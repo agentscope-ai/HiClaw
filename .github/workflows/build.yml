@@ -69,10 +69,12 @@ jobs:
 
       - name: Summary
         env:
+          OPENCLAW_BASE_IMAGE: ${{ env.REGISTRY }}/${{ env.REPO }}/openclaw-base
           MANAGER_IMAGE: ${{ env.REGISTRY }}/${{ env.REPO }}/hiclaw-manager
           WORKER_IMAGE: ${{ env.REGISTRY }}/${{ env.REPO }}/hiclaw-worker
         run: |
           echo "### Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "- OpenClaw Base: \`${OPENCLAW_BASE_IMAGE}:${{ steps.meta.outputs.version }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- Manager: \`${MANAGER_IMAGE}:${{ steps.meta.outputs.version }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- Worker: \`${WORKER_IMAGE}:${{ steps.meta.outputs.version }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- Platforms: \`linux/amd64, linux/arm64\`" >> $GITHUB_STEP_SUMMARY

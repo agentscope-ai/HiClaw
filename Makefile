@@ -22,15 +22,18 @@ VERSION        ?= latest
 REGISTRY       ?= higress-registry.cn-hangzhou.cr.aliyuncs.com
 REPO           ?= higress
 
-MANAGER_IMAGE  ?= $(REGISTRY)/$(REPO)/hiclaw-manager
-WORKER_IMAGE   ?= $(REGISTRY)/$(REPO)/hiclaw-worker
+MANAGER_IMAGE       ?= $(REGISTRY)/$(REPO)/hiclaw-manager
+WORKER_IMAGE        ?= $(REGISTRY)/$(REPO)/hiclaw-worker
+OPENCLAW_BASE_IMAGE ?= $(REGISTRY)/$(REPO)/openclaw-base
 
 MANAGER_TAG    ?= $(MANAGER_IMAGE):$(VERSION)
 WORKER_TAG     ?= $(WORKER_IMAGE):$(VERSION)
+OPENCLAW_BASE_TAG ?= $(OPENCLAW_BASE_IMAGE):$(VERSION)
 
 # Local image names (no registry prefix, used by tests and install script)
-LOCAL_MANAGER  = hiclaw/manager-agent:$(VERSION)
-LOCAL_WORKER   = hiclaw/worker-agent:$(VERSION)
+LOCAL_MANAGER       = hiclaw/manager-agent:$(VERSION)
+LOCAL_WORKER        = hiclaw/worker-agent:$(VERSION)
+LOCAL_OPENCLAW_BASE = hiclaw/openclaw-base:$(VERSION)
 
 # Higress base image registry (regional mirrors auto-synced from cn-hangzhou primary)
 #   China (default): higress-registry.cn-hangzhou.cr.aliyuncs.com
@@ -65,8 +68,8 @@ TEST_FILTER    ?=
 
 # ---------- Phony targets ----------
 
-.PHONY: all build build-manager build-worker \
-        tag push push-manager push-worker \
+.PHONY: all build build-openclaw-base build-manager build-worker \
+        tag push push-openclaw-base push-manager push-worker \
         push-native push-native-manager push-native-worker \
         buildx-setup \
         test test-quick test-installed \
@@ -79,17 +82,25 @@ all: build
 
 # ---------- Build ----------
 
-build: build-manager build-worker ## Build all images
+build: build-openclaw-base build-manager build-worker ## Build all images
+
+build-openclaw-base: ## Build OpenClaw base image
+	@echo "==> Building OpenClaw base image: $(LOCAL_OPENCLAW_BASE) (registry: $(HIGRESS_REGISTRY))"
+	docker build $(PLATFORM_FLAG) $(REGISTRY_ARG) $(DOCKER_BUILD_ARGS) \
+		-t $(LOCAL_OPENCLAW_BASE) \
+		./openclaw-base/
+
+OPENCLAW_BASE_BUILD_ARG = --build-arg OPENCLAW_BASE_TAG=$(VERSION)
 
 build-manager: ## Build Manager image
 	@echo "==> Building Manager image: $(LOCAL_MANAGER) (registry: $(HIGRESS_REGISTRY))"
-	docker build $(PLATFORM_FLAG) $(REGISTRY_ARG) $(BUILTIN_VERSION_ARG) $(DOCKER_BUILD_ARGS) \
+	docker build $(PLATFORM_FLAG) $(REGISTRY_ARG) $(BUILTIN_VERSION_ARG) $(OPENCLAW_BASE_BUILD_ARG) $(DOCKER_BUILD_ARGS) \
 		-t $(LOCAL_MANAGER) \
 		./manager/
 
 build-worker: ## Build Worker image
 	@echo "==> Building Worker image: $(LOCAL_WORKER) (registry: $(HIGRESS_REGISTRY))"
-	docker build $(PLATFORM_FLAG) $(REGISTRY_ARG) $(DOCKER_BUILD_ARGS) \
+	docker build $(PLATFORM_FLAG) $(REGISTRY_ARG) $(OPENCLAW_BASE_BUILD_ARG) $(DOCKER_BUILD_ARGS) \
 		-t $(LOCAL_WORKER) \
 		./worker/
 
@@ -128,7 +139,32 @@ else
 	fi
 endif
 
-push: push-manager push-worker ## Build + push multi-arch images (amd64 + arm64)
+push: push-openclaw-base push-manager push-worker ## Build + push multi-arch images (amd64 + arm64)
+
+push-openclaw-base: buildx-setup ## Build + push multi-arch OpenClaw base image
+	@echo "==> Building + pushing multi-arch OpenClaw base: $(OPENCLAW_BASE_TAG) [$(MULTIARCH_PLATFORMS)]"
+ifeq ($(IS_PODMAN),1)
+	@# Podman: build each platform into a manifest list, then push
+	-podman manifest rm $(OPENCLAW_BASE_TAG) 2>/dev/null
+	$(foreach plat,$(subst $(comma), ,$(MULTIARCH_PLATFORMS)), \
+		echo "  -> Building OpenClaw base for $(plat)..." && \
+		podman build --platform $(plat) \
+			$(REGISTRY_ARG) $(DOCKER_BUILD_ARGS) \
+			--manifest $(OPENCLAW_BASE_TAG) \
+			./openclaw-base/ && ) true
+	podman manifest push --all $(OPENCLAW_BASE_TAG) docker://$(OPENCLAW_BASE_TAG)
+	$(if $(filter-out latest,$(VERSION)), \
+		podman manifest push --all $(OPENCLAW_BASE_TAG) docker://$(OPENCLAW_BASE_IMAGE):latest)
+else
+	docker buildx build \
+		--builder $(BUILDX_BUILDER) \
+		--platform $(MULTIARCH_PLATFORMS) \
+		$(REGISTRY_ARG) $(DOCKER_BUILD_ARGS) \
+		-t $(OPENCLAW_BASE_TAG) \
+		$(if $(filter-out latest,$(VERSION)),-t $(OPENCLAW_BASE_IMAGE):latest) \
+		--push \
+		./openclaw-base/
+endif
 
 push-manager: buildx-setup ## Build + push multi-arch Manager image
 	@echo "==> Building + pushing multi-arch Manager: $(MANAGER_TAG) [$(MULTIARCH_PLATFORMS)]"
@@ -138,7 +174,7 @@ ifeq ($(IS_PODMAN),1)
 	$(foreach plat,$(subst $(comma), ,$(MULTIARCH_PLATFORMS)), \
 		echo "  -> Building Manager for $(plat)..." && \
 		podman build --platform $(plat) \
-			$(REGISTRY_ARG) $(BUILTIN_VERSION_ARG) $(DOCKER_BUILD_ARGS) \
+			$(REGISTRY_ARG) $(BUILTIN_VERSION_ARG) $(OPENCLAW_BASE_BUILD_ARG) $(DOCKER_BUILD_ARGS) \
 			--manifest $(MANAGER_TAG) \
 			./manager/ && ) true
 	podman manifest push --all $(MANAGER_TAG) docker://$(MANAGER_TAG)
@@ -148,7 +184,7 @@ else
 	docker buildx build \
 		--builder $(BUILDX_BUILDER) \
 		--platform $(MULTIARCH_PLATFORMS) \
-		$(REGISTRY_ARG) $(BUILTIN_VERSION_ARG) $(DOCKER_BUILD_ARGS) \
+		$(REGISTRY_ARG) $(BUILTIN_VERSION_ARG) $(OPENCLAW_BASE_BUILD_ARG) $(DOCKER_BUILD_ARGS) \
 		-t $(MANAGER_TAG) \
 		$(if $(filter-out latest,$(VERSION)),-t $(MANAGER_IMAGE):latest) \
 		--push \
@@ -163,7 +199,7 @@ ifeq ($(IS_PODMAN),1)
 	$(foreach plat,$(subst $(comma), ,$(MULTIARCH_PLATFORMS)), \
 		echo "  -> Building Worker for $(plat)..." && \
 		podman build --platform $(plat) \
-			$(REGISTRY_ARG) $(DOCKER_BUILD_ARGS) \
+			$(REGISTRY_ARG) $(OPENCLAW_BASE_BUILD_ARG) $(DOCKER_BUILD_ARGS) \
 			--manifest $(WORKER_TAG) \
 			./worker/ && ) true
 	podman manifest push --all $(WORKER_TAG) docker://$(WORKER_TAG)
@@ -173,7 +209,7 @@ else
 	docker buildx build \
 		--builder $(BUILDX_BUILDER) \
 		--platform $(MULTIARCH_PLATFORMS) \
-		$(REGISTRY_ARG) $(DOCKER_BUILD_ARGS) \
+		$(REGISTRY_ARG) $(OPENCLAW_BASE_BUILD_ARG) $(DOCKER_BUILD_ARGS) \
 		-t $(WORKER_TAG) \
 		$(if $(filter-out latest,$(VERSION)),-t $(WORKER_IMAGE):latest) \
 		--push \
@@ -321,6 +357,7 @@ clean: ## Remove local images and test containers
 	@echo "==> Removing local images..."
 	-docker rmi $(LOCAL_MANAGER) 2>/dev/null
 	-docker rmi $(LOCAL_WORKER) 2>/dev/null
+	-docker rmi $(LOCAL_OPENCLAW_BASE) 2>/dev/null
 	@echo "==> Clean complete"
 
 # ---------- Help ----------
