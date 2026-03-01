@@ -36,7 +36,7 @@ RUN if [ -n "${APT_MIRROR}" ]; then \
     hash -r && node --version
 
 RUN git clone https://github.com/johnlanni/openclaw.git /opt/openclaw && \
-    cd /opt/openclaw && git checkout 1021357a54537a205770238240f06978436062ff
+    cd /opt/openclaw && git checkout df5225e1fc310158f84f888b74ba2ea815190181
 
 RUN cd /opt/openclaw && pnpm config set registry ${NPM_REGISTRY} && pnpm install && pnpm build
 
