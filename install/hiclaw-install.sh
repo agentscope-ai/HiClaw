@@ -19,7 +19,7 @@
 #   HICLAW_ADMIN_PASSWORD     Admin password       (auto-generated if not set, min 8 chars)
 #   HICLAW_MATRIX_DOMAIN      Matrix domain        (default: matrix-local.hiclaw.io:18080)
 #   HICLAW_MOUNT_SOCKET       Mount container runtime socket (default: 1)
-#   HICLAW_DATA_DIR           Host directory for persistent data (default: docker volume)
+#   HICLAW_DATA_DIR           Docker volume name for persistent data (default: hiclaw-data)
 #   HICLAW_WORKSPACE_DIR      Host directory for manager workspace (default: ~/hiclaw-manager)
 #   HICLAW_VERSION            Image tag            (default: latest)
 #   HICLAW_REGISTRY           Image registry       (default: auto-detected by timezone)
@@ -27,6 +27,7 @@
 #   HICLAW_INSTALL_WORKER_IMAGE   Override worker image  (e.g., local build)
 #   HICLAW_PORT_GATEWAY       Host port for Higress gateway (default: 18080)
 #   HICLAW_PORT_CONSOLE       Host port for Higress console (default: 18001)
+#   HICLAW_PORT_ELEMENT_WEB   Host port for Element Web direct access (default: 18088)
 
 set -e
 
@@ -776,6 +777,7 @@ install_manager() {
     log "--- Port Configuration (press Enter for defaults) ---"
     prompt HICLAW_PORT_GATEWAY "Host port for gateway (8080 inside container)" "18080"
     prompt HICLAW_PORT_CONSOLE "Host port for Higress console (8001 inside container)" "18001"
+    prompt HICLAW_PORT_ELEMENT_WEB "Host port for Element Web direct access (8088 inside container)" "18088"
 
     log ""
 
@@ -797,16 +799,12 @@ install_manager() {
     # Data persistence
     log "--- Data Persistence ---"
     if [ "${HICLAW_NON_INTERACTIVE}" != "1" ] && [ -z "${HICLAW_DATA_DIR+x}" ]; then
-        read -p "External data directory (leave empty for Docker volume): " HICLAW_DATA_DIR
+        read -p "Docker volume name for persistent data [hiclaw-data]: " HICLAW_DATA_DIR
+        HICLAW_DATA_DIR="${HICLAW_DATA_DIR:-hiclaw-data}"
         export HICLAW_DATA_DIR
     fi
-    if [ -n "${HICLAW_DATA_DIR}" ]; then
-        HICLAW_DATA_DIR="$(cd "${HICLAW_DATA_DIR}" 2>/dev/null && pwd || echo "${HICLAW_DATA_DIR}")"
-        mkdir -p "${HICLAW_DATA_DIR}"
-        log "  Data directory: ${HICLAW_DATA_DIR}"
-    else
-        log "  Using Docker volume: hiclaw-data"
-    fi
+    HICLAW_DATA_DIR="${HICLAW_DATA_DIR:-hiclaw-data}"
+    log "  Using Docker volume: ${HICLAW_DATA_DIR}"
 
     # Manager workspace directory (skills, memory, state — host-editable)
     log "--- Manager Workspace ---"
@@ -851,6 +849,7 @@ HICLAW_ADMIN_PASSWORD=${HICLAW_ADMIN_PASSWORD}
 # Ports
 HICLAW_PORT_GATEWAY=${HICLAW_PORT_GATEWAY}
 HICLAW_PORT_CONSOLE=${HICLAW_PORT_CONSOLE}
+HICLAW_PORT_ELEMENT_WEB=${HICLAW_PORT_ELEMENT_WEB}
 
 # Matrix
 HICLAW_MATRIX_DOMAIN=${HICLAW_MATRIX_DOMAIN}
@@ -879,7 +878,7 @@ HICLAW_WORKER_IMAGE=${WORKER_IMAGE}
 HIGRESS_ADMIN_WASM_PLUGIN_IMAGE_REGISTRY=${HICLAW_REGISTRY}
 
 # Data persistence
-HICLAW_DATA_DIR=${HICLAW_DATA_DIR:-}
+HICLAW_DATA_DIR=${HICLAW_DATA_DIR:-hiclaw-data}
 # Manager workspace (skills, memory, state — host-editable)
 HICLAW_WORKSPACE_DIR=${HICLAW_WORKSPACE_DIR:-}
 # Host directory sharing
@@ -908,12 +907,8 @@ EOF
         docker rm hiclaw-manager 2>/dev/null || true
     fi
 
-    # Data mount: external directory or Docker volume
-    if [ -n "${HICLAW_DATA_DIR}" ]; then
-        DATA_MOUNT_ARGS="-v ${HICLAW_DATA_DIR}:/data"
-    else
-        DATA_MOUNT_ARGS="-v hiclaw-data:/data"
-    fi
+    # Data mount: Docker volume
+    DATA_MOUNT_ARGS="-v ${HICLAW_DATA_DIR}:/data"
 
     # Manager workspace mount (always a host directory, defaulting to ~/hiclaw-manager)
     WORKSPACE_MOUNT_ARGS="-v ${HICLAW_WORKSPACE_DIR}:/root/manager-workspace"
@@ -986,6 +981,7 @@ EOF
         ${SOCKET_MOUNT_ARGS} \
         -p "${HICLAW_PORT_GATEWAY}:8080" \
         -p "${HICLAW_PORT_CONSOLE}:8001" \
+        -p "${HICLAW_PORT_ELEMENT_WEB:-18088}:8088" \
         ${DATA_MOUNT_ARGS} \
         ${WORKSPACE_MOUNT_ARGS} \
         ${HOST_SHARE_MOUNT_ARGS} \
@@ -1009,13 +1005,12 @@ EOF
     log "The following domains are configured to resolve to 127.0.0.1:"
     log "  ${HICLAW_MATRIX_DOMAIN%%:*} ${HICLAW_MATRIX_CLIENT_DOMAIN} ${HICLAW_AI_GATEWAY_DOMAIN} ${HICLAW_FS_DOMAIN}"
     log ""
-    local element_url="http://${HICLAW_MATRIX_CLIENT_DOMAIN}:${HICLAW_PORT_GATEWAY}/#/login"
     local lan_ip
     lan_ip=$(detect_lan_ip)
     echo -e "\033[33m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
     echo -e "\033[33m  ★ Open the following URL in your browser to start:                           ★\033[0m"
     echo -e "\033[33m                                                                                 \033[0m"
-    echo -e "\033[1;36m    ${element_url}\033[0m"
+    echo -e "\033[1;36m    http://127.0.0.1:${HICLAW_PORT_ELEMENT_WEB:-18088}/#/login\033[0m"
     echo -e "\033[33m                                                                                 \033[0m"
     echo -e "\033[33m  Login with:                                                                    \033[0m"
     echo -e "\033[33m    Username: \033[1;32m${HICLAW_ADMIN_USER}\033[0m"
@@ -1056,11 +1051,7 @@ EOF
     log "Tip: You can also ask the Manager to configure LLM providers for you in the chat."
     log ""
     log "Configuration file: ${ENV_FILE}"
-    if [ -n "${HICLAW_DATA_DIR}" ]; then
-        log "Data directory:     ${HICLAW_DATA_DIR}"
-    else
-        log "Data volume:        hiclaw-data (use HICLAW_DATA_DIR to persist externally)"
-    fi
+    log "Data volume:        ${HICLAW_DATA_DIR}"
     log "Manager workspace:  ${HICLAW_WORKSPACE_DIR}"
 }
 

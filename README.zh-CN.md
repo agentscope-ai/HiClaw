@@ -44,12 +44,7 @@ HICLAW_LLM_API_KEY="sk-xxx" make install
 #### Windows（PowerShell 7+）
 
 ```powershell
-# 一键安装（交互式）
-Invoke-Expression (Invoke-WebRequest -Uri "https://higress.ai/hiclaw/install.ps1" -UseBasicParsing).Content
-
-# 或下载后运行
-Invoke-WebRequest -Uri "https://higress.ai/hiclaw/install.ps1" -OutFile "hiclaw-install.ps1"
-.\hiclaw-install.ps1
+Set-ExecutionPolicy Bypass -Scope Process -Force; Invoke-Expression ((New-Object System.Net.WebClient).DownloadString('https://higress.ai/hiclaw/install.ps1'))
 ```
 
 安装脚本会自动：

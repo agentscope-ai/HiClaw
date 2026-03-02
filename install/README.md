@@ -18,17 +18,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/higress-group/hiclaw/main/in
 ### Windows (PowerShell 7+)
 
 ```powershell
-Invoke-Expression (Invoke-WebRequest -Uri "https://raw.githubusercontent.com/higress-group/hiclaw/main/install/hiclaw-install.ps1" -UseBasicParsing).Content
-```
-
-Or download and run:
-
-```powershell
-# Download
-Invoke-WebRequest -Uri "https://raw.githubusercontent.com/higress-group/hiclaw/main/install/hiclaw-install.ps1" -OutFile "hiclaw-install.ps1"
-
-# Run
-.\hiclaw-install.ps1
+Set-ExecutionPolicy Bypass -Scope Process -Force; Invoke-Expression ((New-Object System.Net.WebClient).DownloadString('https://higress.ai/hiclaw/install.ps1'))
 ```
 
 ## Installation Modes
