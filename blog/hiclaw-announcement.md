@@ -283,67 +283,162 @@ Alice: 好的，我正在处理...
 
 ```
 你: 帮我创建 4 个 Worker：
-    - alex: 产品经理，负责需求分析、竞品调研
-    - sam: 全栈开发，前后端都能搞
-    - taylor: 内容运营，负责社媒、SEO、增长
-    - jordan: 数据分析，负责埋点、报表、洞察
+    - alex: 产品经理
+    - sam: 全栈开发
+    - taylor: 内容运营
+    - jordan: 数据分析
 
-Manager: 好的，已创建 4 个 Worker，各自有独立的技能和记忆。
+Manager: 好的，4 个 Worker 已创建，各自有独立的技能和记忆。
 
-你: 我们要做一款 AI 写作助手，下周要发 MVP。alex 先出 PRD。
+你: 启动项目：AI 写作助手 MVP，下周要上线
+
+Manager: 收到，我来规划项目...
+
+         [创建项目群，邀请所有 Worker 加入]
+         [起草项目计划]
+         
+         计划如下，请确认：
+         
+         Phase 1: 产品定义
+         - task-001: 竞品调研 & PRD（alex）
+         
+         Phase 2: 开发
+         - task-002: 技术选型 & 架构（sam，依赖 task-001）
+         - task-003: 核心功能开发（sam，依赖 task-002）
+         - task-004: 代码审查（alex，依赖 task-003）
+         
+         Phase 3: 上线准备
+         - task-005: 发布素材准备（taylor，依赖 task-001）
+         
+         确认后我开始分配任务。
+
+你: 确认
+
+Manager: [更新项目状态为 active]
+         
+         @alex 你有新任务 [task-001]：竞品调研 & PRD
+         目标：输出 PRD 文档，明确 MVP 功能边界
+         规格：~/hiclaw-fs/shared/tasks/task-001/spec.md
+         完成后在项目群 @我 汇报
 
 [2 小时后]
 
-alex: PRD 已完成，核心功能：AI 续写、多模型切换、历史记录。
-      文档地址：/shared/prd-v1.md
-      请 @sam 评估技术可行性
+alex: @manager task-001 完成
+      PRD 已输出：核心功能包括 AI 续写、多模型切换、历史记录
+      结果：~/hiclaw-fs/shared/tasks/task-001/result.md
 
-你: 看了 PRD，方向 OK。@sam 你看下
+Manager: [读取 result.md，状态：SUCCESS]
+         [更新项目计划，task-001 标记完成]
+         
+         @sam 你有新任务 [task-002]：技术选型 & 架构
+         PRD 参考：~/hiclaw-fs/shared/tasks/task-001/result.md
+         
+         @taylor 你有新任务 [task-005]：发布素材准备
+         产品定位参考：~/hiclaw-fs/shared/tasks/task-001/result.md
 
-sam: 评估完成。技术栈：Next.js + Vercel + Supabase。
-      预计 3 天可完成 MVP。开始动手？
+[1 天后]
 
-你: 开搞
+sam: @manager task-002 完成
+     技术栈：Next.js + Vercel + Supabase
+     预计 3 天完成开发
+
+Manager: [更新计划，分配 task-003]
+         
+         @sam 继续开发核心功能 [task-003]
 
 [3 天后]
 
-Manager: MVP 开发完成
-         - sam: 所有功能已实现，已部署到 vercel
-         - alex: 产品验收通过
-         地址：https://xxx.vercel.app
+sam: @manager task-003 完成，已部署到 Vercel
+     Demo 地址：https://xxx.vercel.app
 
-你: 很好。@taylor 准备上线推广
+Manager: [更新计划，分配 task-004]
+         
+         @alex 请验收 [task-004]：产品验收
+         测试地址：https://xxx.vercel.app
+         对照 PRD 验收功能完整性
 
-taylor: 已准备好发布素材：
-        - Product Hunt 发布页文案
-        - Twitter/X 宣发推文（3 条）
-        - 独立开发者社区推广贴
-        建议：明天早上 9 点（美西时间）在 PH 上线
+[验收中发现问题]
 
-[上线当天]
+alex: @manager task-004 需要修改
+      问题：多模型切换没有引导，用户不知道怎么选
+      建议：增加模型对比说明页
+      结果：~/hiclaw-fs/shared/tasks/task-004/result.md
+      状态：REVISION_NEEDED → 返回 task-003
 
-taylor: PH 当日排名第 3！
-        - 423 upvotes
-        - 87 条评论
-        - 首日注册用户：1,247
+Manager: [读取 result.md，状态：REVISION_NEEDED]
+         [创建修订任务 task-006]
+         
+         @sam task-004 验收发现问题，需要修改
+         
+         修改任务 [task-006]：增加模型选择引导页
+         反馈详情：~/hiclaw-fs/shared/tasks/task-004/result.md
+         完成后 @我 汇报
 
-jordan: 已配置埋点和看板
-        - 用户留存（次日）：34%
-        - 核心功能使用率：AI 续写 78%，多模型切换 23%
-        建议：优先优化多模型切换的引导流程
+[修改完成]
 
-你: @alex 看下多模型切换的使用数据
+sam: @manager task-006 完成，引导页已加上
 
-alex: 分析完成。问题：用户不知道不同模型的区别。
-      建议：增加模型选择引导页 + 使用场景提示。
-      PRD 更新：/shared/prd-v2.md
+Manager: [task-006 完成，task-004 重新验收通过]
+         [所有开发任务完成]
+         
+         @你 MVP 开发完成！
+         - 代码已部署：https://xxx.vercel.app
+         - 产品验收通过
+         - 发布素材已就绪
+         
+         项目计划：~/hiclaw-fs/shared/projects/proj-xxx/plan.md
 
-你: 批准。@sam 下个迭代加上
+你: 准备上线。@taylor 明天 Product Hunt 发布
 
-[就这样，你一个人带着 4 个 AI 员工，跑完了产品从 0 到 1 的完整流程]
+taylor: 收到，已排期。素材已准备完毕。
+
+[上线当天 — Manager 自动检测进度]
+
+Manager: @你 Product Hunt 发布提醒
+         当前排名：第 3 名
+         Upvotes: 423
+         评论数: 87
+         
+         @jordan 请配置数据埋点
+
+jordan: 收到，开始配置 GA4 + 自定义事件...
+
+[数据就绪后]
+
+jordan: @manager 埋点配置完成
+        看板地址：https://analytics.google.com/xxx
+        
+        首日数据：
+        - 注册用户：1,247
+        - 次日留存：34%
+        - AI 续写使用率：78%
+        - 多模型切换使用率：23%
+
+Manager: @你 项目「AI 写作助手 MVP」上线数据日报
+         
+         核心指标：
+         - 首日注册：1,247
+         - 次日留存：34%
+         - 功能使用：续写 78%，切换 23%
+         
+         洞察：多模型切换使用率偏低
+         建议：@alex 分析原因，优化引导流程
+
+[就这样，Manager 贯穿始终：规划 → 分配 → 监控 → 协调 → 汇报]
 ```
 
-**这不是科幻——是 HiClaw 能让你做到的事。**
+**Manager 做了什么？**
+
+| 环节 | Manager 的作用 |
+|------|---------------|
+| **项目规划** | 把目标拆解成任务，识别依赖关系 |
+| **任务分配** | @mention 指派任务，提供上下文 |
+| **进度监控** | 收到汇报后更新计划，触发下一步 |
+| **处理问题** | 验收不通过 → 自动创建修订任务 |
+| **状态同步** | 关键节点主动汇报给你 |
+| **风险预警** | 发现数据异常，主动建议优化 |
+
+**你只需要做决策，剩下的交给 Manager。**
 
 ---
 
