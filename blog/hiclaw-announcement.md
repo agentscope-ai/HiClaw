@@ -43,27 +43,86 @@
 
 ---
 
-## 更安全：Manager 能管理，但不能泄密
+## 技术架构：OpenClaw 的"器官移植"
 
-### 问题：OpenClaw 的凭证风险
+OpenClaw 的设计就像一个完整的生物体：有**大脑**（LLM）、**中枢神经系统**（pi-mono）、**眼睛和嘴**（各种 Channel）。但原生设计中，大脑和感知器官都是"外接"的——你需要自己去配置 LLM Provider、去对接各种消息渠道。
 
-原生 OpenClaw 架构下，每个 Agent 都需要持有真实的 API Key：
+HiClaw 做了一次"器官移植"手术，把这些外接组件变成**内置器官**：
 
-```json
-// 每个 agent 的配置文件里都要写
-{
-  "providers": {
-    "anthropic": { "apiKey": "sk-ant-xxx" },  // 真实的 Key
-    "github": { "token": "ghp_xxx" }          // 真实的 PAT
-  }
-}
+```
+┌────────────────────────────────────────────────────────────────────┐
+│                         HiClaw All-in-One                          │
+│  ┌──────────────────────────────────────────────────────────────┐ │
+│  │                     OpenClaw (pi-mono)                       │ │
+│  │                      中枢神经系统                             │ │
+│  └──────────────────────────────────────────────────────────────┘ │
+│           ↑                              ↑                        │
+│  ┌────────────────┐              ┌────────────────┐               │
+│  │  Higress AI    │              │   Tuwunel      │               │
+│  │  Gateway       │              │   Matrix       │               │
+│  │  (大脑接入)     │              │   Server       │               │
+│  │                │              │   (感知器官)    │               │
+│  │  灵活切换       │              │                │               │
+│  │  LLM供应商      │              │  Element Web   │               │
+│  │  和模型         │              │  Element/Xbox    │               │
+│  └────────────────┘              │  (自带客户端)   │               │
+│                                  └────────────────┘               │
+└────────────────────────────────────────────────────────────────────┘
 ```
 
-一旦 Agent 被攻击或意外输出，这些凭证就可能泄露。
+### LLM 接入：Higress AI Gateway
 
-### HiClaw 的解决方案
+**大脑不再外接，而是通过 AI Gateway 灵活管理**：
 
-**Worker 永远不持有真实凭证**
+- **一个入口，多种模型**：在 Higress 控制台即可切换阿里云通义、OpenAI、Claude 等不同供应商
+- **凭证集中管理**：API Key 只需要配置一次，所有 Agent 共享
+- **按需授权**：每个 Worker 只获得调用权限，永远接触不到真实的 API Key
+
+### 通信接入：内置 Matrix Server
+
+**感知器官也变成内置的**：
+
+- **Tuwunel Matrix Server**：开箱即用的消息服务器，无需任何配置
+- **自带 Element Web 客户端**：浏览器打开就能对话
+- **移动端友好**：支持 Element、FluffyChat 等全平台客户端
+- **零对接成本**：不需要申请飞书/钉钉机器人，不需要等待审批
+
+> 💡 换个比喻：OpenClaw 原生就像一台组装电脑，你需要自己买显卡（LLM）、显示器（Channel）然后装驱动。HiClaw 则是一台开箱即用的笔记本，所有外设都集成好了，开机就能干活。
+
+---
+
+## Multi-Agent 系统：你的 AI 管家贾维斯
+
+在组件封装的基础上，HiClaw 还实现了一套**开箱即用的 Multi-Agent 系统**——Manager Agent 管理 Worker Agent，就像钢铁侠的管家 **贾维斯** 一样。
+
+### 按需启用，两种模式
+
+这套系统是**按需启用**的，你可以灵活选择：
+
+**模式一：直接对话 Manager**
+- 简单任务直接告诉 Manager，它自己处理
+- 适合快速问答、简单操作
+
+**模式二：Manager 分派 Worker**
+- 复杂任务由 Manager 拆解，分配给专业 Worker
+- 每个 Worker 有独立的 Skills 和 Memory
+- 技能和记忆**完全隔离**，不会互相污染
+
+### 协作架构：Supervisor + Swarm 的融合
+
+从 Manager-Worker 的角度看，这是一个 **Supervisor 架构**：Manager 作为中心节点协调所有 Worker。但因为基于 Matrix 群聊房间协作，它同时也具备了 **Swarm（蜂群）架构** 的特点。
+
+**共享上下文，无需重复沟通**：每个 Agent 都能看到群聊房间里的完整上下文。Alice 说"我在做登录页面"，Bob 自动知道前端在做什么，API 设计时可以配合。
+
+**防惊群设计**：Agent 只有被 @ 的时候才会触发 LLM 调用，不会因为无关消息被唤醒，成本可控。
+
+**中间产物不污染上下文**：文件交换、代码片段等大量协作通过底层的 **MinIO 共享文件系统** 完成，不会发到群聊里导致上下文膨胀。
+
+### 安全设计：Manager 能管理，但不能泄密
+
+原生 OpenClaw 架构下，每个 Agent 都需要持有真实的 API Key，一旦被攻击或意外输出，凭证就可能泄露。
+
+HiClaw 的解决方案是 **Worker 永远不持有真实凭证**：
 
 ```
 ┌──────────────┐      ┌──────────────────┐      ┌─────────────┐
@@ -76,14 +135,9 @@
 
 - Worker 只持有一个 Consumer Token（类似于"工牌"）
 - 真实的 API Key、GitHub PAT 等凭证存储在 AI Gateway
-- Worker 调用外部服务时，通过 Gateway 代理
 - **即使 Worker 被攻击，攻击者也拿不到真实凭证**
 
-**Manager 的安全设计**：
-
-- Manager 知道 Worker 要做什么任务，但不知道 API Key、GitHub PAT
-- Manager 的职责是"管理和协调"，不直接执行文件读写、代码编写
-- 即使 Manager 被攻击，攻击者只能看到任务列表，无法获取凭证
+Manager 的安全设计同样严格：它知道 Worker 要做什么任务，但不知道 API Key、GitHub PAT。Manager 的职责是"管理和协调"，不直接执行文件读写、代码编写。
 
 | 维度 | OpenClaw 原生 | HiClaw |
 |------|--------------|--------|
@@ -91,11 +145,38 @@
 | 泄漏途径 | Agent 可直接输出凭证 | Manager 无法访问真实凭证 |
 | 攻击面 | 每个 Agent 都是入口 | 只有 Manager 需要防护 |
 
----
+### Human in the Loop：全程透明，随时干预
 
-## 更易用：5 分钟打造一人公司
+和 OpenClaw 原生的 Sub Agent 系统相比，HiClaw 的 Multi-Agent 系统不仅更易用，而且**更透明**：
 
-### Manager 帮你做这些事
+```
+┌─────────────────────────────────────────────────────────────┐
+│                  Matrix 项目群聊房间                        │
+│                                                             │
+│  你: 实现一个登录页面                                        │
+│                                                             │
+│  Manager: 收到，我来分派...                                  │
+│           → @alice 前端页面                                  │
+│           → @bob 后端 API                                    │
+│                                                             │
+│  Alice: 正在实现登录组件...                                  │
+│  Bob: API 接口已定义好...                                    │
+│                                                             │
+│  你: @bob 等下，密码规则改成至少8位                          │  ← 随时干预
+│                                                             │
+│  Bob: 好的，已修改...                                        │
+│  Alice: 收到，前端校验也更新了                               │
+│                                                             │
+│  Manager: 任务完成，请 Review                                │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**核心优势**：
+- **全程可见**：所有 Agent 的协作过程都在 Matrix 群聊里
+- **随时介入**：发现问题可以直接 @某个 Agent 修正
+- **自然交互**：就像在微信群里和一群同事协作
+
+### Manager 的核心能力
 
 | 能力 | 说明 |
 |------|------|
@@ -104,66 +185,42 @@
 | **Heartbeat 自动监工** | 定期检查 Worker 状态，发现卡住自动提醒你 |
 | **项目群自动拉起** | 为项目创建 Matrix Room，邀请相关人员 |
 
-### 真实案例：一人开发一个 Todo App
-
-**以前（用原生 OpenClaw）**：
-
-```
-1. 手动配置前端 Agent 的 skills
-2. 手动配置后端 Agent 的 skills
-3. 手动分配任务："Alice 你做前端"
-4. 手动检查进度："Alice 你做完了吗？"
-5. 手动同步："Alice 做完了，Bob 可以开始了"
-6. ...一直盯着，生怕烂尾
-```
-
-**现在（用 HiClaw）**：
-
-```
-你: "我要做一个 Todo App，前端用 React，后端用 Node.js"
-
-Manager: 好的，我来安排
-  1. 创建 Worker Alice（前端专家）
-  2. 创建 Worker Bob（后端专家）
-  3. 创建项目群（你 + Manager + Alice + Bob）
-  4. 拆解任务：前端页面 → API 设计 → 数据库 → 联调
-  5. 分配给 Alice 和 Bob
-  6. [Heartbeat] 定期检查进度，卡住提醒你
-
-[30 分钟后]
-
-Manager: @你 Alice 完成了前端页面，Bob 完成了 API，项目已完成
-         请在项目群里 Review 结果
-
-你: [打开手机 Matrix 客户端] 看到进度，满意 ✅
-```
-
-**你只需要做决策，不需要当保姆。**
-
 ### 移动端体验
 
 HiClaw 内置 Matrix 服务器，支持多种客户端：
 
 - **一键安装后直接用**：无需配置飞书/钉钉机器人
-- **手机上随时指挥**：下载 Matrix 客户端，推荐 **FluffyChat**（轻量、国区可下载）
+- **手机上随时指挥**：下载 Matrix 客户端（Element、FluffyChat 等）
 - **消息实时推送**：不会折叠到"服务号"
 - **所有对话可见**：你、Manager、Worker 在同一个 Room，全程透明
 
-> 💡 **移动端推荐**：国内用户推荐使用 **FluffyChat**，Element 在国区 iOS 暂未开放下载。FluffyChat 同样支持 iOS/Android/Web 全平台，体验流畅。
+> 💡 **移动端**：支持 Element、FluffyChat 等主流 Matrix 客户端，iOS/Android/Web 全平台覆盖。
 
 ---
 
 ## 5 分钟快速开始
 
-### 第一步：安装（1 分钟）
+### 第一步：安装
+
+**macOS / Linux：**
 
 ```bash
-# 一键安装
 bash <(curl -sSL https://higress.ai/hiclaw/install.sh)
-
-# 只需要提供一个 LLM API Key
-HICLAW_LLM_API_KEY=sk-xxx bash <(curl -sSL https://higress.ai/hiclaw/install.sh)
 ```
+
+**Windows（PowerShell 7+）：**
+
+```powershell
+Set-ExecutionPolicy Bypass -Scope Process -Force; Invoke-Expression ((New-Object System.Net.WebClient).DownloadString('https://higress.ai/hiclaw/install.ps1'))
+```
+
+> ⚠️ Windows 用户需要先安装 **PowerShell 7+** 和 **Docker Desktop**。
+
+安装脚本特点：
+- **跨平台**：Mac / Linux 用 bash，Windows 用 PowerShell，体验一致
+- **智能检测**：根据时区自动选择最近的镜像仓库
+- **Docker 封装**：所有组件跑在容器里，屏蔽操作系统差异
+- **最少配置**：只需要一个 LLM API Key，其他都是可选的
 
 安装完成后，你会看到：
 
@@ -173,7 +230,7 @@ HICLAW_LLM_API_KEY=sk-xxx bash <(curl -sSL https://higress.ai/hiclaw/install.sh)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   ★ Open the following URL in your browser to start:                           ★
                                                                                 
-    http://matrix-client-local.hiclaw.io:18080/#/login
+    http://127.0.0.1:18088/#/login
                                                                                 
   Login with:                                                                   
     Username: admin
@@ -185,15 +242,15 @@ HICLAW_LLM_API_KEY=sk-xxx bash <(curl -sSL https://higress.ai/hiclaw/install.sh)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ```
 
-> 💡 **无需配置 hosts**：我们已经为你配好了 DNS 解析，`*-local.hiclaw.io` 会自动解析到 `127.0.0.1`，开箱即用！
+> 💡 **无需配置 hosts**：`*-local.hiclaw.io` 会自动解析到 `127.0.0.1`，开箱即用！
 
-### 第二步：打开浏览器，登录开始对话（1 分钟）
+### 第二步：登录开始对话
 
-1. 打开浏览器访问安装时显示的 URL（如 `http://matrix-client-local.hiclaw.io:18080`）
+1. 打开浏览器访问安装时显示的 URL（如 `http://127.0.0.1:18088`）
 2. 输入安装时显示的用户名和密码登录
 3. 你会看到一个 "Manager" 的对话
 
-### 第三步：创建你的第一个 Worker（1 分钟）
+### 第三步：创建你的第一个 Worker
 
 ```
 你: 帮我创建一个 Worker，名字叫 alice，负责前端开发
@@ -203,54 +260,185 @@ Manager: 好的，正在创建...
          你可以在 "Worker: Alice" Room 里直接给 alice 分配任务
 ```
 
-### 第四步：分配任务（1 分钟）
+### 第四步：分配任务
 
 ```
 你: @alice 请帮我实现一个简单的登录页面，使用 React
 
 Alice: 好的，我正在处理...
-       [5分钟后] 完成了！代码已提交到 GitHub，PR 链接: https://github.com/xxx/pull/1
+       [几分钟后] 完成了！代码已提交到 GitHub，PR 链接: https://github.com/xxx/pull/1
 ```
 
-### 第五步：在手机上查看进度（1 分钟）
+### 第五步：在手机上查看进度
 
-1. 下载 **FluffyChat**（iOS/Android/全平台）
+1. 下载 Matrix 客户端（Element、FluffyChat 等，支持 iOS/Android/全平台）
 2. 登录时选择"其他服务器"，填入你的 Matrix 服务器地址
 3. 随时查看 Worker 的进度，随时干预
 
 ---
 
-## 一人公司实战：3 个 Worker 干完一个团队的活
+## 一人公司实战：一个人，一支队伍
 
-假设你是一个独立开发者，想做一个 SaaS 产品。你可以这样配置：
+假设你想做一个 SaaS 产品——从 idea 到上线到增长，传统上你需要产品、设计、开发、测试、运营……但现在你可以这样：
 
 ```
-你: 帮我创建 3 个 Worker：
-    - alice: 前端开发
-    - bob: 后端开发
-    - charlie: 测试
+你: 帮我创建 4 个 Worker：
+    - alex: 产品经理
+    - sam: 全栈开发
+    - taylor: 内容运营
+    - jordan: 数据分析
 
-Manager: 好的，已创建。
+Manager: 好的，4 个 Worker 已创建，各自有独立的技能和记忆。
 
-你: 这个 Sprint 的目标是：实现用户注册和登录功能
+你: 启动项目：AI 写作助手 MVP，下周要上线
 
-Manager: 收到，我来拆解任务...
-         [拆解完成]
-         - 任务 1: 设计注册/登录 API（分配给 bob）
-         - 任务 2: 实现登录页面（分配给 alice，依赖任务 1）
-         - 任务 3: 实现注册页面（分配给 alice，依赖任务 2）
-         - 任务 4: 编写测试用例（分配给 charlie，依赖任务 1-3）
+Manager: 收到，我来规划项目...
+
+         [创建项目群，邀请所有 Worker 加入]
+         [起草项目计划]
+         
+         计划如下，请确认：
+         
+         Phase 1: 产品定义
+         - task-001: 竞品调研 & PRD（alex）
+         
+         Phase 2: 开发
+         - task-002: 技术选型 & 架构（sam，依赖 task-001）
+         - task-003: 核心功能开发（sam，依赖 task-002）
+         - task-004: 代码审查（alex，依赖 task-003）
+         
+         Phase 3: 上线准备
+         - task-005: 发布素材准备（taylor，依赖 task-001）
+         
+         确认后我开始分配任务。
+
+你: 确认
+
+Manager: [更新项目状态为 active]
+         
+         @alex 你有新任务 [task-001]：竞品调研 & PRD
+         目标：输出 PRD 文档，明确 MVP 功能边界
+         规格：~/hiclaw-fs/shared/tasks/task-001/spec.md
+         完成后在项目群 @我 汇报
 
 [2 小时后]
 
-Manager: @你 Sprint 完成！
-         - bob: API 设计完成
-         - alice: 登录页面、注册页面完成
-         - charlie: 测试用例编写完成，全部通过
-         请在项目群里 Review
+alex: @manager task-001 完成
+      PRD 已输出：核心功能包括 AI 续写、多模型切换、历史记录
+      结果：~/hiclaw-fs/shared/tasks/task-001/result.md
+
+Manager: [读取 result.md，状态：SUCCESS]
+         [更新项目计划，task-001 标记完成]
+         
+         @sam 你有新任务 [task-002]：技术选型 & 架构
+         PRD 参考：~/hiclaw-fs/shared/tasks/task-001/result.md
+         
+         @taylor 你有新任务 [task-005]：发布素材准备
+         产品定位参考：~/hiclaw-fs/shared/tasks/task-001/result.md
+
+[1 天后]
+
+sam: @manager task-002 完成
+     技术栈：Next.js + Vercel + Supabase
+     预计 3 天完成开发
+
+Manager: [更新计划，分配 task-003]
+         
+         @sam 继续开发核心功能 [task-003]
+
+[3 天后]
+
+sam: @manager task-003 完成，已部署到 Vercel
+     Demo 地址：https://xxx.vercel.app
+
+Manager: [更新计划，分配 task-004]
+         
+         @alex 请验收 [task-004]：产品验收
+         测试地址：https://xxx.vercel.app
+         对照 PRD 验收功能完整性
+
+[验收中发现问题]
+
+alex: @manager task-004 需要修改
+      问题：多模型切换没有引导，用户不知道怎么选
+      建议：增加模型对比说明页
+      结果：~/hiclaw-fs/shared/tasks/task-004/result.md
+      状态：REVISION_NEEDED → 返回 task-003
+
+Manager: [读取 result.md，状态：REVISION_NEEDED]
+         [创建修订任务 task-006]
+         
+         @sam task-004 验收发现问题，需要修改
+         
+         修改任务 [task-006]：增加模型选择引导页
+         反馈详情：~/hiclaw-fs/shared/tasks/task-004/result.md
+         完成后 @我 汇报
+
+[修改完成]
+
+sam: @manager task-006 完成，引导页已加上
+
+Manager: [task-006 完成，task-004 重新验收通过]
+         [所有开发任务完成]
+         
+         @你 MVP 开发完成！
+         - 代码已部署：https://xxx.vercel.app
+         - 产品验收通过
+         - 发布素材已就绪
+         
+         项目计划：~/hiclaw-fs/shared/projects/proj-xxx/plan.md
+
+你: 准备上线。@taylor 明天 Product Hunt 发布
+
+taylor: 收到，已排期。素材已准备完毕。
+
+[上线当天 — Manager 自动检测进度]
+
+Manager: @你 Product Hunt 发布提醒
+         当前排名：第 3 名
+         Upvotes: 423
+         评论数: 87
+         
+         @jordan 请配置数据埋点
+
+jordan: 收到，开始配置 GA4 + 自定义事件...
+
+[数据就绪后]
+
+jordan: @manager 埋点配置完成
+        看板地址：https://analytics.google.com/xxx
+        
+        首日数据：
+        - 注册用户：1,247
+        - 次日留存：34%
+        - AI 续写使用率：78%
+        - 多模型切换使用率：23%
+
+Manager: @你 项目「AI 写作助手 MVP」上线数据日报
+         
+         核心指标：
+         - 首日注册：1,247
+         - 次日留存：34%
+         - 功能使用：续写 78%，切换 23%
+         
+         洞察：多模型切换使用率偏低
+         建议：@alex 分析原因，优化引导流程
+
+[就这样，Manager 贯穿始终：规划 → 分配 → 监控 → 协调 → 汇报]
 ```
 
-**你一个人，带着 3 个 AI 员工，干完了一个团队的活。**
+**Manager 做了什么？**
+
+| 环节 | Manager 的作用 |
+|------|---------------|
+| **项目规划** | 把目标拆解成任务，识别依赖关系 |
+| **任务分配** | @mention 指派任务，提供上下文 |
+| **进度监控** | 收到汇报后更新计划，触发下一步 |
+| **处理问题** | 验收不通过 → 自动创建修订任务 |
+| **状态同步** | 关键节点主动汇报给你 |
+| **风险预警** | 发现数据异常，主动建议优化 |
+
+**你只需要做决策，剩下的交给 Manager。**
 
 ---
 
@@ -275,7 +463,7 @@ HiClaw 是对 OpenClaw 的一次"超进化"——不是推翻，而是增强。
 
 HiClaw 就是为你准备的。
 
-**5 分钟，打造你的一人公司。现在就开始：**
+**现在就开始：**
 
 ```bash
 bash <(curl -sSL https://higress.ai/hiclaw/install.sh)
