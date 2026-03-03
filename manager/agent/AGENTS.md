@@ -94,6 +94,84 @@ Skills provide your tools. When you need one, check its `SKILL.md`. Keep local n
 
 ## Task Workflow
 
+### Step 0: Worker Availability Check (when no Worker is explicitly specified)
+
+When the human admin assigns a task **without explicitly naming a Worker**, you MUST first assess whether a Worker is needed and offer options before proceeding.
+
+**Trigger condition**: Admin gives you a task but does NOT say "assign to [worker]" or "let [worker] do this".
+
+**Step 1 — Check existing Workers:**
+
+```bash
+cat ~/workers-registry.json
+```
+
+Also check current workload:
+
+```bash
+cat ~/state.json
+```
+
+**Step 2 — Present options to the admin:**
+
+Based on what you find, present a message like:
+
+> You've assigned me a task: **{task title}**
+>
+> How would you like to handle this?
+>
+> **Option A — Assign to an existing Worker** *(only if idle Workers exist)*
+> {For each idle Worker: "**{name}**: {role/description from their SOUL.md} — currently idle"}
+>
+> **Option B — Create a new Worker**
+> I'll create a dedicated Worker for this task. Suggested configurations:
+> - **{Suggested name}** (e.g., `coder-01`): Focused on {relevant role based on task type}. Skills: {relevant skills}. Model: {default model}.
+> - **{Alternative name}** (e.g., `researcher-01`): Focused on {alternative role}. Skills: {alternative skills}. Model: {default model}.
+>
+> *(You can also describe a custom Worker configuration.)*
+>
+> **Option C — I'll handle it myself**
+> I'll work on this directly. Note: I run with broader system access than Workers — for tasks involving external code, third-party skills, or untrusted inputs, using an isolated Worker is safer.
+>
+> Which option do you prefer?
+
+**Step 3 — Act on the admin's choice:**
+
+| Choice | Action |
+|--------|--------|
+| Existing Worker name / Option A | Proceed to "Before Assigning Tasks" section below, assign to that Worker |
+| "Create a Worker" / Option B (with or without customization) | Ask about find-skills (Step 4), then follow the worker-management skill to create the Worker, then assign the task |
+| Custom Worker description | Use the description to configure and create the Worker (ask about find-skills first), then assign the task |
+| "Handle it yourself" / Option C | Proceed to work on the task directly, without creating a task directory or assigning to a Worker |
+
+**Step 4 — Find-Skills configuration (only when creating a new Worker):**
+
+Check the current default:
+```bash
+echo "${HICLAW_SKILLS_API_URL:-not set (will use https://skills.sh)}"
+```
+
+Ask the admin:
+
+> **Find-Skills** — Workers can discover and install new skills from the Agent Skills ecosystem to extend their capabilities. Workers run in isolated containers and cannot access your personal data.
+>
+> Current default registry: `${HICLAW_SKILLS_API_URL:-https://skills.sh}`
+>
+> 1. **Enable** (Recommended) — Worker can search and install skills
+> 2. **Disable** — Worker uses only pre-installed skills
+>
+> If enabled, enter a custom registry URL or leave empty to use the default.
+
+Record `enable_find_skills` (true/false) and `skills_api_url` (custom URL or empty), then pass to `create-worker.sh` via `--find-skills` / `--skills-api-url`.
+
+**Skip this step when:**
+- The admin explicitly names a Worker ("assign to alice", "let bob handle this")
+- The admin explicitly says "do it yourself" or "handle it"
+- This is a heartbeat-triggered infinite task (already assigned)
+- YOLO mode is active (`$HICLAW_YOLO = "1"`) — in that case, create a Worker autonomously unless the task is trivial enough to handle directly
+
+---
+
 ### Before Assigning Tasks: Container Status Check (if container API is available)
 
 Before assigning any task (finite or triggering an infinite task) to a Worker:

@@ -29,36 +29,14 @@ No need to set defaults - these are always available in the container environmen
 
 ## Create a Worker
 
-### Step 0: Ask Admin about Find-Skills (IMPORTANT)
+### Step 0: Receive configuration from AGENTS.md interaction
 
-**Before creating any Worker, you MUST ask the admin about find-skills configuration.**
-
-> **Note**: If the environment variable `HICLAW_SKILLS_API_URL` is set (configured during Manager installation), it will be used automatically as the default skills registry URL. The admin can override it per-worker, or leave it empty to accept the default.
-
-Check the current default first:
-```bash
-echo "${HICLAW_SKILLS_API_URL:-not set (will use https://skills.sh)}"
-```
-
-Ask the admin:
-
-> **Find-Skills Configuration**
->
-> Workers can discover and install new skills from the Agent Skills ecosystem (skills.sh) to extend their capabilities.
->
-> **Security Note**: Workers run in completely isolated containers and **cannot access any of admin's personal sensitive data**. You can safely enable this feature.
->
-> Current default skills registry: `${HICLAW_SKILLS_API_URL:-https://skills.sh}`
->
-> Please choose:
-> 1. **Enable find-skills** (Recommended) - Worker can search and install skills
-> 2. **Disable** - Worker can only use pre-installed skills from Manager
->
-> If enabled, do you want to use a different registry URL than the default? (Leave empty to keep current default)
-
-Wait for admin's response and record:
+By the time you reach this skill, the admin has already confirmed:
+- Worker name, role description, and any custom model/MCP server preferences
 - `enable_find_skills`: true/false
-- `skills_api_url`: custom URL or empty (default: https://skills.sh)
+- `skills_api_url`: custom URL or empty (uses `${HICLAW_SKILLS_API_URL:-https://skills.sh}` as default)
+
+These are determined during the Task Workflow Step 0 / Step 4 interaction in AGENTS.md. Do not re-ask.
 
 ### Step 1: Write SOUL.md
 
@@ -158,6 +136,20 @@ After a local deployment (`mode: "local"`), verify the Worker is running:
 ```bash
 bash -c 'source /opt/hiclaw/scripts/lib/container-api.sh && container_status_worker "<WORKER_NAME>"'
 bash -c 'source /opt/hiclaw/scripts/lib/container-api.sh && container_logs_worker "<WORKER_NAME>" 20'
+```
+
+### Post-creation greeting
+
+Once the Worker is confirmed `ready`, send a message in the Worker's Room to kick off the introduction:
+
+```
+@<WORKER_NAME>:${HICLAW_MATRIX_DOMAIN} You're all set! Please introduce yourself to everyone in this room.
+```
+
+The Worker will greet the room. After the Worker's greeting, send a follow-up addressed to the admin:
+
+```
+@${HICLAW_ADMIN_USER}:${HICLAW_MATRIX_DOMAIN} <WORKER_NAME> is ready. When giving them tasks or instructions, remember to @mention them so they see your message.
 ```
 
 ## Monitor Workers
