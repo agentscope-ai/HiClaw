@@ -28,7 +28,7 @@ This builds images locally, mounts the container runtime socket (for direct Work
 **Option B: One-line install (no git clone needed)**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/higress-group/hiclaw/main/install/hiclaw-install.sh | bash -s manager
+bash <(curl -sSL https://higress.ai/hiclaw/install.sh)
 ```
 
 Follow the interactive prompts to configure:
