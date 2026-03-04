@@ -267,7 +267,15 @@ if [ -f /root/manager-workspace/openclaw.json ]; then
     log "Manager openclaw.json already exists, updating dynamic fields only (preserving user customizations)..."
     jq --arg token "${MANAGER_TOKEN}" \
        --arg key "${HICLAW_MANAGER_GATEWAY_KEY}" \
-       '.channels.matrix.accessToken = $token | .hooks.token = $key | .models.providers["hiclaw-gateway"].apiKey = $key' \
+       --arg model "${MODEL_NAME}" \
+       --argjson ctx "${MODEL_CONTEXT_WINDOW}" \
+       --argjson max "${MODEL_MAX_TOKENS}" \
+       '.channels.matrix.accessToken = $token | .hooks.token = $key | .models.providers["hiclaw-gateway"].apiKey = $key
+        | .models.providers["hiclaw-gateway"].models[0].id = $model
+        | .models.providers["hiclaw-gateway"].models[0].name = $model
+        | .models.providers["hiclaw-gateway"].models[0].contextWindow = $ctx
+        | .models.providers["hiclaw-gateway"].models[0].maxTokens = $max
+        | .agents.defaults.model.primary = ("hiclaw-gateway/" + $model)' \
        /root/manager-workspace/openclaw.json > /tmp/openclaw.json.tmp && \
         mv /tmp/openclaw.json.tmp /root/manager-workspace/openclaw.json
 else

@@ -58,7 +58,7 @@ param(
 $script:HICLAW_VERSION = if ($env:HICLAW_VERSION) { $env:HICLAW_VERSION } else { "latest" }
 $script:HICLAW_NON_INTERACTIVE = if ($env:HICLAW_NON_INTERACTIVE -eq "1" -or $NonInteractive) { $true } else { $false }
 $script:HICLAW_MOUNT_SOCKET = if ($env:HICLAW_MOUNT_SOCKET -eq "0") { $false } else { $true }
-$script:HICLAW_ENV_FILE = if ($EnvFile) { $EnvFile } elseif ($env:HICLAW_ENV_FILE) { $env:HICLAW_ENV_FILE } else { ".\hiclaw-manager.env" }
+$script:HICLAW_ENV_FILE = if ($EnvFile) { $EnvFile } elseif ($env:HICLAW_ENV_FILE) { $env:HICLAW_ENV_FILE } else { "$env:USERPROFILE\hiclaw-manager.env" }
 
 # ============================================================
 # Utility Functions
@@ -171,7 +171,7 @@ $script:Messages = @{
     "install.title" = @{ zh = "=== HiClaw Manager 安装 ==="; en = "=== HiClaw Manager Installation ===" }
     "install.registry" = @{ zh = "镜像仓库: {0}"; en = "Registry: {0}" }
     "install.dir" = @{ zh = "安装目录: {0}"; en = "Installation directory: {0}" }
-    "install.dir_hint" = @{ zh = "  （env 文件 'hiclaw-manager.env' 将在此目录中创建。）"; en = "  (The env file 'hiclaw-manager.env' will be created in this directory.)" }
+    "install.dir_hint" = @{ zh = "  （env 文件 'hiclaw-manager.env' 将保存到 HOME 目录。）"; en = "  (The env file 'hiclaw-manager.env' will be saved to your HOME directory.)" }
     "install.dir_hint2" = @{ zh = "  （请从您希望管理此安装的目录运行此脚本。）"; en = "  (Run this script from the directory where you want to manage this installation.)" }
 
     # --- Onboarding mode ---
@@ -235,12 +235,17 @@ $script:Messages = @{
     "llm.apikey_url" = @{ zh = "     https://www.aliyun.com/product/bailian"; en = "     https://www.aliyun.com/product/bailian" }
     "llm.apikey_prompt" = @{ zh = "LLM API Key"; en = "LLM API Key" }
     "llm.providers_title" = @{ zh = "可用 LLM 提供商:"; en = "Available LLM Providers:" }
-    "llm.provider.alibaba" = @{ zh = "  1) alibaba-cloud  - 阿里云百炼（推荐中国用户使用）"; en = "  1) alibaba-cloud  - Alibaba Cloud Bailian (recommended for Chinese users)" }
-    "llm.provider.openai_compat" = @{ zh = "  2) openai-compat  - OpenAI 兼容 API（OpenAI、DeepSeek 等）"; en = "  2) openai-compat  - OpenAI-compatible API (OpenAI, DeepSeek, etc.)" }
+    "llm.provider.alibaba" = @{ zh = "  1) 阿里云百炼  - 推荐中国用户使用"; en = "  1) Alibaba Cloud Bailian  - Recommended for Chinese users" }
+    "llm.provider.openai_compat" = @{ zh = "  2) OpenAI 兼容 API  - 自定义 Base URL（OpenAI、DeepSeek 等）"; en = "  2) OpenAI-compatible API  - Custom Base URL (OpenAI, DeepSeek, etc.)" }
     "llm.provider.select" = @{ zh = "选择提供商 [1/2]"; en = "Select provider [1/2]" }
-    "llm.provider.selected_qwen" = @{ zh = "  提供商: {0}（阿里云百炼）"; en = "  Provider: {0} (Alibaba Cloud Bailian)" }
+    "llm.alibaba.models_title" = @{ zh = "选择百炼模型系列:"; en = "Select Bailian model series:" }
+    "llm.alibaba.model.codingplan" = @{ zh = "  1) CodingPlan  - 专为编程任务优化（推荐）"; en = "  1) CodingPlan  - Optimized for coding tasks (recommended)" }
+    "llm.alibaba.model.qwen" = @{ zh = "  2) 百炼通用接口"; en = "  2) qwen general  - General purpose LLM" }
+    "llm.alibaba.model.select" = @{ zh = "选择模型系列 [1/2]"; en = "Select model series [1/2]" }
+    "llm.provider.selected_codingplan" = @{ zh = "  提供商: 阿里云百炼 CodingPlan"; en = "  Provider: Alibaba Cloud Bailian CodingPlan" }
+    "llm.provider.selected_qwen" = @{ zh = "  提供商: 阿里云百炼"; en = "  Provider: Alibaba Cloud Bailian" }
     "llm.provider.selected_openai" = @{ zh = "  提供商: {0}（OpenAI 兼容）"; en = "  Provider: {0} (OpenAI-compatible)" }
-    "llm.provider.invalid" = @{ zh = "无效选择，默认使用阿里云"; en = "Invalid choice, defaulting to Alibaba Cloud" }
+    "llm.provider.invalid" = @{ zh = "无效选择，默认使用阿里云百炼 CodingPlan"; en = "Invalid choice, defaulting to Alibaba Cloud Bailian CodingPlan" }
     "llm.openai.base_url_prompt" = @{ zh = "Base URL（例如 https://api.openai.com/v1）"; en = "Base URL (e.g., https://api.openai.com/v1)" }
     "llm.openai.model_prompt" = @{ zh = "默认模型 ID [gpt-4o]"; en = "Default Model ID [gpt-4o]" }
     "llm.openai.base_url_label" = @{ zh = "  Base URL: {0}"; en = "  Base URL: {0}" }
@@ -938,6 +943,11 @@ function Install-Manager {
     } else {
         # Check existing env file for saved language preference (upgrade scenario)
         $_envFile = $script:HICLAW_ENV_FILE
+        # Migrate from legacy location (current directory) if needed
+        if (-not (Test-Path $_envFile) -and (Test-Path ".\hiclaw-manager.env")) {
+            Write-Log "Migrating hiclaw-manager.env to $_envFile..."
+            Move-Item ".\hiclaw-manager.env" $_envFile -ErrorAction SilentlyContinue
+        }
         if (Test-Path $_envFile) {
             $_savedLang = (Get-Content $_envFile | Select-String "^HICLAW_LANGUAGE=" | ForEach-Object {
                 $_.Line -replace '^HICLAW_LANGUAGE=', ''
@@ -1035,8 +1045,6 @@ function Install-Manager {
         switch -Regex ($choice) {
             "^(1|quick|quickstart)$" {
                 Write-Log (Get-Msg "install.mode.quickstart_selected")
-                $config.LLM_PROVIDER = "qwen"
-                $config.DEFAULT_MODEL = if ($env:HICLAW_DEFAULT_MODEL) { $env:HICLAW_DEFAULT_MODEL } else { "qwen3.5-plus" }
                 $script:HICLAW_QUICKSTART = $true
             }
             "^(2|manual)$" {
@@ -1045,8 +1053,6 @@ function Install-Manager {
             }
             default {
                 Write-Log (Get-Msg "install.mode.invalid")
-                $config.LLM_PROVIDER = "qwen"
-                $config.DEFAULT_MODEL = if ($env:HICLAW_DEFAULT_MODEL) { $env:HICLAW_DEFAULT_MODEL } else { "qwen3.5-plus" }
                 $script:HICLAW_QUICKSTART = $true
             }
         }
@@ -1054,6 +1060,11 @@ function Install-Manager {
     }
 
     # Check for existing installation
+    # Migrate from legacy location (current directory) if needed
+    if (-not (Test-Path $script:HICLAW_ENV_FILE) -and (Test-Path ".\hiclaw-manager.env")) {
+        Write-Log "Migrating hiclaw-manager.env to $($script:HICLAW_ENV_FILE)..."
+        Move-Item ".\hiclaw-manager.env" $script:HICLAW_ENV_FILE -ErrorAction SilentlyContinue
+    }
     if (Test-Path $script:HICLAW_ENV_FILE) {
         Write-Log (Get-Msg "install.existing.detected" -f $script:HICLAW_ENV_FILE)
 
@@ -1209,49 +1220,69 @@ function Install-Manager {
     # LLM Configuration
     Write-Log (Get-Msg "llm.title")
 
-    if ($script:HICLAW_QUICKSTART -or $script:HICLAW_NON_INTERACTIVE) {
+    if ($script:HICLAW_NON_INTERACTIVE) {
+        # Non-interactive mode: use qwen defaults
         $config.LLM_PROVIDER = if ($env:HICLAW_LLM_PROVIDER) { $env:HICLAW_LLM_PROVIDER } else { "qwen" }
         $config.DEFAULT_MODEL = if ($env:HICLAW_DEFAULT_MODEL) { $env:HICLAW_DEFAULT_MODEL } else { "qwen3.5-plus" }
+        $config.OPENAI_BASE_URL = if ($env:HICLAW_OPENAI_BASE_URL) { $env:HICLAW_OPENAI_BASE_URL } else { "" }
 
         Write-Log (Get-Msg "llm.provider.label" -f $config.LLM_PROVIDER)
         Write-Log (Get-Msg "llm.model.label" -f $config.DEFAULT_MODEL)
-
-        if ($config.LLM_PROVIDER -eq "qwen") {
-            Write-Log ""
-            Write-Log (Get-Msg "llm.apikey_hint")
-            Write-Log (Get-Msg "llm.apikey_url")
-        }
-
         Write-Log ""
         $config.LLM_API_KEY = Read-Prompt -VarName "HICLAW_LLM_API_KEY" -PromptText (Get-Msg "llm.apikey_prompt") -Secret
     }
     else {
+        # Both Quick Start and Manual: show two-level provider menu
         Write-Host ""
         Write-Host (Get-Msg "llm.providers_title")
         Write-Host (Get-Msg "llm.provider.alibaba")
         Write-Host (Get-Msg "llm.provider.openai_compat")
         Write-Host ""
 
-        $providerChoice = Read-Host (Get-Msg "llm.provider.select")
+        if ($script:HICLAW_QUICKSTART) {
+            $providerChoice = Read-Host "$(Get-Msg 'llm.provider.select') [1]"
+        } else {
+            $providerChoice = Read-Host (Get-Msg "llm.provider.select")
+        }
         $providerChoice = if ($providerChoice) { $providerChoice } else { "1" }
 
         switch -Regex ($providerChoice) {
             "^(1|alibaba-cloud)$" {
-                $config.LLM_PROVIDER = "qwen"
-                $config.DEFAULT_MODEL = if ($env:HICLAW_DEFAULT_MODEL) { $env:HICLAW_DEFAULT_MODEL } else { "qwen3.5-plus" }
+                # Sub-menu: CodingPlan or qwen general
+                Write-Host ""
+                Write-Host (Get-Msg "llm.alibaba.models_title")
+                Write-Host (Get-Msg "llm.alibaba.model.codingplan")
+                Write-Host (Get-Msg "llm.alibaba.model.qwen")
+                Write-Host ""
 
-                Write-Log (Get-Msg "llm.provider.selected_qwen" -f $config.LLM_PROVIDER)
+                if ($script:HICLAW_QUICKSTART) {
+                    $modelChoice = Read-Host "$(Get-Msg 'llm.alibaba.model.select') [1]"
+                } else {
+                    $modelChoice = Read-Host (Get-Msg "llm.alibaba.model.select")
+                }
+                $modelChoice = if ($modelChoice) { $modelChoice } else { "1" }
+
+                if ($modelChoice -match "^(2|qwen)$") {
+                    $config.LLM_PROVIDER = "qwen"
+                    $config.DEFAULT_MODEL = if ($env:HICLAW_DEFAULT_MODEL) { $env:HICLAW_DEFAULT_MODEL } else { "qwen3.5-plus" }
+                    $config.OPENAI_BASE_URL = ""
+                    Write-Log (Get-Msg "llm.provider.selected_qwen")
+                } else {
+                    $config.LLM_PROVIDER = "openai-compat"
+                    $config.OPENAI_BASE_URL = if ($env:HICLAW_OPENAI_BASE_URL) { $env:HICLAW_OPENAI_BASE_URL } else { "https://coding.dashscope.aliyuncs.com/v1" }
+                    $config.DEFAULT_MODEL = if ($env:HICLAW_DEFAULT_MODEL) { $env:HICLAW_DEFAULT_MODEL } else { "qwen3.5-plus" }
+                    Write-Log (Get-Msg "llm.provider.selected_codingplan")
+                }
+
                 Write-Log (Get-Msg "llm.model.label" -f $config.DEFAULT_MODEL)
                 Write-Log ""
                 Write-Log (Get-Msg "llm.apikey_hint")
                 Write-Log (Get-Msg "llm.apikey_url")
                 Write-Log ""
-
                 $config.LLM_API_KEY = Read-Prompt -VarName "HICLAW_LLM_API_KEY" -PromptText (Get-Msg "llm.apikey_prompt") -Secret
             }
             "^(2|openai-compat)$" {
                 $config.LLM_PROVIDER = "openai-compat"
-
                 Write-Log (Get-Msg "llm.provider.selected_openai" -f $config.LLM_PROVIDER)
                 Write-Host ""
 
@@ -1262,18 +1293,19 @@ function Install-Manager {
                 Write-Log (Get-Msg "llm.openai.base_url_label" -f $config.OPENAI_BASE_URL)
                 Write-Log (Get-Msg "llm.model.label" -f $config.DEFAULT_MODEL)
                 Write-Log ""
-
                 $config.LLM_API_KEY = Read-Prompt -VarName "HICLAW_LLM_API_KEY" -PromptText (Get-Msg "llm.apikey_prompt") -Secret
             }
             default {
-                $config.LLM_PROVIDER = "qwen"
-                $config.DEFAULT_MODEL = if ($env:HICLAW_DEFAULT_MODEL) { $env:HICLAW_DEFAULT_MODEL } else { "qwen3.5-plus" }
-
                 Write-Log (Get-Msg "llm.provider.invalid")
-                Write-Log (Get-Msg "llm.provider.label" -f $config.LLM_PROVIDER)
+                $config.LLM_PROVIDER = "openai-compat"
+                $config.OPENAI_BASE_URL = if ($env:HICLAW_OPENAI_BASE_URL) { $env:HICLAW_OPENAI_BASE_URL } else { "https://coding.dashscope.aliyuncs.com/v1" }
+                $config.DEFAULT_MODEL = if ($env:HICLAW_DEFAULT_MODEL) { $env:HICLAW_DEFAULT_MODEL } else { "qwen3.5-plus" }
+                Write-Log (Get-Msg "llm.provider.selected_codingplan")
                 Write-Log (Get-Msg "llm.model.label" -f $config.DEFAULT_MODEL)
                 Write-Log ""
-
+                Write-Log (Get-Msg "llm.apikey_hint")
+                Write-Log (Get-Msg "llm.apikey_url")
+                Write-Log ""
                 $config.LLM_API_KEY = Read-Prompt -VarName "HICLAW_LLM_API_KEY" -PromptText (Get-Msg "llm.apikey_prompt") -Secret
             }
         }

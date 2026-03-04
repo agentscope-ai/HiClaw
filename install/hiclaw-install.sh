@@ -111,7 +111,11 @@ detect_language() {
 # Language priority: env var > existing env file > timezone detection
 if [ -z "${HICLAW_LANGUAGE}" ]; then
     # Check existing env file for saved language preference (upgrade scenario)
-    _env_file="${HICLAW_ENV_FILE:-./hiclaw-manager.env}"
+    _env_file="${HICLAW_ENV_FILE:-${HOME}/hiclaw-manager.env}"
+    # Migrate from legacy location (current directory) if needed
+    if [ ! -f "${_env_file}" ] && [ -f "./hiclaw-manager.env" ]; then
+        mv "./hiclaw-manager.env" "${_env_file}" 2>/dev/null || true
+    fi
     if [ -f "${_env_file}" ]; then
         _saved_lang=$(grep '^HICLAW_LANGUAGE=' "${_env_file}" 2>/dev/null | cut -d= -f2-)
         if [ -n "${_saved_lang}" ]; then
@@ -155,8 +159,8 @@ msg() {
         "install.registry.en") text="Registry: %s" ;;
         "install.dir.zh") text="安装目录: %s" ;;
         "install.dir.en") text="Installation directory: %s" ;;
-        "install.dir_hint.zh") text="  （env 文件 'hiclaw-manager.env' 将在此目录中创建。）" ;;
-        "install.dir_hint.en") text="  (The env file 'hiclaw-manager.env' will be created in this directory.)" ;;
+        "install.dir_hint.zh") text="  （env 文件 'hiclaw-manager.env' 将保存到 HOME 目录。）" ;;
+        "install.dir_hint.en") text="  (The env file 'hiclaw-manager.env' will be saved to your HOME directory.)" ;;
         "install.dir_hint2.zh") text="  （请从您希望管理此安装的目录运行此脚本。）" ;;
         "install.dir_hint2.en") text="  (Run this script from the directory where you want to manage this installation.)" ;;
         # --- Onboarding mode ---
@@ -268,18 +272,28 @@ msg() {
         "llm.apikey_prompt.en") text="LLM API Key" ;;
         "llm.providers_title.zh") text="可用 LLM 提供商:" ;;
         "llm.providers_title.en") text="Available LLM Providers:" ;;
-        "llm.provider.alibaba.zh") text="  1) alibaba-cloud  - 阿里云百炼（推荐中国用户使用）" ;;
-        "llm.provider.alibaba.en") text="  1) alibaba-cloud  - Alibaba Cloud Bailian (recommended for Chinese users)" ;;
-        "llm.provider.openai_compat.zh") text="  2) openai-compat  - OpenAI 兼容 API（OpenAI、DeepSeek 等）" ;;
-        "llm.provider.openai_compat.en") text="  2) openai-compat  - OpenAI-compatible API (OpenAI, DeepSeek, etc.)" ;;
+        "llm.provider.alibaba.zh") text="  1) 阿里云百炼  - 推荐中国用户使用" ;;
+        "llm.provider.alibaba.en") text="  1) Alibaba Cloud Bailian  - Recommended for Chinese users" ;;
+        "llm.provider.openai_compat.zh") text="  2) OpenAI 兼容 API  - 自定义 Base URL（OpenAI、DeepSeek 等）" ;;
+        "llm.provider.openai_compat.en") text="  2) OpenAI-compatible API  - Custom Base URL (OpenAI, DeepSeek, etc.)" ;;
         "llm.provider.select.zh") text="选择提供商 [1/2]" ;;
         "llm.provider.select.en") text="Select provider [1/2]" ;;
-        "llm.provider.selected_qwen.zh") text="  提供商: %s（阿里云百炼）" ;;
-        "llm.provider.selected_qwen.en") text="  Provider: %s (Alibaba Cloud Bailian)" ;;
+        "llm.alibaba.models_title.zh") text="选择百炼模型系列:" ;;
+        "llm.alibaba.models_title.en") text="Select Bailian model series:" ;;
+        "llm.alibaba.model.codingplan.zh") text="  1) CodingPlan  - 专为编程任务优化（推荐）" ;;
+        "llm.alibaba.model.codingplan.en") text="  1) CodingPlan  - Optimized for coding tasks (recommended)" ;;
+        "llm.alibaba.model.qwen.zh") text="  2) 百炼通用接口" ;;
+        "llm.alibaba.model.qwen.en") text="  2) qwen general  - General purpose LLM" ;;
+        "llm.alibaba.model.select.zh") text="选择模型系列 [1/2]" ;;
+        "llm.alibaba.model.select.en") text="Select model series [1/2]" ;;
+        "llm.provider.selected_codingplan.zh") text="  提供商: 阿里云百炼 CodingPlan" ;;
+        "llm.provider.selected_codingplan.en") text="  Provider: Alibaba Cloud Bailian CodingPlan" ;;
+        "llm.provider.selected_qwen.zh") text="  提供商: 阿里云百炼" ;;
+        "llm.provider.selected_qwen.en") text="  Provider: Alibaba Cloud Bailian" ;;
         "llm.provider.selected_openai.zh") text="  提供商: %s（OpenAI 兼容）" ;;
         "llm.provider.selected_openai.en") text="  Provider: %s (OpenAI-compatible)" ;;
-        "llm.provider.invalid.zh") text="无效选择，默认使用阿里云" ;;
-        "llm.provider.invalid.en") text="Invalid choice, defaulting to Alibaba Cloud" ;;
+        "llm.provider.invalid.zh") text="无效选择，默认使用阿里云百炼 CodingPlan" ;;
+        "llm.provider.invalid.en") text="Invalid choice, defaulting to Alibaba Cloud Bailian CodingPlan" ;;
         "llm.openai.base_url_prompt.zh") text="Base URL（例如 https://api.openai.com/v1）" ;;
         "llm.openai.base_url_prompt.en") text="Base URL (e.g., https://api.openai.com/v1)" ;;
         "llm.openai.model_prompt.zh") text="默认模型 ID [gpt-4o]" ;;
@@ -638,76 +652,6 @@ wait_manager_ready() {
 }
 
 # ============================================================
-# Create OpenAI-compatible provider via Higress Console API
-# ============================================================
-
-create_openai_compat_provider() {
-    local base_url="${HICLAW_OPENAI_BASE_URL}"
-    local api_key="${HICLAW_LLM_API_KEY}"
-    local console_port="${HICLAW_PORT_CONSOLE:-18001}"
-    local console_url="http://localhost:${console_port}"
-
-    if [ -z "${base_url}" ] || [ -z "${api_key}" ]; then
-        log "$(msg install.openai_compat.missing)"
-        return 1
-    fi
-
-    # Parse base URL to extract domain and port
-    local domain=""
-    local port="443"
-    local protocol="https"
-
-    # Remove protocol prefix
-    local url_without_proto="${base_url#https://}"
-    url_without_proto="${url_without_proto#http://}"
-
-    # Detect protocol
-    if echo "${base_url}" | grep -q '^http://'; then
-        protocol="http"
-        port="80"
-    fi
-
-    # Extract domain (first part before /)
-    domain="${url_without_proto%%/*}"
-
-    # Check for explicit port in domain
-    if echo "${domain}" | grep -q ':'; then
-        port="${domain##*:}"
-        domain="${domain%:*}"
-    fi
-
-    log "$(msg install.openai_compat.creating)"
-    log "$(msg install.openai_compat.domain "${domain}")"
-    log "$(msg install.openai_compat.port "${port}")"
-    log "$(msg install.openai_compat.protocol "${protocol}")"
-
-    # Create DNS service source
-    local service_name="openai-compat"
-    curl -sf -X POST "${console_url}/v1/service-sources" \
-        -H 'Accept: application/json' \
-        -H 'Content-Type: application/json' \
-        -d "{\"type\":\"dns\",\"name\":\"${service_name}\",\"port\":\"${port}\",\"protocol\":\"${protocol}\",\"proxyName\":\"\",\"domain\":\"${domain}\"}" 2>/dev/null || {
-        log "$(msg install.openai_compat.service_fail)"
-    }
-
-    # Wait a moment for service to be created
-    sleep 2
-
-    # Create AI provider
-    local provider_name="openai-compat"
-    curl -sf -X POST "${console_url}/v1/ai/providers" \
-        -H 'Accept: application/json' \
-        -H 'Content-Type: application/json' \
-        -d "{\"type\":\"openai\",\"name\":\"${provider_name}\",\"tokens\":[\"${api_key}\"],\"version\":0,\"protocol\":\"openai/v1\",\"tokenFailoverConfig\":{\"enabled\":false},\"rawConfigs\":{\"openaiCustomUrl\":\"${base_url}\",\"openaiCustomServiceName\":\"${service_name}.dns\",\"openaiCustomServicePort\":${port}}}" 2>/dev/null || {
-        log "$(msg install.openai_compat.provider_fail)"
-        return 1
-    }
-
-    log "$(msg install.openai_compat.success)"
-    return 0
-}
-
-# ============================================================
 # Send welcome message to Manager
 # ============================================================
 
@@ -723,84 +667,63 @@ send_welcome_message() {
     local admin_user="${HICLAW_ADMIN_USER:-admin}"
     local admin_password="${HICLAW_ADMIN_PASSWORD}"
     local matrix_domain="${HICLAW_MATRIX_DOMAIN}"
-    local matrix_url="http://127.0.0.1:6167"
-    local manager_user="manager"
-    local manager_full_id="@${manager_user}:${matrix_domain}"
+    local language="${HICLAW_LANGUAGE}"
+    local timezone="${HICLAW_TIMEZONE}"
 
-    # Helper: run curl inside the manager container to reach Matrix directly
-    mcurl() { docker exec "${container}" curl "$@"; }
-
-    # Login to get admin access token
     log "$(msg install.welcome_msg.logging_in "${admin_user}")"
-    local login_resp
-    login_resp=$(mcurl -sf -X POST "${matrix_url}/_matrix/client/v3/login" \
-        -H 'Content-Type: application/json' \
-        -d "{\"type\":\"m.login.password\",\"identifier\":{\"type\":\"m.id.user\",\"user\":\"${admin_user}\"},\"password\":\"${admin_password}\"}" 2>/dev/null)
 
-    local access_token
-    access_token=$(echo "${login_resp}" | jq -r '.access_token // empty')
-    if [ -z "${access_token}" ]; then
-        log "$(msg install.welcome_msg.login_failed "${admin_user}")"
-        return 1
+    # Run all Matrix API calls and jq parsing inside the container (jq is only available there).
+    # Build the inner script as a variable first (avoids bash -s stdin conflict with $() capture).
+    local inner_script
+    inner_script=$(cat <<INNER_SCRIPT
+MATRIX_URL="http://127.0.0.1:6167"
+ADMIN_USER="${admin_user}"
+ADMIN_PASSWORD="${admin_password}"
+MATRIX_DOMAIN="${matrix_domain}"
+MANAGER_FULL_ID="@manager:\${MATRIX_DOMAIN}"
+
+login_resp=\$(curl -sf -X POST "\${MATRIX_URL}/_matrix/client/v3/login" \\
+    -H 'Content-Type: application/json' \\
+    -d "{\"type\":\"m.login.password\",\"identifier\":{\"type\":\"m.id.user\",\"user\":\"\${ADMIN_USER}\"},\"password\":\"\${ADMIN_PASSWORD}\"}" 2>/dev/null) || true
+access_token=\$(echo "\${login_resp}" | jq -r '.access_token // empty' 2>/dev/null)
+if [ -z "\${access_token}" ]; then
+    echo "LOGIN_FAILED: \${login_resp}" >&2; echo "LOGIN_FAILED"; exit 0
+fi
+
+room_id=""
+rooms=\$(curl -sf "\${MATRIX_URL}/_matrix/client/v3/joined_rooms" \\
+    -H "Authorization: Bearer \${access_token}" 2>/dev/null | jq -r '.joined_rooms[]' 2>/dev/null) || true
+for rid in \${rooms}; do
+    members=\$(curl -sf "\${MATRIX_URL}/_matrix/client/v3/rooms/\${rid}/members" \\
+        -H "Authorization: Bearer \${access_token}" 2>/dev/null | jq -r '.chunk[].state_key' 2>/dev/null) || continue
+    member_count=\$(echo "\${members}" | wc -l | xargs)
+    if [ "\${member_count}" = "2" ] && echo "\${members}" | grep -q "@manager:"; then
+        room_id="\${rid}"; break
     fi
+done
 
-    # Find or create DM room with manager
-    log "$(msg install.welcome_msg.finding_room)"
-    local rooms
-    rooms=$(mcurl -sf "${matrix_url}/_matrix/client/v3/joined_rooms" \
-        -H "Authorization: Bearer ${access_token}" 2>/dev/null | jq -r '.joined_rooms[]' 2>/dev/null) || true
+if [ -z "\${room_id}" ]; then
+    create_resp=\$(curl -sf -X POST "\${MATRIX_URL}/_matrix/client/v3/createRoom" \\
+        -H "Authorization: Bearer \${access_token}" \\
+        -H 'Content-Type: application/json' \\
+        -d "{\"is_direct\":true,\"invite\":[\"\${MANAGER_FULL_ID}\"],\"preset\":\"trusted_private_chat\"}" 2>/dev/null) || true
+    room_id=\$(echo "\${create_resp}" | jq -r '.room_id // empty' 2>/dev/null)
+fi
+[ -z "\${room_id}" ] && { echo "NO_ROOM" >&2; echo "NO_ROOM"; exit 0; }
 
-    local room_id=""
-    for rid in ${rooms}; do
-        local members
-        members=$(mcurl -sf "${matrix_url}/_matrix/client/v3/rooms/${rid}/members" \
-            -H "Authorization: Bearer ${access_token}" 2>/dev/null | jq -r '.chunk[].state_key' 2>/dev/null) || continue
-        local member_count
-        member_count=$(echo "${members}" | wc -l | xargs)
-        if [ "${member_count}" = "2" ] && echo "${members}" | grep -q "@${manager_user}:"; then
-            room_id="${rid}"
-            break
-        fi
-    done
+wait_elapsed=0
+while [ "\${wait_elapsed}" -lt 60 ]; do
+    members=\$(curl -sf "\${MATRIX_URL}/_matrix/client/v3/rooms/\${room_id}/members" \\
+        -H "Authorization: Bearer \${access_token}" 2>/dev/null | jq -r '.chunk[].state_key' 2>/dev/null) || true
+    echo "\${members}" | grep -q "\${MANAGER_FULL_ID}" && break
+    sleep 2; wait_elapsed=\$((wait_elapsed + 2))
+done
 
-    if [ -z "${room_id}" ]; then
-        log "$(msg install.welcome_msg.creating_room)"
-        local create_resp
-        create_resp=$(mcurl -sf -X POST "${matrix_url}/_matrix/client/v3/createRoom" \
-            -H "Authorization: Bearer ${access_token}" \
-            -H 'Content-Type: application/json' \
-            -d "{\"is_direct\":true,\"invite\":[\"${manager_full_id}\"],\"preset\":\"trusted_private_chat\"}" 2>/dev/null)
-        room_id=$(echo "${create_resp}" | jq -r '.room_id // empty')
-    fi
-
-    if [ -z "${room_id}" ]; then
-        log "$(msg install.welcome_msg.no_room)"
-        return 1
-    fi
-
-    # Wait for Manager to join the room
-    log "$(msg install.welcome_msg.waiting_join)"
-    local wait_elapsed=0
-    local wait_timeout=60
-    while [ "${wait_elapsed}" -lt "${wait_timeout}" ]; do
-        local members
-        members=$(mcurl -sf "${matrix_url}/_matrix/client/v3/rooms/${room_id}/members" \
-            -H "Authorization: Bearer ${access_token}" 2>/dev/null | jq -r '.chunk[].state_key' 2>/dev/null) || true
-        if echo "${members}" | grep -q "${manager_full_id}"; then
-            break
-        fi
-        sleep 2
-        wait_elapsed=$((wait_elapsed + 2))
-    done
-
-    # Send welcome message
-    log "$(msg install.welcome_msg.sending)"
-    local welcome_msg
-    welcome_msg="This is an automated message from the HiClaw installation script. This is a fresh installation.
+welcome_msg="This is an automated message from the HiClaw installation script. This is a fresh installation.
 
 --- Installation Context ---
-User Language: ${HICLAW_LANGUAGE}  (zh = Chinese, en = English)
-User Timezone: ${HICLAW_TIMEZONE}  (IANA timezone identifier)
+User Language: ${language}  (zh = Chinese, en = English)
+User Timezone: ${timezone}  (IANA timezone identifier)
 ---
 
 You are an AI agent that manages a team of worker agents. Your identity and personality have not been configured yet — the human admin is about to meet you for the first time.
@@ -808,8 +731,8 @@ You are an AI agent that manages a team of worker agents. Your identity and pers
 Please begin the onboarding conversation:
 
 1. Greet the admin warmly and briefly describe what you can do (coordinate workers, manage tasks, run multi-agent projects) — without referring to yourself by any specific title yet
-2. The user has selected \"${HICLAW_LANGUAGE}\" as their preferred language during installation. Use this language for your greeting and all subsequent communication.
-3. The user's timezone is ${HICLAW_TIMEZONE}. Based on this timezone, you may infer their likely region and suggest additional language options (e.g., Japanese, Korean, German, etc.) that they might prefer for future interactions.
+2. The user has selected \"${language}\" as their preferred language during installation. Use this language for your greeting and all subsequent communication.
+3. The user's timezone is ${timezone}. Based on this timezone, you may infer their likely region and suggest additional language options (e.g., Japanese, Korean, German, etc.) that they might prefer for future interactions.
 4. Ask them the following questions (one message is fine):
    a. What would they like to call you? (name or title)
    b. What communication style do they prefer? (e.g. formal, casual, concise, detailed)
@@ -821,19 +744,37 @@ Please begin the onboarding conversation:
 
 The human admin will start chatting shortly."
 
-    local txn_id="welcome-$(date +%s%N 2>/dev/null || date +%s)"
-    local payload
-    payload=$(jq -nc --arg body "${welcome_msg}" '{"msgtype":"m.text","body":$body}')
-    mcurl -sf -X PUT "${matrix_url}/_matrix/client/v3/rooms/${room_id}/send/m.room.message/${txn_id}" \
-        -H "Authorization: Bearer ${access_token}" \
-        -H 'Content-Type: application/json' \
-        -d "${payload}" > /dev/null 2>&1 || {
-        log "$(msg install.welcome_msg.send_failed)"
-        return 1
-    }
+txn_id="welcome-\$(date +%s)"
+payload=\$(jq -nc --arg body "\${welcome_msg}" '{"msgtype":"m.text","body":\$body}')
+curl -sf -X PUT "\${MATRIX_URL}/_matrix/client/v3/rooms/\${room_id}/send/m.room.message/\${txn_id}" \\
+    -H "Authorization: Bearer \${access_token}" \\
+    -H 'Content-Type: application/json' \\
+    -d "\${payload}" > /dev/null 2>&1 || { echo "SEND_FAILED" >&2; echo "SEND_FAILED"; exit 0; }
+echo "OK"
+INNER_SCRIPT
+)
 
-    log "$(msg install.welcome_msg.sent)"
-    return 0
+    local result
+    result=$(docker exec "${container}" bash -c "${inner_script}")
+
+    case "${result}" in
+        *LOGIN_FAILED*)
+            log "$(msg install.welcome_msg.login_failed "${admin_user}")"
+            return 1 ;;
+        *NO_ROOM*)
+            log "$(msg install.welcome_msg.no_room)"
+            return 1 ;;
+        *SEND_FAILED*)
+            log "$(msg install.welcome_msg.send_failed)"
+            return 1 ;;
+        *OK*)
+            log "$(msg install.welcome_msg.sent)"
+            return 0 ;;
+        *)
+            log "WARNING: send_welcome_message got unexpected result: ${result}"
+            log "$(msg install.welcome_msg.send_failed)"
+            return 1 ;;
+    esac
 }
 
 # Prompt for a value interactively, but skip if env var is already set.
@@ -1035,8 +976,6 @@ install_manager() {
         case "${ONBOARDING_CHOICE}" in
             1|quick|quickstart)
                 log "$(msg install.mode.quickstart_selected)"
-                HICLAW_LLM_PROVIDER="qwen"
-                HICLAW_DEFAULT_MODEL="${HICLAW_DEFAULT_MODEL:-qwen3.5-plus}"
                 HICLAW_QUICKSTART=1
                 ;;
             2|manual)
@@ -1044,8 +983,6 @@ install_manager() {
                 ;;
             *)
                 log "$(msg install.mode.invalid)"
-                HICLAW_LLM_PROVIDER="qwen"
-                HICLAW_DEFAULT_MODEL="${HICLAW_DEFAULT_MODEL:-qwen3.5-plus}"
                 HICLAW_QUICKSTART=1
                 ;;
         esac
@@ -1053,7 +990,12 @@ install_manager() {
     fi
 
     # Check if Manager is already installed (by env file existence)
-    local existing_env="${HICLAW_ENV_FILE:-./hiclaw-manager.env}"
+    local existing_env="${HICLAW_ENV_FILE:-${HOME}/hiclaw-manager.env}"
+    # Migrate from legacy location (current directory) if needed
+    if [ ! -f "${existing_env}" ] && [ -f "./hiclaw-manager.env" ]; then
+        log "Migrating hiclaw-manager.env from current directory to ${existing_env}..."
+        mv "./hiclaw-manager.env" "${existing_env}"
+    fi
     if [ -f "${existing_env}" ]; then
         log "$(msg install.existing.detected "${existing_env}")"
 
@@ -1223,16 +1165,7 @@ install_manager() {
     # LLM Configuration
     log "$(msg llm.title)"
 
-    if [ "${HICLAW_QUICKSTART}" = "1" ]; then
-        # Quick Start mode: use Alibaba Cloud Bailian
-        log "$(msg llm.provider.qwen)"
-        log "$(msg llm.model.label "${HICLAW_DEFAULT_MODEL:-qwen3.5-plus}")"
-        log ""
-        log "$(msg llm.apikey_hint)"
-        log "$(msg llm.apikey_url)"
-        log ""
-        prompt HICLAW_LLM_API_KEY "$(msg llm.apikey_prompt)" "" "true"
-    elif [ "${HICLAW_NON_INTERACTIVE}" = "1" ]; then
+    if [ "${HICLAW_NON_INTERACTIVE}" = "1" ]; then
         # Non-interactive mode: use defaults
         HICLAW_LLM_PROVIDER="${HICLAW_LLM_PROVIDER:-qwen}"
         HICLAW_DEFAULT_MODEL="${HICLAW_DEFAULT_MODEL:-qwen3.5-plus}"
@@ -1240,21 +1173,52 @@ install_manager() {
         log "$(msg llm.model.default "${HICLAW_DEFAULT_MODEL}")"
         prompt HICLAW_LLM_API_KEY "$(msg llm.apikey_prompt)" "" "true"
     else
-        # Manual mode: only support Alibaba Cloud or OpenAI-compatible
+        # Both Quick Start and Manual mode: show provider selection menu
+        # Quick Start defaults to option 1 (Alibaba Cloud → CodingPlan); Manual requires explicit choice
         echo ""
         echo "$(msg llm.providers_title)"
         echo "$(msg llm.provider.alibaba)"
         echo "$(msg llm.provider.openai_compat)"
         echo ""
-        read -p "$(msg llm.provider.select): " PROVIDER_CHOICE
-        PROVIDER_CHOICE="${PROVIDER_CHOICE:-1}"
+        if [ "${HICLAW_QUICKSTART}" = "1" ]; then
+            read -p "$(msg llm.provider.select) [1]: " PROVIDER_CHOICE
+            PROVIDER_CHOICE="${PROVIDER_CHOICE:-1}"
+        else
+            read -p "$(msg llm.provider.select): " PROVIDER_CHOICE
+            PROVIDER_CHOICE="${PROVIDER_CHOICE:-1}"
+        fi
 
         case "${PROVIDER_CHOICE}" in
             1|alibaba-cloud)
-                HICLAW_LLM_PROVIDER="qwen"
-                HICLAW_DEFAULT_MODEL="${HICLAW_DEFAULT_MODEL:-qwen3.5-plus}"
-                log "$(msg llm.provider.selected_qwen "${HICLAW_LLM_PROVIDER}")"
-                log "$(msg llm.model.label "${HICLAW_DEFAULT_MODEL}")"
+                # Sub-menu: CodingPlan or qwen general
+                echo ""
+                echo "$(msg llm.alibaba.models_title)"
+                echo "$(msg llm.alibaba.model.codingplan)"
+                echo "$(msg llm.alibaba.model.qwen)"
+                echo ""
+                if [ "${HICLAW_QUICKSTART}" = "1" ]; then
+                    read -p "$(msg llm.alibaba.model.select) [1]: " ALIBABA_MODEL_CHOICE
+                    ALIBABA_MODEL_CHOICE="${ALIBABA_MODEL_CHOICE:-1}"
+                else
+                    read -p "$(msg llm.alibaba.model.select): " ALIBABA_MODEL_CHOICE
+                    ALIBABA_MODEL_CHOICE="${ALIBABA_MODEL_CHOICE:-1}"
+                fi
+
+                case "${ALIBABA_MODEL_CHOICE}" in
+                    2|qwen)
+                        HICLAW_LLM_PROVIDER="qwen"
+                        HICLAW_DEFAULT_MODEL="${HICLAW_DEFAULT_MODEL:-qwen3.5-plus}"
+                        log "$(msg llm.provider.selected_qwen)"
+                        log "$(msg llm.model.label "${HICLAW_DEFAULT_MODEL}")"
+                        ;;
+                    *)
+                        HICLAW_LLM_PROVIDER="openai-compat"
+                        HICLAW_OPENAI_BASE_URL="${HICLAW_OPENAI_BASE_URL:-https://coding.dashscope.aliyuncs.com/v1}"
+                        HICLAW_DEFAULT_MODEL="${HICLAW_DEFAULT_MODEL:-qwen3.5-plus}"
+                        log "$(msg llm.provider.selected_codingplan)"
+                        log "$(msg llm.model.label "${HICLAW_DEFAULT_MODEL}")"
+                        ;;
+                esac
                 log ""
                 log "$(msg llm.apikey_hint)"
                 log "$(msg llm.apikey_url)"
@@ -1275,9 +1239,10 @@ install_manager() {
                 ;;
             *)
                 log "$(msg llm.provider.invalid)"
-                HICLAW_LLM_PROVIDER="qwen"
+                HICLAW_LLM_PROVIDER="openai-compat"
+                HICLAW_OPENAI_BASE_URL="${HICLAW_OPENAI_BASE_URL:-https://coding.dashscope.aliyuncs.com/v1}"
                 HICLAW_DEFAULT_MODEL="${HICLAW_DEFAULT_MODEL:-qwen3.5-plus}"
-                log "$(msg llm.provider.label "${HICLAW_LLM_PROVIDER}")"
+                log "$(msg llm.provider.selected_codingplan)"
                 log "$(msg llm.model.label "${HICLAW_DEFAULT_MODEL}")"
                 log ""
                 log "$(msg llm.apikey_hint)"
@@ -1399,7 +1364,7 @@ install_manager() {
     HICLAW_MANAGER_GATEWAY_KEY="${HICLAW_MANAGER_GATEWAY_KEY:-$(generate_key)}"
 
     # Write .env file
-    ENV_FILE="${HICLAW_ENV_FILE:-./hiclaw-manager.env}"
+    ENV_FILE="${HICLAW_ENV_FILE:-${HOME}/hiclaw-manager.env}"
     cat > "${ENV_FILE}" << EOF
 # HiClaw Manager Configuration
 # Generated by hiclaw-install.sh on $(date)
@@ -1595,11 +1560,6 @@ EOF
 
     # Wait for Manager agent to be ready
     wait_manager_ready "hiclaw-manager"
-
-    # Create OpenAI-compatible provider if needed
-    if [ "${HICLAW_LLM_PROVIDER}" = "openai-compat" ]; then
-        create_openai_compat_provider
-    fi
 
     # Send welcome message to Manager (skipped automatically if soul-configured marker exists)
     send_welcome_message
