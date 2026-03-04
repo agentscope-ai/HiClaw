@@ -935,7 +935,7 @@ function Install-Manager {
     Write-Log (Get-Msg "install.title")
 
     # Detect timezone
-    $script:HICLAW_TIMEZONE =  { $(Get-HiClawTimeZone) } 
+    $script:HICLAW_TIMEZONE = Get-HiClawTimeZone
 
     # Language priority: env var > existing env file > timezone detection
     if ($env:HICLAW_LANGUAGE) {
@@ -1693,7 +1693,7 @@ function Install-Worker {
     }
 
     # Detect timezone and registry
-    $timezone =  { $(Get-HiClawTimeZone) } 
+    $timezone = Get-HiClawTimeZone
     $registry = Get-Registry -Timezone $timezone
     $workerImage = if ($env:HICLAW_INSTALL_WORKER_IMAGE) {
         $env:HICLAW_INSTALL_WORKER_IMAGE
