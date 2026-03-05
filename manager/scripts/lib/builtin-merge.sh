@@ -38,12 +38,13 @@ update_builtin_section() {
     fi
 
     if grep -q 'hiclaw-builtin-start' "${target}" 2>/dev/null; then
-        # Detect corrupted file: markers count must be exactly start=1, end=1
-        local start_count end_count
+        # Detect corrupted file: markers count must be exactly start=1, end=1, and line count <= 500
+        local start_count end_count line_count
         start_count=$(awk '$0 == "<!-- hiclaw-builtin-start -->" {c++} END {print c+0}' "${target}" 2>/dev/null || echo 0)
         end_count=$(awk '$0 == "<!-- hiclaw-builtin-end -->" {c++} END {print c+0}' "${target}" 2>/dev/null || echo 0)
-        if [ "${start_count}" -ne 1 ] || [ "${end_count}" -ne 1 ]; then
-            log "  Corrupted (start=${start_count}, end=${end_count}): ${target} — force rewriting"
+        line_count=$(wc -l < "${target}" 2>/dev/null || echo 0)
+        if [ "${start_count}" -ne 1 ] || [ "${end_count}" -ne 1 ] || [ "${line_count}" -gt 500 ]; then
+            log "  Corrupted (start=${start_count}, end=${end_count}, lines=${line_count}): ${target} — force rewriting"
             local user_content=""
             # Only attempt to preserve user content if there's at least one end marker to anchor on
             if [ "${end_count}" -ge 1 ]; then
