@@ -271,30 +271,7 @@ EOF
 }
 
 echo ""
-echo "=== TC13: Oversized file (>500 lines) — force rewrite ==="
-{
-    d=$(new_workdir)
-    src="${d}/source.md"; tgt="${d}/target.md"
-    echo "# Fresh Content" > "${src}"
-    # Build a valid-looking file that exceeds 500 lines
-    {
-        printf '<!-- hiclaw-builtin-start -->\n'
-        printf '> ⚠️ DO NOT EDIT\n\n'
-        printf '# Old Builtin\n'
-        printf '<!-- hiclaw-builtin-end -->\n'
-        # Pad with 500 extra lines of user content
-        for i in $(seq 1 500); do printf 'line %d\n' "$i"; done
-    } > "${tgt}"
-    update_builtin_section "${tgt}" "${src}"
-    content=$(cat "${tgt}")
-    assert_contains     "has new content after oversize repair" "# Fresh Content" "${content}"
-    assert_not_contains "old content gone"                      "# Old Builtin"   "${content}"
-    assert_eq           "exactly 1 start marker" "1" "$(count_occurrences 'hiclaw-builtin-start' "${tgt}")"
-    assert_eq           "exactly 1 end marker"   "1" "$(awk '$0 == "<!-- hiclaw-builtin-end -->" {c++} END {print c+0}' "${tgt}")"
-}
-
-echo ""
-echo "=== TC14: Duplicate heading — force rewrite ==="
+echo "=== TC13: Duplicate heading — force rewrite ==="
 {
     d=$(new_workdir)
     src="${d}/source.md"; tgt="${d}/target.md"

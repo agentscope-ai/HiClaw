@@ -40,18 +40,17 @@ update_builtin_section() {
     if grep -q 'hiclaw-builtin-start' "${target}" 2>/dev/null; then
         # Detect corrupted file: markers count must be exactly start=1, end=1, and line count <= 500,
         # and the builtin heading (first non-empty line of source) must appear exactly once.
-        local start_count end_count line_count heading heading_count
+        local start_count end_count heading heading_count
         start_count=$(awk '$0 == "<!-- hiclaw-builtin-start -->" {c++} END {print c+0}' "${target}" 2>/dev/null || echo 0)
         end_count=$(awk '$0 == "<!-- hiclaw-builtin-end -->" {c++} END {print c+0}' "${target}" 2>/dev/null || echo 0)
-        line_count=$(wc -l < "${target}" 2>/dev/null || echo 0)
         heading=$(grep -m1 '^#' "${source}" 2>/dev/null || true)
         if [ -n "${heading}" ]; then
             heading_count=$(awk -v h="${heading}" '$0 == h {c++} END {print c+0}' "${target}" 2>/dev/null || echo 0)
         else
             heading_count=1  # no heading in source, skip this check
         fi
-        if [ "${start_count}" -ne 1 ] || [ "${end_count}" -ne 1 ] || [ "${line_count}" -gt 500 ] || [ "${heading_count}" -gt 1 ]; then
-            log "  Corrupted (start=${start_count}, end=${end_count}, lines=${line_count}, heading_count=${heading_count}): ${target} — force rewriting"
+        if [ "${start_count}" -ne 1 ] || [ "${end_count}" -ne 1 ] || [ "${heading_count}" -gt 1 ]; then
+            log "  Corrupted (start=${start_count}, end=${end_count}, heading_count=${heading_count}): ${target} — force rewriting"
             local user_content=""
             # Only attempt to preserve user content if there's at least one end marker to anchor on.
             # Also strip any lines matching the builtin heading to avoid duplicates.
