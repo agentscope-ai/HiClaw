@@ -191,6 +191,31 @@ See [docs/zh-cn/faq.md](docs/zh-cn/faq.md) for common issues (startup timeout, L
 
 Feel free to [open an issue](https://github.com/higress-group/hiclaw/issues) or ask in [Discord](https://discord.gg/n6mV8xEYUF) / DingTalk group.
 
+## Roadmap
+
+### Lightweight Worker Runtimes
+
+Currently, Workers run on OpenClaw which has relatively high memory usage. We plan to support alternative lightweight runtimes:
+
+- **Copaw** — Minimal agent runtime for simple tasks
+- **Zeroclaw** — Zero-dependency agent for resource-constrained environments
+- **Nanoclaw** — Ultra-lightweight agent for edge deployment
+
+Goal: Reduce per-Worker memory footprint from ~500MB to <100MB, enabling more Workers on the same hardware.
+
+### Team Management Center
+
+A built-in dashboard for observing and controlling your Agent Teams:
+
+- **Real-time observation**: Watch each agent's thinking process, tool calls, and decision-making
+- **Active interruption**: Pause or stop any agent mid-task when you spot issues
+- **Task timeline**: Visual history of who did what and when
+- **Resource monitoring**: CPU/memory usage per Worker
+
+Goal: Make Agent Teams as observable and controllable as human teams — no black boxes.
+
+---
+
 ## Documentation
 
 | | |

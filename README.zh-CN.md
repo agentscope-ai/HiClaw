@@ -186,6 +186,31 @@ docker exec -it hiclaw-manager cat /var/log/hiclaw/manager-agent.log
 
 欢迎[提交 Issue](https://github.com/higress-group/hiclaw/issues)，或在 [Discord](https://discord.gg/n6mV8xEYUF) / 钉钉群里随时提问。
 
+## Roadmap
+
+### 轻量级 Worker 运行时
+
+目前 Worker 基于 OpenClaw 运行，内存占用较高（约 500MB+）。我们计划支持更轻量的 Agent 运行时：
+
+- **Copaw** —— 适合简单任务的轻量 Agent 运行时
+- **Zeroclaw** —— 零依赖的 Agent，适合资源受限环境
+- **Nanoclaw** —— 超轻量 Agent，适合边缘部署
+
+目标：将单 Worker 内存占用从 ~500MB 降至 <100MB，在相同硬件上支持更多 Worker。
+
+### Team 管理中心
+
+开箱即用的可视化控制台，用于观察和管控整个 Agent Team：
+
+- **实时观测**：每个 Agent 的工作过程细节可视化（对话、工具调用、思考过程）
+- **主动打断**：发现问题时可随时打断指定 Agent 的工作，接管或调整方向
+- **任务时间线**：谁在什么时候做了什么，完整历史记录
+- **资源监控**：每个 Worker 的 CPU/内存使用情况
+
+目标：让 Agent Teams 像人类团队一样透明可控——没有黑盒。
+
+---
+
 ## 文档
 
 | | |
