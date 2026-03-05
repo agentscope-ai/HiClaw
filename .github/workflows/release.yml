@@ -4,6 +4,12 @@ on:
   push:
     tags:
       - 'v[0-9]+.[0-9]+.[0-9]+'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g. v1.2.3)'
+        required: true
+        type: string
 
 env:
   REGISTRY: higress-registry.cn-hangzhou.cr.aliyuncs.com
@@ -22,9 +28,33 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Resolve version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            VERSION="${{ github.ref_name }}"
+          fi
+          # Validate format
+          if ! echo "${VERSION}" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "ERROR: invalid version format: ${VERSION}"
+            exit 1
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Create tag (workflow_dispatch only)
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag "${VERSION}" || echo "Tag already exists, skipping"
+          git push origin "${VERSION}" || echo "Tag already pushed, skipping"
+
       - name: Build release body
         run: |
-          VERSION="${{ github.ref_name }}"
+          VERSION="${{ steps.version.outputs.version }}"
           REGISTRY="${{ env.REGISTRY }}"
           REPO="${{ env.REPO }}"
           REPOSITORY="${{ github.repository }}"
@@ -75,11 +105,12 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
         with:
+          tag_name: ${{ steps.version.outputs.version }}
           body_path: /tmp/release-body.md
 
       - name: Archive changelog and reset
         run: |
-          VERSION="${{ github.ref_name }}"
+          VERSION="${{ steps.version.outputs.version }}"
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
@@ -107,8 +138,8 @@ jobs:
         uses: peter-evans/create-pull-request@v6
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          branch: chore/archive-changelog-${{ github.ref_name }}
+          branch: chore/archive-changelog-${{ steps.version.outputs.version }}
           base: main
-          title: "chore: archive changelog for ${{ github.ref_name }}"
-          body: "Automated PR to archive `changelog/current.md` → `changelog/${{ github.ref_name }}.md` and reset for next release."
+          title: "chore: archive changelog for ${{ steps.version.outputs.version }}"
+          body: "Automated PR to archive `changelog/current.md` → `changelog/${{ steps.version.outputs.version }}.md` and reset for next release."
           labels: changelog
