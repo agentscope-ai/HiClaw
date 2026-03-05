@@ -192,9 +192,9 @@ docker exec -it hiclaw-manager cat /var/log/hiclaw/manager-agent.log
 
 目前 Worker 基于 OpenClaw 运行，内存占用较高（约 500MB+）。我们计划支持更轻量的 Agent 运行时：
 
-- **Copaw** —— 适合简单任务的轻量 Agent 运行时
-- **Zeroclaw** —— 零依赖的 Agent，适合资源受限环境
-- **Nanoclaw** —— 超轻量 Agent，适合边缘部署
+- **CoPaw** —— AgentScope 团队开发的轻量 Agent 运行时，支持本地模型（llama.cpp/MLX/Ollama）和多渠道接入，内存占用比 OpenClaw 更低
+- **ZeroClaw** —— 基于 Rust 的超轻量运行时，3.4MB 二进制，冷启动 <10ms，专为边缘和资源受限环境设计
+- **NanoClaw** —— 极简 OpenClaw 替代品，<4000 行代码，基于容器隔离，使用 Anthropic Agents SDK
 
 目标：将单 Worker 内存占用从 ~500MB 降至 <100MB，在相同硬件上支持更多 Worker。
 

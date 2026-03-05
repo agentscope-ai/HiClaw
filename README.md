@@ -197,9 +197,9 @@ Feel free to [open an issue](https://github.com/higress-group/hiclaw/issues) or 
 
 Currently, Workers run on OpenClaw which has relatively high memory usage. We plan to support alternative lightweight runtimes:
 
-- **Copaw** — Minimal agent runtime for simple tasks
-- **Zeroclaw** — Zero-dependency agent for resource-constrained environments
-- **Nanoclaw** — Ultra-lightweight agent for edge deployment
+- **CoPaw** — Lightweight agent runtime by AgentScope, supports local models (llama.cpp/MLX/Ollama) and multi-channel, lower memory footprint than OpenClaw
+- **ZeroClaw** — Rust-based ultra-lightweight runtime, 3.4MB binary, <10ms cold start, designed for edge and resource-constrained environments
+- **NanoClaw** — Minimal OpenClaw alternative, <4000 LOC, container-based isolation, built on Anthropic Agents SDK
 
 Goal: Reduce per-Worker memory footprint from ~500MB to <100MB, enabling more Workers on the same hardware.
 
