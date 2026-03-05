@@ -47,6 +47,8 @@ Full lifecycle of Worker containers and skill assignments.
 
 ## project-management
 
+> **Rule: if the admin explicitly wants multiple Workers to collaborate on something, always use this skill — do not assign tasks individually.**
+
 Multi-Worker collaborative projects.
 
 - Admin says "kick off the website redesign project with Alice and Bob"
