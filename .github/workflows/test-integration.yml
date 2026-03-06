@@ -76,6 +76,8 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: read
+      pull-requests: write
+      actions: read
     
     steps:
       - name: Free Up GitHub Actions Ubuntu Runner Disk Space
@@ -110,10 +112,9 @@ jobs:
           sudo apt-get install -y jq curl
 
       - name: Run HiClaw installation
-        env:
-          HICLAW_LLM_API_KEY: ${{ secrets.HICLAW_LLM_API_KEY }}
         run: |
           # Install HiClaw with local images
+          HICLAW_LLM_API_KEY="${{ secrets.HICLAW_LLM_API_KEY }}" \
           HICLAW_NON_INTERACTIVE=1 \
           HICLAW_VERSION=ci-test \
           HICLAW_MOUNT_SOCKET=1 \
@@ -163,6 +164,148 @@ jobs:
             echo "Running all integration tests..."
             ./tests/run-all-tests.sh --skip-build --use-existing
           fi
+
+      # ============================================================
+      # Metrics Comparison & PR Comment
+      # ============================================================
+
+      - name: Download previous baseline metrics
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+            
+            // Get the list of workflow runs for this PR's target branch
+            const runs = await github.rest.actions.listWorkflowRuns({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: 'test-integration.yml',
+              branch: context.payload.pull_request.base.ref,
+              status: 'success',
+              per_page: 1
+            });
+            
+            if (runs.data.workflow_runs.length === 0) {
+              console.log('No previous successful runs found');
+              return;
+            }
+            
+            const previousRun = runs.data.workflow_runs[0];
+            console.log(`Found previous run: ${previousRun.id} (${previousRun.head_sha})`);
+            
+            // Get artifacts from the previous run
+            const artifacts = await github.rest.actions.listWorkflowRunArtifacts({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              run_id: previousRun.id
+            });
+            
+            // Find the baseline artifact
+            const baselineArtifact = artifacts.data.artifacts.find(a => a.name.startsWith('metrics-baseline-'));
+            if (!baselineArtifact) {
+              console.log('No baseline artifact found in previous run');
+              return;
+            }
+            
+            console.log(`Found baseline artifact: ${baselineArtifact.name}`);
+            
+            // Download the artifact
+            const download = await github.rest.actions.downloadArtifact({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              artifact_id: baselineArtifact.id,
+              archive_format: 'zip'
+            });
+            
+            // Save the zip file
+            const zipPath = path.join(process.cwd(), 'baseline.zip');
+            fs.writeFileSync(zipPath, Buffer.from(download.data));
+            console.log(`Downloaded baseline to ${zipPath}`);
+            
+            // Extract using shell
+            const { execSync } = require('child_process');
+            execSync('mkdir -p baseline-metrics && unzip -o baseline.zip -d baseline-metrics', { stdio: 'inherit' });
+            console.log('Extracted baseline metrics');
+
+      - name: Compare metrics with baseline and post PR comment
+        if: github.event_name == 'pull_request'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          
+          # Source the metrics library
+          source tests/lib/agent-metrics.sh
+          
+          # Generate current metrics summary
+          echo "Generating current metrics summary..."
+          CURRENT_SUMMARY=$(generate_metrics_summary "02-create-worker")
+          
+          # Check for baseline
+          BASELINE_SUMMARY=""
+          if [ -d "baseline-metrics" ] && [ -f "baseline-metrics/metrics-summary.json" ]; then
+            echo "Found baseline metrics, loading..."
+            BASELINE_SUMMARY=$(cat baseline-metrics/metrics-summary.json)
+          else
+            echo "No baseline metrics found, this will be the first run"
+          fi
+          
+          # Compare metrics
+          echo "Comparing metrics..."
+          COMPARISON=$(compare_metrics_with_baseline "$CURRENT_SUMMARY" "$BASELINE_SUMMARY")
+          
+          # Generate Markdown report
+          echo "Generating Markdown report..."
+          MARKDOWN_REPORT=$(generate_comparison_markdown "$COMPARISON")
+          
+          # Save for debugging
+          mkdir -p tests/output
+          echo "$COMPARISON" > tests/output/metrics-comparison.json
+          echo "$MARKDOWN_REPORT" > tests/output/metrics-report.md
+          
+          # Post PR comment (update existing if present)
+          echo "Posting PR comment..."
+          
+          # Check for existing comment
+          EXISTING_COMMENT=$(gh api repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments \
+            --jq '.[] | select(.body | startswith("## 📊 CI Metrics Report")) | .id')
+          
+          if [ -n "$EXISTING_COMMENT" ]; then
+            echo "Updating existing comment: $EXISTING_COMMENT"
+            gh api --method PATCH repos/${{ github.repository }}/issues/comments/$EXISTING_COMMENT \
+              -f body="$MARKDOWN_REPORT"
+          else
+            echo "Creating new comment"
+            gh api --method POST repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments \
+              -f body="$MARKDOWN_REPORT"
+          fi
+          
+          echo "Metrics report posted successfully!"
+
+      - name: Save baseline metrics for future runs
+        if: always()
+        run: |
+          mkdir -p baseline-output
+          
+          # Generate and save summary for future comparison
+          if [ -d "tests/output" ] && ls tests/output/metrics-*.json 1>/dev/null 2>&1; then
+            source tests/lib/agent-metrics.sh
+            generate_metrics_summary "02-create-worker" > baseline-output/metrics-summary.json
+            echo "Saved metrics summary for future runs"
+          else
+            echo '{"error": "no metrics files found", "timestamp": "'$(date -Iseconds)'"}' > baseline-output/metrics-summary.json
+          fi
+
+      - name: Upload baseline metrics artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: metrics-baseline-${{ github.sha }}
+          path: baseline-output/
+          retention-days: 30
 
       - name: Collect test artifacts
         if: always()

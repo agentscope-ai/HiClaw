@@ -571,3 +571,202 @@ generate_metrics_summary() {
     
     echo "$summary"
 }
+
+# ============================================================
+# Metrics Comparison (Current vs Baseline)
+# ============================================================
+
+# Compare current metrics with baseline and generate delta
+# Usage: compare_metrics_with_baseline <current_summary_json> <baseline_summary_json>
+# Output: JSON with comparison results including deltas and trends
+compare_metrics_with_baseline() {
+    local current="$1"
+    local baseline="$2"
+    
+    # If no baseline, return current as-is with no comparison
+    if [ -z "$baseline" ] || [ "$baseline" = "null" ] || echo "$baseline" | jq -e '.error' >/dev/null 2>&1; then
+        echo "$current" | jq '. + {baseline_available: false, totals: {current: .totals}}'
+        return 0
+    fi
+    
+    # Calculate deltas for each test
+    local comparison
+    comparison=$(echo "$current" "$baseline" | jq -s '
+        {
+            baseline_available: true,
+            tests: (
+                .[0].tests | map(
+                    . as $curr |
+                    (.[1].tests | map(select(.test_name == $curr.test_name)) | .[0]) as $base |
+                    if $base then
+                        {
+                            test_name: $curr.test_name,
+                            current: $curr,
+                            baseline: $base,
+                            delta: {
+                                llm_calls: ($curr.llm_calls - $base.llm_calls),
+                                tokens_input: ($curr.tokens.input - $base.tokens.input),
+                                tokens_output: ($curr.tokens.output - $base.tokens.output),
+                                tokens_total: (($curr.tokens.input - $base.tokens.input) + ($curr.tokens.output - $base.tokens.output))
+                            },
+                            trend: (
+                                if $curr.llm_calls < $base.llm_calls then "improved"
+                                elif $curr.llm_calls > $base.llm_calls then "regressed"
+                                else "unchanged"
+                                end
+                            )
+                        }
+                    else
+                        {
+                            test_name: $curr.test_name,
+                            current: $curr,
+                            baseline: null,
+                            delta: null,
+                            trend: "new_test"
+                        }
+                    end
+                )
+            ),
+            totals: {
+                current: .[0].totals,
+                baseline: .[1].totals,
+                delta: {
+                    llm_calls: (.[0].totals.llm_calls - .[1].totals.llm_calls),
+                    tokens_input: (.[0].totals.tokens.input - .[1].totals.tokens.input),
+                    tokens_output: (.[0].totals.tokens.output - .[1].totals.tokens.output),
+                    tokens_total: ((.[0].totals.tokens.input - .[1].totals.tokens.input) + (.[0].totals.tokens.output - .[1].totals.tokens.output))
+                }
+            }
+        }
+    ')
+    
+    echo "$comparison"
+}
+
+# Format a number with +/- sign for delta display
+_format_delta() {
+    local value="$1"
+    if [ "$value" -gt 0 ]; then
+        echo "+${value}"
+    elif [ "$value" -lt 0 ]; then
+        echo "${value}"
+    else
+        echo "0"
+    fi
+}
+
+# Generate a Markdown comparison report for PR comments
+# Usage: generate_comparison_markdown <comparison_json>
+# Output: Markdown formatted report
+generate_comparison_markdown() {
+    local comparison="$1"
+    local baseline_available
+    baseline_available=$(echo "$comparison" | jq -r '.baseline_available // false')
+    
+    echo "## 📊 CI Metrics Report"
+    echo ""
+    
+    if [ "$baseline_available" = "false" ]; then
+        echo "> ℹ️ **No baseline available** - This is the first run or baseline data was not found."
+        echo ""
+    fi
+    
+    # Summary totals section
+    echo "### Summary"
+    echo ""
+    
+    if [ "$baseline_available" = "true" ]; then
+        local curr_calls base_calls delta_calls
+        local curr_in base_in delta_in
+        local curr_out base_out delta_out
+        
+        curr_calls=$(echo "$comparison" | jq -r '.totals.current.llm_calls // 0')
+        base_calls=$(echo "$comparison" | jq -r '.totals.baseline.llm_calls // 0')
+        delta_calls=$(echo "$comparison" | jq -r '.totals.delta.llm_calls // 0')
+        
+        curr_in=$(echo "$comparison" | jq -r '.totals.current.tokens.input // 0')
+        base_in=$(echo "$comparison" | jq -r '.totals.baseline.tokens.input // 0')
+        delta_in=$(echo "$comparison" | jq -r '.totals.delta.tokens_input // 0')
+        
+        curr_out=$(echo "$comparison" | jq -r '.totals.current.tokens.output // 0')
+        base_out=$(echo "$comparison" | jq -r '.totals.baseline.tokens.output // 0')
+        delta_out=$(echo "$comparison" | jq -r '.totals.delta.tokens_output // 0')
+        
+        echo "| Metric | Current | Baseline | Delta |"
+        echo "|--------|---------|----------|-------|"
+        echo "| **LLM Calls** | ${curr_calls} | ${base_calls} | $(_format_delta "$delta_calls") |"
+        echo "| **Input Tokens** | ${curr_in} | ${base_in} | $(_format_delta "$delta_in") |"
+        echo "| **Output Tokens** | ${curr_out} | ${base_out} | $(_format_delta "$delta_out") |"
+    else
+        local curr_calls curr_in curr_out
+        curr_calls=$(echo "$comparison" | jq -r '.totals.current.llm_calls // .totals.llm_calls // 0')
+        curr_in=$(echo "$comparison" | jq -r '.totals.current.tokens.input // .totals.tokens.input // 0')
+        curr_out=$(echo "$comparison" | jq -r '.totals.current.tokens.output // .totals.tokens.output // 0')
+        
+        echo "| Metric | Value |"
+        echo "|--------|-------|"
+        echo "| **LLM Calls** | ${curr_calls} |"
+        echo "| **Input Tokens** | ${curr_in} |"
+        echo "| **Output Tokens** | ${curr_out} |"
+    fi
+    
+    echo ""
+    
+    # Per-test breakdown
+    local test_count
+    test_count=$(echo "$comparison" | jq '.tests | length // 0')
+    
+    if [ "$test_count" -gt 0 ]; then
+        echo "### Per-Test Breakdown"
+        echo ""
+        
+        if [ "$baseline_available" = "true" ]; then
+            echo "| Test | LLM Calls (Δ) | Input Tokens (Δ) | Output Tokens (Δ) | Trend |"
+            echo "|------|---------------|-----------------|-------------------|-------|"
+            
+            echo "$comparison" | jq -r '.tests[] | 
+                .test_name as $name |
+                .current.llm_calls as $calls |
+                (.delta.llm_calls // "N/A") as $calls_delta |
+                .current.tokens.input as $in |
+                (.delta.tokens_input // "N/A") as $in_delta |
+                .current.tokens.output as $out |
+                (.delta.tokens_output // "N/A") as $out_delta |
+                .trend as $trend |
+                "\($name) | \($calls) (\($calls_delta)) | \($in) (\($in_delta)) | \($out) (\($out_delta)) | \($trend)"' | while IFS= read -r line; do
+                echo "| $line |"
+            done
+        else
+            echo "| Test | LLM Calls | Input Tokens | Output Tokens |"
+            echo "|------|-----------|--------------|---------------|"
+            
+            echo "$comparison" | jq -r '.tests[] | 
+                "\(.test_name) | \(.current.llm_calls // .llm_calls) | \(.current.tokens.input // .tokens.input) | \(.current.tokens.output // .tokens.output)"' | while IFS= read -r line; do
+                echo "| $line |"
+            done
+        fi
+        echo ""
+    fi
+    
+    # Trend indicators
+    if [ "$baseline_available" = "true" ]; then
+        local improved regressed
+        improved=$(echo "$comparison" | jq '[.tests[]? | select(.trend == "improved")] | length // 0')
+        regressed=$(echo "$comparison" | jq '[.tests[]? | select(.trend == "regressed")] | length // 0')
+        
+        if [ "$improved" -gt 0 ] || [ "$regressed" -gt 0 ]; then
+            echo "### Trends"
+            echo ""
+            if [ "$improved" -gt 0 ]; then
+                echo "✅ **${improved}** test(s) improved (fewer LLM calls)"
+            fi
+            if [ "$regressed" -gt 0 ]; then
+                echo "⚠️ **${regressed}** test(s) regressed (more LLM calls)"
+            fi
+            echo ""
+        fi
+    fi
+    
+    echo "---"
+    echo "*Generated by HiClaw CI on $(date -u +"%Y-%m-%d %H:%M:%S UTC")*"
+}
