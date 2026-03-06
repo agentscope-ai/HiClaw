@@ -25,56 +25,8 @@ env:
   WORKER_IMAGE: hiclaw/worker-agent:ci-test
 
 jobs:
-  # Build images locally (no registry push)
-  build:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    
-    steps:
-      - name: Free Up GitHub Actions Ubuntu Runner Disk Space
-        uses: jlumbroso/free-disk-space@main
-        with:
-          tool-cache: false
-          android: true
-          dotnet: true
-          haskell: true
-          large-packages: true
-          swap-storage: true
-
-      - name: Checkout PR code
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
-          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      # Pull base images first to ensure they're available
-      - name: Pull base images
-        run: |
-          docker pull higress-registry.cn-hangzhou.cr.aliyuncs.com/higress/openclaw-base:latest
-
-      # Build manager and worker images locally (no push)
-      - name: Build images
-        run: |
-          make build-manager build-worker VERSION=ci-test
-
-      - name: List built images
-        run: |
-          docker images | grep hiclaw
-
-      - name: Build Summary
-        run: |
-          echo "### Build Summary" >> $GITHUB_STEP_SUMMARY
-          echo "- Manager Image: \`${{ env.MANAGER_IMAGE }}\` (local)" >> $GITHUB_STEP_SUMMARY
-          echo "- Worker Image: \`${{ env.WORKER_IMAGE }}\` (local)" >> $GITHUB_STEP_SUMMARY
-          echo "- Platform: \`linux/amd64\` (native)" >> $GITHUB_STEP_SUMMARY
-
   # Run integration tests with local images
   integration-tests:
-    needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -107,7 +59,7 @@ jobs:
         run: |
           docker pull higress-registry.cn-hangzhou.cr.aliyuncs.com/higress/openclaw-base:latest
 
-      # Rebuild images (needed since each job runs on fresh runner)
+      # Build images locally (each job runs on fresh runner)
       - name: Build images
         run: |
           make build-manager build-worker VERSION=ci-test
