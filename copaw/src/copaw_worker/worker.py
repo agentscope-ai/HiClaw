@@ -212,6 +212,10 @@ class Worker:
                 gateway_token = provider_config["apiKey"]
                 if "baseUrl" in provider_config:
                     gateway_url = provider_config["baseUrl"].replace("/v1", "")
+                    # Handle port mapping: container internal (8080) -> external (18080)
+                    if gateway_url and ":8080" in gateway_url and not self._is_running_in_container():
+                        gateway_url = gateway_url.replace(":8080", ":18080")
+                        console.print(f"[dim]Adjusted AI Gateway to external port: {gateway_url}[/dim]")
                 break
         
         # Fallback to env config
@@ -326,9 +330,9 @@ class Worker:
         """Get or create an agent for a specific room (context isolation)."""
         if room_id not in self.room_agents:
             self.room_agents[room_id] = Agent(
-                gateway_url=self.config.ai_gateway,
-                gateway_token=self.config.gateway_token,
-                model=self.config.model,
+                gateway_url=self._gateway_url,
+                gateway_token=self._gateway_token,
+                model=self._model,
                 system_prompt=system_prompt,
             )
         return self.room_agents[room_id]
@@ -498,7 +502,19 @@ class Worker:
 
 async def main() -> None:
     """Main entry point."""
+    import os
     from copaw_worker.config import load_config
+
+    # Bypass proxy for local hiclaw.io domains so matrix-nio (aiohttp) and
+    # other HTTP clients don't route through any configured http_proxy
+    existing_no_proxy = os.environ.get("no_proxy", os.environ.get("NO_PROXY", ""))
+    hiclaw_domains = "hiclaw.io,localhost,127.0.0.1"
+    if existing_no_proxy:
+        os.environ["no_proxy"] = f"{existing_no_proxy},{hiclaw_domains}"
+        os.environ["NO_PROXY"] = f"{existing_no_proxy},{hiclaw_domains}"
+    else:
+        os.environ["no_proxy"] = hiclaw_domains
+        os.environ["NO_PROXY"] = hiclaw_domains
 
     config = load_config()
     worker = Worker(config)

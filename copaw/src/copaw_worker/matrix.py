@@ -119,7 +119,7 @@ class MatrixClient:
         if self._initial_access_token:
             console.print("[yellow]Logging in with access token...[/yellow]")
             self.client.access_token = self._initial_access_token
-            
+
             # Verify token by calling whoami
             try:
                 whoami = await self.client.whoami()
@@ -127,6 +127,9 @@ class MatrixClient:
                     self.user_id = whoami.user_id
                     self.device_id = whoami.device_id or "copaw-worker"
                     self.access_token = self._initial_access_token
+                    # Set user_id on the nio client so it filters self-messages correctly
+                    self.client.user_id = whoami.user_id
+                    self.client.user = whoami.user_id
                     console.print(f"[green]Logged in as {self.user_id} (via token)[/green]")
                     return True
                 else:
@@ -388,7 +391,7 @@ class MatrixClient:
         since: Optional[str] = None,
     ) -> None:
         """
-        Run sync loop forever.
+        Run sync loop forever, auto-joining invited rooms.
 
         Args:
             timeout: Sync timeout in milliseconds
@@ -400,12 +403,30 @@ class MatrixClient:
         # Set up callback
         self.client.add_event_callback(self._handle_room_event, (RoomMessageText,))
 
-        # Run sync loop
-        await self.client.sync_forever(
-            timeout=timeout,
-            since=since,
-            full_state=True,
-        )
+        # Manual sync loop so we can handle invites
+        next_batch = since
+        while True:
+            try:
+                response = await self.client.sync(
+                    timeout=timeout,
+                    since=next_batch,
+                    full_state=(next_batch is None),
+                )
+                if isinstance(response, SyncResponse):
+                    next_batch = response.next_batch
+                    # Auto-join any invited rooms
+                    for room_id in response.rooms.invite:
+                        console.print(f"[yellow]Auto-joining invited room: {room_id}[/yellow]")
+                        join_resp = await self.client.join(room_id)
+                        console.print(f"[green]Joined room: {room_id} -> {join_resp}[/green]")
+                else:
+                    console.print(f"[yellow]Sync error: {response}[/yellow]")
+                    await asyncio.sleep(5)
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                console.print(f"[red]Sync exception: {e}[/red]")
+                await asyncio.sleep(5)
 
     async def sync_once(self, timeout: int = 30000) -> SyncResponse:
         """

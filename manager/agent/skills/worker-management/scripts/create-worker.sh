@@ -192,6 +192,11 @@ cat > "${POLICY_FILE}" <<POLICY
   "Statement": [
     {
       "Effect": "Allow",
+      "Action": ["s3:GetBucketLocation"],
+      "Resource": ["arn:aws:s3:::hiclaw-storage"]
+    },
+    {
+      "Effect": "Allow",
       "Action": ["s3:ListBucket"],
       "Resource": ["arn:aws:s3:::hiclaw-storage"],
       "Condition": {
@@ -558,16 +563,10 @@ _build_install_cmd() {
     if [ "${RUNTIME}" = "copaw" ]; then
         # CoPaw: Simplified - only MinIO credentials needed
         # All other config (Matrix, AI Gateway) comes from openclaw.json in MinIO
-        local fs_port="8080"
         local fs_host="${HICLAW_FS_DOMAIN:-fs-local.hiclaw.io}"
 
-        # Check if running outside container (use exposed port 18080)
-        if [ -n "${HICLAW_EXTERNAL_PORT}" ]; then
-            fs_port="${HICLAW_EXTERNAL_PORT}"
-        elif [ ! -f /.dockerenv ] 2>/dev/null; then
-            # Outside container, use mapped port
-            fs_port="18080"
-        fi
+        # CoPaw runs outside the container, so use the host-exposed gateway port
+        local fs_port="${HICLAW_EXTERNAL_PORT:-${HICLAW_PORT_GATEWAY:-18080}}"
 
         local fs_endpoint="http://${fs_host}:${fs_port}"
 

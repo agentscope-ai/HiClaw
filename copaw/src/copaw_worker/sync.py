@@ -1,23 +1,87 @@
 """
-MinIO file synchronization for CoPaw Worker.
+MinIO file synchronization for CoPaw Worker via mc (MinIO Client CLI).
+
+mc is auto-downloaded on first use based on the current OS/arch.
 """
 
 import asyncio
 import json
 import os
-import re
+import platform
+import stat
+import urllib.request
 from pathlib import Path
 from typing import Optional
 
-from minio import Minio
-from minio.error import S3Error
 from rich.console import Console
 
 console = Console()
 
+# mc download base URL
+_MC_BASE_URL = "https://dl.min.io/client/mc/release"
+
+# Map (system, machine) -> mc platform string
+_PLATFORM_MAP = {
+    ("linux", "x86_64"):  "linux-amd64",
+    ("linux", "aarch64"): "linux-arm64",
+    ("linux", "ppc64le"): "linux-ppc64le",
+    ("linux", "s390x"):   "linux-s390x",
+    ("darwin", "x86_64"): "darwin-amd64",
+    ("darwin", "arm64"):  "darwin-arm64",
+    ("windows", "x86_64"): "windows-amd64",
+}
+
+
+def _mc_platform() -> str:
+    system = platform.system().lower()
+    machine = platform.machine().lower()
+    key = (system, machine)
+    plat = _PLATFORM_MAP.get(key)
+    if not plat:
+        raise RuntimeError(f"Unsupported platform: {system}/{machine}")
+    return plat
+
+
+def _mc_binary_name() -> str:
+    return "mc.exe" if platform.system().lower() == "windows" else "mc"
+
+
+def _default_mc_path() -> Path:
+    return Path.home() / ".copaw-worker" / "bin" / _mc_binary_name()
+
+
+def download_mc(dest: Optional[Path] = None) -> Path:
+    """
+    Download mc binary for the current platform if not already present.
+
+    Returns:
+        Path to the mc binary.
+    """
+    dest = dest or _default_mc_path()
+
+    if dest.exists():
+        return dest
+
+    plat = _mc_platform()
+    binary = _mc_binary_name()
+    url = f"{_MC_BASE_URL}/{plat}/{binary}"
+
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    console.print(f"[yellow]Downloading mc from {url}...[/yellow]")
+
+    # dl.min.io is external so proxies are fine here; use a plain opener
+    urllib.request.urlretrieve(url, dest)
+
+    # Make executable on Unix
+    if platform.system().lower() != "windows":
+        dest.chmod(dest.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+
+    console.print(f"[green]mc downloaded to {dest}[/green]")
+    return dest
+
 
 class FileSync:
-    """Handles bidirectional file sync between worker and MinIO."""
+    """Handles bidirectional file sync between worker and MinIO via mc."""
 
     def __init__(
         self,
@@ -28,226 +92,188 @@ class FileSync:
         worker_name: str,
         secure: bool = False,
         local_dir: Optional[Path] = None,
+        mc_path: Optional[Path] = None,
     ):
         """
         Initialize file sync.
 
         Args:
-            endpoint: MinIO endpoint (e.g., "fs-local.hiclaw.io:8080")
+            endpoint: MinIO endpoint URL (e.g., "http://fs-local.hiclaw.io:18080")
             access_key: MinIO access key
             secret_key: MinIO secret key
             bucket: MinIO bucket name
             worker_name: Worker name (used as prefix in bucket)
-            secure: Use HTTPS
-            local_dir: Local directory to sync (default: ~/.copaw-worker/<worker_name>)
+            secure: Unused, inferred from endpoint scheme
+            local_dir: Local workspace dir (default: ~/.copaw-worker/<worker_name>)
+            mc_path: Path to mc binary (auto-downloaded if not provided)
         """
-        # Parse endpoint - remove protocol if present
-        self.endpoint = re.sub(r"^https?://", "", endpoint)
+        self.endpoint = endpoint.rstrip("/")
         self.access_key = access_key
         self.secret_key = secret_key
         self.bucket = bucket
         self.worker_name = worker_name
-        self.secure = secure
 
-        # Local directory
+        # Local workspace mirrors the hiclaw-fs layout used by OpenClaw workers
         self.local_dir = local_dir or Path.home() / ".copaw-worker" / worker_name
         self.local_dir.mkdir(parents=True, exist_ok=True)
 
-        # MinIO client
-        self.client = Minio(
+        # shared/ sits alongside the per-worker directory
+        base = local_dir.parent if local_dir else Path.home() / ".copaw-worker"
+        self.shared_dir = base / "shared"
+
+        # mc alias name for this connection
+        self.alias = "hiclaw"
+
+        # mc binary (resolved lazily on first setup())
+        self._mc_path: Optional[Path] = mc_path
+        self._ready = False
+
+    # ------------------------------------------------------------------
+    # Setup
+    # ------------------------------------------------------------------
+
+    def setup(self) -> None:
+        """Ensure mc is available and alias is configured."""
+        if self._ready:
+            return
+        if self._mc_path is None:
+            self._mc_path = download_mc()
+        self._configure_alias()
+        self._ready = True
+
+    def _run_mc(self, *args: str, check: bool = True):
+        """Run an mc subcommand, return CompletedProcess."""
+        import subprocess
+        # Bypass any system proxy for local hiclaw.io domains
+        existing = os.environ.get("no_proxy", os.environ.get("NO_PROXY", ""))
+        hiclaw = "hiclaw.io,localhost,127.0.0.1"
+        no_proxy_val = f"{existing},{hiclaw}" if existing else hiclaw
+        env = {**os.environ, "MC_NO_COLOR": "1", "no_proxy": no_proxy_val, "NO_PROXY": no_proxy_val}
+        result = subprocess.run(
+            [str(self._mc_path), *args],
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+        if check and result.returncode != 0:
+            raise RuntimeError(
+                f"mc {' '.join(args[:2])} failed (exit {result.returncode}):\n"
+                f"{result.stderr.strip()}"
+            )
+        return result
+
+    def _configure_alias(self) -> None:
+        """Register mc alias for this MinIO endpoint."""
+        self._run_mc(
+            "alias", "set", self.alias,
             self.endpoint,
-            access_key=access_key,
-            secret_key=secret_key,
-            secure=secure,
+            self.access_key,
+            self.secret_key,
+            "--api", "S3v4",
         )
 
-        # Prefix for this worker in the bucket
-        self.prefix = f"agents/{worker_name}/"
+    # ------------------------------------------------------------------
+    # Sync operations
+    # ------------------------------------------------------------------
 
-    def pull(self, exclude: Optional[set[str]] = None) -> list[str]:
+    def pull(self) -> list[str]:
         """
-        Pull files from MinIO to local directory.
-
-        Args:
-            exclude: Set of filename patterns to exclude
+        Pull files from MinIO agents/<worker_name>/ to local workspace.
 
         Returns:
-            List of pulled file paths
+            List of pulled object keys.
         """
-        exclude = exclude or set()
-        pulled_files = []
+        self.setup()
+        src = f"{self.alias}/{self.bucket}/agents/{self.worker_name}/"
+        dst = str(self.local_dir) + "/"
+        result = self._run_mc("mirror", src, dst, "--overwrite", "--json", check=False)
+        return _parse_mirror_output(result.stdout)
 
-        try:
-            objects = self.client.list_objects(
-                self.bucket,
-                prefix=self.prefix,
-                recursive=True,
-            )
-
-            for obj in objects:
-                # Get relative path
-                rel_path = obj.object_name[len(self.prefix) :]
-                if not rel_path:
-                    continue
-
-                # Skip excluded files
-                if any(
-                    rel_path == excl or rel_path.startswith(f"{excl}/")
-                    for excl in exclude
-                ):
-                    continue
-
-                local_path = self.local_dir / rel_path
-                local_path.parent.mkdir(parents=True, exist_ok=True)
-
-                # Download file
-                self.client.fget_object(self.bucket, obj.object_name, str(local_path))
-                pulled_files.append(str(local_path))
-
-        except S3Error as e:
-            console.print(f"[red]MinIO pull error: {e}[/red]")
-            raise
-
-        return pulled_files
-
-    def push(self, exclude: Optional[set[str]] = None) -> list[str]:
+    def push(self, exclude: Optional[list[str]] = None) -> list[str]:
         """
-        Push files from local directory to MinIO.
+        Push local workspace files to MinIO agents/<worker_name>/.
 
         Args:
-            exclude: Set of filename patterns to exclude
+            exclude: Glob patterns to exclude (defaults to Manager-managed config files)
 
         Returns:
-            List of pushed file paths
+            List of pushed object keys.
         """
-        exclude = exclude or {
-            "openclaw.json",
-            "AGENTS.md",
-            "SOUL.md",
-            ".agents",
-            ".openclaw",
-            ".cache",
-            ".local",
-            "__pycache__",
-            ".git",
-        }
-        pushed_files = []
+        self.setup()
+        default_exclude = ["openclaw.json", "AGENTS.md", "SOUL.md"]
+        patterns = exclude if exclude is not None else default_exclude
 
-        if not self.local_dir.exists():
-            return pushed_files
+        args = [
+            "mirror",
+            str(self.local_dir) + "/",
+            f"{self.alias}/{self.bucket}/agents/{self.worker_name}/",
+            "--overwrite", "--json",
+        ]
+        for pat in patterns:
+            args += ["--exclude", pat]
 
-        try:
-            for local_path in self.local_dir.rglob("*"):
-                if not local_path.is_file():
-                    continue
-
-                rel_path = local_path.relative_to(self.local_dir)
-                rel_str = str(rel_path)
-
-                # Skip excluded files
-                if any(
-                    rel_str == excl
-                    or rel_str.startswith(f"{excl}/")
-                    or rel_str.startswith(f"{excl}\\")
-                    for excl in exclude
-                ):
-                    continue
-
-                # Skip hidden files
-                if any(part.startswith(".") for part in rel_path.parts):
-                    continue
-
-                object_name = f"{self.prefix}{rel_str}"
-                self.client.fput_object(
-                    self.bucket,
-                    object_name,
-                    str(local_path),
-                )
-                pushed_files.append(str(local_path))
-
-        except S3Error as e:
-            console.print(f"[red]MinIO push error: {e}[/red]")
-            raise
-
-        return pushed_files
+        result = self._run_mc(*args, check=False)
+        return _parse_mirror_output(result.stdout)
 
     def pull_shared(self) -> list[str]:
-        """Pull shared files from MinIO."""
-        shared_dir = self.local_dir.parent / "shared"
-        shared_dir.mkdir(parents=True, exist_ok=True)
-        pulled_files = []
+        """Pull shared/ from MinIO to local shared directory."""
+        self.setup()
+        self.shared_dir.mkdir(parents=True, exist_ok=True)
+        src = f"{self.alias}/{self.bucket}/shared/"
+        dst = str(self.shared_dir) + "/"
+        result = self._run_mc("mirror", src, dst, "--overwrite", "--json", check=False)
+        return _parse_mirror_output(result.stdout)
 
-        try:
-            objects = self.client.list_objects(
-                self.bucket,
-                prefix="shared/",
-                recursive=True,
-            )
-
-            for obj in objects:
-                rel_path = obj.object_name[len("shared/") :]
-                if not rel_path:
-                    continue
-
-                local_path = shared_dir / rel_path
-                local_path.parent.mkdir(parents=True, exist_ok=True)
-
-                self.client.fget_object(self.bucket, obj.object_name, str(local_path))
-                pulled_files.append(str(local_path))
-
-        except S3Error as e:
-            console.print(f"[yellow]Warning: Could not pull shared files: {e}[/yellow]")
-
-        return pulled_files
+    # ------------------------------------------------------------------
+    # Config file helpers (used at startup before sync loop)
+    # ------------------------------------------------------------------
 
     def get_config(self) -> dict:
-        """Pull and return the worker's openclaw.json config."""
-        config_path = self.local_dir / "openclaw.json"
-
-        try:
-            self.client.fget_object(
-                self.bucket,
-                f"{self.prefix}openclaw.json",
-                str(config_path),
-            )
-            with open(config_path) as f:
-                return json.load(f)
-        except S3Error:
-            console.print("[red]Could not pull openclaw.json from MinIO[/red]")
-            raise
+        """Pull and return the worker's openclaw.json."""
+        self.setup()
+        dest = self.local_dir / "openclaw.json"
+        self._run_mc(
+            "cp",
+            f"{self.alias}/{self.bucket}/agents/{self.worker_name}/openclaw.json",
+            str(dest),
+        )
+        with open(dest) as f:
+            return json.load(f)
 
     def get_soul(self) -> str:
-        """Pull and return the worker's SOUL.md content."""
-        soul_path = self.local_dir / "SOUL.md"
-
+        """Pull and return SOUL.md content."""
+        self.setup()
+        dest = self.local_dir / "SOUL.md"
         try:
-            self.client.fget_object(
-                self.bucket,
-                f"{self.prefix}SOUL.md",
-                str(soul_path),
+            self._run_mc(
+                "cp",
+                f"{self.alias}/{self.bucket}/agents/{self.worker_name}/SOUL.md",
+                str(dest),
             )
-            with open(soul_path) as f:
-                return f.read()
-        except S3Error:
-            console.print("[red]Could not pull SOUL.md from MinIO[/red]")
-            raise
-
-    def get_agents_md(self) -> str:
-        """Pull and return the worker's AGENTS.md content."""
-        agents_path = self.local_dir / "AGENTS.md"
-
-        try:
-            self.client.fget_object(
-                self.bucket,
-                f"{self.prefix}AGENTS.md",
-                str(agents_path),
-            )
-            with open(agents_path) as f:
-                return f.read()
-        except S3Error:
-            console.print("[yellow]Could not pull AGENTS.md from MinIO[/yellow]")
+            return dest.read_text()
+        except RuntimeError:
+            console.print("[yellow]SOUL.md not found in MinIO[/yellow]")
             return ""
 
+    def get_agents_md(self) -> str:
+        """Pull and return AGENTS.md content."""
+        self.setup()
+        dest = self.local_dir / "AGENTS.md"
+        try:
+            self._run_mc(
+                "cp",
+                f"{self.alias}/{self.bucket}/agents/{self.worker_name}/AGENTS.md",
+                str(dest),
+            )
+            return dest.read_text()
+        except RuntimeError:
+            console.print("[yellow]AGENTS.md not found in MinIO[/yellow]")
+            return ""
+
+
+# ------------------------------------------------------------------
+# Background sync loop
+# ------------------------------------------------------------------
 
 async def sync_loop(
     sync: FileSync,
@@ -255,18 +281,41 @@ async def sync_loop(
     on_pull: Optional[callable] = None,
 ) -> None:
     """
-    Run periodic sync loop.
+    Periodically pull from MinIO and push local changes back.
 
     Args:
         sync: FileSync instance
         interval: Sync interval in seconds
-        on_pull: Optional callback after pull
+        on_pull: Async callback(pulled_files: list[str]) invoked after a pull
     """
+    loop = asyncio.get_event_loop()
     while True:
         await asyncio.sleep(interval)
         try:
-            pulled = sync.pull()
+            pulled = await loop.run_in_executor(None, sync.pull)
             if pulled and on_pull:
                 await on_pull(pulled)
+
+            await loop.run_in_executor(None, sync.push)
         except Exception as e:
             console.print(f"[yellow]Sync error: {e}[/yellow]")
+
+
+# ------------------------------------------------------------------
+# Helpers
+# ------------------------------------------------------------------
+
+def _parse_mirror_output(stdout: str) -> list[str]:
+    """Parse mc mirror/cp --json output, return list of transferred object keys."""
+    transferred = []
+    for line in stdout.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+            if obj.get("status") == "success" and "key" in obj:
+                transferred.append(obj["key"])
+        except json.JSONDecodeError:
+            pass
+    return transferred

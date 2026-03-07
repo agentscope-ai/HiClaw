@@ -73,8 +73,8 @@ class Agent:
         # Available tools (functions)
         self.tools: dict[str, callable] = {}
 
-        # HTTP client
-        self.http_client = httpx.AsyncClient(timeout=120.0)
+        # HTTP client - trust_env=False to bypass any system proxy settings
+        self.http_client = httpx.AsyncClient(timeout=120.0, trust_env=False)
 
         # Add system prompt if provided
         if self.system_prompt:
