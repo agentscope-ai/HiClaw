@@ -85,7 +85,7 @@ Pass the matched skills as a comma-separated string to `--skills`, e.g. `file-sy
 The script handles everything: Matrix registration, room creation, Higress consumer, AI/MCP authorization, config generation, MinIO sync, skills push, and container startup.
 
 ```bash
-bash /opt/hiclaw/agent/skills/worker-management/scripts/create-worker.sh --name <WORKER_NAME> [--model <MODEL_ID>] [--mcp-servers s1,s2] [--skills s1,s2] [--find-skills] [--skills-api-url <URL>] [--remote]
+bash /opt/hiclaw/agent/skills/worker-management/scripts/create-worker.sh --name <WORKER_NAME> [--model <MODEL_ID>] [--mcp-servers s1,s2] [--skills s1,s2] [--find-skills] [--skills-api-url <URL>] [--remote] [--runtime openclaw|copaw]
 ```
 
 **Parameters**:
@@ -96,6 +96,16 @@ bash /opt/hiclaw/agent/skills/worker-management/scripts/create-worker.sh --name 
 - `--find-skills`: enable find-skills capability (allows Worker to discover and install skills from skills.sh or private registry)
 - `--skills-api-url`: custom skills registry URL (default: https://skills.sh). Only used when `--find-skills` is set
 - `--remote`: force output install command instead of starting container locally
+- `--runtime`: `openclaw` (default) or `copaw`. Use `copaw` for Python-based Workers that run via `pip install copaw-worker` instead of a container image
+
+**Runtime: `copaw`**
+
+When `--runtime copaw` is specified:
+- Container startup is skipped entirely (copaw workers are pip-installed processes, not containers)
+- `status` is always `"pending_install"` — the admin must run the `install_cmd` on the target machine
+- The install command does **not** include `--console-port` by default (~100MB RAM). To enable the web console, append `--console-port 8088` to the command — note this adds ~500MB RAM overhead. If port 8088 is already in use, change it to another free port.
+- The worker entry in `workers-registry.json` will have `"runtime": "copaw"`
+- Lifecycle management (auto-stop/start) is skipped for copaw workers — they are treated like remote workers
 
 **Deployment behavior** (without `--remote`):
 - If container socket is available: auto-starts Worker container locally
@@ -250,6 +260,7 @@ jq '.idle_timeout_minutes = 60' ~/worker-lifecycle.json > /tmp/lc.json && mv /tm
 | Container is stopped | `lifecycle-worker.sh --action start` | Restarts the existing container, preserving all config and mounts |
 | Container does not exist (`not_found`) | `create-worker.sh` | Rebuilds from image; full registration flow required |
 | Worker needs reset or config update | `create-worker.sh` (removes old container first) | Full rebuild; Matrix account is reused |
+| copaw runtime worker | `copaw-worker run --name <name> ...` (on target machine) | Not container-managed; lifecycle scripts skip these workers |
 
 ## Reset a Worker
 
@@ -276,6 +287,7 @@ Format:
     "<worker-name>": {
       "matrix_user_id": "@<name>:<domain>",
       "room_id": "!xxx:<domain>",
+      "runtime": "openclaw",
       "skills": ["file-sync", "github-operations"],
       "created_at": "2026-01-01T00:00:00Z",
       "skills_updated_at": "2026-01-01T00:00:00Z"
@@ -283,6 +295,8 @@ Format:
   }
 }
 ```
+
+`runtime` is `"openclaw"` (default, container-based) or `"copaw"` (pip-installed Python process). Omitted field defaults to `"openclaw"` for backward compatibility.
 
 `file-sync` is the bootstrap skill (image-managed) and is always included.
 

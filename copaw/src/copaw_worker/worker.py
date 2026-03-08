@@ -1,157 +1,73 @@
 """
-Worker main loop - ties together Matrix, Sync, and Agent.
+Worker main entry point.
 
-Implements message response rules:
-- DM vs Group detection
-- allowlist checking (dm.allowFrom / groupAllowFrom)
-- requireMention for group rooms
-- Message buffering (merge on mention)
-- Per-room context isolation
+Bootstrap flow:
+1. Pull openclaw.json + SOUL.md + AGENTS.md from MinIO
+2. Bridge openclaw.json -> CoPaw config.json + providers.json
+3. Install MatrixChannel into CoPaw's custom_channels dir
+4. Start CoPaw AgentRunner + ChannelManager (Matrix channel)
 """
+from __future__ import annotations
 
 import asyncio
-import json
-import re
-import signal
+import logging
+import shutil
 from pathlib import Path
-from typing import Any, Optional
+from typing import Optional
 
 from rich.console import Console
 from rich.panel import Panel
 
-from copaw_worker.agent import Agent
 from copaw_worker.config import WorkerConfig
-from copaw_worker.matrix import MatrixClient, MessageContext, RoomState, RoomType
 from copaw_worker.sync import FileSync, sync_loop
+from copaw_worker.bridge import bridge_openclaw_to_copaw
 
 console = Console()
-
-
-class MessageRules:
-    """Parsed message response rules from openclaw.json channels.matrix config."""
-
-    def __init__(self, raw_config: dict):
-        self.raw = raw_config
-        matrix = raw_config.get("channels", {}).get("matrix", {})
-
-        # DM settings
-        dm_config = matrix.get("dm", {})
-        self.dm_policy = dm_config.get("policy", "allowlist")
-        self.dm_allow_from: list[str] = dm_config.get("allowFrom", [])
-
-        # Group settings
-        self.group_policy = matrix.get("groupPolicy", "allowlist")
-        self.group_allow_from: list[str] = matrix.get("groupAllowFrom", [])
-
-        # Per-group/room settings
-        self.groups: dict[str, dict] = matrix.get("groups", matrix.get("rooms", {}))
-
-        # Normalize user IDs
-        self.dm_allow_from = [self._normalize_user_id(u) for u in self.dm_allow_from]
-        self.group_allow_from = [self._normalize_user_id(u) for u in self.group_allow_from]
-
-    @staticmethod
-    def _normalize_user_id(user_id: str) -> str:
-        """Normalize Matrix user ID for comparison."""
-        uid = user_id.strip().lower()
-        if not uid.startswith("@"):
-            uid = "@" + uid
-        return uid
-
-    def is_dm_allowed(self, sender_id: str) -> bool:
-        """Check if sender is allowed to send DM."""
-        if self.dm_policy == "open":
-            return True
-        if self.dm_policy == "disabled":
-            return False
-        # allowlist or pairing
-        normalized = self._normalize_user_id(sender_id)
-        return normalized in self.dm_allow_from
-
-    def is_group_allowed(self, sender_id: str, room_id: str) -> bool:
-        """Check if sender is allowed to send in group."""
-        if self.group_policy == "open":
-            return True
-        if self.group_policy == "disabled":
-            return False
-        # allowlist
-        normalized = self._normalize_user_id(sender_id)
-        return normalized in self.group_allow_from
-
-    def get_room_config(self, room_id: str) -> Optional[dict]:
-        """Get per-room configuration."""
-        # Try exact match first
-        if room_id in self.groups:
-            return self.groups[room_id]
-        # Try alias match (would need to resolve aliases)
-        for key, config in self.groups.items():
-            if key.startswith("#") or key.startswith("!"):
-                # Could be alias or room ID
-                pass
-        return None
-
-    def require_mention(self, room_type: RoomType, room_id: str) -> bool:
-        """Check if mention is required for this room."""
-        if room_type == RoomType.DM:
-            return False  # DM never requires mention
-
-        # Check per-room config
-        room_config = self.get_room_config(room_id)
-        if room_config:
-            # autoReply=true means no mention required
-            if room_config.get("autoReply") is True:
-                return False
-            # explicit requireMention setting
-            if "requireMention" in room_config:
-                return room_config["requireMention"]
-
-        # Default: require mention for group rooms
-        return True
+logger = logging.getLogger(__name__)
 
 
 class Worker:
-    """
-    Main worker class that coordinates Matrix, Sync, and Agent.
-    """
-
-    def __init__(self, config: "WorkerConfig"):
-        """
-        Initialize worker.
-
-        Args:
-            config: Worker configuration
-        """
+    def __init__(self, config: WorkerConfig) -> None:
         self.config = config
         self.worker_name = config.worker_name
-
-        # Components
         self.sync: Optional[FileSync] = None
-        self.matrix: Optional[MatrixClient] = None
-        self.agent: Optional[Agent] = None
+        self._copaw_working_dir: Optional[Path] = None
+        self._runner = None
+        self._channel_manager = None
 
-        # Parsed openclaw.json message rules
-        self.message_rules: Optional[MessageRules] = None
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
 
-        # State
-        self.running = False
-
-        # Per-room agents (context isolation)
-        self.room_agents: dict[str, Agent] = {}
-
-    def _is_running_in_container(self) -> bool:
-        """Check if running inside a Docker container."""
+    async def run(self) -> None:
+        if not await self.start():
+            return
         try:
-            return Path("/.dockerenv").exists()
-        except Exception:
-            return False
+            await self._run_copaw()
+        except asyncio.CancelledError:
+            pass
+        finally:
+            await self.stop()
+
+    async def stop(self) -> None:
+        console.print("[yellow]Stopping worker...[/yellow]")
+        if self._channel_manager is not None:
+            try:
+                await self._channel_manager.stop_all()
+            except Exception:
+                pass
+        if self._runner is not None:
+            try:
+                await self._runner.stop()
+            except Exception:
+                pass
+        console.print("[green]Worker stopped.[/green]")
+
+    # ------------------------------------------------------------------
+    # Startup
+    # ------------------------------------------------------------------
 
     async def start(self) -> bool:
-        """
-        Start the worker.
-
-        Returns:
-            True if startup successful
-        """
         console.print(
             Panel.fit(
                 f"[bold green]CoPaw Worker[/bold green]\n"
@@ -160,8 +76,7 @@ class Worker:
             )
         )
 
-        # 1. Initialize file sync
-        console.print("[yellow]Initializing file sync...[/yellow]")
+        # 1. Init file sync
         self.sync = FileSync(
             endpoint=self.config.minio_endpoint,
             access_key=self.config.minio_access_key,
@@ -175,94 +90,38 @@ class Worker:
         # 2. Pull config from MinIO
         console.print("[yellow]Pulling configuration from MinIO...[/yellow]")
         try:
-            openclaw_config = self.sync.get_config()
+            openclaw_cfg = self.sync.get_config()
             soul_content = self.sync.get_soul()
             agents_content = self.sync.get_agents_md()
-        except Exception as e:
-            console.print(f"[red]Failed to pull config: {e}[/red]")
+        except Exception as exc:
+            console.print(f"[red]Failed to pull config: {exc}[/red]")
             return False
 
-        # Parse openclaw.json for message rules
-        self.message_rules = MessageRules(openclaw_config)
+        # 3. Set up CoPaw working directory
+        self._copaw_working_dir = self.config.install_dir / self.worker_name / ".copaw"
+        self._copaw_working_dir.mkdir(parents=True, exist_ok=True)
 
-        # Extract Matrix config from openclaw.json
-        matrix_config = openclaw_config.get("channels", {}).get("matrix", {})
-        matrix_server = matrix_config.get("homeserver", self.config.matrix_server)
-        
-        # Handle port mapping: container internal (8080) -> external (18080)
-        # This is needed when running outside the manager container
-        if matrix_server and ":8080" in matrix_server and not self._is_running_in_container():
-            matrix_server = matrix_server.replace(":8080", ":18080")
-            console.print(f"[dim]Adjusted Matrix server to external port: {matrix_server}[/dim]")
-        
-        matrix_user = self.config.matrix_user or self.worker_name
-        
-        # Prefer access token from config, fallback to password
-        matrix_access_token = matrix_config.get("accessToken", "")
-        matrix_password = self.config.matrix_password if not matrix_access_token else ""
+        # Write SOUL.md / AGENTS.md into CoPaw working dir
+        if soul_content:
+            (self._copaw_working_dir / "SOUL.md").write_text(soul_content)
+        if agents_content:
+            (self._copaw_working_dir / "AGENTS.md").write_text(agents_content)
 
-        # Extract AI Gateway config from openclaw.json
-        ai_config = openclaw_config.get("models", {}).get("providers", {})
-        gateway_token = ""
-        gateway_url = self.config.ai_gateway
-        
-        # Try to get gateway token from providers config
-        for provider_name, provider_config in ai_config.items():
-            if "apiKey" in provider_config:
-                gateway_token = provider_config["apiKey"]
-                if "baseUrl" in provider_config:
-                    gateway_url = provider_config["baseUrl"].replace("/v1", "")
-                    # Handle port mapping: container internal (8080) -> external (18080)
-                    if gateway_url and ":8080" in gateway_url and not self._is_running_in_container():
-                        gateway_url = gateway_url.replace(":8080", ":18080")
-                        console.print(f"[dim]Adjusted AI Gateway to external port: {gateway_url}[/dim]")
-                break
-        
-        # Fallback to env config
-        if not gateway_token:
-            gateway_token = self.config.gateway_token
-        if not gateway_url:
-            gateway_url = self.config.ai_gateway
-
-        # Get model name
-        model = ai_config.get("default", self.config.model) if isinstance(ai_config.get("default"), str) else self.config.model
-
-        # Save for room agents
-        self._gateway_url = gateway_url
-        self._gateway_token = gateway_token
-        self._model = model
-
-        # Build system prompt
-        system_prompt = self._build_system_prompt(soul_content, agents_content)
-
-        # 3. Initialize Matrix client
-        console.print("[yellow]Connecting to Matrix...[/yellow]")
-        self.matrix = MatrixClient(
-            homeserver=matrix_server,
-            username=matrix_user,
-            password=matrix_password,
-            access_token=matrix_access_token,
-            device_name=f"copaw-{self.worker_name}",
-        )
-
-        if not await self.matrix.login():
-            console.print("[red]Failed to login to Matrix[/red]")
+        # 4. Bridge openclaw.json -> CoPaw config.json + providers.json
+        console.print("[yellow]Bridging configuration to CoPaw...[/yellow]")
+        try:
+            bridge_openclaw_to_copaw(openclaw_cfg, self._copaw_working_dir)
+        except Exception as exc:
+            console.print(f"[red]Config bridge failed: {exc}[/red]")
             return False
 
-        # Register message handler
-        self.matrix.on_message(self._handle_matrix_message)
+        # 5. Install MatrixChannel into CoPaw's custom_channels dir
+        self._install_matrix_channel()
 
-        # 4. Initialize default agent (for DMs without room agent)
-        console.print("[yellow]Initializing Agent...[/yellow]")
-        self.agent = Agent(
-            gateway_url=gateway_url,
-            gateway_token=gateway_token,
-            model=model,
-            system_prompt=system_prompt,
-        )
+        # 6. Sync skills from MinIO into CoPaw's active_skills dir
+        self._sync_skills()
 
-        # 5. Start background sync
-        console.print("[yellow]Starting background sync...[/yellow]")
+        # 6. Start background MinIO sync
         asyncio.create_task(
             sync_loop(
                 self.sync,
@@ -271,267 +130,166 @@ class Worker:
             )
         )
 
-        self.running = True
-        console.print("[bold green]Worker started successfully![/bold green]")
-
+        console.print("[bold green]Worker initialized.[/bold green]")
+        if self.config.console_port:
+            console.print(
+                f"[dim]Note: web console enabled on port {self.config.console_port} "
+                f"(~500MB extra RAM). Remove --console-port to save memory.[/dim]"
+            )
+        else:
+            console.print(
+                "[dim]Tip: add --console-port 8088 to enable the web console "
+                "(costs ~500MB extra RAM).[/dim]"
+            )
         return True
 
-    async def stop(self) -> None:
-        """Stop the worker."""
-        console.print("[yellow]Stopping worker...[/yellow]")
-        self.running = False
+    # ------------------------------------------------------------------
+    # CoPaw runner
+    # ------------------------------------------------------------------
 
-        if self.matrix:
-            await self.matrix.logout()
+    async def _run_copaw(self) -> None:
+        """Start CoPaw. If console_port is set, run the full FastAPI app via
+        uvicorn (gives access to the web console). Otherwise start the runner
+        and channel manager directly (lightweight, no HTTP server)."""
+        if self.config.console_port:
+            await self._run_copaw_with_console(self.config.console_port)
+        else:
+            await self._run_copaw_headless()
 
-        if self.agent:
-            await self.agent.close()
+    async def _run_copaw_with_console(self, port: int) -> None:
+        """Run CoPaw's full FastAPI app (runner + channels + web console)."""
+        import uvicorn
+        from copaw.app.channels.registry import clear_builtin_channel_cache
 
-        # Close all room agents
-        for agent in self.room_agents.values():
-            await agent.close()
+        clear_builtin_channel_cache()
 
-        console.print("[green]Worker stopped.[/green]")
+        uv_config = uvicorn.Config(
+            "copaw.app._app:app",
+            host="0.0.0.0",
+            port=port,
+            log_level="info",
+        )
+        server = uvicorn.Server(uv_config)
+        console.print(
+            f"[bold green]CoPaw console available at "
+            f"http://127.0.0.1:{port}/[/bold green]"
+        )
+        try:
+            await server.serve()
+        except asyncio.CancelledError:
+            server.should_exit = True
 
-    async def run(self) -> None:
-        """Run the main event loop."""
-        if not await self.start():
-            return
+    async def _run_copaw_headless(self) -> None:
+        """Start CoPaw's AgentRunner + ChannelManager (no HTTP server)."""
+        from copaw.app.runner.runner import AgentRunner
+        from copaw.config.utils import load_config
+        from copaw.app.channels.manager import ChannelManager
+        from copaw.app.channels.utils import make_process_from_runner
+        from copaw.app.channels.registry import clear_builtin_channel_cache
+
+        # Force registry reload so newly installed matrix_channel.py is picked up
+        clear_builtin_channel_cache()
+
+        self._runner = AgentRunner()
+        await self._runner.start()
+
+        # load_config reads COPAW_WORKING_DIR/config.json (set by bridge.py)
+        config = load_config()
+        self._channel_manager = ChannelManager.from_config(
+            process=make_process_from_runner(self._runner),
+            config=config,
+            on_last_dispatch=None,
+        )
+        await self._channel_manager.start_all()
+
+        console.print("[bold green]CoPaw channels started. Worker is running.[/bold green]")
 
         try:
-            # Run Matrix sync forever
-            await self.matrix.sync_forever()
+            while True:
+                await asyncio.sleep(60)
         except asyncio.CancelledError:
             pass
         finally:
-            await self.stop()
+            await self._channel_manager.stop_all()
+            await self._runner.stop()
+            # Clear refs so stop() doesn't double-call
+            self._channel_manager = None
+            self._runner = None
 
-    def _build_system_prompt(self, soul: str, agents: str) -> str:
-        """Build system prompt from SOUL.md and AGENTS.md."""
-        parts = []
+    # ------------------------------------------------------------------
+    # Skills sync
+    # ------------------------------------------------------------------
 
-        if soul:
-            parts.append(f"# Your Identity\n\n{soul}")
+    def _sync_skills(self) -> None:
+        """Pull skills from MinIO and install into CoPaw's active_skills dir."""
+        active_skills_dir = self._copaw_working_dir / "active_skills"
+        active_skills_dir.mkdir(parents=True, exist_ok=True)
 
-        if agents:
-            parts.append(f"# Guidelines\n\n{agents}")
+        skill_names = self.sync.list_skills()
+        if not skill_names:
+            logger.info("No skills found in MinIO for worker %s", self.worker_name)
+            return
 
-        # Add worker context
-        parts.append(
-            f"\n# Worker Context\n\n"
-            f"You are a worker agent named **{self.worker_name}**.\n"
-            f"You communicate via Matrix chat rooms.\n"
-            f"When someone @mentions you, respond helpfully.\n"
-        )
+        for skill_name in skill_names:
+            skill_md = self.sync.get_skill_md(skill_name)
+            if not skill_md:
+                continue
+            skill_dir = active_skills_dir / skill_name
+            skill_dir.mkdir(parents=True, exist_ok=True)
+            (skill_dir / "SKILL.md").write_text(skill_md)
+            logger.info("Installed skill: %s", skill_name)
 
-        return "\n\n---\n\n".join(parts)
+        console.print(f"[green]Skills installed: {', '.join(skill_names)}[/green]")
 
-    def _get_or_create_room_agent(self, room_id: str, system_prompt: str) -> Agent:
-        """Get or create an agent for a specific room (context isolation)."""
-        if room_id not in self.room_agents:
-            self.room_agents[room_id] = Agent(
-                gateway_url=self._gateway_url,
-                gateway_token=self._gateway_token,
-                model=self._model,
-                system_prompt=system_prompt,
-            )
-        return self.room_agents[room_id]
+    # ------------------------------------------------------------------
+    # MatrixChannel installation
+    # ------------------------------------------------------------------
 
-    async def _handle_matrix_message(
-        self,
-        ctx: MessageContext,
-        room_state: RoomState,
-    ) -> None:
+    def _install_matrix_channel(self) -> None:
+        """Copy matrix_channel.py into COPAW_WORKING_DIR/custom_channels/.
+
+        CoPaw's CUSTOM_CHANNELS_DIR = WORKING_DIR / "custom_channels", and
+        WORKING_DIR is read from COPAW_WORKING_DIR env var at import time.
+        We set COPAW_WORKING_DIR in bridge.py before this runs, so the
+        directory is already correct.
         """
-        Handle incoming Matrix message with response rules.
+        custom_channels_dir = self._copaw_working_dir / "custom_channels"
+        custom_channels_dir.mkdir(parents=True, exist_ok=True)
+        src = Path(__file__).parent / "matrix_channel.py"
+        dst = custom_channels_dir / "matrix_channel.py"
+        shutil.copy2(src, dst)
+        logger.debug("MatrixChannel installed to %s", dst)
 
-        Rules:
-        1. DM: check dm.allowFrom, no mention required
-        2. Group: check groupAllowFrom, requireMention by default
-        3. Buffer non-mention messages, merge on mention
-        4. Per-room context isolation
-        """
-        sender_id = ctx.sender_id
-        room_id = ctx.room_id
-
-        console.print(
-            f"[dim]Message from {sender_id} in {room_id} "
-            f"(type={ctx.room_type.value}, mention={ctx.was_mentioned})[/dim]"
-        )
-
-        # Step 1: Check allowlist
-        if ctx.room_type == RoomType.DM:
-            if not self.message_rules.is_dm_allowed(sender_id):
-                console.print(f"[yellow]DM blocked: {sender_id} not in allowlist[/yellow]")
-                return
-        else:  # Group
-            if not self.message_rules.is_group_allowed(sender_id, room_id):
-                console.print(f"[yellow]Group message blocked: {sender_id} not in allowlist[/yellow]")
-                return
-
-        # Step 2: Check requireMention
-        require_mention = self.message_rules.require_mention(ctx.room_type, room_id)
-
-        if ctx.room_type == RoomType.GROUP and require_mention:
-            if not ctx.was_mentioned:
-                # Buffer message for later merge
-                room_state.pending_messages.append(ctx)
-                console.print(
-                    f"[dim]Buffered message (no mention, pending={len(room_state.pending_messages)})[/dim]"
-                )
-                return
-            else:
-                # Mention received - merge pending messages
-                if room_state.pending_messages:
-                    console.print(
-                        f"[cyan]Mention received, merging {len(room_state.pending_messages)} buffered messages[/cyan]"
-                    )
-                    # Build combined context from pending messages
-                    combined_content = self._merge_pending_messages(
-                        room_state.pending_messages + [ctx]
-                    )
-                    ctx = MessageContext(
-                        room_id=ctx.room_id,
-                        room_type=ctx.room_type,
-                        sender_id=ctx.sender_id,
-                        sender_name=ctx.sender_name,
-                        content=combined_content,
-                        event_id=ctx.event_id,
-                        timestamp=ctx.timestamp,
-                        was_mentioned=True,
-                        has_explicit_mention=ctx.has_explicit_mention,
-                        room_name=ctx.room_name,
-                        room_alias=ctx.room_alias,
-                    )
-                    room_state.pending_messages.clear()
-
-        # Step 3: Process message with agent (per-room context isolation)
-        try:
-            # Get room-specific agent
-            room_agent = self._get_or_create_room_agent(
-                room_id,
-                self.agent.system_prompt or ""
-            )
-
-            # Add context to history
-            room_state.history.append({
-                "role": "user",
-                "sender": ctx.sender_name,
-                "content": ctx.content,
-                "timestamp": ctx.timestamp,
-            })
-
-            # Keep only last 20 messages
-            if len(room_state.history) > 20:
-                room_state.history = room_state.history[-20:]
-
-            # Get agent response
-            response = await room_agent.chat(ctx.content)
-
-            # Send response
-            mentions = [sender_id] if sender_id else None
-            await self.matrix.send_text(room_id, response, mentions=mentions)
-
-            # Add to history
-            room_state.history.append({
-                "role": "assistant",
-                "content": response,
-            })
-
-            console.print(f"[green]Response sent to {room_id}[/green]")
-
-        except Exception as e:
-            console.print(f"[red]Error processing message: {e}[/red]")
-            await self.matrix.send_text(
-                room_id,
-                f"Sorry, I encountered an error: {e}",
-                mentions=[sender_id] if sender_id else None,
-            )
-
-    def _merge_pending_messages(self, messages: list[MessageContext]) -> str:
-        """Merge pending messages into a single context string."""
-        if not messages:
-            return ""
-
-        if len(messages) == 1:
-            return messages[0].content
-
-        parts = []
-        for msg in messages:
-            timestamp_str = ""
-            if msg.timestamp:
-                # Convert to readable time
-                import datetime
-                ts = datetime.datetime.fromtimestamp(msg.timestamp / 1000)
-                timestamp_str = ts.strftime("%H:%M")
-
-            sender = msg.sender_name or msg.sender_id.split(":")[0].lstrip("@")
-            parts.append(f"[{timestamp_str}] {sender}: {msg.content}")
-
-        return "\n".join(parts)
+    # ------------------------------------------------------------------
+    # File sync callback
+    # ------------------------------------------------------------------
 
     async def _on_files_pulled(self, pulled_files: list[str]) -> None:
-        """Handle files pulled from MinIO."""
-        console.print(f"[yellow]Pulled {len(pulled_files)} files from MinIO[/yellow]")
+        """Re-bridge config when openclaw.json / SOUL.md / AGENTS.md change."""
+        # Re-sync skills if any skill file changed
+        if any(f.startswith("skills/") for f in pulled_files):
+            self._sync_skills()
 
-        # Check for config changes
-        for f in pulled_files:
-            if "SOUL.md" in f or "AGENTS.md" in f:
-                console.print("[yellow]Config changed, reloading...[/yellow]")
-                try:
-                    soul = self.sync.get_soul()
-                    agents = self.sync.get_agents_md()
-                    system_prompt = self._build_system_prompt(soul, agents)
-                    self.agent.set_system_prompt(system_prompt)
-                    # Also update all room agents
-                    for room_agent in self.room_agents.values():
-                        room_agent.set_system_prompt(system_prompt)
-                    console.print("[green]Config reloaded.[/green]")
-                except Exception as e:
-                    console.print(f"[red]Failed to reload config: {e}[/red]")
+        needs_rebridge = any(
+            name in f
+            for f in pulled_files
+            for name in ("openclaw.json", "SOUL.md", "AGENTS.md")
+        )
+        if not needs_rebridge:
+            return
 
-            if "openclaw.json" in f:
-                console.print("[yellow]openclaw.json changed, reloading message rules...[/yellow]")
-                try:
-                    openclaw_config = self.sync.get_config()
-                    self.message_rules = MessageRules(openclaw_config)
-                    console.print("[green]Message rules reloaded.[/green]")
-                except Exception as e:
-                    console.print(f"[red]Failed to reload openclaw.json: {e}[/red]")
+        console.print("[yellow]Config changed, re-bridging...[/yellow]")
+        try:
+            openclaw_cfg = self.sync.get_config()
+            soul = self.sync.get_soul()
+            agents = self.sync.get_agents_md()
 
+            if soul:
+                (self._copaw_working_dir / "SOUL.md").write_text(soul)
+            if agents:
+                (self._copaw_working_dir / "AGENTS.md").write_text(agents)
 
-async def main() -> None:
-    """Main entry point."""
-    import os
-    from copaw_worker.config import load_config
-
-    # Bypass proxy for local hiclaw.io domains so matrix-nio (aiohttp) and
-    # other HTTP clients don't route through any configured http_proxy
-    existing_no_proxy = os.environ.get("no_proxy", os.environ.get("NO_PROXY", ""))
-    hiclaw_domains = "hiclaw.io,localhost,127.0.0.1"
-    if existing_no_proxy:
-        os.environ["no_proxy"] = f"{existing_no_proxy},{hiclaw_domains}"
-        os.environ["NO_PROXY"] = f"{existing_no_proxy},{hiclaw_domains}"
-    else:
-        os.environ["no_proxy"] = hiclaw_domains
-        os.environ["NO_PROXY"] = hiclaw_domains
-
-    config = load_config()
-    worker = Worker(config)
-
-    # Set up signal handlers
-    loop = asyncio.get_event_loop()
-
-    def handle_signal():
-        console.print("\n[yellow]Received shutdown signal...[/yellow]")
-        asyncio.create_task(worker.stop())
-
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        loop.add_signal_handler(sig, handle_signal)
-
-    # Run worker
-    await worker.run()
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
+            bridge_openclaw_to_copaw(openclaw_cfg, self._copaw_working_dir)
+            console.print("[green]Config re-bridged.[/green]")
+        except Exception as exc:
+            console.print(f"[red]Re-bridge failed: {exc}[/red]")

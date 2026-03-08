@@ -28,7 +28,11 @@ PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 # ============================================================
 
 # Load env file if present (variables already set in env take precedence)
+# Search order: HICLAW_ENV_FILE > project root > HOME directory
 ENV_FILE="${HICLAW_ENV_FILE:-${PROJECT_ROOT}/hiclaw-manager.env}"
+if [ ! -f "${ENV_FILE}" ] && [ -f "${HOME}/hiclaw-manager.env" ]; then
+    ENV_FILE="${HOME}/hiclaw-manager.env"
+fi
 if [ -f "${ENV_FILE}" ]; then
     # Source the env file but don't override existing env vars
     while IFS='=' read -r key value; do
@@ -123,7 +127,10 @@ get_joined_rooms() {
 get_room_members() {
     local token="$1"
     local room_id="$2"
-    matrix_api GET "/_matrix/client/v3/rooms/${room_id}/members" "" "${token}" | jq -r '.chunk[].state_key' 2>/dev/null
+    # URL-encode the room_id (! -> %21, : -> %3A)
+    local encoded_room_id
+    encoded_room_id=$(printf '%s' "${room_id}" | sed 's/!/%21/g; s/:/%3A/g')
+    matrix_api GET "/_matrix/client/v3/rooms/${encoded_room_id}/members" "" "${token}" | jq -r '.chunk[].state_key' 2>/dev/null
 }
 
 # Find DM room with manager
@@ -167,12 +174,14 @@ send_message() {
     local body="$3"
     local txn_id
     txn_id="replay_$(date +%s%N)"
+    local encoded_room_id
+    encoded_room_id=$(printf '%s' "${room_id}" | sed 's/!/%21/g; s/:/%3A/g')
 
     # Escape the body for JSON
     local json_body
     json_body=$(printf '%s' "${body}" | jq -Rs .)
 
-    matrix_api PUT "/_matrix/client/v3/rooms/${room_id}/send/m.room.message/${txn_id}" \
+    matrix_api PUT "/_matrix/client/v3/rooms/${encoded_room_id}/send/m.room.message/${txn_id}" \
         "{\"msgtype\":\"m.text\",\"body\":${json_body}}" "${token}" > /dev/null
 }
 
@@ -181,7 +190,9 @@ read_messages() {
     local token="$1"
     local room_id="$2"
     local limit="${3:-10}"
-    matrix_api GET "/_matrix/client/v3/rooms/${room_id}/messages?dir=b&limit=${limit}" "" "${token}"
+    local encoded_room_id
+    encoded_room_id=$(printf '%s' "${room_id}" | sed 's/!/%21/g; s/:/%3A/g')
+    matrix_api GET "/_matrix/client/v3/rooms/${encoded_room_id}/messages?dir=b&limit=${limit}" "" "${token}"
 }
 
 # Wait for a reply from the manager
@@ -333,6 +344,8 @@ if [ "${GATEWAY_READY}" != "true" ]; then
 fi
 
 # Phase 2: Wait for Manager to join the DM room (confirms Matrix channel is active)
+# Reset elapsed counter for phase 2 (phase 1 may have consumed the budget)
+READY_ELAPSED=0
 while [ "${READY_ELAPSED}" -lt "${READY_TIMEOUT}" ]; do
     MEMBERS=$(get_room_members "${ACCESS_TOKEN}" "${ROOM_ID}" 2>/dev/null) || true
     if echo "${MEMBERS}" | grep -q "${MANAGER_FULL_ID}"; then
