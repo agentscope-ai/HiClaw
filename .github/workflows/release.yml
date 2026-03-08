@@ -134,3 +134,45 @@ jobs:
           title: "chore: archive changelog for ${{ steps.version.outputs.version }}"
           body: "Automated PR to archive `changelog/current.md` → `changelog/${{ steps.version.outputs.version }}.md` and reset for next release."
           labels: changelog
+
+  publish-pypi:
+    runs-on: ubuntu-latest
+    needs: release
+    permissions:
+      id-token: write  # required for trusted publishing (OIDC)
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            VERSION="${{ github.ref_name }}"
+          fi
+          # Strip leading 'v' for PEP 440
+          PY_VERSION="${VERSION#v}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "py_version=${PY_VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Set package version
+        run: |
+          sed -i "s/^version = .*/version = \"${{ steps.version.outputs.py_version }}\"/" copaw/pyproject.toml
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Build package
+        run: |
+          pip install build
+          python -m build copaw/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: copaw/dist/

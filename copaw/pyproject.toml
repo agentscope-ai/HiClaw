@@ -7,11 +7,16 @@ name = "copaw-worker"
 version = "0.1.0"
 description = "Lightweight HiClaw Worker runtime based on CoPaw"
 readme = "README.md"
+license = { text = "Apache-2.0" }
 requires-python = ">=3.10"
 dependencies = [
     "copaw>=0.0.5",
     "matrix-nio>=0.24.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/higress-group/hiclaw"
+Repository = "https://github.com/higress-group/hiclaw"
 
 [project.scripts]
 copaw-worker = "copaw_worker.cli:main"
