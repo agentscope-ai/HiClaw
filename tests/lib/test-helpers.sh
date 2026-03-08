@@ -245,12 +245,17 @@ detect_manager_config() {
         return 0
     fi
     
-    # Read config from container environment
+    # Read all config and credentials from container environment in one call
+    local container_env
+    container_env=$(docker exec "${container}" printenv 2>/dev/null) || true
+
+    _cenv() { echo "${container_env}" | grep "^${1}=" | cut -d= -f2-; }
+
     local detected_domain detected_gateway_port detected_console_port
-    detected_domain=$(docker exec "${container}" printenv HICLAW_MATRIX_DOMAIN 2>/dev/null) || true
-    detected_gateway_port=$(docker exec "${container}" printenv HICLAW_PORT_GATEWAY 2>/dev/null) || true
-    detected_console_port=$(docker exec "${container}" printenv HICLAW_PORT_CONSOLE 2>/dev/null) || true
-    
+    detected_domain=$(      _cenv HICLAW_MATRIX_DOMAIN)
+    detected_gateway_port=$(  _cenv HICLAW_PORT_GATEWAY)
+    detected_console_port=$(  _cenv HICLAW_PORT_CONSOLE)
+
     # Override defaults with detected values (only if not explicitly set by user)
     if [ -n "${detected_gateway_port}" ] && [ -z "${TEST_GATEWAY_PORT_SET:-}" ]; then
         export TEST_GATEWAY_PORT="${detected_gateway_port}"
@@ -258,20 +263,28 @@ detect_manager_config() {
         # Note: TEST_MINIO_URL is NOT updated here. MinIO runs on the fixed internal port 9000
         # inside the container; mc commands use exec_in_manager so no host port is needed.
     fi
-    
+
     if [ -n "${detected_console_port}" ] && [ -z "${TEST_CONSOLE_PORT_SET:-}" ]; then
         export TEST_CONSOLE_PORT="${detected_console_port}"
         export TEST_CONSOLE_URL="http://${TEST_MANAGER_HOST}:${TEST_CONSOLE_PORT}"
     fi
-    
+
     if [ -n "${detected_domain}" ] && [ -z "${TEST_MATRIX_DOMAIN}" ]; then
         export TEST_MATRIX_DOMAIN="${detected_domain}"
     fi
-    
+
     # If TEST_MATRIX_DOMAIN is still not set, derive from gateway port
     if [ -z "${TEST_MATRIX_DOMAIN}" ]; then
         export TEST_MATRIX_DOMAIN="matrix-local.hiclaw.io:${TEST_GATEWAY_PORT}"
     fi
+
+    # Load credentials from container env (only if not already set externally)
+    [ -z "${TEST_ADMIN_USER}" ]          && export TEST_ADMIN_USER="$(           _cenv HICLAW_ADMIN_USER)"
+    [ -z "${TEST_ADMIN_PASSWORD}" ]      && export TEST_ADMIN_PASSWORD="$(        _cenv HICLAW_ADMIN_PASSWORD)"
+    [ -z "${TEST_MINIO_USER}" ]          && export TEST_MINIO_USER="$(            _cenv HICLAW_MINIO_USER)"
+    [ -z "${TEST_MINIO_PASSWORD}" ]      && export TEST_MINIO_PASSWORD="$(        _cenv HICLAW_MINIO_PASSWORD)"
+    [ -z "${TEST_REGISTRATION_TOKEN}" ]  && export TEST_REGISTRATION_TOKEN="$(    _cenv HICLAW_REGISTRATION_TOKEN)"
+    [ -z "${TEST_MANAGER_GATEWAY_KEY}" ] && export TEST_MANAGER_GATEWAY_KEY="$(   _cenv HICLAW_MANAGER_GATEWAY_KEY)"
 }
 
 # ============================================================
