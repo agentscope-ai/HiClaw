@@ -32,7 +32,8 @@ export TEST_MINIO_URL="http://127.0.0.1:9000"
 # Derived external URLs — rebuilt by detect_manager_config() after port detection
 export TEST_CONSOLE_URL="http://${TEST_MANAGER_HOST}:${TEST_CONSOLE_PORT}"
 
-# Matrix domain — auto-detected from container env in detect_manager_config()
+# Matrix domain (used for user IDs like @manager:domain)
+# If not set, will be auto-detected from Manager container
 export TEST_MATRIX_DOMAIN="${TEST_MATRIX_DOMAIN:-}"
 
 # Test state
