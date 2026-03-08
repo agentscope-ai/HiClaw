@@ -132,6 +132,14 @@ log "  Project room created: ${ROOM_ID}"
 jq --arg rid "${ROOM_ID}" '.project_room_id = $rid' "${PROJECT_DIR}/meta.json" > /tmp/proj-meta-updated.json
 mv /tmp/proj-meta-updated.json "${PROJECT_DIR}/meta.json"
 
+# Ensure admin is in the room (belt-and-suspenders: createRoom already invites, but re-invite is safe)
+ADMIN_MATRIX_ID="@${ADMIN_USER}:${MATRIX_DOMAIN}"
+curl -sf -X POST "http://127.0.0.1:6167/_matrix/client/v3/rooms/${ROOM_ID}/invite" \
+    -H "Authorization: Bearer ${MANAGER_MATRIX_TOKEN}" \
+    -H 'Content-Type: application/json' \
+    -d "{\"user_id\": \"${ADMIN_MATRIX_ID}\"}" > /dev/null 2>&1 || true
+log "  Admin ${ADMIN_MATRIX_ID} invited to project room"
+
 # ============================================================
 # Step 3: Add Workers to Manager's groupAllowFrom
 # ============================================================
