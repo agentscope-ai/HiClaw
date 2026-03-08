@@ -8,6 +8,7 @@ source "${SCRIPT_DIR}/lib/test-helpers.sh"
 source "${SCRIPT_DIR}/lib/matrix-client.sh"
 source "${SCRIPT_DIR}/lib/higress-client.sh"
 source "${SCRIPT_DIR}/lib/minio-client.sh"
+source "${SCRIPT_DIR}/lib/agent-metrics.sh"
 
 test_setup "02-create-worker"
 
@@ -93,6 +94,12 @@ log_section "Start Worker Container"
 # Extract install parameters from Manager's reply and start Worker
 # In real test, we would parse the install command from REPLY
 log_info "Worker Alice verification complete (container start requires install params from Manager)"
+
+log_section "Collect Metrics"
+
+METRICS=$(collect_test_metrics "02-create-worker")
+save_metrics_file "$METRICS" "02-create-worker"
+print_metrics_report "$METRICS"
 
 test_teardown "02-create-worker"
 test_summary

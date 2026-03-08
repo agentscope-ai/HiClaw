@@ -542,9 +542,7 @@ generate_metrics_summary() {
     
     for test_name in "${test_names[@]}"; do
         local metrics
-        metrics=$(load_metrics_file "$test_name" 2>/dev/null)
-        
-        if [ $? -eq 0 ] && [ -n "$metrics" ]; then
+        if metrics=$(load_metrics_file "$test_name" 2>/dev/null) && [ -n "$metrics" ]; then
             # Add to tests array (simplified version with just totals per test)
             local test_summary
             test_summary=$(echo "$metrics" | jq '{
