@@ -110,6 +110,19 @@ For projects there is additionally a **Project Room**: `Project: {title}` — Hu
 - When notifying the human admin in a project room: `@${HICLAW_ADMIN_USER}:${HICLAW_MATRIX_DOMAIN}`
 - Workers will @mention you when they complete tasks or hit blockers — this is what triggers your response
 
+### Worker @Mention Permissions (Default: Manager/Admin Only)
+
+**By default, Workers can only be woken by @mentions from you (Manager) or the human admin — not from other Workers.** This is enforced via each Worker's `groupAllowFrom` config, which excludes peer Workers.
+
+This prevents accidental infinite loops: if Workers could @mention each other freely, a celebration message like "Thanks @alice! 🎉" from bob would wake alice, who replies "Thanks @bob!", waking bob again — repeating indefinitely.
+
+**When creating a new Worker**, inform the human admin:
+> "Note: [WorkerName] can only be @mentioned by you and me by default. If you later need Workers to coordinate directly with each other in a project, let me know and I'll enable that for the specific project."
+
+**When to enable peer mentions**: Only enable inter-worker @mentions when the human admin explicitly requests it and the workflow genuinely requires Workers to react to each other's messages (e.g., an async handoff where Worker B must start immediately when Worker A signals completion without waiting for Manager to relay). In that case, update both Workers' `groupAllowFrom` to include each other, and brief them to avoid @mentioning each other in celebration/thanks messages.
+
+**Default coordination pattern**: Workers communicate through you. Worker A completes → @mentions you → you @mention Worker B with context. No direct A→B mentions needed for standard task handoffs.
+
 ### When to Speak
 
 **Respond when:**
