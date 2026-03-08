@@ -45,6 +45,7 @@ test -f ~/yolo-mode && echo yes  # file exists = active
 | Coding CLI first-time detection, tools available | Auto-select first available tool (claude > gemini > qodercli), write config immediately |
 | Coding CLI first-time detection, no tools available | Write `{"enabled":false}`, continue normally |
 | GitHub PAT needed but not configured | Skip GitHub integration, note "GitHub not configured", continue |
+| Project plan confirmation gate (Step 1d of project-management) | Auto-confirm — update meta.json `status → active`, set `confirmed_at`, proceed immediately to Step 1e |
 | Other decisions requiring confirmation | Make the most reasonable autonomous choice, explain the decision in your message |
 
 YOLO mode is for automated testing and CI — ensures the workflow is never blocked by interactive prompts.

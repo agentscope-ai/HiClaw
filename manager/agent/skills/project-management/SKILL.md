@@ -90,6 +90,8 @@ If you'd like changes, let me know. Otherwise, reply "确认" to begin.
 
 Wait for human confirmation before proceeding.
 
+> **YOLO mode**: Skip the confirmation gate. Auto-confirm immediately — update meta.json `status → active`, set `confirmed_at` to now, and proceed directly to Step 1e.
+
 ### 1e. After confirmation
 
 1. Update meta.json: `"status": "planning" → "active"`, set `confirmed_at`
@@ -453,6 +455,8 @@ For each newly unblocked task, go to Step 2 to assign it.
 Assign the next task to the same Worker immediately (Step 2). The Worker is available and context-fresh.
 
 ### 3g. If all tasks are complete
+
+**This step is mandatory — always execute it, including in YOLO mode.**
 
 1. Update meta.json: `status → completed`
 2. Update plan.md Status to "completed"
