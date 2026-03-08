@@ -31,14 +31,7 @@ DM_ROOM=$(matrix_find_dm_room "${ADMIN_TOKEN}" "${MANAGER_USER}" 2>/dev/null || 
 
 if [ -z "${DM_ROOM}" ]; then
     log_info "Creating DM room with Manager..."
-    DM_ROOM=$(curl -sf -X POST "${TEST_MATRIX_DIRECT_URL}/_matrix/client/v3/createRoom" \
-        -H "Authorization: Bearer ${ADMIN_TOKEN}" \
-        -H 'Content-Type: application/json' \
-        -d '{
-            "invite": ["'"${MANAGER_USER}"'"],
-            "is_direct": true,
-            "preset": "trusted_private_chat"
-        }' | jq -r '.room_id')
+    DM_ROOM=$(matrix_create_dm_room "${ADMIN_TOKEN}" "${MANAGER_USER}")
     sleep 5
 fi
 
