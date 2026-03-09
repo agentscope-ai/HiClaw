@@ -1,0 +1,254 @@
+# HiClaw 1.0.4：轻量级 CoPaw Worker 来了，内存占用降低 80%，还能直接操作你的本地环境
+
+> 发布日期：2026 年 3 月 10 日
+
+---
+
+## 当我们在谈论 "轻量级 Worker" 时，我们在谈论什么？
+
+如果你用过 HiClaw，可能已经熟悉了 Manager + Worker 的多 Agent 协作模式。一个 Manager 作为"AI 管家"，管理着多个专业化的 Worker —— 前端开发、后端开发、数据分析……
+
+但在实际使用中，我们也收到了不少反馈：
+
+**"每个 Worker 都要跑一个完整容器，内存压力有点大"** —— 默认的 OpenClaw Worker 容器大概占用 500MB 内存，如果你需要同时跑 4-5 个 Worker，一台 8GB 内存的服务器就有点吃紧了。
+
+**"Worker 跑在容器里，没法访问我的本地环境"** —— 有些任务需要操作浏览器、访问本地文件系统、运行桌面应用……这些在容器隔离环境下都做不到。
+
+在 1.0.4 版本，我们给出了答案：**CoPaw Worker**。
+
+---
+
+## CoPaw 是什么？
+
+[CoPaw](https://github.com/copaw-ai/copaw) 是一个基于 Python 的轻量级 AI Agent 运行时，核心特点是：
+
+- **轻量级**：基于 Python，不需要 Node.js 全家桶，内存占用只有 OpenClaw Worker 的 1/5
+- **控制台友好**：内置 Web 控制台，可以实时查看工具调用、Thinking 输出、执行过程
+- **执行速度快**：Python 原生启动，冷启动时间短
+- **扩展方便**：基于 OpenAI SDK 的工具定义，上手成本低
+
+HiClaw 1.0.4 通过实现 Matrix Channel 和配置桥接层，将 CoPaw 接入了 HiClaw 的多 Agent 协作体系。代码量不大，但解锁了很多新的可能性。
+
+---
+
+## 两种部署模式，解决两个痛点
+
+### 模式一：Docker 容器模式 —— 更省内存的 Worker
+
+如果你只是需要更多的 Worker 并行干活，不需要访问本地环境，**Docker 模式的 CoPaw Worker 是最佳选择**：
+
+| 对比项 | OpenClaw Worker | CoPaw Worker (Docker) |
+|--------|-----------------|----------------------|
+| 基础镜像 | Node.js 全家桶 | Python 3.11-slim |
+| 内存占用 | ~500MB | ~100MB |
+| 启动速度 | 较慢 | 较快 |
+| 安全性 | 容器隔离 | 容器隔离 |
+
+**内存占用降低了 80%**，安全性完全一致。
+
+这意味着同样的硬件配置下，你可以跑更多的 Worker。以前 8GB 内存只能跑 8-10 个 OpenClaw Worker，现在可以跑 40+ 个 CoPaw Worker。
+
+**按需启用控制台，再省 500MB**
+
+CoPaw Worker 默认启动时会加载 Web 控制台，方便调试。但在生产环境中，你可能不需要每个 Worker 都开控制台。
+
+我们提供了 `enable-worker-console.sh` 脚本，可以按需开关控制台。关闭控制台后，**每个 Worker 再节省约 500MB 内存**。
+
+```bash
+# 关闭 Worker 控制台（节省内存）
+/opt/hiclaw/scripts/enable-worker-console.sh alice disable
+
+# 需要调试时再开启
+/opt/hiclaw/scripts/enable-worker-console.sh alice enable
+```
+
+### 模式二：本地 Host 模式 —— 直接操作你的电脑
+
+有些任务天然需要访问本地环境：
+
+- **操作浏览器**：自动化测试、网页截图、数据采集
+- **访问本地文件**：读取桌面上的文件、操作本地 IDE
+- **运行桌面应用**：自动化 Figma、Sketch、本地数据库客户端
+
+这些任务在容器里做不到，因为容器是隔离环境。
+
+**CoPaw Worker 的本地模式，就是为这类任务设计的**：
+
+```bash
+# Manager 会告诉你这个命令，在你的本机执行即可
+pip install copaw-worker && copaw-worker --config ... --console-port 8088
+```
+
+Worker 直接运行在你的本机上，拥有完整的本地访问权限。同时，它仍然通过 Matrix 与 Manager 和其他 Worker 通信，完美融入 HiClaw 的多 Agent 协作体系。
+
+**架构示意：**
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    HiClaw Manager                            │
+│                    (容器环境)                                │
+│                                                             │
+│    Worker A (Docker)    Worker B (Docker)                   │
+│    前端开发              后端开发                            │
+└─────────────────────────────────────────────────────────────┘
+              ↑ Matrix 通信
+              │
+┌─────────────┴───────────────────────────────────────────────┐
+│                    你的本地电脑                              │
+│                                                             │
+│    Worker C (CoPaw 本地模式)                                │
+│    浏览器操作 / 本地文件访问                                │
+└─────────────────────────────────────────────────────────────┘
+```
+
+本地模式默认启用控制台（`--console-port 8088`），你可以打开 `http://localhost:8088` 实时查看 Worker 的执行过程。
+
+---
+
+## CoPaw 控制台：可视化的调试体验
+
+不管是 Docker 模式还是本地模式，CoPaw Worker 都可以启用 Web 控制台。
+
+控制台可以实时查看：
+
+- **Thinking 输出**：Worker 在思考什么
+- **工具调用**：调用了哪些工具，参数是什么
+- **执行结果**：工具返回了什么
+- **错误信息**：哪里出错了
+
+对于调试和优化 Agent 行为非常有帮助。特别是当你发现 Worker 没按预期工作时，打开控制台看一眼 Thinking 输出，往往能快速定位问题。
+
+---
+
+## 围绕社区痛点的优化
+
+除了 CoPaw Worker 这一重大特性，1.0.4 还针对社区反馈的一系列痛点做了优化。
+
+### 模型切换更可控
+
+之前有用户反馈：切换模型时，Manager 可能会"自作主张"修改其他配置，导致意外的行为。
+
+1.0.4 将 Worker 模型切换拆分为独立的 `worker-model-switch` skill，职责更单一，行为更可预测。同时修复了模型 `input` 字段的硬编码问题，现在会根据模型是否支持视觉能力动态设置。
+
+### Worker 不再"交头接耳"
+
+在项目群聊中，Worker 之间有时会进行不必要的对话，浪费 token。
+
+1.0.4 优化了 Worker 的唤醒逻辑，确保只有被 @mention 时才会触发 LLM 调用。同时修复了 CoPaw MatrixChannel 回复未携带发送者信息的问题，避免 Manager 忽略 Worker 回复导致的重复调用。
+
+### AI 身份认知
+
+在 SOUL.md 中增加了 AI 身份声明，确保 Agent 明确知道自己是 AI，而不是人类。这可以避免一些奇怪的身份混淆问题，比如 Agent 假装自己是真人用户。
+
+```markdown
+## My Role
+
+You are an AI assistant powered by HiClaw. You help users complete tasks
+through natural language interaction, but you are not a human.
+```
+
+### Token 消耗基线 CI
+
+1.0.4 新增了 Token 消耗基线的 CI 流程，可以定量分析每个版本的 Token 优化效果。
+
+在关键流程中（创建 Worker、分派任务、多 Worker 协作等），CI 会记录 Token 消耗情况，并与上一个版本对比。这样可以：
+
+- 量化优化效果
+- 发现意外的 Token 回归
+- 为后续优化提供数据支撑
+
+---
+
+## 如何使用 CoPaw Worker？
+
+### 安装时选择运行时
+
+新的安装脚本会在安装时询问你默认使用哪种 Worker 运行时：
+
+```
+Select default worker runtime:
+  1) openclaw (~500MB, full-featured)
+  2) copaw (~100MB, lightweight)
+
+Enter your choice [1-2]:
+```
+
+选择后，`create-worker.sh` 会默认使用你选择的运行时。
+
+### 创建 CoPaw Worker
+
+告诉 Manager 即可：
+
+```
+你: 帮我创建一个 Worker，名字叫 browser-bot，用 CoPaw 运行时
+
+Manager: 好的，正在创建...
+         Worker browser-bot 已创建，运行时：copaw
+         内存占用：~100MB
+```
+
+或者如果你想要本地模式：
+
+```
+你: 帮我创建一个本地 Worker，名字叫 local-bot，可以操作我的浏览器
+
+Manager: 好的，这是安装命令，请在你的本机执行：
+         
+         pip install copaw-worker
+         copaw-worker --config ... --console-port 8088
+         
+         执行后 Worker 会自动连接到 HiClaw。
+```
+
+---
+
+## 致谢
+
+感谢 [CoPaw 团队](https://github.com/copaw-ai) 的工作！CoPaw 是一个设计精良的轻量级 Agent 运行时，控制台体验尤其出色。HiClaw 通过实现 Matrix Channel 和配置桥接层接入 CoPaw，整个过程很顺畅，代码量也不大。
+
+如果你对 CoPaw 本身感兴趣，可以查看 [CoPaw GitHub 仓库](https://github.com/copaw-ai/copaw)。
+
+---
+
+## 升级指南
+
+如果你已经在使用 HiClaw 1.0.3 或更早版本，升级到 1.0.4 很简单：
+
+```bash
+cd ~/hiclass-install/higress  # 或你的安装目录
+docker compose pull
+docker compose up -d
+```
+
+升级后，Manager 会自动支持 CoPaw Worker。现有的 OpenClaw Worker 不受影响，可以继续正常运行。
+
+---
+
+## 写在最后
+
+HiClaw 1.0.4 的核心目标是让 Worker 更轻、更灵活：
+
+- **更轻**：CoPaw Worker 内存占用降低 80%
+- **更灵活**：本地模式解锁了浏览器操作等新场景
+- **更可控**：模型切换、Token 消耗都有了更好的控制
+
+如果你有以下的场景，特别推荐尝试 CoPaw Worker：
+
+- 需要同时运行大量 Worker，但内存有限
+- 需要 Worker 操作浏览器、访问本地文件
+- 想要更轻量级的 Worker 调试体验
+
+**现在就开始：**
+
+```bash
+bash <(curl -sSL https://higress.ai/hiclaw/install.sh)
+```
+
+---
+
+*HiClaw 是开源项目，基于 Apache 2.0 协议。如果你觉得有用，欢迎 Star ⭐ 和贡献代码！*
+
+**相关链接：**
+- [GitHub 仓库](https://github.com/alibaba/hiclaw)
+- [Changelog v1.0.4](https://github.com/alibaba/hiclaw/blob/main/changelog/v1.0.4.md)
+- [CoPaw GitHub](https://github.com/copaw-ai/copaw)
