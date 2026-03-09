@@ -7,6 +7,7 @@ logs/
 
 # IDE / Kiro workspace files
 .kiro/
+.idea/
 
 # OS files
 .DS_Store

@@ -78,7 +78,7 @@ jobs:
           HICLAW_MOUNT_SOCKET=1 \
           HICLAW_INSTALL_MANAGER_IMAGE=${{ env.MANAGER_IMAGE }} \
           HICLAW_INSTALL_WORKER_IMAGE=${{ env.WORKER_IMAGE }} \
-          ./install/hiclaw-install.sh manager
+          bash ./install/hiclaw-install.sh manager
 
       - name: Wait for Manager to be ready
         run: |
@@ -266,7 +266,7 @@ jobs:
           HICLAW_MOUNT_SOCKET=1 \
           HICLAW_INSTALL_MANAGER_IMAGE=hiclaw/manager-agent:${VERSION} \
           HICLAW_INSTALL_WORKER_IMAGE=hiclaw/worker-agent:${VERSION} \
-          ./install/hiclaw-install.sh manager
+          bash ./install/hiclaw-install.sh manager
 
       - name: Wait for Manager to be ready
         run: |

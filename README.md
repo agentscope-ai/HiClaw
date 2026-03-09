@@ -25,7 +25,7 @@ All communication happens in Matrix Rooms. You see everything, and can intervene
 
 ## News
 
-- **2026-03-04**: We officially open source HiClaw，an Agent Teams System. Read more on our [blog](https://github.com/higress-group/hiclaw/blob/main/blog/hiclaw-announcement.md).
+- **2026-03-04**: We officially open source HiClaw, an Agent Teams System. Read more on our [blog](https://github.com/higress-group/hiclaw/blob/main/blog/hiclaw-announcement.md).
 
 
 ## Why HiClaw

@@ -11,6 +11,7 @@
 - [如何切换 Worker 的模型](#如何切换-worker-的模型)
 - [HiClaw 支持发送和接收文件吗](#hiclaw-支持发送和接收文件吗)
 - [为什么 Manager/Worker 一直显示"输入中"](#为什么-managerworker-一直显示输入中)
+- [Manager/Worker 不回复消息怎么办](#managerworker-不回复消息怎么办)
 - [在房间里和 Manager 聊天没有响应或返回错误状态码](#在房间里和-manager-聊天没有响应或返回错误状态码)
 - [HTTP 401: invalid access token or token expired](#http-401-invalid-access-token-or-token-expired)
 
@@ -182,6 +183,41 @@ docker exec -it <worker-name> ls .openclaw/agents/main/sessions/
 ```
 
 该目录下的 `.jsonl` 文件由 OpenClaw 实时写入，记录了完整的 Agent 执行过程，包括 LLM 调用、工具使用、推理步骤等。
+
+---
+
+## Manager/Worker 不回复消息怎么办
+
+如果给 Manager 或 Worker 发送消息后没有回复，可以按以下步骤排查：
+
+### 1. 检查聊天环境
+
+**私聊 vs 群聊**：
+- 如果是**私聊**（只有你和一个 Agent），每条消息都会触发 Agent 响应
+- 如果是**2 人以上的房间**（群聊），必须 **@ Agent** 才能让它响应，没有 @ 的消息会被忽略
+
+### 2. 检查 Session 状态
+
+可能是 OpenClaw session 卡住了。进入 Manager 或 Worker 容器，使用 OpenClaw TUI 查看：
+
+```bash
+# Manager
+docker exec -it hiclaw-manager openclaw tui
+
+# Worker（将 <worker-name> 替换为实际容器名）
+docker exec -it <worker-name> openclaw tui
+```
+
+进入 TUI 后：
+1. 输入 `/sessions` 查看所有 session
+2. 切换到对应聊天记录的 session
+3. 尝试对话，观察是否有报错
+
+如果 session 确实卡住了，可以尝试用 `/reset` 重置 session，看是否恢复正常。
+
+### 3. 检查模型配置
+
+可能是模型的上下文窗口大小配置不正确，导致窗口耗尽前没有及时压缩。请参考 [如何切换 Manager 的模型](#如何切换-manager-的模型) 和 [如何切换 Worker 的模型](#如何切换-worker-的模型) 进行正确配置。
 
 ---
 
