@@ -354,29 +354,11 @@ if [ -n "${TARGET_MCP_LIST}" ]; then
     echo "${MCPORTER_JSON}" | jq . > "/root/hiclaw-fs/agents/${WORKER_NAME}/mcporter-servers.json"
 fi
 
-# ============================================================
-# Step 6.5: Add existing Workers to new Worker's groupAllowFrom
-# ============================================================
-log "Step 6.5: Adding existing Workers to new Worker's groupAllowFrom..."
-NEW_WORKER_CONFIG="/root/hiclaw-fs/agents/${WORKER_NAME}/openclaw.json"
+# Step 6.5 removed: Workers do NOT get other workers in their groupAllowFrom by default.
+# By default, a Worker only accepts @mentions from Manager and the human admin.
+# This prevents infinite mutual-mention loops between Workers.
+# Inter-worker direct @mentions must be explicitly enabled per-project when needed.
 REGISTRY_FILE_EARLY="${HOME}/workers-registry.json"
-if [ -f "${REGISTRY_FILE_EARLY}" ]; then
-    EXISTING_WORKERS_EARLY=$(jq -r '.workers | keys[]' "${REGISTRY_FILE_EARLY}" 2>/dev/null | grep -v "^${WORKER_NAME}$" || true)
-    for ew in ${EXISTING_WORKERS_EARLY}; do
-        EW_ID="@${ew}:${MATRIX_DOMAIN}"
-        ALREADY=$(jq -r --arg w "${EW_ID}" \
-            '.channels.matrix.groupAllowFrom // [] | map(select(. == $w)) | length' \
-            "${NEW_WORKER_CONFIG}" 2>/dev/null || echo "0")
-        if [ "${ALREADY}" = "0" ]; then
-            jq --arg w "${EW_ID}" '.channels.matrix.groupAllowFrom += [$w]' \
-                "${NEW_WORKER_CONFIG}" > /tmp/new-worker-oclaw-tmp.json
-            mv /tmp/new-worker-oclaw-tmp.json "${NEW_WORKER_CONFIG}"
-            log "  Added @${ew} to new worker's groupAllowFrom"
-        fi
-    done
-else
-    log "  No existing registry, skipping"
-fi
 
 # ============================================================
 # Step 7: Update Manager groupAllowFrom
@@ -439,57 +421,9 @@ else
     log "  WARNING: worker-agent directory not found at ${WORKER_AGENT_SRC}"
 fi
 
-# ============================================================
-# Step 8b: Add new Worker to all existing Workers' groupAllowFrom
-# ============================================================
-log "Step 8b: Updating existing Workers' groupAllowFrom..."
-if [ -f "${REGISTRY_FILE_EARLY}" ]; then
-    EXISTING_WORKERS_EARLY=$(jq -r '.workers | keys[]' "${REGISTRY_FILE_EARLY}" 2>/dev/null | grep -v "^${WORKER_NAME}$" || true)
-    for ew in ${EXISTING_WORKERS_EARLY}; do
-        EW_MINIO="hiclaw/hiclaw-storage/agents/${ew}/openclaw.json"
-        EW_TMP="/tmp/openclaw-${ew}-update.json"
-        EW_TMP_OUT="/tmp/openclaw-${ew}-updated.json"
-
-        if ! mc cp "${EW_MINIO}" "${EW_TMP}" 2>/dev/null; then
-            log "  WARNING: Could not pull openclaw.json for ${ew} from MinIO, skipping"
-            continue
-        fi
-
-        ALREADY=$(jq -r --arg w "${WORKER_MATRIX_ID}" \
-            '.channels.matrix.groupAllowFrom // [] | map(select(. == $w)) | length' \
-            "${EW_TMP}" 2>/dev/null || echo "0")
-
-        if [ "${ALREADY}" = "0" ]; then
-            jq --arg w "${WORKER_MATRIX_ID}" '.channels.matrix.groupAllowFrom += [$w]' \
-                "${EW_TMP}" > "${EW_TMP_OUT}"
-            if mc cp "${EW_TMP_OUT}" "${EW_MINIO}" 2>/dev/null; then
-                log "  Updated ${ew}: added ${WORKER_MATRIX_ID} to groupAllowFrom"
-                # Notify worker to run hiclaw-sync
-                EW_ROOM_ID=$(jq -r --arg w "${ew}" '.workers[$w].room_id // empty' \
-                    "${REGISTRY_FILE_EARLY}" 2>/dev/null || true)
-                if [ -n "${EW_ROOM_ID}" ]; then
-                    TXN_ID=$(openssl rand -hex 8)
-                    curl -sf -X PUT \
-                        "http://127.0.0.1:6167/_matrix/client/v3/rooms/${EW_ROOM_ID}/send/m.room.message/${TXN_ID}" \
-                        -H "Authorization: Bearer ${MANAGER_MATRIX_TOKEN}" \
-                        -H 'Content-Type: application/json' \
-                        -d "{\"msgtype\":\"m.text\",\"body\":\"@${ew}:${MATRIX_DOMAIN} Your config has been updated (new worker @${WORKER_NAME}:${MATRIX_DOMAIN} added to groupAllowFrom). Please use your file-sync skill to sync the latest config.\",\"m.mentions\":{\"user_ids\":[\"@${ew}:${MATRIX_DOMAIN}\"]}}" \
-                        > /dev/null 2>&1 \
-                        && log "  Notified @${ew} to use file-sync skill" \
-                        || log "  WARNING: Failed to notify @${ew}"
-                fi
-            else
-                log "  WARNING: Failed to push updated config for ${ew} to MinIO"
-            fi
-            rm -f "${EW_TMP}" "${EW_TMP_OUT}"
-        else
-            log "  ${ew}: already has ${WORKER_MATRIX_ID} in groupAllowFrom"
-            rm -f "${EW_TMP}"
-        fi
-    done
-else
-    log "  No existing registry, skipping"
-fi
+# Step 8b removed: Do NOT add the new Worker to existing Workers' groupAllowFrom.
+# Workers only accept @mentions from Manager and admin by default.
+# This prevents inter-worker mention loops. Enable peer mentions explicitly if needed.
 
 # ============================================================
 # Step 8.5: Update workers-registry.json and push skills

@@ -14,6 +14,7 @@ logs/
 # Design docs
 design/
 poc-verification/
+tests/output/
 
 # Python (copaw)
 __pycache__/
@@ -24,4 +25,5 @@ dist/
 *.egg-info/
 .pytest_cache/
 .mypy_cache/
-.ruff_cache/manager/copaw-agent/
+.ruff_cache/
+manager/copaw-agent/

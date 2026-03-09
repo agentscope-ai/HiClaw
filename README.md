@@ -1,4 +1,3 @@
-<img width="2224" height="676" alt="image" src="https://github.com/user-attachments/assets/5b0162b5-d2b5-4720-bd19-31c510dc5efc" /><a name="readme-top"></a>
 <h1 align="center">
     <img src="https://img.alicdn.com/imgextra/i3/O1CN01JLLvVU21EWyG90gbi_!!6000000006953-2-tps-2539-575.png" alt="HiClaw"  width="290" height="72.5">
   <br>

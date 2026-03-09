@@ -6,6 +6,7 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/lib/test-helpers.sh"
 source "${SCRIPT_DIR}/lib/matrix-client.sh"
+source "${SCRIPT_DIR}/lib/agent-metrics.sh"
 
 test_setup "13-git-delegation"
 
@@ -42,6 +43,7 @@ wait_for_manager_agent_ready 300 "${DM_ROOM}" "${ADMIN_TOKEN}" || {
 }
 
 # Ensure Alice worker exists
+METRICS_BASELINE=$(snapshot_baseline "alice")
 matrix_send_message "${ADMIN_TOKEN}" "${DM_ROOM}" \
     "Create a worker named alice if it doesn't exist yet. Give her the github-operations and git-delegation skills."
 
@@ -98,6 +100,12 @@ if echo "${MSG_BODIES}" | grep -qi "processing\|marker\|coordinate"; then
 else
     log_info "Task coordination may have happened silently (expected)"
 fi
+
+log_section "Collect Metrics"
+wait_for_session_stable 5 60
+METRICS=$(collect_delta_metrics "13-git-delegation" "$METRICS_BASELINE" "alice")
+save_metrics_file "$METRICS" "13-git-delegation"
+print_metrics_report "$METRICS"
 
 test_teardown "13-git-delegation"
 test_summary

@@ -6,6 +6,7 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/lib/test-helpers.sh"
 source "${SCRIPT_DIR}/lib/matrix-client.sh"
+source "${SCRIPT_DIR}/lib/agent-metrics.sh"
 
 test_setup "05-heartbeat"
 
@@ -33,7 +34,9 @@ wait_for_manager_agent_ready 300 "${DM_ROOM}" "${ADMIN_TOKEN}" || {
     exit 1
 }
 
-# Assign a long-running task
+# Alice container should be running from test-02/03/04; wait to ensure it's up before snapshot
+wait_for_worker_container "alice" 60
+METRICS_BASELINE=$(snapshot_baseline "alice")
 matrix_send_message "${ADMIN_TOKEN}" "${DM_ROOM}" \
     "Ask Alice to research and write a comprehensive technical document about WebAssembly. This should be detailed and thorough."
 
@@ -63,6 +66,14 @@ if [ -n "${INQUIRY}" ]; then
 else
     log_info "Heartbeat inquiry not detected (may need longer wait or different room)"
 fi
+
+log_section "Collect Metrics"
+wait_for_worker_session_stable "alice" 5 120
+wait_for_session_stable 5 60
+PREV_METRICS=$(cat "${TEST_OUTPUT_DIR}/metrics-05-heartbeat.json" 2>/dev/null || true)
+METRICS=$(collect_delta_metrics "05-heartbeat" "$METRICS_BASELINE" "alice")
+print_metrics_report "$METRICS" "$PREV_METRICS"
+save_metrics_file "$METRICS" "05-heartbeat"
 
 test_teardown "05-heartbeat"
 test_summary

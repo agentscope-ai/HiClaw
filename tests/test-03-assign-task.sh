@@ -7,6 +7,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/lib/test-helpers.sh"
 source "${SCRIPT_DIR}/lib/matrix-client.sh"
 source "${SCRIPT_DIR}/lib/minio-client.sh"
+source "${SCRIPT_DIR}/lib/agent-metrics.sh"
 
 test_setup "03-assign-task"
 
@@ -35,7 +36,9 @@ wait_for_manager_agent_ready 300 "${DM_ROOM}" "${ADMIN_TOKEN}" || {
     exit 1
 }
 
-# Send task assignment
+# Alice container should be running from test-02; wait to ensure it's up before snapshot
+wait_for_worker_container "alice" 60
+METRICS_BASELINE=$(snapshot_baseline "alice")
 matrix_send_message "${ADMIN_TOKEN}" "${DM_ROOM}" \
     "Please assign Alice a task: Create a simple README.md for a hello-world project. The README should include project name, description, and usage instructions."
 
@@ -65,6 +68,14 @@ sleep 60
 # Check for result file
 TASKS_LIST=$(minio_list_dir "shared/tasks/" 2>/dev/null)
 log_info "Tasks directory contents: ${TASKS_LIST}"
+
+log_section "Collect Metrics"
+wait_for_worker_session_stable "alice" 5 120
+wait_for_session_stable 5 60
+PREV_METRICS=$(cat "${TEST_OUTPUT_DIR}/metrics-03-assign-task.json" 2>/dev/null || true)
+METRICS=$(collect_delta_metrics "03-assign-task" "$METRICS_BASELINE" "alice")
+print_metrics_report "$METRICS" "$PREV_METRICS"
+save_metrics_file "$METRICS" "03-assign-task"
 
 test_teardown "03-assign-task"
 test_summary

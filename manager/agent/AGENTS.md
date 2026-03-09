@@ -45,6 +45,7 @@ test -f ~/yolo-mode && echo yes  # file exists = active
 | Coding CLI first-time detection, tools available | Auto-select first available tool (claude > gemini > qodercli), write config immediately |
 | Coding CLI first-time detection, no tools available | Write `{"enabled":false}`, continue normally |
 | GitHub PAT needed but not configured | Skip GitHub integration, note "GitHub not configured", continue |
+| Project plan confirmation gate (Step 1d of project-management) | Auto-confirm — update meta.json `status → active`, set `confirmed_at`, proceed immediately to Step 1e |
 | Other decisions requiring confirmation | Make the most reasonable autonomous choice, explain the decision in your message |
 
 YOLO mode is for automated testing and CI — ensures the workflow is never blocked by interactive prompts.
@@ -106,9 +107,42 @@ For projects there is additionally a **Project Room**: `Project: {title}` — Hu
 
 **You MUST use @mentions** to communicate in any group room. OpenClaw only processes messages that @mention you:
 
-- When assigning a task to a Worker: `@worker:${HICLAW_MATRIX_DOMAIN}` — include this in your message
+- When assigning a task to a Worker: `@alice:${HICLAW_MATRIX_DOMAIN}` — include this in your message
 - When notifying the human admin in a project room: `@${HICLAW_ADMIN_USER}:${HICLAW_MATRIX_DOMAIN}`
 - Workers will @mention you when they complete tasks or hit blockers — this is what triggers your response
+
+**CRITICAL — @mention format**: The mention MUST use the full Matrix user ID including domain, e.g. `@alice:matrix-local.hiclaw.io:18080`. Writing just "alice" or "@alice" without the domain is NOT a mention and will NOT wake the Worker. Always substitute the actual value of `${HICLAW_MATRIX_DOMAIN}` (check with `echo $HICLAW_MATRIX_DOMAIN` if unsure). A message without a valid @mention is silently ignored by the Worker.
+
+**CRITICAL — Multi-worker projects**: In any project involving multiple Workers, you MUST first create a shared Project Room using `create-project.sh` (see project-management skill), then send all task assignments in that Project Room. The Project Room MUST include the human admin and all participating Workers. Never assign tasks in an individual Worker's private room — other Workers are not members there and will never see the message.
+
+### Worker @Mention Permissions (Default: Manager/Admin Only)
+
+**By default, Workers can only be woken by @mentions from you (Manager) or the human admin — not from other Workers.** This is enforced via each Worker's `groupAllowFrom` config, which excludes peer Workers.
+
+This prevents accidental infinite loops: if Workers could @mention each other freely, a celebration message like "Thanks @alice! 🎉" from bob would wake alice, who replies "Thanks @bob!", waking bob again — repeating indefinitely.
+
+**When creating a new Worker**, inform the human admin:
+> "Note: [WorkerName] can only be @mentioned by you and me by default. If you later need Workers to coordinate directly with each other in a project, let me know and I'll enable that for the specific project."
+
+**When to enable peer mentions**: Only enable inter-worker @mentions when the human admin explicitly requests it and the workflow genuinely requires Workers to react to each other's messages (e.g., an async handoff where Worker B must start immediately when Worker A signals completion without waiting for Manager to relay). Use the dedicated script — do not edit configs manually:
+
+```bash
+bash /opt/hiclaw/agent/skills/worker-management/scripts/enable-peer-mentions.sh \
+    --workers alice,bob,charlie
+```
+
+After enabling, brief the Workers: peer mentions are for blocking handoffs only — **never @mention each other in celebration or acknowledgment messages**, as that triggers an infinite loop.
+
+**Default coordination pattern**: Workers communicate through you. Worker A completes → @mentions you → you @mention Worker B with context. No direct A→B mentions needed for standard task handoffs.
+
+**CRITICAL — Act immediately on phase handoffs**: When a Worker reports phase/task completion in a multi-phase workflow, you MUST **immediately send the next phase assignment** to the next Worker in the same response — do NOT just describe what comes next or say "now bob will handle phase 2". Actually send the @mention message to the next Worker. Describing a plan without sending the @mention means the next Worker never receives the task and the workflow stalls permanently.
+
+Example of WRONG behavior (stalls workflow):
+> "Phase 1 done! Phase 2 will now be handled by bob, who will review alice's work."
+
+Example of CORRECT behavior (continues workflow):
+> "Phase 1 done! Moving to Phase 2.
+> @bob:matrix-local.hiclaw.io:18080 Phase 1 is complete. Please start Phase 2: [task details here]"
 
 ### When to Speak
 

@@ -8,6 +8,7 @@ source "${SCRIPT_DIR}/lib/test-helpers.sh"
 source "${SCRIPT_DIR}/lib/matrix-client.sh"
 source "${SCRIPT_DIR}/lib/higress-client.sh"
 source "${SCRIPT_DIR}/lib/minio-client.sh"
+source "${SCRIPT_DIR}/lib/agent-metrics.sh"
 
 test_setup "02-create-worker"
 
@@ -45,9 +46,12 @@ wait_for_manager_agent_ready 300 "${DM_ROOM}" "${ADMIN_TOKEN}" || {
     exit 1
 }
 
+# Snapshot metrics baseline before sending message (to calculate delta later)
+METRICS_BASELINE=$(snapshot_baseline)
+
 # Send create worker request
 matrix_send_message "${ADMIN_TOKEN}" "${DM_ROOM}" \
-    "Please create a new Worker named alice for frontend development tasks. She should have access to GitHub MCP."
+    "Please create a new Worker for frontend development tasks. The worker's name (username) must be exactly 'alice'. She should have access to GitHub MCP."
 
 log_info "Waiting for Manager to create Worker Alice..."
 
@@ -93,6 +97,15 @@ log_section "Start Worker Container"
 # Extract install parameters from Manager's reply and start Worker
 # In real test, we would parse the install command from REPLY
 log_info "Worker Alice verification complete (container start requires install params from Manager)"
+
+log_section "Collect Metrics"
+
+# Wait for Manager to finish all post-reply processing before collecting metrics
+wait_for_session_stable 5 60
+PREV_METRICS=$(cat "${TEST_OUTPUT_DIR}/metrics-02-create-worker.json" 2>/dev/null || true)
+METRICS=$(collect_delta_metrics "02-create-worker" "$METRICS_BASELINE")
+print_metrics_report "$METRICS" "$PREV_METRICS"
+save_metrics_file "$METRICS" "02-create-worker"
 
 test_teardown "02-create-worker"
 test_summary

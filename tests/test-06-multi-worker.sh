@@ -7,6 +7,7 @@ source "${SCRIPT_DIR}/lib/test-helpers.sh"
 source "${SCRIPT_DIR}/lib/matrix-client.sh"
 source "${SCRIPT_DIR}/lib/higress-client.sh"
 source "${SCRIPT_DIR}/lib/minio-client.sh"
+source "${SCRIPT_DIR}/lib/agent-metrics.sh"
 
 test_setup "06-multi-worker"
 
@@ -34,8 +35,11 @@ wait_for_manager_agent_ready 300 "${DM_ROOM}" "${ADMIN_TOKEN}" || {
     exit 1
 }
 
+# Alice is running from previous tests; bob will be created below (offset=0 is correct for new workers)
+wait_for_worker_container "alice" 60
+METRICS_BASELINE=$(snapshot_baseline "alice" "bob")
 matrix_send_message "${ADMIN_TOKEN}" "${DM_ROOM}" \
-    "Create a new Worker named bob for backend development. He should have access to GitHub MCP."
+    "Create a new Worker for backend development. The worker's name (username) must be exactly 'bob'. He should have access to GitHub MCP."
 
 log_info "Waiting for Manager to create Worker Bob..."
 REPLY=$(matrix_wait_for_reply "${ADMIN_TOKEN}" "${DM_ROOM}" "@manager" 180)
@@ -69,6 +73,15 @@ log_section "Verify Shared Coordination"
 sleep 60
 TASKS=$(minio_list_dir "shared/tasks/" 2>/dev/null || echo "")
 log_info "Shared tasks directory: ${TASKS}"
+
+log_section "Collect Metrics"
+wait_for_worker_session_stable "alice" 5 120
+wait_for_worker_session_stable "bob" 5 120
+wait_for_session_stable 5 60
+PREV_METRICS=$(cat "${TEST_OUTPUT_DIR}/metrics-06-multi-worker.json" 2>/dev/null || true)
+METRICS=$(collect_delta_metrics "06-multi-worker" "$METRICS_BASELINE" "alice" "bob")
+print_metrics_report "$METRICS" "$PREV_METRICS"
+save_metrics_file "$METRICS" "06-multi-worker"
 
 test_teardown "06-multi-worker"
 test_summary

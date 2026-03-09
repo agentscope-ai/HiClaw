@@ -51,10 +51,18 @@ This skill allows you to delegate **any git operation** to the Manager. Since Wo
 
 ## Message Format
 
-Send a `git-request:` message to the Manager:
+Send a `git-request:` message to the Manager.
+
+**First, get your actual Matrix domain:**
+```bash
+echo $HICLAW_MATRIX_DOMAIN
+# e.g.: matrix-local.hiclaw.io:18080
+```
+
+Then send (substitute the real domain — do NOT write `$HICLAW_MATRIX_DOMAIN` literally):
 
 ```
-@manager:DOMAIN task-{task-id} git-request:
+@manager:matrix-local.hiclaw.io:18080 task-{task-id} git-request:
 workspace: ~/hiclaw-fs/shared/tasks/{task-id}/workspace/{repo-name}
 operations:
   - git clone https://github.com/org/repo.git

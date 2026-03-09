@@ -147,155 +147,278 @@ get_latest_session() {
     docker exec "$container" sh -c "ls -t '${session_dir}'/*.jsonl 2>/dev/null | head -1" 2>/dev/null
 }
 
+# Wait for the latest session file to stop growing (agent has finished processing)
+# Wait for a worker container's session to stabilize (no new bytes written for stable_seconds).
+# Usage: wait_for_worker_session_stable <worker_name> [stable_seconds] [max_wait_seconds]
+wait_for_worker_session_stable() {
+    local worker="$1"
+    local stable_seconds="${2:-5}"
+    local max_wait="${3:-120}"
+    local container="hiclaw-worker-${worker}"
+    local session_dir="/root/hiclaw-fs/agents/${worker}/.openclaw/agents/main/sessions"
+
+    if ! docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^${container}$"; then
+        log_info "Worker '${worker}' container not running, skipping session wait" >&2
+        return 0
+    fi
+
+    log_info "Waiting for Worker '${worker}' session to stabilize (up to ${max_wait}s)..." >&2
+
+    local elapsed=0
+    local last_size=-1
+    local stable_for=0
+
+    while [ "$elapsed" -lt "$max_wait" ]; do
+        local session
+        session=$(get_latest_session "$container" "$session_dir")
+        local size=0
+        if [ -n "$session" ]; then
+            size=$(docker exec "$container" sh -c "wc -c < '${session}' 2>/dev/null || echo 0")
+        fi
+
+        if [ "$size" -eq "$last_size" ] && [ "$size" -gt 0 ]; then
+            stable_for=$((stable_for + 2))
+            if [ "$stable_for" -ge "$stable_seconds" ]; then
+                log_info "Worker '${worker}' session stable after ${elapsed}s (size=${size})" >&2
+                return 0
+            fi
+        else
+            stable_for=0
+            last_size="$size"
+        fi
+
+        sleep 2
+        elapsed=$((elapsed + 2))
+    done
+
+    log_info "Worker '${worker}' session did not stabilize within ${max_wait}s, proceeding anyway" >&2
+    return 0
+}
+
+# Usage: wait_for_session_stable [stable_seconds] [max_wait_seconds]
+# Polls the manager's latest session file until its size is unchanged for stable_seconds.
+wait_for_session_stable() {
+    local stable_seconds="${1:-5}"
+    local max_wait="${2:-60}"
+    local manager_container="${TEST_MANAGER_CONTAINER:-hiclaw-manager}"
+    local manager_session_dir="/root/manager-workspace/.openclaw/agents/main/sessions"
+
+    log_info "Waiting for Manager session to stabilize (up to ${max_wait}s)..." >&2
+
+    local elapsed=0
+    local last_size=-1
+    local stable_for=0
+
+    while [ "$elapsed" -lt "$max_wait" ]; do
+        local session
+        session=$(get_latest_session "$manager_container" "$manager_session_dir")
+        local size=0
+        if [ -n "$session" ]; then
+            size=$(docker exec "$manager_container" sh -c "wc -c < '${session}' 2>/dev/null || echo 0")
+        fi
+
+        if [ "$size" -eq "$last_size" ]; then
+            stable_for=$((stable_for + 2))
+            if [ "$stable_for" -ge "$stable_seconds" ]; then
+                log_info "Session stable after ${elapsed}s (size=${size})" >&2
+                return 0
+            fi
+        else
+            stable_for=0
+            last_size="$size"
+        fi
+
+        sleep 2
+        elapsed=$((elapsed + 2))
+    done
+
+    log_info "Session did not stabilize within ${max_wait}s, proceeding anyway" >&2
+    return 0
+}
+
 # ============================================================
 # Baseline & Delta Metrics (for per-test metrics)
 # ============================================================
 
-# Snapshot current session metrics as baseline for later delta calculation
+# Snapshot all session file byte offsets as baseline for accurate delta calculation.
 # Usage: METRICS_BASELINE=$(snapshot_baseline "worker1" "worker2" ...)
-# Returns: JSON with current cumulative metrics for all agents
+# Returns: JSON with per-agent map of {file -> byte_offset} for all existing session files.
 snapshot_baseline() {
     local workers=("$@")
-    
+
     local manager_container="${TEST_MANAGER_CONTAINER:-hiclaw-manager}"
     local manager_session_dir="/root/manager-workspace/.openclaw/agents/main/sessions"
-    
-    local snapshot_result='{"agents": {}}'
-    
-    # Collect Manager baseline
-    local manager_session
-    manager_session=$(get_latest_session "$manager_container" "$manager_session_dir")
-    
-    if [ -n "$manager_session" ]; then
-        local manager_metrics
-        manager_metrics=$(docker exec "$manager_container" cat "$manager_session" 2>/dev/null | parse_session_metrics_inline)
-        if [ -n "$manager_metrics" ]; then
-            snapshot_result=$(echo "$snapshot_result" | jq --argjson m "$manager_metrics" '.agents.manager = $m')
-        fi
+
+    local snapshot_result='{"offsets": {}}'
+
+    # Snapshot all Manager session files
+    local manager_files
+    manager_files=$(docker exec "$manager_container" \
+        sh -c "ls '${manager_session_dir}'/*.jsonl 2>/dev/null" 2>/dev/null)
+    if [ -n "$manager_files" ]; then
+        local manager_offsets='{}'
+        while IFS= read -r f; do
+            local sz
+            sz=$(docker exec "$manager_container" sh -c "wc -c < '$f' 2>/dev/null || echo 0")
+            manager_offsets=$(echo "$manager_offsets" | jq --arg f "$f" --argjson s "$sz" '.[$f] = $s')
+        done <<< "$manager_files"
+        snapshot_result=$(echo "$snapshot_result" | jq --argjson o "$manager_offsets" '.offsets.manager = $o')
     fi
-    
-    # Collect Worker baselines
+
+    # Snapshot all Worker session files
     for worker in "${workers[@]}"; do
         local worker_container="hiclaw-worker-${worker}"
         local worker_session_dir="/root/hiclaw-fs/agents/${worker}/.openclaw/agents/main/sessions"
-        
+
         if ! docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^${worker_container}$"; then
             continue
         fi
-        
-        local worker_session
-        worker_session=$(get_latest_session "$worker_container" "$worker_session_dir")
-        
-        if [ -n "$worker_session" ]; then
-            local worker_metrics
-            worker_metrics=$(docker exec "$worker_container" cat "$worker_session" 2>/dev/null | parse_session_metrics_inline)
-            if [ -n "$worker_metrics" ]; then
-                snapshot_result=$(echo "$snapshot_result" | jq --arg w "$worker" --argjson m "$worker_metrics" '.agents[$w] = $m')
-            fi
+
+        local worker_files
+        worker_files=$(docker exec "$worker_container" \
+            sh -c "ls '${worker_session_dir}'/*.jsonl 2>/dev/null" 2>/dev/null)
+        if [ -n "$worker_files" ]; then
+            local worker_offsets='{}'
+            while IFS= read -r f; do
+                local sz
+                sz=$(docker exec "$worker_container" sh -c "wc -c < '$f' 2>/dev/null || echo 0")
+                worker_offsets=$(echo "$worker_offsets" | jq --arg f "$f" --argjson s "$sz" '.[$f] = $s')
+            done <<< "$worker_files"
+            snapshot_result=$(echo "$snapshot_result" | jq --arg w "$worker" --argjson o "$worker_offsets" '.offsets[$w] = $o')
         fi
     done
-    
+
     echo "$snapshot_result"
 }
 
-# Collect delta metrics (difference from baseline) - metrics consumed during THIS test only
+# Parse metrics from new bytes only (bytes after offset) in a container's session file.
+# Usage: _parse_agent_delta <container> <file> <offset>
+_parse_agent_delta() {
+    local container="$1"
+    local file="$2"
+    local offset="$3"
+    # tail -c +N reads from byte N (1-indexed), so +$(offset+1) skips the first $offset bytes
+    docker exec "$container" sh -c "tail -c +$((offset + 1)) '$file' 2>/dev/null" \
+        | parse_session_metrics_inline
+}
+
+# Accumulate metrics from all session files of a container, reading only new bytes.
+# Usage: _collect_agent_delta <container> <session_dir> <offsets_json>
+# offsets_json: {"file": byte_offset, ...} from snapshot_baseline
+_collect_agent_delta() {
+    local container="$1"
+    local session_dir="$2"
+    local offsets_json="$3"
+
+    local current_files
+    current_files=$(docker exec "$container" \
+        sh -c "ls '${session_dir}'/*.jsonl 2>/dev/null" 2>/dev/null)
+    [ -z "$current_files" ] && return 0
+
+    local llm_calls=0 input=0 output=0 cache_read=0 cache_write=0
+    local first_ts="" last_ts=""
+
+    while IFS= read -r f; do
+        local offset=0
+        if [ -n "$offsets_json" ]; then
+            local stored
+            stored=$(echo "$offsets_json" | jq -r --arg f "$f" '.[$f] // 0')
+            offset="${stored:-0}"
+        fi
+
+        local metrics
+        metrics=$(_parse_agent_delta "$container" "$f" "$offset")
+        [ -z "$metrics" ] && continue
+
+        local calls
+        calls=$(echo "$metrics" | jq -r '.llm_calls // 0')
+        [ "$calls" -eq 0 ] 2>/dev/null && continue
+
+        llm_calls=$((llm_calls + calls))
+        input=$((input + $(echo "$metrics" | jq -r '.tokens.input // 0')))
+        output=$((output + $(echo "$metrics" | jq -r '.tokens.output // 0')))
+        cache_read=$((cache_read + $(echo "$metrics" | jq -r '.tokens.cache_read // 0')))
+        cache_write=$((cache_write + $(echo "$metrics" | jq -r '.tokens.cache_write // 0')))
+
+        local ts_start ts_end
+        ts_start=$(echo "$metrics" | jq -r '.timing.start // empty')
+        ts_end=$(echo "$metrics" | jq -r '.timing.end // empty')
+        if [ -n "$ts_start" ]; then
+            if [ -z "$first_ts" ] || [[ "$ts_start" < "$first_ts" ]]; then first_ts="$ts_start"; fi
+        fi
+        if [ -n "$ts_end" ]; then
+            if [ -z "$last_ts" ] || [[ "$ts_end" > "$last_ts" ]]; then last_ts="$ts_end"; fi
+        fi
+    done <<< "$current_files"
+
+    local total=$((input + output))
+    local duration
+    duration=$(calculate_duration_seconds "$first_ts" "$last_ts")
+    cat <<EOF
+{
+  "llm_calls": ${llm_calls},
+  "tokens": {
+    "input": ${input},
+    "output": ${output},
+    "cache_read": ${cache_read},
+    "cache_write": ${cache_write},
+    "total": ${total}
+  },
+  "timing": {
+    "start": "${first_ts}",
+    "end": "${last_ts}",
+    "duration_seconds": ${duration}
+  }
+}
+EOF
+}
+
+# Collect delta metrics (new bytes only across all session files since baseline snapshot).
 # Usage: METRICS=$(collect_delta_metrics <test_name> "$METRICS_BASELINE" "worker1" "worker2" ...)
 collect_delta_metrics() {
     local test_name="$1"
     local baseline="$2"
     shift 2
     local workers=("$@")
-    
+
     local manager_container="${TEST_MANAGER_CONTAINER:-hiclaw-manager}"
     local manager_session_dir="/root/manager-workspace/.openclaw/agents/main/sessions"
-    
+
     # Initialize result structure
     local delta_result='{"test_name": "'"${test_name}"'", "timestamp": "'"$(date -Iseconds)"'", "agents": {}, "totals": {"llm_calls": 0, "tokens": {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0, "total": 0}, "timing": {"duration_seconds": 0}}}'
-    
-    # Collect Manager delta
+
+    # Collect Manager delta using byte-offset approach across all session files
     log_info "Collecting Manager delta metrics..." >&2
-    local manager_session
-    manager_session=$(get_latest_session "$manager_container" "$manager_session_dir")
-    
-    if [ -n "$manager_session" ]; then
-        local current_manager
-        current_manager=$(docker exec "$manager_container" cat "$manager_session" 2>/dev/null | parse_session_metrics_inline)
-        if [ -n "$current_manager" ]; then
-            local baseline_manager=$(echo "$baseline" | jq -r '.agents.manager // empty')
-            local manager_delta
-            
-            if [ -n "$baseline_manager" ] && [ "$baseline_manager" != "null" ] && [ "$baseline_manager" != "" ]; then
-                # Calculate delta
-                manager_delta=$(echo "$current_manager" | jq --argjson base "$baseline_manager" '
-                    {
-                        llm_calls: (.llm_calls - $base.llm_calls),
-                        tokens: {
-                            input: (.tokens.input - $base.tokens.input),
-                            output: (.tokens.output - $base.tokens.output),
-                            cache_read: (.tokens.cache_read - $base.tokens.cache_read),
-                            cache_write: (.tokens.cache_write - $base.tokens.cache_write),
-                            total: ((.tokens.input - $base.tokens.input) + (.tokens.output - $base.tokens.output))
-                        },
-                        timing: .timing
-                    }
-                ')
-            else
-                # No baseline, use current as-is
-                manager_delta="$current_manager"
-            fi
-            
-            delta_result=$(echo "$delta_result" | jq --argjson m "$manager_delta" '.agents.manager = $m')
-            log_info "Manager delta: $(echo "$manager_delta" | jq -r '.llm_calls') LLM calls, $(echo "$manager_delta" | jq -r '.tokens.total') tokens" >&2
-        fi
+    local manager_offsets
+    manager_offsets=$(echo "$baseline" | jq -r '.offsets.manager // empty')
+    local manager_delta
+    manager_delta=$(_collect_agent_delta "$manager_container" "$manager_session_dir" "$manager_offsets")
+    if [ -n "$manager_delta" ]; then
+        delta_result=$(echo "$delta_result" | jq --argjson m "$manager_delta" '.agents.manager = $m')
+        log_info "Manager delta: $(echo "$manager_delta" | jq -r '.llm_calls') LLM calls, $(echo "$manager_delta" | jq -r '.tokens.total') tokens" >&2
     fi
-    
+
     # Collect Worker deltas
     for worker in "${workers[@]}"; do
         local worker_container="hiclaw-worker-${worker}"
         local worker_session_dir="/root/hiclaw-fs/agents/${worker}/.openclaw/agents/main/sessions"
-        
+
         log_info "Collecting Worker '${worker}' delta metrics..." >&2
-        
+
         if ! docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^${worker_container}$"; then
             log_info "Worker '${worker}' container not running, skipping" >&2
             continue
         fi
-        
-        local worker_session
-        worker_session=$(get_latest_session "$worker_container" "$worker_session_dir")
-        
-        if [ -n "$worker_session" ]; then
-            local current_worker
-            current_worker=$(docker exec "$worker_container" cat "$worker_session" 2>/dev/null | parse_session_metrics_inline)
-            if [ -n "$current_worker" ]; then
-                local baseline_worker=$(echo "$baseline" | jq -r --arg w "$worker" '.agents[$w] // empty')
-                local worker_delta
-                
-                if [ -n "$baseline_worker" ] && [ "$baseline_worker" != "null" ] && [ "$baseline_worker" != "" ]; then
-                    # Calculate delta
-                    worker_delta=$(echo "$current_worker" | jq --argjson base "$baseline_worker" '
-                        {
-                            llm_calls: (.llm_calls - $base.llm_calls),
-                            tokens: {
-                                input: (.tokens.input - $base.tokens.input),
-                                output: (.tokens.output - $base.tokens.output),
-                                cache_read: (.tokens.cache_read - $base.tokens.cache_read),
-                                cache_write: (.tokens.cache_write - $base.tokens.cache_write),
-                                total: ((.tokens.input - $base.tokens.input) + (.tokens.output - $base.tokens.output))
-                            },
-                            timing: .timing
-                        }
-                    ')
-                else
-                    # No baseline, use current as-is
-                    worker_delta="$current_worker"
-                fi
-                
-                delta_result=$(echo "$delta_result" | jq --arg w "$worker" --argjson m "$worker_delta" '.agents[$w] = $m')
-                log_info "Worker '${worker}' delta: $(echo "$worker_delta" | jq -r '.llm_calls') LLM calls, $(echo "$worker_delta" | jq -r '.tokens.total') tokens" >&2
-            fi
+
+        local worker_offsets
+        worker_offsets=$(echo "$baseline" | jq -r --arg w "$worker" '.offsets[$w] // empty')
+        local worker_delta
+        worker_delta=$(_collect_agent_delta "$worker_container" "$worker_session_dir" "$worker_offsets")
+        if [ -n "$worker_delta" ]; then
+            delta_result=$(echo "$delta_result" | jq --arg w "$worker" --argjson m "$worker_delta" '.agents[$w] = $m')
+            log_info "Worker '${worker}' delta: $(echo "$worker_delta" | jq -r '.llm_calls') LLM calls, $(echo "$worker_delta" | jq -r '.tokens.total') tokens" >&2
         else
-            log_info "No session found for Worker '${worker}'" >&2
+            log_info "No new session data for Worker '${worker}'" >&2
         fi
     done
     
@@ -393,52 +516,101 @@ collect_test_metrics() {
 # Metrics Reporting
 # ============================================================
 
-# Print a formatted metrics report to stdout
-# Usage: print_metrics_report <metrics_json>
+# Print a formatted metrics report to stdout, comparing with previous saved run.
+# Usage: print_metrics_report <metrics_json> [baseline_json]
+# If baseline_json is omitted, loads the previously saved metrics file for this test.
+# Call BEFORE save_metrics_file to get a meaningful comparison.
 print_metrics_report() {
     local metrics="$1"
-    
+    local baseline="${2:-}"
+    if [ -z "$baseline" ]; then
+        local test_name
+        test_name=$(echo "$metrics" | jq -r '.test_name // empty')
+        if [ -n "$test_name" ]; then
+            local prev_file="${TEST_OUTPUT_DIR}/metrics-${test_name}.json"
+            [ -f "$prev_file" ] && baseline=$(cat "$prev_file" 2>/dev/null) || true
+        fi
+    fi
+
     echo ""
     echo "========================================"
     echo "  Agent Metrics Report"
     echo "========================================"
     echo "  Test: $(echo "$metrics" | jq -r '.test_name')"
     echo "  Time: $(echo "$metrics" | jq -r '.timestamp')"
+    [ -n "$baseline" ] && echo "  Mode: vs previous baseline"
     echo "========================================"
-    
+
     # Print each agent's metrics
     local agent_names
     agent_names=$(echo "$metrics" | jq -r '.agents | keys[]' 2>/dev/null)
-    
+
     for agent in $agent_names; do
-        local agent_data
-        agent_data=$(echo "$metrics" | jq -c ".agents[\"$agent\"]")
-        
+        local d b
+        d=$(echo "$metrics"  | jq -c ".agents[\"$agent\"]")
+        b=$(echo "$baseline" | jq -c ".agents[\"$agent\"] // {}" 2>/dev/null)
+
+        local b_calls b_in b_out b_cr b_cw b_total b_dur
+        b_calls=$(echo "$b" | jq -r '.llm_calls // 0')
+        b_in=$(   echo "$b" | jq -r '.tokens.input // 0')
+        b_out=$(  echo "$b" | jq -r '.tokens.output // 0')
+        b_cr=$(   echo "$b" | jq -r '.tokens.cache_read // 0')
+        b_cw=$(   echo "$b" | jq -r '.tokens.cache_write // 0')
+        b_total=$(echo "$b" | jq -r '.tokens.total // 0')
+        b_dur=$(  echo "$b" | jq -r '.timing.duration_seconds // 0')
+
         echo ""
         echo "  [$agent]"
-        echo "    LLM Calls:    $(echo "$agent_data" | jq -r '.llm_calls')"
-        echo "    Input Tokens: $(echo "$agent_data" | jq -r '.tokens.input')"
-        echo "    Output Tokens: $(echo "$agent_data" | jq -r '.tokens.output')"
-        echo "    Cache Read:   $(echo "$agent_data" | jq -r '.tokens.cache_read')"
-        echo "    Cache Write:  $(echo "$agent_data" | jq -r '.tokens.cache_write')"
-        echo "    Total Tokens: $(echo "$agent_data" | jq -r '.tokens.total')"
-        echo "    Duration:     $(echo "$agent_data" | jq -r '.timing.duration_seconds')s"
-        echo "    Start:        $(echo "$agent_data" | jq -r '.timing.start')"
-        echo "    End:          $(echo "$agent_data" | jq -r '.timing.end')"
+        _print_metric "LLM Calls"     "$(echo "$d" | jq -r '.llm_calls')"          "$b_calls"  "$baseline"
+        _print_metric "Input Tokens"  "$(echo "$d" | jq -r '.tokens.input')"        "$b_in"     "$baseline"
+        _print_metric "Output Tokens" "$(echo "$d" | jq -r '.tokens.output')"       "$b_out"    "$baseline"
+        _print_metric "Cache Read"    "$(echo "$d" | jq -r '.tokens.cache_read')"   "$b_cr"     "$baseline"
+        _print_metric "Cache Write"   "$(echo "$d" | jq -r '.tokens.cache_write')"  "$b_cw"     "$baseline"
+        _print_metric "Total Tokens"  "$(echo "$d" | jq -r '.tokens.total')"        "$b_total"  "$baseline"
+        _print_metric "Duration"      "$(echo "$d" | jq -r '.timing.duration_seconds')s" "${b_dur}s" "$baseline"
     done
-    
+
     echo ""
     echo "----------------------------------------"
     echo "  TOTALS"
     echo "----------------------------------------"
-    echo "    LLM Calls:    $(echo "$metrics" | jq -r '.totals.llm_calls')"
-    echo "    Input Tokens: $(echo "$metrics" | jq -r '.totals.tokens.input')"
-    echo "    Output Tokens: $(echo "$metrics" | jq -r '.totals.tokens.output')"
-    echo "    Cache Read:   $(echo "$metrics" | jq -r '.totals.tokens.cache_read')"
-    echo "    Cache Write:  $(echo "$metrics" | jq -r '.totals.tokens.cache_write')"
-    echo "    Total Tokens: $(echo "$metrics" | jq -r '.totals.tokens.total')"
-    echo "    Duration:     $(echo "$metrics" | jq -r '.totals.timing.duration_seconds')s"
+    local bt_calls bt_in bt_out bt_cr bt_cw bt_total bt_dur
+    bt_calls=$(echo "$baseline" | jq -r '.totals.llm_calls // 0'           2>/dev/null || echo 0)
+    bt_in=$(   echo "$baseline" | jq -r '.totals.tokens.input // 0'         2>/dev/null || echo 0)
+    bt_out=$(  echo "$baseline" | jq -r '.totals.tokens.output // 0'        2>/dev/null || echo 0)
+    bt_cr=$(   echo "$baseline" | jq -r '.totals.tokens.cache_read // 0'    2>/dev/null || echo 0)
+    bt_cw=$(   echo "$baseline" | jq -r '.totals.tokens.cache_write // 0'   2>/dev/null || echo 0)
+    bt_total=$(echo "$baseline" | jq -r '.totals.tokens.total // 0'         2>/dev/null || echo 0)
+    bt_dur=$(  echo "$baseline" | jq -r '.totals.timing.duration_seconds // 0' 2>/dev/null || echo 0)
+
+    _print_metric "LLM Calls"     "$(echo "$metrics" | jq -r '.totals.llm_calls')"           "$bt_calls"  "$baseline"
+    _print_metric "Input Tokens"  "$(echo "$metrics" | jq -r '.totals.tokens.input')"         "$bt_in"     "$baseline"
+    _print_metric "Output Tokens" "$(echo "$metrics" | jq -r '.totals.tokens.output')"        "$bt_out"    "$baseline"
+    _print_metric "Cache Read"    "$(echo "$metrics" | jq -r '.totals.tokens.cache_read')"    "$bt_cr"     "$baseline"
+    _print_metric "Cache Write"   "$(echo "$metrics" | jq -r '.totals.tokens.cache_write')"   "$bt_cw"     "$baseline"
+    _print_metric "Total Tokens"  "$(echo "$metrics" | jq -r '.totals.tokens.total')"         "$bt_total"  "$baseline"
+    _print_metric "Duration"      "$(echo "$metrics" | jq -r '.totals.timing.duration_seconds')s" "${bt_dur}s" "$baseline"
     echo "========================================"
+}
+
+# Internal helper: print one metric line with optional pct comparison
+# Usage: _print_metric <label> <current> <baseline_val> <baseline_json>
+_print_metric() {
+    local label="$1"
+    local curr="$2"
+    local base_val="$3"
+    local baseline_json="$4"
+
+    if [ -n "$baseline_json" ] && [ "$baseline_json" != "{}" ] && [ "$baseline_json" != "null" ]; then
+        local curr_num base_num
+        curr_num="${curr%s}"   # strip trailing 's' for duration
+        base_num="${base_val%s}"
+        local pct
+        pct=$(_format_pct "$curr_num" "$base_num")
+        printf "    %-16s %s  (was %s  %s)\n" "${label}:" "$curr" "$base_val" "$pct"
+    else
+        printf "    %-16s %s\n" "${label}:" "$curr"
+    fi
 }
 
 # ============================================================
@@ -542,9 +714,7 @@ generate_metrics_summary() {
     
     for test_name in "${test_names[@]}"; do
         local metrics
-        metrics=$(load_metrics_file "$test_name" 2>/dev/null)
-        
-        if [ $? -eq 0 ] && [ -n "$metrics" ]; then
+        if metrics=$(load_metrics_file "$test_name" 2>/dev/null) && [ -n "$metrics" ]; then
             # Add to tests array (simplified version with just totals per test)
             local test_summary
             test_summary=$(echo "$metrics" | jq '{
@@ -655,6 +825,25 @@ _format_delta() {
     fi
 }
 
+# Format percentage change with ↑/↓ indicator
+# Usage: _format_pct <current> <baseline>
+# Output: e.g. "↑ +23.4%" or "↓ -12.1%" or "— 0%"
+_format_pct() {
+    local curr="$1"
+    local base="$2"
+    if [ -z "$base" ] || [ "$base" = "0" ] || [ "$base" = "null" ]; then
+        echo "(new)"
+        return
+    fi
+    # Use awk for floating point
+    awk -v c="$curr" -v b="$base" 'BEGIN {
+        pct = (c - b) / b * 100
+        if (pct > 0.05)       printf "↑ +%.1f%%", pct
+        else if (pct < -0.05) printf "↓ %.1f%%", pct
+        else                   printf "— 0%%"
+    }'
+}
+
 # Generate a Markdown comparison report for PR comments
 # Usage: generate_comparison_markdown <comparison_json>
 # Output: Markdown formatted report
@@ -679,24 +868,30 @@ generate_comparison_markdown() {
         local curr_calls base_calls delta_calls
         local curr_in base_in delta_in
         local curr_out base_out delta_out
-        
+        local curr_total base_total delta_total
+
         curr_calls=$(echo "$comparison" | jq -r '.totals.current.llm_calls // 0')
         base_calls=$(echo "$comparison" | jq -r '.totals.baseline.llm_calls // 0')
         delta_calls=$(echo "$comparison" | jq -r '.totals.delta.llm_calls // 0')
-        
+
         curr_in=$(echo "$comparison" | jq -r '.totals.current.tokens.input // 0')
         base_in=$(echo "$comparison" | jq -r '.totals.baseline.tokens.input // 0')
         delta_in=$(echo "$comparison" | jq -r '.totals.delta.tokens_input // 0')
-        
+
         curr_out=$(echo "$comparison" | jq -r '.totals.current.tokens.output // 0')
         base_out=$(echo "$comparison" | jq -r '.totals.baseline.tokens.output // 0')
         delta_out=$(echo "$comparison" | jq -r '.totals.delta.tokens_output // 0')
-        
-        echo "| Metric | Current | Baseline | Delta |"
-        echo "|--------|---------|----------|-------|"
-        echo "| **LLM Calls** | ${curr_calls} | ${base_calls} | $(_format_delta "$delta_calls") |"
-        echo "| **Input Tokens** | ${curr_in} | ${base_in} | $(_format_delta "$delta_in") |"
-        echo "| **Output Tokens** | ${curr_out} | ${base_out} | $(_format_delta "$delta_out") |"
+
+        curr_total=$(echo "$comparison" | jq -r '.totals.current.tokens.total // 0')
+        base_total=$(echo "$comparison" | jq -r '.totals.baseline.tokens.total // 0')
+        delta_total=$(echo "$comparison" | jq -r '.totals.delta.tokens_total // 0')
+
+        echo "| Metric | Current | Baseline | Change |"
+        echo "|--------|---------|----------|--------|"
+        echo "| **LLM Calls** | ${curr_calls} | ${base_calls} | $(_format_delta "$delta_calls") $(_format_pct "$curr_calls" "$base_calls") |"
+        echo "| **Input Tokens** | ${curr_in} | ${base_in} | $(_format_delta "$delta_in") $(_format_pct "$curr_in" "$base_in") |"
+        echo "| **Output Tokens** | ${curr_out} | ${base_out} | $(_format_delta "$delta_out") $(_format_pct "$curr_out" "$base_out") |"
+        echo "| **Total Tokens** | ${curr_total} | ${base_total} | $(_format_delta "$delta_total") $(_format_pct "$curr_total" "$base_total") |"
     else
         local curr_calls curr_in curr_out
         curr_calls=$(echo "$comparison" | jq -r '.totals.current.llm_calls // .totals.llm_calls // 0')
@@ -721,21 +916,28 @@ generate_comparison_markdown() {
         echo ""
         
         if [ "$baseline_available" = "true" ]; then
-            echo "| Test | LLM Calls (Δ) | Input Tokens (Δ) | Output Tokens (Δ) | Trend |"
-            echo "|------|---------------|-----------------|-------------------|-------|"
-            
-            echo "$comparison" | jq -r '.tests[] | 
-                .test_name as $name |
-                .current.llm_calls as $calls |
-                (.delta.llm_calls // "N/A") as $calls_delta |
-                .current.tokens.input as $in |
-                (.delta.tokens_input // "N/A") as $in_delta |
-                .current.tokens.output as $out |
-                (.delta.tokens_output // "N/A") as $out_delta |
-                .trend as $trend |
-                "\($name) | \($calls) (\($calls_delta)) | \($in) (\($in_delta)) | \($out) (\($out_delta)) | \($trend)"' | while IFS= read -r line; do
-                echo "| $line |"
-            done
+            echo "| Test | LLM Calls | Δ | Total Tokens | Δ | Trend |"
+            echo "|------|-----------|---|--------------|---|-------|"
+
+            while IFS= read -r row; do
+                local name calls base_calls delta_calls total base_total delta_total trend
+                name=$(echo "$row" | jq -r '.test_name')
+                calls=$(echo "$row" | jq -r '.current.llm_calls // 0')
+                base_calls=$(echo "$row" | jq -r '.baseline.llm_calls // 0')
+                delta_calls=$(echo "$row" | jq -r '.delta.llm_calls // 0')
+                total=$(echo "$row" | jq -r '(.current.tokens.input // 0) + (.current.tokens.output // 0)')
+                base_total=$(echo "$row" | jq -r '((.baseline.tokens.input // 0) + (.baseline.tokens.output // 0))')
+                delta_total=$(echo "$row" | jq -r '.delta.tokens_total // 0')
+                trend=$(echo "$row" | jq -r '.trend')
+                local trend_icon
+                case "$trend" in
+                    improved)  trend_icon="✅ improved" ;;
+                    regressed) trend_icon="⚠️ regressed" ;;
+                    new_test)  trend_icon="🆕 new" ;;
+                    *)         trend_icon="— unchanged" ;;
+                esac
+                echo "| $name | $calls | $(_format_delta "$delta_calls") $(_format_pct "$calls" "$base_calls") | $total | $(_format_delta "$delta_total") $(_format_pct "$total" "$base_total") | $trend_icon |"
+            done < <(echo "$comparison" | jq -c '.tests[]')
         else
             echo "| Test | LLM Calls | Input Tokens | Output Tokens |"
             echo "|------|-----------|--------------|---------------|"

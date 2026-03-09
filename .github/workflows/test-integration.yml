@@ -6,36 +6,42 @@ on:
       - main
     paths:
       - 'manager/**'
+      - 'tests/**'
       - '.github/workflows/test-integration.yml'
   push:
     branches:
       - main
     paths:
       - 'manager/**'
+      - 'tests/**'
   workflow_dispatch:
     inputs:
-      test_case:
-        description: 'Specific test case to run (e.g., test-02-create-worker.sh). Leave empty to run create-worker test only.'
+      test_filter:
+        description: 'Test filter pattern (e.g. "01 02 14"). Leave empty to run all non-GitHub tests.'
         required: false
-        default: 'test-02-create-worker.sh'
+        default: ''
+      baseline_version:
+        description: 'Re-generate baseline for a specific release version (e.g. v1.2.3). Pulls published image, runs tests, uploads baseline to that release. Leave empty to run normal integration tests.'
+        required: false
+        default: ''
 
 env:
-  # Local image tags (no registry push needed)
   MANAGER_IMAGE: hiclaw/manager-agent:ci-test
   WORKER_IMAGE: hiclaw/worker-agent:ci-test
+  # Tests that do not require a GitHub token
+  NON_GITHUB_TESTS: "01 02 03 04 05 06 14"
 
 jobs:
-  # Run integration tests with local images
   integration-tests:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 120
     permissions:
       contents: read
       pull-requests: write
       actions: read
-    
+
     steps:
-      - name: Free Up GitHub Actions Ubuntu Runner Disk Space
+      - name: Free Up Disk Space
         uses: jlumbroso/free-disk-space@main
         with:
           tool-cache: false
@@ -45,7 +51,7 @@ jobs:
           large-packages: true
           swap-storage: true
 
-      - name: Checkout PR code
+      - name: Checkout code
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
@@ -54,26 +60,19 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # Pull base images first
       - name: Pull base images
-        run: |
-          docker pull higress-registry.cn-hangzhou.cr.aliyuncs.com/higress/openclaw-base:latest
+        run: docker pull higress-registry.cn-hangzhou.cr.aliyuncs.com/higress/openclaw-base:latest
 
-      # Build images locally (each job runs on fresh runner)
       - name: Build images
-        run: |
-          make build-manager build-worker VERSION=ci-test
+        run: make build-manager build-worker VERSION=ci-test
 
       - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y jq curl unzip
+        run: sudo apt-get update && sudo apt-get install -y jq curl unzip
 
-      - name: Run HiClaw installation
+      - name: Install HiClaw
         env:
           HICLAW_LLM_API_KEY: ${{ secrets.HICLAW_LLM_API_KEY }}
         run: |
-          # Install HiClaw with local images
           HICLAW_NON_INTERACTIVE=1 \
           HICLAW_VERSION=ci-test \
           HICLAW_MOUNT_SOCKET=1 \
@@ -83,17 +82,10 @@ jobs:
 
       - name: Wait for Manager to be ready
         run: |
-          echo "Waiting for Manager to be healthy..."
           for i in {1..60}; do
             if docker exec hiclaw-manager curl -sf http://127.0.0.1:8001/ >/dev/null 2>&1; then
-              echo "Manager console is ready!"
-              # Additional wait for internal services
-              sleep 10
-              # Check internal services via docker exec
               if docker exec hiclaw-manager curl -sf http://127.0.0.1:6167/_matrix/client/versions >/dev/null 2>&1; then
-                echo "Matrix is ready!"
-                # Wait for agent initialization
-                echo "Waiting 60s for Manager Agent initialization..."
+                echo "Manager ready, waiting 60s for agent initialization..."
                 sleep 60
                 exit 0
               fi
@@ -101,177 +93,97 @@ jobs:
             echo "Waiting... ($i/60)"
             sleep 5
           done
-          echo "Manager did not become healthy in time"
+          echo "Manager did not become ready in time"
           docker logs hiclaw-manager --tail 50
           exit 1
+
+      - name: Enable YOLO mode
+        run: docker exec hiclaw-manager touch /root/manager-workspace/yolo-mode
 
       - name: Run integration tests
         env:
           HICLAW_LLM_API_KEY: ${{ secrets.HICLAW_LLM_API_KEY }}
         run: |
-          # Enable YOLO mode for automated testing
-          docker exec hiclaw-manager touch /root/manager-workspace/yolo-mode
-          
-          # Run specific test or all tests
-          if [ -n "${{ github.event.inputs.test_case }}" ] && [ "${{ github.event.inputs.test_case }}" != "test-02-create-worker.sh" ]; then
-            echo "Running specific test: ${{ github.event.inputs.test_case }}"
-            ./tests/${{ github.event.inputs.test_case }}
-          else
-            echo "Running default test: test-02-create-worker.sh"
-            ./tests/test-02-create-worker.sh
-          fi
+          FILTER="${{ github.event.inputs.test_filter }}"
+          [ -z "$FILTER" ] && FILTER="${NON_GITHUB_TESTS}"
+          TEST_GATEWAY_PORT=18080 TEST_CONSOLE_PORT=18001 TEST_MANAGER_CONTAINER=hiclaw-manager \
+            ./tests/run-all-tests.sh --skip-build --use-existing --test-filter "$FILTER"
 
       # ============================================================
-      # Metrics Comparison & PR Comment
+      # Metrics: download latest release baseline for comparison
       # ============================================================
 
-      - name: Download previous baseline metrics
+      - name: Download latest release baseline
         if: github.event_name == 'pull_request_target'
         continue-on-error: true
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const fs = require('fs');
-            const { execSync } = require('child_process');
-            
-            try {
-              const runs = await github.rest.actions.listWorkflowRuns({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                workflow_id: 'test-integration.yml',
-                branch: context.payload.pull_request.base.ref,
-                status: 'success',
-                per_page: 1
-              });
-              
-              if (runs.data.workflow_runs.length === 0) {
-                console.log('No previous successful runs found');
-                return;
-              }
-              
-              const previousRun = runs.data.workflow_runs[0];
-              console.log(`Found previous run: ${previousRun.id}`);
-              
-              const artifacts = await github.rest.actions.listWorkflowRunArtifacts({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                run_id: previousRun.id
-              });
-              
-              const baselineArtifact = artifacts.data.artifacts.find(a => a.name.startsWith('metrics-baseline-'));
-              if (!baselineArtifact) {
-                console.log('No baseline artifact found');
-                return;
-              }
-              
-              console.log(`Found baseline: ${baselineArtifact.name}`);
-              
-              const download = await github.rest.actions.downloadArtifact({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                artifact_id: baselineArtifact.id,
-                archive_format: 'zip'
-              });
-              
-              fs.writeFileSync('baseline.zip', Buffer.from(download.data));
-              execSync('mkdir -p baseline-metrics && unzip -o baseline.zip -d baseline-metrics', { stdio: 'inherit' });
-              console.log('Baseline downloaded');
-            } catch (err) {
-              console.log(`Error: ${err.message}`);
-            }
+        run: |
+          mkdir -p baseline-metrics
+          # Find latest release with a metrics asset
+          LATEST=$(gh release list --limit 20 --json tagName,assets \
+            --jq '[.[] | select(.assets | map(.name) | contains(["metrics-baseline.json"]))] | .[0].tagName' \
+            2>/dev/null || true)
+          if [ -n "$LATEST" ] && [ "$LATEST" != "null" ]; then
+            echo "Downloading baseline from release $LATEST"
+            gh release download "$LATEST" --pattern "metrics-baseline.json" --dir baseline-metrics
+          else
+            echo "No release baseline found"
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Generate metrics comparison and post PR comment
         if: github.event_name == 'pull_request_target'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          set -e
-          
-          # Check if metrics library exists
-          if [ ! -f "tests/lib/agent-metrics.sh" ]; then
-            echo "No metrics library found, skipping comparison"
-            exit 0
-          fi
-          
           source tests/lib/agent-metrics.sh
-          
-          # Generate current summary
-          echo "Generating current metrics..."
-          CURRENT=$(generate_metrics_summary "02-create-worker")
-          
-          # Load baseline if exists
+
+          # Collect current summary across all tests that ran
+          FILTER="${{ github.event.inputs.test_filter }}"
+          [ -z "$FILTER" ] && FILTER="${NON_GITHUB_TESTS}"
+          TEST_NAMES=$(echo "$FILTER" | tr ' ' '\n' | while read n; do
+            f=$(ls tests/output/metrics-*${n}*.json 2>/dev/null | head -1)
+            [ -n "$f" ] && basename "$f" .json | sed 's/^metrics-//'
+          done | tr '\n' ' ')
+
+          CURRENT=$(generate_metrics_summary $TEST_NAMES)
+
           BASELINE=""
-          if [ -f "baseline-metrics/metrics-summary.json" ]; then
-            echo "Loading baseline..."
-            BASELINE=$(cat baseline-metrics/metrics-summary.json)
+          if [ -f "baseline-metrics/metrics-baseline.json" ]; then
+            BASELINE=$(cat baseline-metrics/metrics-baseline.json)
           fi
-          
-          # Compare and generate report
-          echo "Comparing..."
+
           COMPARISON=$(compare_metrics_with_baseline "$CURRENT" "$BASELINE")
           REPORT=$(generate_comparison_markdown "$COMPARISON")
-          
-          # Save for artifacts
+
           mkdir -p tests/output
           echo "$COMPARISON" > tests/output/metrics-comparison.json
           echo "$REPORT" > tests/output/metrics-report.md
-          
-          # Post PR comment
+
           PR_NUM="${{ github.event.pull_request.number }}"
           REPO="${{ github.repository }}"
-          
-          # Find existing comment
           EXISTING=$(gh api "repos/$REPO/issues/$PR_NUM/comments" \
             --jq '.[] | select(.body | startswith("## 📊 CI Metrics Report")) | .id' | head -1)
-          
           if [ -n "$EXISTING" ]; then
-            echo "Updating comment..."
             gh api --method PATCH "repos/$REPO/issues/comments/$EXISTING" -f body="$REPORT"
           else
-            echo "Creating comment..."
             gh api --method POST "repos/$REPO/issues/$PR_NUM/comments" -f body="$REPORT"
           fi
-          
-          echo "Done!"
 
-      - name: Save baseline metrics for future runs
-        if: always()
-        run: |
-          mkdir -p baseline-output
-          
-          if [ -f "tests/lib/agent-metrics.sh" ] && [ -d "tests/output" ] && ls tests/output/metrics-*.json 1>/dev/null 2>&1; then
-            source tests/lib/agent-metrics.sh
-            generate_metrics_summary "02-create-worker" > baseline-output/metrics-summary.json
-            echo "Saved baseline"
-          else
-            echo '{"error": "no metrics", "timestamp": "'$(date -Iseconds)'"}' > baseline-output/metrics-summary.json
-          fi
-
-      - name: Upload baseline metrics artifact
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: metrics-baseline-${{ github.sha }}
-          path: baseline-output/
-          retention-days: 30
+      # ============================================================
+      # Artifacts
+      # ============================================================
 
       - name: Collect test artifacts
         if: always()
         run: |
           mkdir -p test-artifacts
-          
-          # Copy test output files
-          if [ -d "tests/output" ]; then
-            cp -r tests/output/* test-artifacts/ 2>/dev/null || true
-          fi
-          
-          # Collect Manager logs
+          [ -d "tests/output" ] && cp -r tests/output/* test-artifacts/ 2>/dev/null || true
           docker logs hiclaw-manager > test-artifacts/manager.log 2>&1 || true
-          docker exec hiclaw-manager cat /var/log/hiclaw/manager-agent.log > test-artifacts/manager-agent.log 2>&1 || true
-          
-          # Collect Worker logs (if any)
-          for container in $(docker ps -a --format '{{.Names}}' | grep hiclaw-worker); do
-            docker logs "$container" > "test-artifacts/${container}.log" 2>&1 || true
+          docker exec hiclaw-manager cat /var/log/hiclaw/manager-agent.log \
+            > test-artifacts/manager-agent.log 2>&1 || true
+          for c in $(docker ps -a --format '{{.Names}}' | grep hiclaw-worker); do
+            docker logs "$c" > "test-artifacts/${c}.log" 2>&1 || true
           done
 
       - name: Upload test artifacts
@@ -284,14 +196,124 @@ jobs:
 
       - name: Cleanup
         if: always()
-        run: |
-          make uninstall || true
-          docker system prune -af || true
+        run: make uninstall || true && docker system prune -af || true
 
       - name: Test Summary
         if: always()
         run: |
-          echo "### Test Summary" >> $GITHUB_STEP_SUMMARY
-          echo "- Manager Image: \`${{ env.MANAGER_IMAGE }}\` (local build)" >> $GITHUB_STEP_SUMMARY
-          echo "- Worker Image: \`${{ env.WORKER_IMAGE }}\` (local build)" >> $GITHUB_STEP_SUMMARY
-          echo "- No registry push required" >> $GITHUB_STEP_SUMMARY
+          echo "### Integration Test Summary" >> $GITHUB_STEP_SUMMARY
+          echo "- Tests: \`$NON_GITHUB_TESTS\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Manager Image: \`${{ env.MANAGER_IMAGE }}\`" >> $GITHUB_STEP_SUMMARY
+
+# ============================================================
+# Release job: run tests and upload baseline to release assets
+# ============================================================
+
+  release-baseline:
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.baseline_version != '')
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      contents: write
+
+    steps:
+      - name: Resolve target version
+        id: version
+        run: |
+          if [ -n "${{ inputs.baseline_version }}" ]; then
+            echo "version=${{ inputs.baseline_version }}" >> $GITHUB_OUTPUT
+            echo "from_dispatch=true" >> $GITHUB_OUTPUT
+          else
+            echo "version=${GITHUB_REF_NAME}" >> $GITHUB_OUTPUT
+            echo "from_dispatch=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          # When re-running a specific version, check out that tag's test scripts
+          ref: ${{ steps.version.outputs.version }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y jq curl unzip
+
+      - name: Pull published image (manual re-run)
+        if: steps.version.outputs.from_dispatch == 'true'
+        run: |
+          VERSION=${{ steps.version.outputs.version }}
+          REGISTRY=higress-registry.cn-hangzhou.cr.aliyuncs.com/higress
+          docker pull ${REGISTRY}/hiclaw-manager:${VERSION}
+          docker pull ${REGISTRY}/hiclaw-worker:${VERSION}
+          docker tag ${REGISTRY}/hiclaw-manager:${VERSION} hiclaw/manager-agent:${VERSION}
+          docker tag ${REGISTRY}/hiclaw-worker:${VERSION} hiclaw/worker-agent:${VERSION}
+
+      - name: Build images from source (tag push)
+        if: steps.version.outputs.from_dispatch == 'false'
+        run: |
+          docker pull higress-registry.cn-hangzhou.cr.aliyuncs.com/higress/openclaw-base:latest
+          make build-manager build-worker VERSION=${{ steps.version.outputs.version }}
+
+      - name: Install HiClaw
+        env:
+          HICLAW_LLM_API_KEY: ${{ secrets.HICLAW_LLM_API_KEY }}
+        run: |
+          VERSION=${{ steps.version.outputs.version }}
+          HICLAW_NON_INTERACTIVE=1 \
+          HICLAW_VERSION=$VERSION \
+          HICLAW_MOUNT_SOCKET=1 \
+          HICLAW_INSTALL_MANAGER_IMAGE=hiclaw/manager-agent:${VERSION} \
+          HICLAW_INSTALL_WORKER_IMAGE=hiclaw/worker-agent:${VERSION} \
+          ./install/hiclaw-install.sh manager
+
+      - name: Wait for Manager to be ready
+        run: |
+          for i in {1..60}; do
+            if docker exec hiclaw-manager curl -sf http://127.0.0.1:8001/ >/dev/null 2>&1; then
+              if docker exec hiclaw-manager curl -sf http://127.0.0.1:6167/_matrix/client/versions >/dev/null 2>&1; then
+                echo "Manager ready, waiting 60s for agent initialization..."
+                sleep 60
+                exit 0
+              fi
+            fi
+            echo "Waiting... ($i/60)"
+            sleep 5
+          done
+          exit 1
+
+      - name: Enable YOLO mode
+        run: docker exec hiclaw-manager touch /root/manager-workspace/yolo-mode
+
+      - name: Run integration tests
+        env:
+          HICLAW_LLM_API_KEY: ${{ secrets.HICLAW_LLM_API_KEY }}
+        run: |
+          TEST_GATEWAY_PORT=18080 TEST_CONSOLE_PORT=18001 TEST_MANAGER_CONTAINER=hiclaw-manager \
+            ./tests/run-all-tests.sh --skip-build --use-existing --test-filter "$NON_GITHUB_TESTS"
+
+      - name: Generate release baseline
+        run: |
+          VERSION=${{ steps.version.outputs.version }}
+          source tests/lib/agent-metrics.sh
+          TEST_NAMES=$(echo "$NON_GITHUB_TESTS" | tr ' ' '\n' | while read n; do
+            f=$(ls tests/output/metrics-*${n}*.json 2>/dev/null | head -1)
+            [ -n "$f" ] && basename "$f" .json | sed 's/^metrics-//'
+          done | tr '\n' ' ')
+          generate_metrics_summary $TEST_NAMES > metrics-baseline.json
+          echo "Baseline generated for version ${VERSION}"
+          cat metrics-baseline.json | jq '.totals'
+
+      - name: Upload baseline to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION=${{ steps.version.outputs.version }}
+          gh release upload "${VERSION}" metrics-baseline.json \
+            --repo "${{ github.repository }}" --clobber
+          echo "✅ Baseline uploaded to release ${VERSION}"
+
+      - name: Cleanup
+        if: always()
+        run: make uninstall || true && docker system prune -af || true
