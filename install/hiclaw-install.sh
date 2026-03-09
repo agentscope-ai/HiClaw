@@ -2241,34 +2241,39 @@ cmd_config() {
             log "$(msg config.fix.success)"
             echo -e "\033[33m$(msg config.fix.restart_required)\033[0m"
             ;;
-        --show)
-            echo ""
-            echo "=== HiClaw LLM 配置 ==="
-            echo "  提供商: ${HICLAW_LLM_PROVIDER:-未设置}"
-            echo "  模型: ${HICLAW_DEFAULT_MODEL:-未设置}"
-            echo "  Base URL: ${HICLAW_OPENAI_BASE_URL:-默认}"
-            echo "  API Key: $([ -n "${HICLAW_LLM_API_KEY}" ] && echo "已设置" || echo "未设置")"
+       --show)
+            msg "config.show.title"
+            msg "config.show.provider" "${HICLAW_LLM_PROVIDER:-$(msg config.show.api_key_unset)}"
+            msg "config.show.model" "${HICLAW_DEFAULT_MODEL:-$(msg config.show.api_key_unset)}"
+            msg "config.show.base_url" "${HICLAW_OPENAI_BASE_URL:-$(msg config.show.default)}"
+            local _api_key_status
+            if [ -n "${HICLAW_LLM_API_KEY}" ]; then
+                _api_key_status=$(msg "config.show.api_key_set")
+            else
+                _api_key_status=$(msg "config.show.api_key_unset")
+            fi
+            msg "config.show.api_key" "$_api_key_status"
             echo ""
             ;;
         --verify)
             if [ -z "${HICLAW_LLM_API_KEY}" ]; then
-                error "LLM API Key 未设置"
+                error "$(msg "config.error.no_api_key")"
                 exit 1
             fi
             test_llm_connectivity "${HICLAW_OPENAI_BASE_URL}" "${HICLAW_LLM_API_KEY}" "${HICLAW_DEFAULT_MODEL}"
             ;;
         --help|*)
-            echo "用法: $0 config <命令>"
+            msg "config.help.usage" "$0"
             echo ""
-            echo "命令:"
-            echo "  --fix-llm    修复 LLM 配置（交互式）"
-            echo "  --show       显示当前配置"
-            echo "  --verify     验证配置有效性"
-            echo "  --help       显示帮助信息"
+            msg "config.help.commands"
+            msg "config.help.fix_llm"
+            msg "config.help.show"
+            msg "config.help.verify"
+            msg "config.help.help"
             echo ""
-            echo "示例:"
-            echo "  $0 config --fix-llm    # 修复 API Key 配置"
-            echo "  $0 config --verify     # 验证当前配置"
+            msg "config.help.examples"
+            msg "config.help.example_fix" "$0"
+            msg "config.help.example_verify" "$0"
             ;;
     esac
 }
