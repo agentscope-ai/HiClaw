@@ -613,6 +613,40 @@ msg() {
         "llm.error.404.zh") text="❌ API 端点不存在或服务未开通" ;;
         "llm.error.404.en") text="❌ API endpoint not found or service not enabled" ;;
         "llm.error.404.hint.zh") text="💡 解决方案：
+        # 在 msg 函数的 case 语句中添加（大约在第 140 行附近）
+        "config.show.title.zh") text="=== HiClaw LLM 配置 ===" ;;
+        "config.show.title.en") text="=== HiClaw LLM Configuration ===" ;;
+        "config.show.provider.zh") text="  提供商: %s" ;;
+        "config.show.provider.en") text="  Provider: %s" ;;
+        "config.show.model.zh") text="  模型: %s" ;;
+        "config.show.model.en") text="  Model: %s" ;;
+        "config.show.base_url.zh") text="  Base URL: %s" ;;
+        "config.show.base_url.en") text="  Base URL: %s" ;;
+        "config.show.api_key_set.zh") text="已设置" ;;
+        "config.show.api_key_set.en") text="Set" ;;
+        "config.show.api_key_unset.zh") text="未设置" ;;
+        "config.show.api_key_unset.en") text="Not set" ;;
+        "config.error.no_api_key.zh") text="LLM API Key 未设置" ;;
+        "config.error.no_api_key.en") text="LLM API Key not set" ;;
+        "config.help.usage.zh") text="用法: %s config <命令>" ;;
+        "config.help.usage.en") text="Usage: %s config <command>" ;;
+        "config.help.commands.zh") text="命令:" ;;
+        "config.help.commands.en") text="Commands:" ;;
+        "config.help.fix_llm.zh") text="  --fix-llm    修复 LLM 配置（交互式）" ;;
+        "config.help.fix_llm.en") text="  --fix-llm    Fix LLM config (interactive)" ;;
+        "config.help.show.zh") text="  --show       显示当前配置" ;;
+        "config.help.show.en") text="  --show       Show current config" ;;
+        "config.help.verify.zh") text="  --verify     验证配置有效性" ;;
+        "config.help.verify.en") text="  --verify     Verify config validity" ;;
+        "config.help.help.zh") text="  --help       显示帮助信息" ;;
+        "config.help.help.en") text="  --help       Show this help" ;;
+        "config.help.examples.zh") text="示例:" ;;
+        "config.help.examples.en") text="Examples:" ;;
+        "config.help.example_fix.zh") text="  %s config --fix-llm    # 修复 API Key 配置" ;;
+        "config.help.example_fix.en") text="  %s config --fix-llm    # Fix API Key config" ;;
+        "config.help.example_verify.zh") text="  %s config --verify     # 验证当前配置" ;;
+        "config.help.example_verify.en") text="  %s config --verify     # Verify current config" ;;
+
   1. 确认 API Key 已开通相应服务（如百炼 CodingPlan）
   2. 如使用自定义 Base URL，请确认地址正确
   3. CodingPlan 用户请确保已开通: https://www.aliyun.com/benefit/scene/codingplan" ;;
