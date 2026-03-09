@@ -105,6 +105,7 @@ class MatrixChannel(BaseChannel):
         self._client: Optional[AsyncClient] = None
         self._user_id: Optional[str] = None
         self._sync_task: Optional[asyncio.Task] = None
+        self._typing_tasks: Dict[str, asyncio.Task] = {}  # room_id -> renewal task
 
     # ------------------------------------------------------------------
     # Factory
@@ -265,6 +266,10 @@ class MatrixChannel(BaseChannel):
             if require_mention and not self._was_mentioned(event, text):
                 return  # silently ignore non-mention group messages
 
+        # Mark as read + start typing immediately so the sender sees feedback
+        await self._send_read_receipt(room_id, event.event_id)
+        await self._send_typing(room_id, True)
+
         # Build native payload and enqueue
         worker_name = (self._user_id or "").split(":")[0].lstrip("@")
         payload = {
@@ -294,22 +299,91 @@ class MatrixChannel(BaseChannel):
                 return bool(room_cfg["requireMention"])
         return True  # default: require mention in group rooms
 
+    # ------------------------------------------------------------------
+    # Read receipt & typing indicator
+    # ------------------------------------------------------------------
+
+    async def _send_read_receipt(self, room_id: str, event_id: str) -> None:
+        """Mark a message as read (sends both read receipt and read marker)."""
+        if not self._client or not event_id:
+            return
+        try:
+            await self._client.room_read_markers(room_id, fully_read_event=event_id, read_event=event_id)
+        except Exception as exc:
+            logger.debug("MatrixChannel: read receipt failed for %s: %s", event_id, exc)
+
+    async def _send_typing(self, room_id: str, typing: bool, timeout: int = 30000) -> None:
+        """Set typing indicator on/off for a room.
+
+        When turning on, starts a background renewal task that re-sends the
+        typing indicator every 25s (before the 30s server timeout expires),
+        up to a 2-minute hard cap. When turning off, cancels the renewal task.
+        """
+        if not self._client:
+            return
+        # Cancel any existing renewal task for this room
+        existing = self._typing_tasks.pop(room_id, None)
+        if existing and not existing.done():
+            existing.cancel()
+        try:
+            await self._client.room_typing(room_id, typing_state=typing, timeout=timeout)
+        except Exception as exc:
+            logger.debug("MatrixChannel: typing indicator failed for %s: %s", room_id, exc)
+        # Start renewal loop if turning on
+        if typing:
+            self._typing_tasks[room_id] = asyncio.create_task(
+                self._typing_renewal_loop(room_id, timeout)
+            )
+
+    async def _typing_renewal_loop(self, room_id: str, timeout: int = 30000) -> None:
+        """Re-send typing=true every 25s, hard-capped at 2 minutes."""
+        max_duration = 120  # seconds
+        renewal_interval = 25  # seconds (renew before 30s server timeout)
+        elapsed = 0
+        try:
+            while elapsed < max_duration:
+                await asyncio.sleep(renewal_interval)
+                elapsed += renewal_interval
+                if not self._client:
+                    break
+                await self._client.room_typing(room_id, typing_state=True, timeout=timeout)
+        except asyncio.CancelledError:
+            pass
+        except Exception as exc:
+            logger.debug("MatrixChannel: typing renewal failed for %s: %s", room_id, exc)
+        finally:
+            # If we hit the 2-min cap, explicitly stop typing
+            if elapsed >= max_duration and self._client:
+                try:
+                    await self._client.room_typing(room_id, typing_state=False)
+                except Exception:
+                    pass
+            self._typing_tasks.pop(room_id, None)
+
     def _was_mentioned(self, event: RoomMessageText, text: str) -> bool:
         if not self._user_id:
             return False
-        # Check m.mentions
+        # 1. Check m.mentions (structured mention from Matrix spec)
         content = event.source.get("content", {})
         mentions = content.get("m.mentions", {})
         if self._user_id in mentions.get("user_ids", []):
             return True
         if mentions.get("room"):
             return True
-        # Fallback: text pattern
-        worker_name = self._user_id.split(":")[0].lstrip("@")
-        pattern = re.compile(
-            rf"@?{re.escape(worker_name)}(?::[^\s]+)?", re.IGNORECASE
-        )
-        return bool(pattern.search(text))
+        # 2. Check formatted_body for matrix.to mention links (Element HTML format)
+        formatted_body = content.get("formatted_body", "")
+        if formatted_body and self._user_id:
+            import urllib.parse
+            escaped_uid = re.escape(self._user_id)
+            if re.search(rf'href=["\']https://matrix\.to/#/{escaped_uid}["\']', formatted_body, re.IGNORECASE):
+                return True
+            encoded_uid = re.escape(urllib.parse.quote(self._user_id))
+            if re.search(rf'href=["\']https://matrix\.to/#/{encoded_uid}["\']', formatted_body, re.IGNORECASE):
+                return True
+        # 3. Fallback: match full MXID in plain text (e.g. @data:matrix-local.hiclaw.io:18080)
+        if self._user_id and re.search(re.escape(self._user_id), text, re.IGNORECASE):
+            return True
+        return False
 
     # ------------------------------------------------------------------
     # build_agent_request_from_native (BaseChannel protocol)
@@ -374,3 +448,6 @@ class MatrixChannel(BaseChannel):
             await self._client.room_send(room_id, "m.room.message", content)
         except Exception as exc:
             logger.exception("MatrixChannel: send failed to %s: %s", room_id, exc)
+        finally:
+            # Stop typing indicator after reply is sent (or failed)
+            await self._send_typing(room_id, False)
