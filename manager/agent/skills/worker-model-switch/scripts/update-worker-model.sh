@@ -1,0 +1,205 @@
+#!/bin/bash
+# update-worker-model.sh - Update a Worker Agent's LLM model
+#
+# Patches the Worker's openclaw.json in MinIO, updates workers-registry.json,
+# and notifies the Worker via Matrix to reload config.
+#
+# Usage:
+#   update-worker-model.sh --worker <name> --model <model-id>
+#
+# Example:
+#   update-worker-model.sh --worker alice --model claude-sonnet-4-6
+
+set -euo pipefail
+
+REGISTRY_FILE="${HOME}/workers-registry.json"
+
+_ts() {
+    date -u '+%Y-%m-%dT%H:%M:%SZ'
+}
+
+_log() {
+    echo "[worker-model-switch $(date '+%Y-%m-%d %H:%M:%S')] $1"
+}
+
+# Resolve context window and max tokens for a given model name
+_resolve_model_params() {
+    local model="$1"
+    case "${model}" in
+        gpt-5.4)
+            CTX=1050000; MAX=128000 ;;
+        gpt-5.3-codex|gpt-5-mini|gpt-5-nano)
+            CTX=400000; MAX=128000 ;;
+        claude-opus-4-6)
+            CTX=1000000; MAX=128000 ;;
+        claude-sonnet-4-6)
+            CTX=1000000; MAX=64000 ;;
+        claude-haiku-4-5)
+            CTX=200000; MAX=64000 ;;
+        qwen3.5-plus)
+            CTX=960000; MAX=64000 ;;
+        deepseek-chat|deepseek-reasoner|kimi-k2.5)
+            CTX=256000; MAX=128000 ;;
+        glm-5|MiniMax-M2.5)
+            CTX=200000; MAX=128000 ;;
+        *)
+            CTX=200000; MAX=128000 ;;
+    esac
+}
+
+# ─── Main logic ──────────────────────────────────────────────────────────────
+
+update_worker_model() {
+    local worker="$1"
+    local new_model="$2"
+    # Strip provider prefix if caller passed "hiclaw-gateway/<model>" by mistake
+    new_model="${new_model#hiclaw-gateway/}"
+
+    if [ -z "${worker}" ] || [ -z "${new_model}" ]; then
+        _log "ERROR: --worker and --model are required"
+        return 1
+    fi
+
+    if [ ! -f "$REGISTRY_FILE" ]; then
+        _log "ERROR: $REGISTRY_FILE not found"
+        return 1
+    fi
+
+    local exists
+    exists=$(jq -r --arg w "$worker" '.workers | has($w)' "$REGISTRY_FILE" 2>/dev/null)
+    if [ "$exists" != "true" ]; then
+        _log "ERROR: Worker '$worker' not found in registry"
+        return 1
+    fi
+
+    local CTX MAX
+    _resolve_model_params "${new_model}"
+    _log "Updating worker $worker model to ${new_model} (ctx=${CTX}, max=${MAX})"
+
+    # ── Pre-flight: verify the model is reachable via AI Gateway ─────────────
+    local gateway_url="http://${HICLAW_AI_GATEWAY_DOMAIN:-aigw-local.hiclaw.io}:8080/v1/chat/completions"
+    local gateway_key="${HICLAW_MANAGER_GATEWAY_KEY:-}"
+    if [ -z "${gateway_key}" ] && [ -f "/data/hiclaw-secrets.env" ]; then
+        source /data/hiclaw-secrets.env
+        gateway_key="${HICLAW_MANAGER_GATEWAY_KEY:-}"
+    fi
+    _log "Testing model reachability: ${gateway_url} (model=${new_model})..."
+    local http_code
+    http_code=$(curl -s -o /tmp/model-test-resp-${worker}.json -w '%{http_code}' \
+        -X POST "${gateway_url}" \
+        -H "Authorization: Bearer ${gateway_key}" \
+        -H "Content-Type: application/json" \
+        -d "{\"model\":\"${new_model}\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"max_tokens\":1}" \
+        --connect-timeout 10 --max-time 30 2>/dev/null) || http_code="000"
+    if [ "${http_code}" != "200" ]; then
+        local resp_body
+        resp_body=$(cat /tmp/model-test-resp-${worker}.json 2>/dev/null | head -c 300 || true)
+        rm -f /tmp/model-test-resp-${worker}.json
+        _log "ERROR: Model test failed (HTTP ${http_code}): ${resp_body}"
+        _log "The model '${new_model}' is not reachable via the AI Gateway."
+        _log "Please check the Higress Console to confirm the AI route is configured for this model:"
+        _log "  http://<manager-host>:8001  →  AI Routes → verify provider and model mapping"
+        return 1
+    fi
+    rm -f /tmp/model-test-resp-${worker}.json
+    _log "Model test passed (HTTP 200)"
+    # ─────────────────────────────────────────────────────────────────────────
+
+    # Pull openclaw.json from MinIO
+    local minio_path="hiclaw/hiclaw-storage/agents/${worker}/openclaw.json"
+    local tmp_in="/tmp/openclaw-${worker}-model-update-in.json"
+    local tmp_out="/tmp/openclaw-${worker}-model-update-out.json"
+
+    if ! mc cp "${minio_path}" "${tmp_in}" 2>/dev/null; then
+        _log "ERROR: Could not pull openclaw.json for ${worker} from MinIO"
+        return 1
+    fi
+
+    # Patch model id, name, contextWindow, maxTokens (preserves other fields like input, reasoning)
+    jq --arg model "${new_model}" \
+       --argjson ctx "${CTX}" \
+       --argjson max "${MAX}" \
+       '(.models.providers["hiclaw-gateway"].models[0]) |= (. + {
+           "id": $model,
+           "name": $model,
+           "contextWindow": $ctx,
+           "maxTokens": $max
+         })
+        | .agents.defaults.model.primary = ("hiclaw-gateway/" + $model)' \
+       "${tmp_in}" > "${tmp_out}"
+
+    if ! mc cp "${tmp_out}" "${minio_path}" 2>/dev/null; then
+        _log "ERROR: Failed to push updated openclaw.json for ${worker} to MinIO"
+        rm -f "${tmp_in}" "${tmp_out}"
+        return 1
+    fi
+    rm -f "${tmp_in}" "${tmp_out}"
+    _log "openclaw.json updated in MinIO for ${worker}"
+
+    # Update workers-registry.json with model field
+    local tmp_reg
+    tmp_reg=$(mktemp)
+    jq --arg w "$worker" --arg m "${new_model}" --arg ts "$(_ts)" \
+        '.workers[$w].model = $m | .updated_at = $ts' \
+        "$REGISTRY_FILE" > "$tmp_reg" && mv "$tmp_reg" "$REGISTRY_FILE"
+    _log "Registry updated: ${worker}.model = ${new_model}"
+
+    # Notify worker to use file-sync skill
+    local room_id
+    room_id=$(jq -r --arg w "$worker" '.workers[$w].room_id // empty' "$REGISTRY_FILE" 2>/dev/null)
+    local matrix_domain="${HICLAW_MATRIX_DOMAIN:-matrix-local.hiclaw.io:8080}"
+    local manager_token="${MANAGER_MATRIX_TOKEN:-}"
+
+    # Try to get token from secrets file if not in env
+    if [ -z "${manager_token}" ] && [ -f "/data/hiclaw-secrets.env" ]; then
+        source /data/hiclaw-secrets.env
+        manager_token="${MANAGER_MATRIX_TOKEN:-}"
+    fi
+
+    if [ -n "${room_id}" ] && [ -n "${manager_token}" ]; then
+        local txn_id
+        txn_id=$(openssl rand -hex 8)
+        curl -sf -X PUT \
+            "http://127.0.0.1:6167/_matrix/client/v3/rooms/${room_id}/send/m.room.message/${txn_id}" \
+            -H "Authorization: Bearer ${manager_token}" \
+            -H 'Content-Type: application/json' \
+            -d "{\"msgtype\":\"m.text\",\"body\":\"@${worker}:${matrix_domain} Your model has been updated to \`${new_model}\`. Please use your file-sync skill to sync the latest config.\",\"m.mentions\":{\"user_ids\":[\"@${worker}:${matrix_domain}\"]}}" \
+            > /dev/null 2>&1 \
+            && _log "Notified @${worker} to use file-sync skill" \
+            || _log "WARNING: Failed to notify @${worker} (container may be stopped)"
+    else
+        _log "WARNING: Could not send Matrix notification (missing room_id or token)"
+    fi
+
+    _log "Model update complete for ${worker}: ${new_model} (ctx=${CTX}, max=${MAX})"
+}
+
+# ─── Argument parsing ─────────────────────────────────────────────────────────
+
+WORKER=""
+MODEL=""
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --worker)
+            WORKER="$2"
+            shift 2
+            ;;
+        --model)
+            MODEL="$2"
+            shift 2
+            ;;
+        *)
+            echo "Unknown argument: $1" >&2
+            exit 1
+            ;;
+    esac
+done
+
+if [ -z "$WORKER" ] || [ -z "$MODEL" ]; then
+    echo "Usage: $0 --worker <name> --model <model-id>" >&2
+    echo "Example: $0 --worker alice --model claude-sonnet-4-6" >&2
+    exit 1
+fi
+
+update_worker_model "$WORKER" "$MODEL"

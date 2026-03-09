@@ -1,6 +1,6 @@
 ---
 name: worker-management
-description: Manage the full lifecycle of Worker Agents (create, configure, monitor, reset, update model). Use when the human admin requests creating a new worker, resetting a worker, or switching a worker's model to a different one.
+description: Manage the full lifecycle of Worker Agents (create, configure, monitor, reset). Use when the human admin requests creating a new worker, resetting a worker, or managing worker skills and lifecycle.
 ---
 
 # Worker Management
@@ -316,18 +316,7 @@ bash /opt/hiclaw/agent/skills/worker-management/scripts/lifecycle-worker.sh --ac
 
 # Manually wake up (start) a stopped Worker container
 bash /opt/hiclaw/agent/skills/worker-management/scripts/lifecycle-worker.sh --action start --worker <name>
-
-# Update a Worker's model (patches openclaw.json in MinIO and notifies the Worker to reload)
-bash /opt/hiclaw/agent/skills/worker-management/scripts/lifecycle-worker.sh --action update-model --worker <name> --model <model-id>
 ```
-
-The `update-model` action:
-1. Resolves the correct `contextWindow` and `maxTokens` for the given model (same mapping as Manager startup)
-2. Patches the Worker's `openclaw.json` in MinIO in-place (preserves all other config)
-3. Updates `workers-registry.json` with the new model name
-4. Sends a Matrix @mention to the Worker asking it to use the `file-sync` skill to pick up the change
-
-If the Worker container is stopped, the config is still updated in MinIO — it will take effect on next start.
 
 ### Changing the Idle Timeout
 
