@@ -20,7 +20,7 @@
 
 ## CoPaw 是什么？
 
-[CoPaw](https://github.com/copaw-ai/copaw) 是一个基于 Python 的轻量级 AI Agent 运行时，核心特点是：
+[CoPaw](https://github.com/agentscope-ai/CoPaw) 是一个基于 Python 的轻量级 AI Agent 运行时，核心特点是：
 
 - **轻量级**：基于 Python，不需要 Node.js 全家桶，内存占用只有 OpenClaw Worker 的 1/5
 - **控制台友好**：内置 Web 控制台，可以实时查看工具调用、Thinking 输出、执行过程
@@ -204,9 +204,9 @@ Manager: 好的，这是安装命令，请在你的本机执行：
 
 ## 致谢
 
-感谢 [CoPaw 团队](https://github.com/copaw-ai) 的工作！CoPaw 是一个设计精良的轻量级 Agent 运行时，控制台体验尤其出色。HiClaw 通过实现 Matrix Channel 和配置桥接层接入 CoPaw，整个过程很顺畅，代码量也不大。
+感谢 [CoPaw 团队](https://github.com/agentscope-ai/CoPaw) 的工作！CoPaw 是一个设计精良的轻量级 Agent 运行时，控制台体验尤其出色。HiClaw 通过实现 Matrix Channel 和配置桥接层接入 CoPaw，整个过程很顺畅，代码量也不大。
 
-如果你对 CoPaw 本身感兴趣，可以查看 [CoPaw GitHub 仓库](https://github.com/copaw-ai/copaw)。
+如果你对 CoPaw 本身感兴趣，可以查看 [CoPaw GitHub 仓库](https://github.com/agentscope-ai/CoPaw)。
 
 ---
 
@@ -251,4 +251,4 @@ bash <(curl -sSL https://higress.ai/hiclaw/install.sh)
 **相关链接：**
 - [GitHub 仓库](https://github.com/alibaba/hiclaw)
 - [Changelog v1.0.4](https://github.com/alibaba/hiclaw/blob/main/changelog/v1.0.4.md)
-- [CoPaw GitHub](https://github.com/copaw-ai/copaw)
+- [CoPaw GitHub 仓库](https://github.com/agentscope-ai/CoPaw)
