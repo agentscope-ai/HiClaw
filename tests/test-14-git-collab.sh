@@ -99,7 +99,7 @@ DO NOT assign any phase to a different worker. DO NOT give alice phase 2 or phas
 IMPORTANT: You MUST use the EXACT branch names and file paths specified below. Do not rename, substitute, or simplify them. The verification system checks these exact names.
 
 Before starting any phase:
-1. Ensure workers alice, bob, and charlie exist with the git-delegation skill.
+1. Ensure workers with usernames exactly 'alice', 'bob', and 'charlie' exist with the git-delegation skill. The username (container name) must match exactly — do not use variations like 'alice-dev' or 'bob-backend'.
 2. Create a shared project room that includes alice, bob, charlie, and the human admin (use the create-project.sh script). All phase assignments and reports MUST happen in this project room — never in individual worker rooms.
 
 Run the phases strictly in order, waiting for each phase's report before starting the next.

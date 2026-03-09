@@ -51,7 +51,7 @@ METRICS_BASELINE=$(snapshot_baseline)
 
 # Send create worker request
 matrix_send_message "${ADMIN_TOKEN}" "${DM_ROOM}" \
-    "Please create a new Worker named alice for frontend development tasks. She should have access to GitHub MCP."
+    "Please create a new Worker for frontend development tasks. The worker's name (username) must be exactly 'alice'. She should have access to GitHub MCP."
 
 log_info "Waiting for Manager to create Worker Alice..."
 

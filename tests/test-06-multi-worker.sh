@@ -37,7 +37,7 @@ wait_for_manager_agent_ready 300 "${DM_ROOM}" "${ADMIN_TOKEN}" || {
 
 METRICS_BASELINE=$(snapshot_baseline "alice" "bob")
 matrix_send_message "${ADMIN_TOKEN}" "${DM_ROOM}" \
-    "Create a new Worker named bob for backend development. He should have access to GitHub MCP."
+    "Create a new Worker for backend development. The worker's name (username) must be exactly 'bob'. He should have access to GitHub MCP."
 
 log_info "Waiting for Manager to create Worker Bob..."
 REPLY=$(matrix_wait_for_reply "${ADMIN_TOKEN}" "${DM_ROOM}" "@manager" 180)
