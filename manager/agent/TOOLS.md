@@ -97,7 +97,6 @@ Full lifecycle of Worker containers and skill assignments.
 - Admin says "create a new Worker named Alice for code review tasks"
 - Before assigning a task, Worker container is `stopped` → wake it up first; `not_found` → tell admin to recreate
 - Admin says "add the github-operations skill to Alice" or "reset the Bob worker"
-- Admin says "switch Alice's model to claude-sonnet-4-6" → use `lifecycle-worker.sh --action update-model`
 
 **After creating a Worker**, always tell the admin:
 1. A 3-person room (Human + Manager + Worker) has been created — please check your Matrix invitations and accept it
@@ -148,9 +147,20 @@ MCP Server lifecycle and per-consumer access control.
 
 ## model-switch
 
-Switch the Manager's own LLM model.
+Switch the **Manager's own** LLM model. Do NOT use this for Workers.
 
 - Admin says "switch your model to X" or "change the Manager model to X"
+
+## worker-model-switch
+
+Switch a **Worker's** LLM model. Do NOT use this for the Manager.
+
+- Admin says "switch Alice's model to claude-sonnet-4-6" or "change the Worker model to X"
+- Patches the Worker's `openclaw.json` in MinIO, updates registry, and notifies the Worker to reload via file-sync
+
+> **Model switch cheat sheet:** Manager model → `model-switch` skill. Worker model → `worker-model-switch` skill. Never mix them up.
+>
+> **⚠️ MANDATORY:** When switching any model (Manager or Worker), you MUST use the corresponding skill script above. Do NOT use `session_status` tool, do NOT call Higress API directly, do NOT manually edit `openclaw.json` or any config file. The scripts handle gateway testing, config patching, registry updates, and Worker notification — skipping them will cause inconsistent state.
 
 ---
 
