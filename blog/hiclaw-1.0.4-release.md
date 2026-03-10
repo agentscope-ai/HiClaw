@@ -123,14 +123,14 @@ If you just need more Workers working in parallel without local environment acce
 
 This means you can run more Workers on the same hardware. Previously, 8GB of memory could only run 8-10 OpenClaw Workers; now you can run 40+ CoPaw Workers.
 
-**On-demand Console, Save Another 500MB**
+**On-demand Console**
 
 CoPaw Worker starts with a web console by default for easy debugging. But in production, you might not need a console for every Worker.
 
-We provide an `enable-worker-console.sh` script to toggle the console on demand. With the console disabled, **each Worker saves another ~500MB of memory**.
+We provide an `enable-worker-console.sh` script to toggle the console on demand:
 
 ```bash
-# Disable Worker console (save memory)
+# Disable Worker console
 /opt/hiclaw/scripts/enable-worker-console.sh alice disable
 
 # Enable when debugging needed
@@ -236,7 +236,9 @@ In key workflows (creating Workers, assigning tasks, multi-Worker collaboration,
 
 ## Getting Started
 
-### Fresh Installation
+### Installation & Upgrade
+
+Installation and upgrade use the same command — the script will guide you interactively:
 
 **macOS / Linux:**
 
@@ -260,17 +262,7 @@ Select default worker runtime:
 Enter your choice [1-2]:
 ```
 
-### Upgrading from Previous Versions
-
-If you're already using HiClaw 1.0.3 or earlier:
-
-```bash
-cd ~/hiclaw-install/higress  # or your installation directory
-docker compose pull
-docker compose up -d
-```
-
-After upgrading, the Manager will automatically support CoPaw Workers. Existing OpenClaw Workers are unaffected and will continue to run normally.
+When upgrading, the script will automatically detect your existing installation — just select "in-place upgrade". After upgrading, the Manager will automatically support CoPaw Workers, and existing OpenClaw Workers will continue to run normally.
 
 ---
 

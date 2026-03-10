@@ -122,14 +122,14 @@ HiClaw 1.0.4 接入 CoPaw，核心代码只有两个文件：
 
 这意味着同样的硬件配置下，你可以跑更多的 Worker。以前 8GB 内存只能跑 8-10 个 OpenClaw Worker，现在可以跑 40+ 个 CoPaw Worker。
 
-**按需启用控制台，再省 500MB**
+**按需启用控制台**
 
 CoPaw Worker 默认启动时会加载 Web 控制台，方便调试。但在生产环境中，你可能不需要每个 Worker 都开控制台。
 
-我们提供了 `enable-worker-console.sh` 脚本，可以按需开关控制台。关闭控制台后，**每个 Worker 再节省约 500MB 内存**。
+我们提供了 `enable-worker-console.sh` 脚本，可以按需开关控制台：
 
 ```bash
-# 关闭 Worker 控制台（节省内存）
+# 关闭 Worker 控制台
 /opt/hiclaw/scripts/enable-worker-console.sh alice disable
 
 # 需要调试时再开启
@@ -235,7 +235,9 @@ through natural language interaction, but you are not a human.
 
 ## 快速开始
 
-### 全新安装
+### 安装与升级
+
+安装和升级使用相同的命令，脚本会交互式引导你选择：
 
 **macOS / Linux：**
 
@@ -259,17 +261,7 @@ Select default worker runtime:
 Enter your choice [1-2]:
 ```
 
-### 从旧版本升级
-
-如果你已经在使用 HiClaw 1.0.3 或更早版本：
-
-```bash
-cd ~/hiclaw-install/higress  # 或你的安装目录
-docker compose pull
-docker compose up -d
-```
-
-升级后，Manager 会自动支持 CoPaw Worker。现有的 OpenClaw Worker 不受影响，可以继续正常运行。
+升级时，脚本会自动检测现有安装，选择"就地升级"即可。升级后，Manager 会自动支持 CoPaw Worker，现有的 OpenClaw Worker 不受影响。
 
 ---
 
