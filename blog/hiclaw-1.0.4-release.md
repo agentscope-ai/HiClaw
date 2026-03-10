@@ -125,17 +125,16 @@ This means you can run more Workers on the same hardware. Previously, 8GB of mem
 
 **On-demand Console**
 
-CoPaw Worker starts with a web console by default for easy debugging. But in production, you might not need a console for every Worker.
+CoPaw Workers start without the web console by default to save resources. When you need to debug, just tell the Manager in Element:
 
-We provide an `enable-worker-console.sh` script to toggle the console on demand:
-
-```bash
-# Disable Worker console
-/opt/hiclaw/scripts/enable-worker-console.sh alice disable
-
-# Enable when debugging needed
-/opt/hiclaw/scripts/enable-worker-console.sh alice enable
 ```
+You: Enable console for alice
+
+Manager: Sure, enabling alice's console...
+         Container restarted, console URL: http://localhost:18089
+```
+
+The Manager will automatically restart the CoPaw Worker container with the console enabled. No manual scripting needed. When you're done debugging, you can also ask the Manager to disable the console.
 
 ### Mode 2: Local Host Mode — Direct Access to Your Computer
 
