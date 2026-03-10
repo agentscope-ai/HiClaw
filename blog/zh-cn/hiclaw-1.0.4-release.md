@@ -124,17 +124,16 @@ HiClaw 1.0.4 接入 CoPaw，核心代码只有两个文件：
 
 **按需启用控制台**
 
-CoPaw Worker 默认启动时会加载 Web 控制台，方便调试。但在生产环境中，你可能不需要每个 Worker 都开控制台。
+CoPaw Worker 默认启动时可能不加载 Web 控制台（取决于创建时的配置），以节省资源。需要调试时，只需要在 Element 里告诉 Manager：
 
-我们提供了 `enable-worker-console.sh` 脚本，可以按需开关控制台：
-
-```bash
-# 关闭 Worker 控制台
-/opt/hiclaw/scripts/enable-worker-console.sh alice disable
-
-# 需要调试时再开启
-/opt/hiclaw/scripts/enable-worker-console.sh alice enable
 ```
+你: 打开 alice 的控制台
+
+Manager: 好的，正在启用 alice 的控制台...
+         容器已重启，控制台地址：http://localhost:18089
+```
+
+Manager 会自动重启 CoPaw Worker 容器并启用控制台，无需手动操作。调试完成后，也可以让 Manager 关闭控制台以节省资源。
 
 ### 模式二：本地 Host 模式 —— 直接操作你的电脑
 
