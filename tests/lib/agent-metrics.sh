@@ -707,38 +707,77 @@ load_metrics_file() {
 
 # Generate a summary JSON combining all test metrics
 # Usage: generate_metrics_summary [test_names...]
-# Output includes totals and per-test breakdown
+# Output includes totals, per-test breakdown with per-agent detail, and by_role aggregation
 generate_metrics_summary() {
     local test_names=("$@")
-    local summary='{"tests": [], "totals": {"llm_calls": 0, "tokens": {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0, "total": 0}}}'
-    
+    local _zero_tokens='{"input": 0, "output": 0, "cache_read": 0, "cache_write": 0, "total": 0}'
+    local summary
+    summary=$(jq -n --argjson zt "$_zero_tokens" '{
+        tests: [],
+        totals: {llm_calls: 0, tokens: $zt},
+        by_role: {
+            manager: {llm_calls: 0, tokens: $zt},
+            workers: {llm_calls: 0, tokens: $zt}
+        }
+    }')
+
     for test_name in "${test_names[@]}"; do
         local metrics
         if metrics=$(load_metrics_file "$test_name" 2>/dev/null) && [ -n "$metrics" ]; then
-            # Add to tests array (simplified version with just totals per test)
+            # Build per-test summary preserving per-agent detail and adding role breakdown
             local test_summary
             test_summary=$(echo "$metrics" | jq '{
                 test_name: .test_name,
                 timestamp: .timestamp,
                 llm_calls: .totals.llm_calls,
                 tokens: .totals.tokens,
-                agents: (.agents | keys)
+                agents: .agents,
+                by_role: {
+                    manager: (
+                        if .agents.manager then .agents.manager
+                        else {llm_calls: 0, tokens: {input: 0, output: 0, cache_read: 0, cache_write: 0, total: 0}}
+                        end
+                    ),
+                    workers: (
+                        [.agents | to_entries[] | select(.key != "manager") | .value] |
+                        {
+                            llm_calls: (map(.llm_calls) | add // 0),
+                            tokens: {
+                                input:       (map(.tokens.input)       | add // 0),
+                                output:      (map(.tokens.output)      | add // 0),
+                                cache_read:  (map(.tokens.cache_read)  | add // 0),
+                                cache_write: (map(.tokens.cache_write) | add // 0),
+                                total:       ((map(.tokens.input) | add // 0) + (map(.tokens.output) | add // 0))
+                            }
+                        }
+                    )
+                }
             }')
-            
-            summary=$(echo "$summary" | jq --argjson t "$test_summary" '.tests += [$t]')
-            
-            # Accumulate totals
-            summary=$(echo "$summary" | jq '
-                .totals.llm_calls += (.tests[-1].llm_calls // 0)
-                | .totals.tokens.input += (.tests[-1].tokens.input // 0)
-                | .totals.tokens.output += (.tests[-1].tokens.output // 0)
-                | .totals.tokens.cache_read += (.tests[-1].tokens.cache_read // 0)
-                | .totals.tokens.cache_write += (.tests[-1].tokens.cache_write // 0)
-                | .totals.tokens.total = (.totals.tokens.input + .totals.tokens.output)
+
+            summary=$(echo "$summary" | jq --argjson t "$test_summary" '
+                .tests += [$t]
+                | .totals.llm_calls          += ($t.llm_calls // 0)
+                | .totals.tokens.input       += ($t.tokens.input // 0)
+                | .totals.tokens.output      += ($t.tokens.output // 0)
+                | .totals.tokens.cache_read  += ($t.tokens.cache_read // 0)
+                | .totals.tokens.cache_write += ($t.tokens.cache_write // 0)
+                | .totals.tokens.total        = (.totals.tokens.input + .totals.tokens.output)
+                | .by_role.manager.llm_calls          += ($t.by_role.manager.llm_calls // 0)
+                | .by_role.manager.tokens.input       += ($t.by_role.manager.tokens.input // 0)
+                | .by_role.manager.tokens.output      += ($t.by_role.manager.tokens.output // 0)
+                | .by_role.manager.tokens.cache_read  += ($t.by_role.manager.tokens.cache_read // 0)
+                | .by_role.manager.tokens.cache_write += ($t.by_role.manager.tokens.cache_write // 0)
+                | .by_role.manager.tokens.total        = (.by_role.manager.tokens.input + .by_role.manager.tokens.output)
+                | .by_role.workers.llm_calls          += ($t.by_role.workers.llm_calls // 0)
+                | .by_role.workers.tokens.input       += ($t.by_role.workers.tokens.input // 0)
+                | .by_role.workers.tokens.output      += ($t.by_role.workers.tokens.output // 0)
+                | .by_role.workers.tokens.cache_read  += ($t.by_role.workers.tokens.cache_read // 0)
+                | .by_role.workers.tokens.cache_write += ($t.by_role.workers.tokens.cache_write // 0)
+                | .by_role.workers.tokens.total        = (.by_role.workers.tokens.input + .by_role.workers.tokens.output)
             ')
         fi
     done
-    
+
     echo "$summary"
 }
 
@@ -748,20 +787,35 @@ generate_metrics_summary() {
 
 # Compare current metrics with baseline and generate delta
 # Usage: compare_metrics_with_baseline <current_summary_json> <baseline_summary_json>
-# Output: JSON with comparison results including deltas and trends
+# Output: JSON with comparison results including deltas, trends, and by_role breakdown
 compare_metrics_with_baseline() {
     local current="$1"
     local baseline="$2"
-    
+
     # If no baseline, return current as-is with no comparison
     if [ -z "$baseline" ] || [ "$baseline" = "null" ] || echo "$baseline" | jq -e '.error' >/dev/null 2>&1; then
-        echo "$current" | jq '. + {baseline_available: false, totals: {current: .totals}}'
+        echo "$current" | jq '. + {baseline_available: false, totals: {current: .totals}, by_role: {current: .by_role}}'
         return 0
     fi
-    
-    # Calculate deltas for each test
+
+    # Helper jq function for role delta (reused for manager & workers)
+    # Expects $curr and $base to be role objects with .llm_calls and .tokens.*
+    local _role_delta_jq='
+        def role_delta($c; $b):
+            {
+                current: $c,
+                baseline: $b,
+                delta: {
+                    llm_calls:    ($c.llm_calls    - $b.llm_calls),
+                    tokens_input: ($c.tokens.input  - $b.tokens.input),
+                    tokens_output:($c.tokens.output - $b.tokens.output),
+                    tokens_total: (($c.tokens.input - $b.tokens.input) + ($c.tokens.output - $b.tokens.output))
+                }
+            };
+    '
+
     local comparison
-    comparison=$(echo "$current" "$baseline" | jq -s '
+    comparison=$(echo "$current" "$baseline" | jq -s "${_role_delta_jq}"'
         {
             baseline_available: true,
             tests: (
@@ -779,6 +833,12 @@ compare_metrics_with_baseline() {
                                 tokens_output: ($curr.tokens.output - $base.tokens.output),
                                 tokens_total: (($curr.tokens.input - $base.tokens.input) + ($curr.tokens.output - $base.tokens.output))
                             },
+                            by_role: (
+                                if ($curr.by_role and $base.by_role) then {
+                                    manager: role_delta($curr.by_role.manager; $base.by_role.manager),
+                                    workers: role_delta($curr.by_role.workers; $base.by_role.workers)
+                                } else null end
+                            ),
                             trend: (
                                 if $curr.llm_calls < $base.llm_calls then "improved"
                                 elif $curr.llm_calls > $base.llm_calls then "regressed"
@@ -792,6 +852,7 @@ compare_metrics_with_baseline() {
                             current: $curr,
                             baseline: null,
                             delta: null,
+                            by_role: null,
                             trend: "new_test"
                         }
                     end
@@ -806,10 +867,18 @@ compare_metrics_with_baseline() {
                     tokens_output: (.[0].totals.tokens.output - .[1].totals.tokens.output),
                     tokens_total: ((.[0].totals.tokens.input - .[1].totals.tokens.input) + (.[0].totals.tokens.output - .[1].totals.tokens.output))
                 }
-            }
+            },
+            by_role: (
+                if (.[0].by_role and .[1].by_role) then {
+                    manager: role_delta(.[0].by_role.manager; .[1].by_role.manager),
+                    workers: role_delta(.[0].by_role.workers; .[1].by_role.workers)
+                } else {
+                    current: .[0].by_role
+                } end
+            )
         }
     ')
-    
+
     echo "$comparison"
 }
 
@@ -846,24 +915,24 @@ _format_pct() {
 
 # Generate a Markdown comparison report for PR comments
 # Usage: generate_comparison_markdown <comparison_json>
-# Output: Markdown formatted report
+# Output: Markdown formatted report with overall, by-role, and per-test sections
 generate_comparison_markdown() {
     local comparison="$1"
     local baseline_available
     baseline_available=$(echo "$comparison" | jq -r '.baseline_available // false')
-    
+
     echo "## 📊 CI Metrics Report"
     echo ""
-    
+
     if [ "$baseline_available" = "false" ]; then
         echo "> ℹ️ **No baseline available** - This is the first run or baseline data was not found."
         echo ""
     fi
-    
-    # Summary totals section
+
+    # ---- Overall Summary ----
     echo "### Summary"
     echo ""
-    
+
     if [ "$baseline_available" = "true" ]; then
         local curr_calls base_calls delta_calls
         local curr_in base_in delta_in
@@ -897,30 +966,73 @@ generate_comparison_markdown() {
         curr_calls=$(echo "$comparison" | jq -r '.totals.current.llm_calls // .totals.llm_calls // 0')
         curr_in=$(echo "$comparison" | jq -r '.totals.current.tokens.input // .totals.tokens.input // 0')
         curr_out=$(echo "$comparison" | jq -r '.totals.current.tokens.output // .totals.tokens.output // 0')
-        
+
         echo "| Metric | Value |"
         echo "|--------|-------|"
         echo "| **LLM Calls** | ${curr_calls} |"
         echo "| **Input Tokens** | ${curr_in} |"
         echo "| **Output Tokens** | ${curr_out} |"
     fi
-    
+
     echo ""
-    
-    # Per-test breakdown
+
+    # ---- By Role Breakdown ----
+    echo "### By Role"
+    echo ""
+
+    if [ "$baseline_available" = "true" ]; then
+        local has_role_baseline
+        has_role_baseline=$(echo "$comparison" | jq -r 'if (.by_role.manager.baseline and .by_role.workers.baseline) then "true" else "false" end')
+
+        if [ "$has_role_baseline" = "true" ]; then
+            echo "| Role | Metric | Current | Baseline | Change |"
+            echo "|------|--------|---------|----------|--------|"
+            for role in manager workers; do
+                local role_label
+                [ "$role" = "manager" ] && role_label="🧠 Manager" || role_label="🔧 Workers"
+                local rc_calls rb_calls rd_calls rc_in rb_in rd_in rc_out rb_out rd_out rc_total rb_total rd_total
+                rc_calls=$(echo "$comparison" | jq -r ".by_role.${role}.current.llm_calls // 0")
+                rb_calls=$(echo "$comparison" | jq -r ".by_role.${role}.baseline.llm_calls // 0")
+                rd_calls=$(echo "$comparison" | jq -r ".by_role.${role}.delta.llm_calls // 0")
+                rc_in=$(echo "$comparison" | jq -r ".by_role.${role}.current.tokens.input // 0")
+                rb_in=$(echo "$comparison" | jq -r ".by_role.${role}.baseline.tokens.input // 0")
+                rd_in=$(echo "$comparison" | jq -r ".by_role.${role}.delta.tokens_input // 0")
+                rc_out=$(echo "$comparison" | jq -r ".by_role.${role}.current.tokens.output // 0")
+                rb_out=$(echo "$comparison" | jq -r ".by_role.${role}.baseline.tokens.output // 0")
+                rd_out=$(echo "$comparison" | jq -r ".by_role.${role}.delta.tokens_output // 0")
+                rc_total=$(( rc_in + rc_out ))
+                rb_total=$(( rb_in + rb_out ))
+                rd_total=$(( rc_total - rb_total ))
+                echo "| ${role_label} | LLM Calls | ${rc_calls} | ${rb_calls} | $(_format_delta "$rd_calls") $(_format_pct "$rc_calls" "$rb_calls") |"
+                echo "| | Input Tokens | ${rc_in} | ${rb_in} | $(_format_delta "$rd_in") $(_format_pct "$rc_in" "$rb_in") |"
+                echo "| | Output Tokens | ${rc_out} | ${rb_out} | $(_format_delta "$rd_out") $(_format_pct "$rc_out" "$rb_out") |"
+                echo "| | Total Tokens | ${rc_total} | ${rb_total} | $(_format_delta "$rd_total") $(_format_pct "$rc_total" "$rb_total") |"
+            done
+        else
+            # Baseline exists but has no by_role data (old-format baseline)
+            _render_role_no_baseline "$comparison"
+        fi
+    else
+        _render_role_no_baseline "$comparison"
+    fi
+
+    echo ""
+
+    # ---- Per-Test Breakdown ----
     local test_count
     test_count=$(echo "$comparison" | jq '.tests | length // 0')
-    
+
     if [ "$test_count" -gt 0 ]; then
         echo "### Per-Test Breakdown"
         echo ""
-        
+
         if [ "$baseline_available" = "true" ]; then
-            echo "| Test | LLM Calls | Δ | Total Tokens | Δ | Trend |"
-            echo "|------|-----------|---|--------------|---|-------|"
+            echo "| Test | LLM Calls | Δ | Mgr Calls | Wkr Calls | Total Tokens | Δ | Trend |"
+            echo "|------|-----------|---|-----------|-----------|--------------|---|-------|"
 
             while IFS= read -r row; do
                 local name calls base_calls delta_calls total base_total delta_total trend
+                local mgr_calls wkr_calls
                 name=$(echo "$row" | jq -r '.test_name')
                 calls=$(echo "$row" | jq -r '.current.llm_calls // 0')
                 base_calls=$(echo "$row" | jq -r '.baseline.llm_calls // 0')
@@ -928,6 +1040,8 @@ generate_comparison_markdown() {
                 total=$(echo "$row" | jq -r '(.current.tokens.input // 0) + (.current.tokens.output // 0)')
                 base_total=$(echo "$row" | jq -r '((.baseline.tokens.input // 0) + (.baseline.tokens.output // 0))')
                 delta_total=$(echo "$row" | jq -r '.delta.tokens_total // 0')
+                mgr_calls=$(echo "$row" | jq -r '.current.by_role.manager.llm_calls // 0')
+                wkr_calls=$(echo "$row" | jq -r '.current.by_role.workers.llm_calls // 0')
                 trend=$(echo "$row" | jq -r '.trend')
                 local trend_icon
                 case "$trend" in
@@ -936,26 +1050,32 @@ generate_comparison_markdown() {
                     new_test)  trend_icon="🆕 new" ;;
                     *)         trend_icon="— unchanged" ;;
                 esac
-                echo "| $name | $calls | $(_format_delta "$delta_calls") $(_format_pct "$calls" "$base_calls") | $total | $(_format_delta "$delta_total") $(_format_pct "$total" "$base_total") | $trend_icon |"
+                echo "| $name | $calls | $(_format_delta "$delta_calls") $(_format_pct "$calls" "$base_calls") | $mgr_calls | $wkr_calls | $total | $(_format_delta "$delta_total") $(_format_pct "$total" "$base_total") | $trend_icon |"
             done < <(echo "$comparison" | jq -c '.tests[]')
         else
-            echo "| Test | LLM Calls | Input Tokens | Output Tokens |"
-            echo "|------|-----------|--------------|---------------|"
-            
-            echo "$comparison" | jq -r '.tests[] | 
-                "\(.test_name) | \(.current.llm_calls // .llm_calls) | \(.current.tokens.input // .tokens.input) | \(.current.tokens.output // .tokens.output)"' | while IFS= read -r line; do
-                echo "| $line |"
-            done
+            echo "| Test | LLM Calls | Mgr Calls | Wkr Calls | Input Tokens | Output Tokens |"
+            echo "|------|-----------|-----------|-----------|--------------|---------------|"
+
+            while IFS= read -r row; do
+                local name calls mgr_calls wkr_calls tin tout
+                name=$(echo "$row" | jq -r '.test_name')
+                calls=$(echo "$row" | jq -r '.current.llm_calls // .llm_calls // 0')
+                mgr_calls=$(echo "$row" | jq -r '.current.by_role.manager.llm_calls // .by_role.manager.llm_calls // 0')
+                wkr_calls=$(echo "$row" | jq -r '.current.by_role.workers.llm_calls // .by_role.workers.llm_calls // 0')
+                tin=$(echo "$row" | jq -r '.current.tokens.input // .tokens.input // 0')
+                tout=$(echo "$row" | jq -r '.current.tokens.output // .tokens.output // 0')
+                echo "| $name | $calls | $mgr_calls | $wkr_calls | $tin | $tout |"
+            done < <(echo "$comparison" | jq -c '.tests[]')
         fi
         echo ""
     fi
-    
-    # Trend indicators
+
+    # ---- Trend indicators ----
     if [ "$baseline_available" = "true" ]; then
         local improved regressed
         improved=$(echo "$comparison" | jq '[.tests[]? | select(.trend == "improved")] | length // 0')
         regressed=$(echo "$comparison" | jq '[.tests[]? | select(.trend == "regressed")] | length // 0')
-        
+
         if [ "$improved" -gt 0 ] || [ "$regressed" -gt 0 ]; then
             echo "### Trends"
             echo ""
@@ -968,7 +1088,24 @@ generate_comparison_markdown() {
             echo ""
         fi
     fi
-    
+
     echo "---"
     echo "*Generated by HiClaw CI on $(date -u +"%Y-%m-%d %H:%M:%S UTC")*"
+}
+
+# Internal helper: render by-role table when no baseline comparison is available
+_render_role_no_baseline() {
+    local comparison="$1"
+    local mgr_calls mgr_in mgr_out wkr_calls wkr_in wkr_out
+    mgr_calls=$(echo "$comparison" | jq -r '.by_role.current.manager.llm_calls // .by_role.manager.current.llm_calls // .by_role.manager.llm_calls // 0')
+    mgr_in=$(echo "$comparison" | jq -r '.by_role.current.manager.tokens.input // .by_role.manager.current.tokens.input // .by_role.manager.tokens.input // 0')
+    mgr_out=$(echo "$comparison" | jq -r '.by_role.current.manager.tokens.output // .by_role.manager.current.tokens.output // .by_role.manager.tokens.output // 0')
+    wkr_calls=$(echo "$comparison" | jq -r '.by_role.current.workers.llm_calls // .by_role.workers.current.llm_calls // .by_role.workers.llm_calls // 0')
+    wkr_in=$(echo "$comparison" | jq -r '.by_role.current.workers.tokens.input // .by_role.workers.current.tokens.input // .by_role.workers.tokens.input // 0')
+    wkr_out=$(echo "$comparison" | jq -r '.by_role.current.workers.tokens.output // .by_role.workers.current.tokens.output // .by_role.workers.tokens.output // 0')
+
+    echo "| Role | LLM Calls | Input Tokens | Output Tokens |"
+    echo "|------|-----------|--------------|---------------|"
+    echo "| 🧠 Manager | ${mgr_calls} | ${mgr_in} | ${mgr_out} |"
+    echo "| 🔧 Workers | ${wkr_calls} | ${wkr_in} | ${wkr_out} |"
 }

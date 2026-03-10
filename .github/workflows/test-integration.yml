@@ -303,7 +303,7 @@ jobs:
           done | tr '\n' ' ')
           generate_metrics_summary $TEST_NAMES > metrics-baseline.json
           echo "Baseline generated for version ${VERSION}"
-          cat metrics-baseline.json | jq '.totals'
+          cat metrics-baseline.json | jq '{totals: .totals, by_role: .by_role}'
 
       - name: Upload baseline to release
         env:
