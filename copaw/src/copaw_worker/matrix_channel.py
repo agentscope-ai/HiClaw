@@ -7,16 +7,25 @@ so CoPaw's channel registry picks it up automatically.
 from __future__ import annotations
 
 import asyncio
+import io
 import logging
+import mimetypes
+import os
 import re
+from pathlib import Path
 from typing import Any, AsyncIterator, Callable, Dict, List, Optional
 
 from nio import (
     AsyncClient,
     LoginResponse,
     MatrixRoom,
+    RoomMessageAudio,
+    RoomMessageFile,
+    RoomMessageImage,
     RoomMessageText,
+    RoomMessageVideo,
     SyncResponse,
+    UploadResponse,
 )
 from nio.responses import WhoamiResponse
 
@@ -30,8 +39,12 @@ try:
     from copaw.app.channels.base import BaseChannel
     from copaw.app.channels.schema import ChannelType
     from agentscope_runtime.engine.schemas.agent_schemas import (
+        AudioContent,
         ContentType,
+        FileContent,
+        ImageContent,
         TextContent,
+        VideoContent,
     )
     _COPAW_AVAILABLE = True
 except ImportError:  # pragma: no cover
@@ -70,6 +83,9 @@ class MatrixChannelConfig:
         self.bot_prefix: str = raw.get("bot_prefix", "")
         self.filter_tool_messages: bool = raw.get("filter_tool_messages", False)
         self.filter_thinking: bool = raw.get("filter_thinking", False)
+        # Whether the active model supports image inputs. Set by bridge.py.
+        # Defaults to False so images are never sent to a non-vision model.
+        self.vision_enabled: bool = raw.get("vision_enabled", False)
 
 
 def _normalize_user_id(uid: str) -> str:
@@ -185,8 +201,12 @@ class MatrixChannel(BaseChannel):
             logger.error("MatrixChannel: no credentials configured")
             return
 
-        # Register event callback and start sync loop
+        # Register event callbacks and start sync loop
         self._client.add_event_callback(self._on_room_event, (RoomMessageText,))
+        self._client.add_event_callback(
+            self._on_room_media_event,
+            (RoomMessageImage, RoomMessageFile, RoomMessageAudio, RoomMessageVideo),
+        )
         self._sync_task = asyncio.create_task(self._sync_loop())
         logger.info("MatrixChannel: sync loop started")
 
@@ -230,7 +250,147 @@ class MatrixChannel(BaseChannel):
                 await asyncio.sleep(5)
 
     # ------------------------------------------------------------------
-    # Incoming message handling
+    # Allowlist helpers
+    # ------------------------------------------------------------------
+
+    def _check_allowed(self, sender_id: str, room_id: str, is_dm: bool) -> bool:
+        """Return True if the sender is allowed to interact in this context."""
+        normalized = _normalize_user_id(sender_id)
+        if is_dm:
+            if self._cfg.dm_policy == "disabled":
+                return False
+            if self._cfg.dm_policy == "allowlist":
+                if normalized not in self._cfg.allow_from:
+                    logger.debug("MatrixChannel: DM blocked from %s", sender_id)
+                    return False
+        else:
+            if self._cfg.group_policy == "disabled":
+                return False
+            if self._cfg.group_policy == "allowlist":
+                if normalized not in self._cfg.group_allow_from:
+                    logger.debug("MatrixChannel: group msg blocked from %s", sender_id)
+                    return False
+        return True
+
+    def _require_mention(self, room_id: str) -> bool:
+        """Check per-room config, fall back to global default (require mention)."""
+        room_cfg = self._cfg.groups.get(room_id) or self._cfg.groups.get("*")
+        if room_cfg:
+            if room_cfg.get("autoReply") is True:
+                return False
+            if "requireMention" in room_cfg:
+                return bool(room_cfg["requireMention"])
+        return True  # default: require mention in group rooms
+
+    def _was_mentioned(self, event: Any, text: str) -> bool:
+        if not self._user_id:
+            return False
+        # 1. Check m.mentions (structured mention from Matrix spec)
+        content = event.source.get("content", {})
+        mentions = content.get("m.mentions", {})
+        if self._user_id in mentions.get("user_ids", []):
+            return True
+        if mentions.get("room"):
+            return True
+        # 2. Check formatted_body for matrix.to mention links (Element HTML format)
+        formatted_body = content.get("formatted_body", "")
+        if formatted_body and self._user_id:
+            import urllib.parse
+            escaped_uid = re.escape(self._user_id)
+            if re.search(rf'href=["\']https://matrix\.to/#/{escaped_uid}["\']', formatted_body, re.IGNORECASE):
+                return True
+            encoded_uid = re.escape(urllib.parse.quote(self._user_id))
+            if re.search(rf'href=["\']https://matrix\.to/#/{encoded_uid}["\']', formatted_body, re.IGNORECASE):
+                return True
+        # 3. Fallback: match full MXID in plain text
+        if self._user_id and re.search(re.escape(self._user_id), text, re.IGNORECASE):
+            return True
+        return False
+
+    # ------------------------------------------------------------------
+    # Media directory
+    # ------------------------------------------------------------------
+
+    def _media_dir(self) -> Path:
+        """Return (and create) the local media storage directory."""
+        try:
+            from copaw.constant import WORKING_DIR
+            d = WORKING_DIR / "media"
+        except Exception:
+            d = Path.home() / ".copaw" / "media"
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    # ------------------------------------------------------------------
+    # Media download (mxc:// → local file)
+    # ------------------------------------------------------------------
+
+    async def _download_mxc(self, mxc_url: str, filename: str) -> Optional[str]:
+        """Download an mxc:// URI to a local file. Returns local path or None."""
+        if not mxc_url.startswith("mxc://"):
+            return None
+        try:
+            rest = mxc_url[6:]  # strip "mxc://"
+            server, media_id = rest.split("/", 1)
+            url = (
+                f"{self._cfg.homeserver}/_matrix/media/v3/download"
+                f"/{server}/{media_id}"
+            )
+            headers = {"Authorization": f"Bearer {self._cfg.access_token}"}
+            import httpx
+            async with httpx.AsyncClient(follow_redirects=True, timeout=60) as http:
+                resp = await http.get(url, headers=headers)
+                resp.raise_for_status()
+            dest = self._media_dir() / filename
+            dest.write_bytes(resp.content)
+            logger.debug("MatrixChannel: downloaded %s → %s", mxc_url, dest)
+            return str(dest)
+        except Exception as exc:
+            logger.warning(
+                "MatrixChannel: failed to download %s: %s", mxc_url, exc
+            )
+            return None
+
+    # ------------------------------------------------------------------
+    # Media upload (local file → mxc://)
+    # ------------------------------------------------------------------
+
+    async def _upload_file(self, file_ref: str) -> Optional[str]:
+        """Upload a local file to Matrix media repo. Returns mxc:// URI or None."""
+        if not self._client:
+            return None
+        try:
+            # file_ref may be a file:// URI or a plain path
+            path = Path(file_ref.removeprefix("file://"))
+            if not path.exists():
+                logger.warning(
+                    "MatrixChannel: upload source not found: %s", file_ref
+                )
+                return None
+            mime_type, _ = mimetypes.guess_type(str(path))
+            mime_type = mime_type or "application/octet-stream"
+            data = path.read_bytes()
+            resp, _ = await self._client.upload(
+                io.BytesIO(data),
+                content_type=mime_type,
+                filename=path.name,
+                filesize=len(data),
+            )
+            if isinstance(resp, UploadResponse):
+                logger.debug(
+                    "MatrixChannel: uploaded %s → %s", path.name, resp.content_uri
+                )
+                return resp.content_uri
+            logger.warning("MatrixChannel: upload failed: %s", resp)
+            return None
+        except Exception as exc:
+            logger.warning(
+                "MatrixChannel: upload error for %s: %s", file_ref, exc
+            )
+            return None
+
+    # ------------------------------------------------------------------
+    # Incoming message handling — text
     # ------------------------------------------------------------------
 
     async def _on_room_event(self, room: MatrixRoom, event: RoomMessageText) -> None:
@@ -243,27 +403,12 @@ class MatrixChannel(BaseChannel):
         text = event.body or ""
         is_dm = len(room.users) == 2
 
-        # Allowlist check
-        normalized_sender = _normalize_user_id(sender_id)
-        if is_dm:
-            if self._cfg.dm_policy == "disabled":
-                return
-            if self._cfg.dm_policy == "allowlist":
-                if normalized_sender not in self._cfg.allow_from:
-                    logger.debug("MatrixChannel: DM blocked from %s", sender_id)
-                    return
-        else:
-            if self._cfg.group_policy == "disabled":
-                return
-            if self._cfg.group_policy == "allowlist":
-                if normalized_sender not in self._cfg.group_allow_from:
-                    logger.debug("MatrixChannel: group msg blocked from %s", sender_id)
-                    return
+        if not self._check_allowed(sender_id, room_id, is_dm):
+            return
 
         # Mention check for group rooms
         if not is_dm:
-            require_mention = self._require_mention(room_id)
-            if require_mention and not self._was_mentioned(event, text):
+            if self._require_mention(room_id) and not self._was_mentioned(event, text):
                 return  # silently ignore non-mention group messages
 
         # Mark as read + start typing immediately so the sender sees feedback
@@ -289,15 +434,101 @@ class MatrixChannel(BaseChannel):
         if self._enqueue:
             self._enqueue(payload)
 
-    def _require_mention(self, room_id: str) -> bool:
-        """Check per-room config, fall back to global default (require mention)."""
-        room_cfg = self._cfg.groups.get(room_id) or self._cfg.groups.get("*")
-        if room_cfg:
-            if room_cfg.get("autoReply") is True:
-                return False
-            if "requireMention" in room_cfg:
-                return bool(room_cfg["requireMention"])
-        return True  # default: require mention in group rooms
+    # ------------------------------------------------------------------
+    # Incoming message handling — media (image / file / audio / video)
+    # ------------------------------------------------------------------
+
+    async def _on_room_media_event(self, room: MatrixRoom, event: Any) -> None:
+        """Handle incoming media messages (image, file, audio, video)."""
+        if event.sender == self._user_id:
+            return
+
+        sender_id = event.sender
+        room_id = room.room_id
+        is_dm = len(room.users) == 2
+
+        if not self._check_allowed(sender_id, room_id, is_dm):
+            return
+
+        # For group rooms, apply the same mention policy as text messages.
+        # Media body (filename) rarely contains a mention, but respect
+        # m.mentions if the client sends it.
+        if not is_dm:
+            if self._require_mention(room_id) and not self._was_mentioned(event, ""):
+                return
+
+        await self._send_read_receipt(room_id, event.event_id)
+        await self._send_typing(room_id, True)
+
+        mxc_url: str = getattr(event, "url", "") or ""
+        body: str = event.body or ""  # filename or caption
+
+        content_parts: list[dict[str, Any]] = []
+
+        # Include the filename/caption as a text hint so the LLM understands context
+        if body:
+            content_parts.append({"type": "text", "text": body})
+
+        if mxc_url:
+            # Use the body as filename, fall back to a safe default
+            filename = body or f"matrix_media_{event.event_id[:8]}"
+            # Ensure unique filenames to avoid collisions between rooms
+            filename = f"{event.event_id[:8]}_{filename}"
+            local_path = await self._download_mxc(mxc_url, filename)
+            if local_path:
+                file_uri = Path(local_path).as_uri()
+                if isinstance(event, RoomMessageImage):
+                    if self._cfg.vision_enabled:
+                        content_parts.append({
+                            "type": "image",
+                            "image_url": file_uri,
+                        })
+                    else:
+                        # Model does not support image input — downgrade to text
+                        content_parts.append({
+                            "type": "text",
+                            "text": f"[User sent an image (current model does not support image input): {body or filename}]",
+                        })
+                elif isinstance(event, RoomMessageAudio):
+                    content_parts.append({
+                        "type": "audio",
+                        "data": file_uri,
+                    })
+                elif isinstance(event, RoomMessageVideo):
+                    content_parts.append({
+                        "type": "video",
+                        "video_url": file_uri,
+                    })
+                else:  # RoomMessageFile
+                    content_parts.append({
+                        "type": "file",
+                        "file_url": file_uri,
+                        "filename": body or filename,
+                    })
+            else:
+                content_parts.append({
+                    "type": "text",
+                    "text": f"[Media unavailable: {body}]",
+                })
+
+        if not content_parts:
+            return
+
+        worker_name = (self._user_id or "").split(":")[0].lstrip("@")
+        payload = {
+            "channel_id": CHANNEL_KEY,
+            "sender_id": sender_id,
+            "content_parts": content_parts,
+            "meta": {
+                "room_id": room_id,
+                "is_dm": is_dm,
+                "worker_name": worker_name,
+                "event_id": event.event_id,
+            },
+        }
+
+        if self._enqueue:
+            self._enqueue(payload)
 
     # ------------------------------------------------------------------
     # Read receipt & typing indicator
@@ -308,11 +539,17 @@ class MatrixChannel(BaseChannel):
         if not self._client or not event_id:
             return
         try:
-            await self._client.room_read_markers(room_id, fully_read_event=event_id, read_event=event_id)
+            await self._client.room_read_markers(
+                room_id, fully_read_event=event_id, read_event=event_id
+            )
         except Exception as exc:
-            logger.debug("MatrixChannel: read receipt failed for %s: %s", event_id, exc)
+            logger.debug(
+                "MatrixChannel: read receipt failed for %s: %s", event_id, exc
+            )
 
-    async def _send_typing(self, room_id: str, typing: bool, timeout: int = 30000) -> None:
+    async def _send_typing(
+        self, room_id: str, typing: bool, timeout: int = 30000
+    ) -> None:
         """Set typing indicator on/off for a room.
 
         When turning on, starts a background renewal task that re-sends the
@@ -326,16 +563,22 @@ class MatrixChannel(BaseChannel):
         if existing and not existing.done():
             existing.cancel()
         try:
-            await self._client.room_typing(room_id, typing_state=typing, timeout=timeout)
+            await self._client.room_typing(
+                room_id, typing_state=typing, timeout=timeout
+            )
         except Exception as exc:
-            logger.debug("MatrixChannel: typing indicator failed for %s: %s", room_id, exc)
+            logger.debug(
+                "MatrixChannel: typing indicator failed for %s: %s", room_id, exc
+            )
         # Start renewal loop if turning on
         if typing:
             self._typing_tasks[room_id] = asyncio.create_task(
                 self._typing_renewal_loop(room_id, timeout)
             )
 
-    async def _typing_renewal_loop(self, room_id: str, timeout: int = 30000) -> None:
+    async def _typing_renewal_loop(
+        self, room_id: str, timeout: int = 30000
+    ) -> None:
         """Re-send typing=true every 25s, hard-capped at 2 minutes."""
         max_duration = 120  # seconds
         renewal_interval = 25  # seconds (renew before 30s server timeout)
@@ -346,11 +589,15 @@ class MatrixChannel(BaseChannel):
                 elapsed += renewal_interval
                 if not self._client:
                     break
-                await self._client.room_typing(room_id, typing_state=True, timeout=timeout)
+                await self._client.room_typing(
+                    room_id, typing_state=True, timeout=timeout
+                )
         except asyncio.CancelledError:
             pass
         except Exception as exc:
-            logger.debug("MatrixChannel: typing renewal failed for %s: %s", room_id, exc)
+            logger.debug(
+                "MatrixChannel: typing renewal failed for %s: %s", room_id, exc
+            )
         finally:
             # If we hit the 2-min cap, explicitly stop typing
             if elapsed >= max_duration and self._client:
@@ -360,34 +607,35 @@ class MatrixChannel(BaseChannel):
                     pass
             self._typing_tasks.pop(room_id, None)
 
-    def _was_mentioned(self, event: RoomMessageText, text: str) -> bool:
-        if not self._user_id:
-            return False
-        # 1. Check m.mentions (structured mention from Matrix spec)
-        content = event.source.get("content", {})
-        mentions = content.get("m.mentions", {})
-        if self._user_id in mentions.get("user_ids", []):
-            return True
-        if mentions.get("room"):
-            return True
-        # 2. Check formatted_body for matrix.to mention links (Element HTML format)
-        formatted_body = content.get("formatted_body", "")
-        if formatted_body and self._user_id:
-            import urllib.parse
-            escaped_uid = re.escape(self._user_id)
-            if re.search(rf'href=["\']https://matrix\.to/#/{escaped_uid}["\']', formatted_body, re.IGNORECASE):
-                return True
-            encoded_uid = re.escape(urllib.parse.quote(self._user_id))
-            if re.search(rf'href=["\']https://matrix\.to/#/{encoded_uid}["\']', formatted_body, re.IGNORECASE):
-                return True
-        # 3. Fallback: match full MXID in plain text (e.g. @data:matrix-local.hiclaw.io:18080)
-        if self._user_id and re.search(re.escape(self._user_id), text, re.IGNORECASE):
-            return True
-        return False
-
     # ------------------------------------------------------------------
     # build_agent_request_from_native (BaseChannel protocol)
     # ------------------------------------------------------------------
+
+    def _build_content_part(self, p: dict[str, Any]) -> Any:
+        """Convert a native content-part dict to a CoPaw Content object."""
+        t = p.get("type")
+        if t == "text" and p.get("text"):
+            return TextContent(type=ContentType.TEXT, text=p["text"])
+        if t == "image" and p.get("image_url"):
+            if not self._cfg.vision_enabled:
+                # Downgrade silently; _on_room_media_event should have already
+                # converted this, but guard here for any code path that builds
+                # content_parts directly.
+                return TextContent(
+                    type=ContentType.TEXT,
+                    text="[Image omitted: current model does not support image input]",
+                )
+            return ImageContent(type=ContentType.IMAGE, image_url=p["image_url"])
+        if t == "file":
+            return FileContent(
+                type=ContentType.FILE,
+                file_url=p.get("file_url", ""),
+            )
+        if t == "audio" and p.get("data"):
+            return AudioContent(type=ContentType.AUDIO, data=p["data"])
+        if t == "video" and p.get("video_url"):
+            return VideoContent(type=ContentType.VIDEO, video_url=p["video_url"])
+        return None
 
     def build_agent_request_from_native(self, native_payload: Any) -> Any:
         parts = native_payload.get("content_parts", [])
@@ -397,9 +645,8 @@ class MatrixChannel(BaseChannel):
         session_id = f"matrix:{room_id}"
 
         content = [
-            TextContent(type=ContentType.TEXT, text=p["text"])
-            for p in parts
-            if p.get("type") == "text" and p.get("text")
+            obj for p in parts
+            if (obj := self._build_content_part(p)) is not None
         ]
         if not content:
             content = [TextContent(type=ContentType.TEXT, text="")]
@@ -423,7 +670,7 @@ class MatrixChannel(BaseChannel):
         return meta.get("room_id", getattr(request, "user_id", ""))
 
     # ------------------------------------------------------------------
-    # Outgoing send
+    # Outgoing send — text
     # ------------------------------------------------------------------
 
     async def send(
@@ -447,7 +694,86 @@ class MatrixChannel(BaseChannel):
         try:
             await self._client.room_send(room_id, "m.room.message", content)
         except Exception as exc:
-            logger.exception("MatrixChannel: send failed to %s: %s", room_id, exc)
+            logger.exception(
+                "MatrixChannel: send failed to %s: %s", room_id, exc
+            )
         finally:
             # Stop typing indicator after reply is sent (or failed)
             await self._send_typing(room_id, False)
+
+    # ------------------------------------------------------------------
+    # Outgoing send — media
+    # ------------------------------------------------------------------
+
+    async def send_media(
+        self,
+        to_handle: str,
+        part: Any,
+        meta: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Upload a local file to Matrix and send as m.image / m.file / etc."""
+        if not self._client:
+            return
+
+        room_id = to_handle
+        t = getattr(part, "type", None)
+
+        # Extract the local file reference from the content part
+        if t == ContentType.IMAGE:
+            file_ref = getattr(part, "image_url", "")
+            matrix_msgtype = "m.image"
+        elif t == ContentType.VIDEO:
+            file_ref = getattr(part, "video_url", "")
+            matrix_msgtype = "m.video"
+        elif t == ContentType.AUDIO:
+            file_ref = getattr(part, "data", "")
+            matrix_msgtype = "m.audio"
+        elif t == ContentType.FILE:
+            file_ref = getattr(part, "file_url", "") or getattr(part, "file_id", "")
+            matrix_msgtype = "m.file"
+        else:
+            return
+
+        if not file_ref:
+            return
+
+        # Upload to Matrix media repository
+        mxc_uri = await self._upload_file(file_ref)
+        if not mxc_uri:
+            logger.warning(
+                "MatrixChannel: send_media upload failed for %s", file_ref
+            )
+            return
+
+        # Build and send the Matrix room event
+        try:
+            path_str = file_ref.removeprefix("file://")
+            filename = os.path.basename(path_str) or "file"
+            mime_type, _ = mimetypes.guess_type(path_str)
+            mime_type = mime_type or "application/octet-stream"
+            try:
+                file_size = os.path.getsize(path_str)
+            except OSError:
+                file_size = 0
+
+            event_content: dict[str, Any] = {
+                "msgtype": matrix_msgtype,
+                "body": filename,
+                "url": mxc_uri,
+                "info": {
+                    "mimetype": mime_type,
+                    "size": file_size,
+                },
+            }
+            sender_id = (meta or {}).get("sender_id") or (meta or {}).get("user_id")
+            if sender_id:
+                event_content["m.mentions"] = {"user_ids": [sender_id]}
+
+            await self._client.room_send(room_id, "m.room.message", event_content)
+            logger.debug(
+                "MatrixChannel: sent %s %s to %s", matrix_msgtype, filename, room_id
+            )
+        except Exception as exc:
+            logger.exception(
+                "MatrixChannel: send_media failed for %s: %s", room_id, exc
+            )

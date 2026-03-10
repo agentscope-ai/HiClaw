@@ -81,7 +81,7 @@ detect_timezone() {
             tz="Asia/Shanghai"
             log "Using default timezone: ${tz}"
         else
-            read -p "Timezone [Asia/Shanghai]: " tz
+            read -e -p "Timezone [Asia/Shanghai]: " tz
             tz="${tz:-Asia/Shanghai}"
         fi
     fi
@@ -298,15 +298,15 @@ msg() {
         "llm.codingplan.model.minimax.zh") text="  4) MiniMax-M2.5  - MiniMax M2.5" ;;
         "llm.codingplan.model.minimax.en") text="  4) MiniMax-M2.5  - MiniMax M2.5" ;;
         "llm.codingplan.model.select.zh") text="选择模型 [1/2/3/4]" ;;
-        "llm.codingplan.model.select.en") text="Select model [1/2/4]" ;;
+        "llm.codingplan.model.select.en") text="Select model [1/2/3/4]" ;;
         "llm.provider.selected_codingplan.zh") text="  提供商: 阿里云百炼 CodingPlan" ;;
         "llm.provider.selected_codingplan.en") text="  Provider: Alibaba Cloud Bailian CodingPlan" ;;
         "llm.provider.selected_qwen.zh") text="  提供商: 阿里云百炼" ;;
         "llm.provider.selected_qwen.en") text="  Provider: Alibaba Cloud Bailian" ;;
         "llm.provider.selected_openai.zh") text="  提供商: %s（OpenAI 兼容）" ;;
         "llm.provider.selected_openai.en") text="  Provider: %s (OpenAI-compatible)" ;;
-        "llm.provider.invalid.zh") text="无效选择，默认使用阿里云百炼 CodingPlan" ;;
-        "llm.provider.invalid.en") text="Invalid choice, defaulting to Alibaba Cloud Bailian CodingPlan" ;;
+        "llm.provider.invalid.zh") text="无效选择: %s（请输入 1 或 2）" ;;
+        "llm.provider.invalid.en") text="Invalid choice: %s (please enter 1 or 2)" ;;
         "llm.qwen.model_prompt.zh") text="默认模型 ID [qwen3.5-plus]" ;;
         "llm.qwen.model_prompt.en") text="Default Model ID [qwen3.5-plus]" ;;
         "llm.openai.base_url_prompt.zh") text="Base URL（例如 https://api.openai.com/v1）" ;;
@@ -399,8 +399,8 @@ msg() {
         # --- Default worker runtime ---
         "worker_runtime.title.zh") text="--- 默认 Worker 运行时 ---" ;;
         "worker_runtime.title.en") text="--- Default Worker Runtime ---" ;;
-        "worker_runtime.openclaw.zh") text="OpenClaw（Node.js 容器，~500MB 内存，功能完整）" ;;
-        "worker_runtime.openclaw.en") text="OpenClaw (Node.js container, ~500MB RAM, full-featured)" ;;
+        "worker_runtime.openclaw.zh") text="OpenClaw（Node.js 容器，~500MB 内存）" ;;
+        "worker_runtime.openclaw.en") text="OpenClaw (Node.js container, ~500MB RAM)" ;;
         "worker_runtime.copaw.zh") text="CoPaw（Python 容器，~100MB 内存，默认关闭控制台，可跟 Manager 对话按需开启）" ;;
         "worker_runtime.copaw.en") text="CoPaw (Python container, ~100MB RAM, console off by default, enable on demand via Manager)" ;;
         "worker_runtime.choice.zh") text="请选择 [1/2]" ;;
@@ -458,12 +458,16 @@ msg() {
         "llm.openai.test.testing.en") text="Testing API connectivity..." ;;
         "llm.openai.test.ok.zh") text="✅ API 联通性测试通过" ;;
         "llm.openai.test.ok.en") text="✅ API connectivity test passed" ;;
-        "llm.openai.test.fail.zh") text="⚠️  API 联通性测试失败（HTTP %s）。响应内容:\n%s\n请根据以上错误信息联系您的模型服务商解决。安装将继续，但 Agent 可能无法正常工作。" ;;
-        "llm.openai.test.fail.en") text="⚠️  API connectivity test failed (HTTP %s). Response body:\n%s\nPlease contact your model provider to resolve the issue. Installation will continue, but the Agent may not work correctly." ;;
+        "llm.openai.test.fail.zh") text="⚠️  API 联通性测试失败（HTTP %s）。响应内容:\n%s\n请根据以上错误信息联系您的模型服务商解决。" ;;
+        "llm.openai.test.fail.en") text="⚠️  API connectivity test failed (HTTP %s). Response body:\n%s\nPlease contact your model provider to resolve the issue." ;;
         "llm.openai.test.fail.codingplan.zh") text="⚠️  提示: 请确认您的 API Key 已开通阿里云百炼 CodingPlan 服务。开通地址: https://www.aliyun.com/benefit/scene/codingplan" ;;
         "llm.openai.test.fail.codingplan.en") text="⚠️  Hint: Please verify that your API Key has CodingPlan service enabled on Alibaba Cloud Bailian. Enable at: https://www.aliyun.com/benefit/scene/codingplan" ;;
         "llm.openai.test.no_curl.zh") text="⚠️  未找到 curl，跳过 API 联通性测试" ;;
         "llm.openai.test.no_curl.en") text="⚠️  curl not found, skipping API connectivity test" ;;
+        "llm.openai.test.confirm.zh") text="是否仍要继续安装？[y/N] " ;;
+        "llm.openai.test.confirm.en") text="Continue with installation anyway? [y/N] " ;;
+        "llm.openai.test.aborted.zh") text="安装已中止。" ;;
+        "llm.openai.test.aborted.en") text="Installation aborted." ;;
         # --- OpenAI-compatible provider creation ---
         "install.openai_compat.missing.zh") text="警告: OpenAI Base URL 或 API Key 未设置，跳过提供商创建" ;;
         "install.openai_compat.missing.en") text="WARNING: OpenAI Base URL or API Key not set, skipping provider creation" ;;
@@ -614,41 +618,6 @@ msg() {
         "error.docker_not_found.en") text="docker or podman command not found. Please install Docker Desktop or Podman Desktop first:\n  Docker Desktop: https://www.docker.com/products/docker-desktop/\n  Podman Desktop: https://podman-desktop.io/" ;;
         "error.docker_not_running.zh") text="Docker 未运行。请先启动 Docker Desktop 或 Podman Desktop。" ;;
         "error.docker_not_running.en") text="Docker is not running. Please start Docker Desktop or Podman Desktop first." ;;
-        # --- Config command messages ---
-        "config.show.title.zh") text="=== HiClaw LLM 配置 ===" ;;
-        "config.show.title.en") text="=== HiClaw LLM Configuration ===" ;;
-        "config.show.provider.zh") text="  提供商：%s" ;;
-        "config.show.provider.en") text="  Provider: %s" ;;
-        "config.show.model.zh") text="  模型：%s" ;;
-        "config.show.model.en") text="  Model: %s" ;;
-        "config.show.base_url.zh") text="  Base URL: %s" ;;
-        "config.show.base_url.en") text="  Base URL: %s" ;;
-        "config.show.default.zh") text="默认" ;;
-        "config.show.default.en") text="Default" ;;
-        "config.show.api_key_set.zh") text="已设置" ;;
-        "config.show.api_key_set.en") text="Set" ;;
-        "config.show.api_key_unset.zh") text="未设置" ;;
-        "config.show.api_key_unset.en") text="Not set" ;;
-        "config.error.no_api_key.zh") text="LLM API Key 未设置" ;;
-        "config.error.no_api_key.en") text="LLM API Key not set" ;;
-        "config.help.usage.zh") text="用法：%s config <命令>" ;;
-        "config.help.usage.en") text="Usage: %s config <command>" ;;
-        "config.help.commands.zh") text="命令:" ;;
-        "config.help.commands.en") text="Commands:" ;;
-        "config.help.fix_llm.zh") text="  --fix-llm    修复 LLM 配置（交互式）" ;;
-        "config.help.fix_llm.en") text="  --fix-llm    Fix LLM config (interactive)" ;;
-        "config.help.show.zh") text="  --show       显示当前配置" ;;
-        "config.help.show.en") text="  --show       Show current config" ;;
-        "config.help.verify.zh") text="  --verify     验证配置有效性" ;;
-        "config.help.verify.en") text="  --verify     Verify config validity" ;;
-        "config.help.help.zh") text="  --help       显示帮助信息" ;;
-        "config.help.help.en") text="  --help       Show this help" ;;
-        "config.help.examples.zh") text="示例:" ;;
-        "config.help.examples.en") text="Examples:" ;;
-        "config.help.example_fix.zh") text="  %s config --fix-llm    # 修复 API Key 配置" ;;
-        "config.help.example_fix.en") text="  %s config --fix-llm    # Fix API Key config" ;;
-        "config.help.example_verify.zh") text="  %s config --verify     # 验证当前配置" ;;
-        "config.help.example_verify.en") text="  %s config --verify     # Verify current config" ;;
         # --- Fallback: try English for unknown lang ---
         *)
             case "${key}.en" in
@@ -914,7 +883,7 @@ prompt() {
                 read -s -p "${prompt_text}: " new_value
                 echo
             else
-                read -p "${prompt_text}: " new_value
+                read -e -p "${prompt_text}: " new_value
             fi
             if [ -n "${new_value}" ]; then
                 eval "export ${var_name}='${new_value}'"
@@ -947,7 +916,7 @@ prompt() {
         read -s -p "${prompt_text}: " value
         echo
     else
-        read -p "${prompt_text}: " value
+        read -e -p "${prompt_text}: " value
     fi
 
     value="${value:-${default_value}}"
@@ -996,7 +965,7 @@ prompt_optional() {
                 read -s -p "${prompt_text}: " new_value
                 echo
             else
-                read -p "${prompt_text}: " new_value
+                read -e -p "${prompt_text}: " new_value
             fi
             if [ -n "${new_value}" ]; then
                 eval "export ${var_name}='${new_value}'"
@@ -1018,7 +987,7 @@ prompt_optional() {
         read -s -p "${prompt_text}: " value
         echo
     else
-        read -p "${prompt_text}: " value
+        read -e -p "${prompt_text}: " value
     fi
 
     eval "export ${var_name}='${value}'"
@@ -1110,7 +1079,7 @@ install_manager() {
         echo "$(msg lang.option_zh)"
         echo "$(msg lang.option_en)"
         echo ""
-        read -p "$(msg lang.prompt) [${lang_default_choice}]: " LANG_CHOICE
+        read -e -p "$(msg lang.prompt) [${lang_default_choice}]: " LANG_CHOICE
         LANG_CHOICE="${LANG_CHOICE:-${lang_default_choice}}"
 
         case "${LANG_CHOICE}" in
@@ -1136,7 +1105,7 @@ install_manager() {
         echo "$(msg install.mode.quickstart)"
         echo "$(msg install.mode.manual)"
         echo ""
-        read -p "$(msg install.mode.prompt): " ONBOARDING_CHOICE
+        read -e -p "$(msg install.mode.prompt): " ONBOARDING_CHOICE
         ONBOARDING_CHOICE="${ONBOARDING_CHOICE:-1}"
 
         case "${ONBOARDING_CHOICE}" in
@@ -1187,7 +1156,7 @@ install_manager() {
             echo "$(msg install.existing.reinstall)"
             echo "$(msg install.existing.cancel)"
             echo ""
-            read -p "$(msg install.existing.prompt): " UPGRADE_CHOICE
+            read -e -p "$(msg install.existing.prompt): " UPGRADE_CHOICE
             UPGRADE_CHOICE="${UPGRADE_CHOICE:-1}"
         fi
 
@@ -1205,7 +1174,7 @@ install_manager() {
                     fi
                     if [ "${HICLAW_NON_INTERACTIVE}" != "1" ]; then
                         echo ""
-                        read -p "$(msg install.existing.continue_prompt): " CONFIRM_STOP
+                        read -e -p "$(msg install.existing.continue_prompt): " CONFIRM_STOP
                         if [ "${CONFIRM_STOP}" != "y" ] && [ "${CONFIRM_STOP}" != "Y" ]; then
                             log "$(msg install.existing.cancelled)"
                             exit 0
@@ -1261,7 +1230,7 @@ install_manager() {
                 echo -e "\033[31m$(msg install.reinstall.confirm_type)\033[0m"
                 echo -e "\033[31m  ${existing_workspace}\033[0m"
                 echo ""
-                read -p "$(msg install.reinstall.confirm_path): " CONFIRM_PATH
+                read -e -p "$(msg install.reinstall.confirm_path): " CONFIRM_PATH
 
                 if [ "${CONFIRM_PATH}" != "${existing_workspace}" ]; then
                     error "$(msg install.reinstall.path_mismatch "${CONFIRM_PATH}" "${existing_workspace}")"
@@ -1348,10 +1317,10 @@ install_manager() {
         echo "$(msg llm.provider.openai_compat)"
         echo ""
         if [ "${HICLAW_QUICKSTART}" = "1" ]; then
-            read -p "$(msg llm.provider.select) [1]: " PROVIDER_CHOICE
+            read -e -p "$(msg llm.provider.select) [1]: " PROVIDER_CHOICE
             PROVIDER_CHOICE="${PROVIDER_CHOICE:-1}"
         else
-            read -p "$(msg llm.provider.select): " PROVIDER_CHOICE
+            read -e -p "$(msg llm.provider.select): " PROVIDER_CHOICE
             PROVIDER_CHOICE="${PROVIDER_CHOICE:-1}"
         fi
 
@@ -1364,26 +1333,61 @@ install_manager() {
                 echo "$(msg llm.alibaba.model.qwen)"
                 echo ""
                 if [ "${HICLAW_QUICKSTART}" = "1" ]; then
-                    read -p "$(msg llm.alibaba.model.select) [1]: " ALIBABA_MODEL_CHOICE
+                    read -e -p "$(msg llm.alibaba.model.select) [1]: " ALIBABA_MODEL_CHOICE
                     ALIBABA_MODEL_CHOICE="${ALIBABA_MODEL_CHOICE:-1}"
                 else
-                    read -p "$(msg llm.alibaba.model.select): " ALIBABA_MODEL_CHOICE
+                    read -e -p "$(msg llm.alibaba.model.select): " ALIBABA_MODEL_CHOICE
                     ALIBABA_MODEL_CHOICE="${ALIBABA_MODEL_CHOICE:-1}"
                 fi
 
                 case "${ALIBABA_MODEL_CHOICE}" in
                     2|qwen)
                         HICLAW_LLM_PROVIDER="qwen"
+                        HICLAW_OPENAI_BASE_URL=""
                         echo ""
-                        read -p "$(msg llm.qwen.model_prompt): " HICLAW_DEFAULT_MODEL
+                        read -e -p "$(msg llm.qwen.model_prompt): " HICLAW_DEFAULT_MODEL
                         HICLAW_DEFAULT_MODEL="${HICLAW_DEFAULT_MODEL:-qwen3.5-plus}"
                         log "$(msg llm.provider.selected_qwen)"
                         log "$(msg llm.model.label "${HICLAW_DEFAULT_MODEL}")"
                         ;;
                     *)
                         HICLAW_LLM_PROVIDER="openai-compat"
-                        HICLAW_OPENAI_BASE_URL="${HICLAW_OPENAI_BASE_URL:-https://coding.dashscope.aliyuncs.com/v1}"
-                        HICLAW_DEFAULT_MODEL="${HICLAW_DEFAULT_MODEL:-qwen3.5-plus}"
+                        HICLAW_OPENAI_BASE_URL="https://coding.dashscope.aliyuncs.com/v1"
+
+                        # Sub-menu: Select CodingPlan model
+                        echo ""
+                        echo "$(msg llm.codingplan.models_title)"
+                        echo "$(msg llm.codingplan.model.qwen35plus)"
+                        echo "$(msg llm.codingplan.model.glm5)"
+                        echo "$(msg llm.codingplan.model.kimi)"
+                        echo "$(msg llm.codingplan.model.minimax)"
+                        echo ""
+                        if [ "${HICLAW_QUICKSTART}" = "1" ]; then
+                            read -e -p "$(msg llm.codingplan.model.select) [1]: " CODINGPLAN_MODEL_CHOICE
+                            CODINGPLAN_MODEL_CHOICE="${CODINGPLAN_MODEL_CHOICE:-1}"
+                        else
+                            read -e -p "$(msg llm.codingplan.model.select): " CODINGPLAN_MODEL_CHOICE
+                            CODINGPLAN_MODEL_CHOICE="${CODINGPLAN_MODEL_CHOICE:-1}"
+                        fi
+
+                        case "${CODINGPLAN_MODEL_CHOICE}" in
+                            1|qwen3.5-plus)
+                                HICLAW_DEFAULT_MODEL="qwen3.5-plus"
+                                ;;
+                            2|glm-5)
+                                HICLAW_DEFAULT_MODEL="glm-5"
+                                ;;
+                            3|kimi-k2.5)
+                                HICLAW_DEFAULT_MODEL="kimi-k2.5"
+                                ;;
+                            4|MiniMax-M2.5)
+                                HICLAW_DEFAULT_MODEL="MiniMax-M2.5"
+                                ;;
+                            *)
+                                HICLAW_DEFAULT_MODEL="qwen3.5-plus"
+                                ;;
+                        esac
+
                         log "$(msg llm.provider.selected_codingplan)"
                         log "$(msg llm.model.label "${HICLAW_DEFAULT_MODEL}")"
                         ;;
@@ -1404,8 +1408,8 @@ install_manager() {
                 HICLAW_LLM_PROVIDER="openai-compat"
                 log "$(msg llm.provider.selected_openai "${HICLAW_LLM_PROVIDER}")"
                 echo ""
-                read -p "$(msg llm.openai.base_url_prompt): " HICLAW_OPENAI_BASE_URL
-                read -p "$(msg llm.openai.model_prompt): " HICLAW_DEFAULT_MODEL
+                read -e -p "$(msg llm.openai.base_url_prompt): " HICLAW_OPENAI_BASE_URL
+                read -e -p "$(msg llm.openai.model_prompt): " HICLAW_DEFAULT_MODEL
                 HICLAW_DEFAULT_MODEL="${HICLAW_DEFAULT_MODEL:-gpt-5.4}"
                 log "$(msg llm.openai.base_url_label "${HICLAW_OPENAI_BASE_URL}")"
                 log "$(msg llm.model.label "${HICLAW_DEFAULT_MODEL}")"
@@ -1414,18 +1418,7 @@ install_manager() {
                 test_llm_connectivity "${HICLAW_OPENAI_BASE_URL}" "${HICLAW_LLM_API_KEY}" "${HICLAW_DEFAULT_MODEL}"
                 ;;
             *)
-                log "$(msg llm.provider.invalid)"
-                HICLAW_LLM_PROVIDER="openai-compat"
-                HICLAW_OPENAI_BASE_URL="${HICLAW_OPENAI_BASE_URL:-https://coding.dashscope.aliyuncs.com/v1}"
-                HICLAW_DEFAULT_MODEL="${HICLAW_DEFAULT_MODEL:-qwen3.5-plus}"
-                log "$(msg llm.provider.selected_codingplan)"
-                log "$(msg llm.model.label "${HICLAW_DEFAULT_MODEL}")"
-                log ""
-                log "$(msg llm.apikey_hint)"
-                log "$(msg llm.apikey_url)"
-                log ""
-                prompt HICLAW_LLM_API_KEY "$(msg llm.apikey_prompt)" "" "true"
-                test_llm_connectivity "${HICLAW_OPENAI_BASE_URL}" "${HICLAW_LLM_API_KEY}" "${HICLAW_DEFAULT_MODEL}" "$(msg llm.openai.test.fail.codingplan)"
+                error "$(msg llm.provider.invalid "${PROVIDER_CHOICE}")"
                 ;;
         esac
     fi
@@ -1461,7 +1454,7 @@ install_manager() {
     if [ "${HICLAW_NON_INTERACTIVE}" = "1" ]; then
         HICLAW_LOCAL_ONLY="${HICLAW_LOCAL_ONLY:-1}"
     elif [ -z "${HICLAW_LOCAL_ONLY+x}" ]; then
-        read -p "$(msg port.local_only.choice): " _local_choice
+        read -e -p "$(msg port.local_only.choice): " _local_choice
         _local_choice="${_local_choice:-1}"
         case "${_local_choice}" in
             2|n|N|no|NO) HICLAW_LOCAL_ONLY="0" ;;
@@ -1509,7 +1502,7 @@ install_manager() {
     # Data persistence
     log "$(msg data.title)"
     if [ "${HICLAW_NON_INTERACTIVE}" != "1" ] && [ "${HICLAW_QUICKSTART}" != "1" ] && [ -z "${HICLAW_DATA_DIR+x}" ]; then
-        read -p "$(msg data.volume_prompt): " HICLAW_DATA_DIR
+        read -e -p "$(msg data.volume_prompt): " HICLAW_DATA_DIR
         HICLAW_DATA_DIR="${HICLAW_DATA_DIR:-hiclaw-data}"
         export HICLAW_DATA_DIR
     fi
@@ -1519,7 +1512,7 @@ install_manager() {
     # Manager workspace directory (skills, memory, state — host-editable)
     log "$(msg workspace.title)"
     if [ "${HICLAW_NON_INTERACTIVE}" != "1" ] && [ "${HICLAW_QUICKSTART}" != "1" ] && [ -z "${HICLAW_WORKSPACE_DIR+x}" ]; then
-        read -p "$(msg workspace.dir_prompt "${HOME}/hiclaw-manager"): " HICLAW_WORKSPACE_DIR
+        read -e -p "$(msg workspace.dir_prompt "${HOME}/hiclaw-manager"): " HICLAW_WORKSPACE_DIR
         HICLAW_WORKSPACE_DIR="${HICLAW_WORKSPACE_DIR:-${HOME}/hiclaw-manager}"
         export HICLAW_WORKSPACE_DIR
     elif [ -z "${HICLAW_WORKSPACE_DIR+x}" ]; then
@@ -1538,8 +1531,18 @@ install_manager() {
     echo ""
     if [ "${HICLAW_NON_INTERACTIVE}" = "1" ]; then
         HICLAW_DEFAULT_WORKER_RUNTIME="${HICLAW_DEFAULT_WORKER_RUNTIME:-openclaw}"
+    elif [ "${HICLAW_UPGRADE}" = "1" ] && [ -n "${HICLAW_DEFAULT_WORKER_RUNTIME}" ]; then
+        log "$(msg prompt.upgrade_keep "HICLAW_DEFAULT_WORKER_RUNTIME" "${HICLAW_DEFAULT_WORKER_RUNTIME}")"
+        read -e -p "$(msg worker_runtime.choice): " _runtime_choice
+        if [ -n "${_runtime_choice}" ]; then
+            case "${_runtime_choice}" in
+                2) HICLAW_DEFAULT_WORKER_RUNTIME="copaw" ;;
+                *) HICLAW_DEFAULT_WORKER_RUNTIME="openclaw" ;;
+            esac
+        fi
+        unset _runtime_choice
     elif [ -z "${HICLAW_DEFAULT_WORKER_RUNTIME+x}" ]; then
-        read -p "$(msg worker_runtime.choice): " _runtime_choice
+        read -e -p "$(msg worker_runtime.choice): " _runtime_choice
         _runtime_choice="${_runtime_choice:-1}"
         case "${_runtime_choice}" in
             2) HICLAW_DEFAULT_WORKER_RUNTIME="copaw" ;;
@@ -1663,7 +1666,7 @@ EOF
 
     # Host directory mount: for file sharing with agents (defaults to user's home)
     if [ "${HICLAW_NON_INTERACTIVE}" != "1" ] && [ -z "${HICLAW_HOST_SHARE_DIR}" ]; then
-        read -p "$(msg host_share.prompt "$HOME"): " HICLAW_HOST_SHARE_DIR
+        read -e -p "$(msg host_share.prompt "$HOME"): " HICLAW_HOST_SHARE_DIR
         HICLAW_HOST_SHARE_DIR="${HICLAW_HOST_SHARE_DIR:-$HOME}"
         export HICLAW_HOST_SHARE_DIR
     elif [ -z "${HICLAW_HOST_SHARE_DIR}" ]; then
@@ -1932,6 +1935,14 @@ test_llm_connectivity() {
         echo -e "\033[33m$(msg llm.openai.test.fail "${_http_code}" "${_body}")\033[0m"
         if [ -n "${hint}" ]; then
             echo -e "\033[33m${hint}\033[0m"
+        fi
+        if [ "${HICLAW_NON_INTERACTIVE}" != "1" ]; then
+            local _confirm
+            read -e -p "$(msg llm.openai.test.confirm)" _confirm
+            if [ "${_confirm}" != "y" ] && [ "${_confirm}" != "Y" ]; then
+                log "$(msg llm.openai.test.aborted)"
+                exit 1
+            fi
         fi
     fi
 }

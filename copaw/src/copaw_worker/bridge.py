@@ -82,6 +82,7 @@ def bridge_openclaw_to_copaw(
 
     Also sets COPAW_WORKING_DIR env var and patches copaw's module-level
     path constants so the running process uses the correct directory.
+
     """
     working_dir.mkdir(parents=True, exist_ok=True)
     in_container = _is_in_container()
@@ -99,6 +100,65 @@ def bridge_openclaw_to_copaw(
     providers_src = working_dir / "providers.json"
     if providers_src.exists():
         shutil.copy2(providers_src, secret_dir / "providers.json")
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _resolve_active_model(cfg: dict[str, Any]) -> dict[str, Any] | None:
+    """Return the config dict of the active model from openclaw.json, or None.
+
+    Prefers agents.defaults.model.primary ("provider_id/model_id");
+    falls back to the first model of the first provider.
+    """
+    providers_raw = cfg.get("models", {}).get("providers", {})
+    if not providers_raw:
+        return None
+
+    primary = (
+        cfg.get("agents", {})
+        .get("defaults", {})
+        .get("model", {})
+        .get("primary", "")
+    )
+
+    if primary and "/" in primary:
+        pid, mid = primary.split("/", 1)
+        provider = providers_raw.get(pid, {})
+        for m in provider.get("models", []):
+            if m.get("id") == mid:
+                return m
+
+    # Fallback: first provider, first model
+    for provider_cfg in providers_raw.values():
+        models = provider_cfg.get("models", [])
+        if models:
+            return models[0]
+
+    return None
+
+
+def _resolve_context_window(cfg: dict[str, Any]) -> int | None:
+    """Return the contextWindow of the active (or first) model, or None."""
+    m = _resolve_active_model(cfg)
+    if m and "contextWindow" in m:
+        return int(m["contextWindow"])
+    return None
+
+
+def _resolve_vision_enabled(cfg: dict[str, Any]) -> bool:
+    """Return True if the active model declares image input support.
+
+    The openclaw.json model's ``input`` field is a list of supported modalities
+    (e.g. ["text", "image"]).  If the field is absent we assume text-only to
+    avoid sending images to a model that cannot handle them.
+    """
+    m = _resolve_active_model(cfg)
+    if m is None:
+        return False
+    input_types = m.get("input", [])
+    return "image" in input_types
 
 
 # ---------------------------------------------------------------------------
@@ -139,6 +199,7 @@ def _write_config_json(
         "groups": groups,
         "filter_tool_messages": True,
         "filter_thinking": True,
+        "vision_enabled": _resolve_vision_enabled(cfg),
     }
 
     config_path = working_dir / "config.json"
@@ -151,6 +212,16 @@ def _write_config_json(
     existing.setdefault("channels", {})["matrix"] = matrix_channel_cfg
     # Disable console channel (we use Matrix)
     existing["channels"].setdefault("console", {})["enabled"] = False
+
+    # Bridge model context window → agents.running.max_input_length so that
+    # CoPaw's memory compaction threshold tracks the actual model capability.
+    # We read contextWindow from the first model of the primary (or first)
+    # provider to avoid hard-coding a default that mismatches the real model.
+    context_window = _resolve_context_window(cfg)
+    if context_window is not None:
+        existing.setdefault("agents", {}).setdefault("running", {})[
+            "max_input_length"
+        ] = context_window
 
     with open(config_path, "w") as f:
         json.dump(existing, f, indent=2, ensure_ascii=False)
