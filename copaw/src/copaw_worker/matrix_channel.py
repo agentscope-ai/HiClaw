@@ -305,6 +305,28 @@ class MatrixChannel(BaseChannel):
         return False
 
     # ------------------------------------------------------------------
+    # Model capability helpers
+    # ------------------------------------------------------------------
+
+    def _vision_enabled(self) -> bool:
+        """Return True if the active model supports image inputs.
+
+        Reads model_caps.json written by bridge.py at startup.  Defaults to
+        False when the file is absent or unreadable (text-only safe default).
+        """
+        try:
+            from copaw.constant import WORKING_DIR
+            caps_path = WORKING_DIR / "model_caps.json"
+        except Exception:
+            caps_path = Path.home() / ".copaw" / "model_caps.json"
+        try:
+            import json as _json
+            with open(caps_path) as f:
+                return bool(_json.load(f).get("vision", False))
+        except Exception:
+            return False
+
+    # ------------------------------------------------------------------
     # Media directory
     # ------------------------------------------------------------------
 
@@ -475,10 +497,17 @@ class MatrixChannel(BaseChannel):
             if local_path:
                 file_uri = Path(local_path).as_uri()
                 if isinstance(event, RoomMessageImage):
-                    content_parts.append({
-                        "type": "image",
-                        "image_url": file_uri,
-                    })
+                    if self._vision_enabled():
+                        content_parts.append({
+                            "type": "image",
+                            "image_url": file_uri,
+                        })
+                    else:
+                        # Model does not support image input — downgrade to text
+                        content_parts.append({
+                            "type": "text",
+                            "text": f"[用户发送了一张图片（当前模型不支持图片输入）：{body or filename}]",
+                        })
                 elif isinstance(event, RoomMessageAudio):
                     content_parts.append({
                         "type": "audio",
@@ -607,6 +636,14 @@ class MatrixChannel(BaseChannel):
         if t == "text" and p.get("text"):
             return TextContent(type=ContentType.TEXT, text=p["text"])
         if t == "image" and p.get("image_url"):
+            if not self._vision_enabled():
+                # Downgrade silently; _on_room_media_event should have already
+                # converted this, but guard here for any code path that builds
+                # content_parts directly.
+                return TextContent(
+                    type=ContentType.TEXT,
+                    text="[图片内容已省略，当前模型不支持图片输入]",
+                )
             return ImageContent(type=ContentType.IMAGE, image_url=p["image_url"])
         if t == "file":
             return FileContent(
