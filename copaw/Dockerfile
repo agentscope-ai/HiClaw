@@ -4,10 +4,17 @@
 # Lightweight Python container for running CoPaw-based Worker Agents.
 # Uses the same MinIO-backed config/sync model as OpenClaw workers.
 #
+# Two runtime modes, each with its own isolated venv so they can carry
+# different versions of the copaw package:
+#   - Standard mode (HICLAW_CONSOLE_PORT set): copaw from PyPI + copaw-worker
+#   - Lite mode (default, no console port):    copaw from GitHub fork + lite-copaw-worker
+#
 # Build args:
-#   HIGRESS_REGISTRY - base image registry for mc (MinIO Client)
-#   APT_MIRROR       - Debian mirror (default: mirrors.aliyun.com)
-#   PIP_INDEX_URL    - PyPI mirror (default: Aliyun)
+#   HIGRESS_REGISTRY  - base image registry for mc (MinIO Client)
+#   APT_MIRROR        - Debian mirror (default: mirrors.aliyun.com)
+#   PIP_INDEX_URL     - PyPI mirror (default: Aliyun)
+#   LITE_COPAW_REPO   - lite CoPaw git repo URL
+#   LITE_COPAW_COMMIT - lite CoPaw git commit hash
 # ============================================================
 
 ARG HIGRESS_REGISTRY=higress-registry.cn-hangzhou.cr.aliyuncs.com
@@ -20,6 +27,8 @@ FROM python:3.11-slim
 
 ARG APT_MIRROR=mirrors.aliyun.com
 ARG PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
+ARG LITE_COPAW_REPO=https://github.com/johnlanni/CoPaw
+ARG LITE_COPAW_COMMIT=fd0ed1eb8b82c1a217532e072e5afdb32c62577c
 
 # python:3.11-slim is Debian-based, uses /etc/apt/sources.list.d/debian.sources
 RUN if [ -n "${APT_MIRROR}" ]; then \
@@ -28,27 +37,74 @@ RUN if [ -n "${APT_MIRROR}" ]; then \
     fi && \
     apt-get update && apt-get install -y --no-install-recommends \
         libolm-dev \
+        libjemalloc2 \
         curl \
+        git \
         tzdata \
     && rm -rf /var/lib/apt/lists/*
+
+# jemalloc reduces Python memory fragmentation (~10-20% RSS savings).
+# Detect the arch-specific .so path so the image works on both amd64 and arm64.
+RUN JEMALLOC=$(find /usr/lib -name 'libjemalloc.so.2' -print -quit) \
+    && echo "LD_PRELOAD=${JEMALLOC}" >> /etc/environment \
+    && echo "${JEMALLOC}" > /etc/ld.so.preload
 
 # mc (MinIO Client)
 COPY --from=mc /usr/bin/mc /usr/local/bin/mc
 
-# Install copaw-worker from local source
+# Download lite CoPaw source archive from GitHub
+RUN curl -fsSL "${LITE_COPAW_REPO}/archive/${LITE_COPAW_COMMIT}.tar.gz" \
+        | tar xz -C /tmp \
+    && mv /tmp/CoPaw-${LITE_COPAW_COMMIT} /tmp/lite-copaw
+
+# Stage copaw-worker source (shared by both venvs)
 COPY pyproject.toml README.md /tmp/copaw-worker/
 COPY src/ /tmp/copaw-worker/src/
-RUN pip install --no-cache-dir \
+
+# --- Standard venv: copaw from PyPI ---
+RUN python -m venv /opt/venv/standard \
+    && /opt/venv/standard/bin/pip install --no-cache-dir \
         --index-url "${PIP_INDEX_URL}" \
         --trusted-host "$(echo ${PIP_INDEX_URL} | sed 's|https\?://||;s|/.*||')" \
-        /tmp/copaw-worker/ \
-    && rm -rf /tmp/copaw-worker/
+        /tmp/copaw-worker/
+
+# --- Lite venv: copaw from GitHub fork ---
+RUN python -m venv /opt/venv/lite \
+    && /opt/venv/lite/bin/pip install --no-cache-dir \
+        --index-url "${PIP_INDEX_URL}" \
+        --trusted-host "$(echo ${PIP_INDEX_URL} | sed 's|https\?://||;s|/.*||')" \
+        /tmp/lite-copaw/ \
+    && /opt/venv/lite/bin/pip install --no-cache-dir \
+        --index-url "${PIP_INDEX_URL}" \
+        --trusted-host "$(echo ${PIP_INDEX_URL} | sed 's|https\?://||;s|/.*||')" \
+        /tmp/copaw-worker/
+
+# ---------------------------------------------------------------------------
+# Patch installed packages in the lite venv to defer heavyweight modules that
+# copaw-worker headless mode never uses.  Total saving: ~170 MB RSS.
+#
+#   patch_reme_lazy.py             — reme: chromadb/pandas/mcp/elasticsearch
+#   patch_agentscope_lazy.py       — agentscope: redis/socketio/sqlalchemy/mcp
+#   patch_agentscope_runtime_lazy.py — agentscope_runtime: opentelemetry/a2a/fastapi
+# ---------------------------------------------------------------------------
+COPY scripts/patch_reme_lazy.py \
+     scripts/patch_agentscope_lazy.py \
+     scripts/patch_agentscope_runtime_lazy.py \
+     /tmp/
+
+RUN SITE=/opt/venv/lite/lib/python3.11/site-packages \
+    && /opt/venv/lite/bin/python /tmp/patch_reme_lazy.py "$SITE/reme" \
+    && /opt/venv/lite/bin/python /tmp/patch_agentscope_lazy.py "$SITE/agentscope" \
+    && /opt/venv/lite/bin/python /tmp/patch_agentscope_runtime_lazy.py "$SITE/agentscope_runtime" \
+    && rm /tmp/patch_*_lazy.py
+
+RUN rm -rf /tmp/copaw-worker/ /tmp/lite-copaw/
 
 # Entrypoint script
 COPY scripts/copaw-worker-entrypoint.sh /opt/hiclaw/scripts/copaw-worker-entrypoint.sh
 RUN chmod +x /opt/hiclaw/scripts/copaw-worker-entrypoint.sh
 
-# Create workspace directory
+# Create workspace directories for both modes
 RUN mkdir -p /root/.copaw-worker
 
 WORKDIR /root/.copaw-worker
