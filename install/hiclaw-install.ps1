@@ -62,6 +62,29 @@ $script:HICLAW_MOUNT_SOCKET = if ($env:HICLAW_MOUNT_SOCKET -eq "0") { $false } e
 $script:HICLAW_ENV_FILE = if ($EnvFile) { $EnvFile } elseif ($env:HICLAW_ENV_FILE) { $env:HICLAW_ENV_FILE } else { "$env:USERPROFILE\hiclaw-manager.env" }
 
 # ============================================================
+# Log all output to file
+# ============================================================
+
+$script:HICLAW_LOG_FILE = "$env:USERPROFILE\hiclaw-install.log"
+
+# Start transcript for logging (PowerShell's built-in logging mechanism)
+try {
+    Start-Transcript -Path $script:HICLAW_LOG_FILE -Append -ErrorAction SilentlyContinue
+} catch {
+    # If transcript fails, continue without logging
+}
+
+Write-Host ""
+Write-Host "========================================"
+Write-Host "HiClaw Installation Log"
+Write-Host "Started: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
+Write-Host "User: $env:USERNAME"
+Write-Host "System: $(hostname)"
+Write-Host "Log file: $($script:HICLAW_LOG_FILE)"
+Write-Host "========================================"
+Write-Host ""
+
+# ============================================================
 # Utility Functions
 # ============================================================
 
@@ -322,7 +345,11 @@ $script:Messages = @{
 
     # --- Container runtime socket ---
     "install.socket_detected" = @{ zh = "容器运行时 socket: {0}（已启用直接创建 Worker）"; en = "Container runtime socket: {0} (direct Worker creation enabled)" }
-    "install.socket_not_found" = @{ zh = "未找到容器运行时 socket（Worker 创建将输出命令）"; en = "No container runtime socket found (Worker creation will output commands)" }
+    "install.socket_not_found" = @{ zh = "未找到容器运行时 socket（Manager 无法直接创建 Worker 容器，需要你手动执行 docker 命令创建）"; en = "No container runtime socket found (Manager cannot create Worker containers directly, you will need to create them manually using docker commands)" }
+    "install.socket_confirm.title" = @{ zh = "⚠️ 未检测到容器运行时 Socket"; en = "⚠️ Container Runtime Socket Not Detected" }
+    "install.socket_confirm.message" = @{ zh = "未找到 Docker/Podman socket，Manager 将无法自动创建 Worker 容器。`n你需要手动执行 docker run 命令来创建 Worker。`n`n是否继续安装？"; en = "Docker/Podman socket not found. Manager will not be able to create Worker containers automatically.`nYou will need to manually run docker commands to create Workers.`n`nContinue installation?" }
+    "install.socket_confirm.prompt" = @{ zh = "继续安装? [y/N]: "; en = "Continue? [y/N]: " }
+    "install.socket_confirm.cancelled" = @{ zh = "安装已取消。如需启用 Worker 自动创建，请确保 Docker/Podman 正在运行，然后重新运行安装脚本。"; en = "Installation cancelled. To enable automatic Worker creation, ensure Docker/Podman is running and re-run the installer." }
 
     # --- Container management ---
     "install.removing_existing" = @{ zh = "正在移除现有 hiclaw-manager 容器..."; en = "Removing existing hiclaw-manager container..." }
@@ -1681,9 +1708,28 @@ function Install-Manager {
     $dockerArgs += @("-e", "TZ=$($script:HICLAW_TIMEZONE)")
 
     # Docker socket mount (Windows uses named pipe)
+    # On Windows, we test socket availability by running docker commands
     if ($script:HICLAW_MOUNT_SOCKET) {
-        $dockerArgs += @("-v", "//var/run/docker.sock:/var/run/docker.sock")
-        Write-Log (Get-Msg "install.socket_detected" -f "//var/run/docker.sock")
+        $socketAvailable = Test-DockerRunning
+        if ($socketAvailable) {
+            $dockerArgs += @("-v", "//var/run/docker.sock:/var/run/docker.sock")
+            Write-Log (Get-Msg "install.socket_detected" -f "//var/run/docker.sock")
+        } else {
+            Write-Log (Get-Msg "install.socket_not_found")
+            # Interactive confirmation when socket not found
+            if (-not $script:HICLAW_NON_INTERACTIVE) {
+                Write-Host ""
+                Write-Host "`e[33m$(Get-Msg 'install.socket_confirm.title')`e[0m"
+                Write-Host ""
+                Write-Host (Get-Msg 'install.socket_confirm.message')
+                Write-Host ""
+                $confirm = Read-Host (Get-Msg 'install.socket_confirm.prompt')
+                if ($confirm -ne 'y' -and $confirm -ne 'Y') {
+                    Write-Log (Get-Msg 'install.socket_confirm.cancelled')
+                    exit 0
+                }
+            }
+        }
     }
 
     # Port mappings
@@ -1997,4 +2043,11 @@ switch ($Command) {
     "uninstall" {
         Uninstall-HiClaw
     }
+}
+
+# Stop transcript logging
+try {
+    Stop-Transcript -ErrorAction SilentlyContinue
+} catch {
+    # Ignore errors when stopping transcript
 }

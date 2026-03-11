@@ -37,6 +37,25 @@ HICLAW_NON_INTERACTIVE="${HICLAW_NON_INTERACTIVE:-0}"
 HICLAW_MOUNT_SOCKET="${HICLAW_MOUNT_SOCKET:-1}"
 
 # ============================================================
+# Log all output to file
+# ============================================================
+
+HICLAW_LOG_FILE="${HOME}/hiclaw-install.log"
+
+# Redirect all output (stdout and stderr) to both terminal and log file
+exec > >(tee -a "${HICLAW_LOG_FILE}") 2>&1
+
+echo ""
+echo "========================================"
+echo "HiClaw Installation Log"
+echo "Started: $(date)"
+echo "User: $(whoami)"
+echo "System: $(uname -a)"
+echo "Log file: ${HICLAW_LOG_FILE}"
+echo "========================================"
+echo ""
+
+# ============================================================
 # Utility functions (needed early for timezone detection)
 # ============================================================
 
@@ -415,8 +434,16 @@ msg() {
         # --- Container runtime socket ---
         "install.socket_detected.zh") text="容器运行时 socket: %s（已启用直接创建 Worker）" ;;
         "install.socket_detected.en") text="Container runtime socket: %s (direct Worker creation enabled)" ;;
-        "install.socket_not_found.zh") text="未找到容器运行时 socket（Worker 创建将输出命令）" ;;
-        "install.socket_not_found.en") text="No container runtime socket found (Worker creation will output commands)" ;;
+        "install.socket_not_found.zh") text="未找到容器运行时 socket（Manager 无法直接创建 Worker 容器，需要你手动执行 docker 命令创建）" ;;
+        "install.socket_not_found.en") text="No container runtime socket found (Manager cannot create Worker containers directly, you will need to create them manually using docker commands)" ;;
+        "install.socket_confirm.title.zh") text="⚠️ 未检测到容器运行时 Socket" ;;
+        "install.socket_confirm.title.en") text="⚠️ Container Runtime Socket Not Detected" ;;
+        "install.socket_confirm.message.zh") text="未找到 Docker/Podman socket，Manager 将无法自动创建 Worker 容器。\n你需要手动执行 docker run 命令来创建 Worker。\n\n是否继续安装？" ;;
+        "install.socket_confirm.message.en") text="Docker/Podman socket not found. Manager will not be able to create Worker containers automatically.\nYou will need to manually run docker commands to create Workers.\n\nContinue installation?" ;;
+        "install.socket_confirm.prompt.zh") text="继续安装? [y/N]: " ;;
+        "install.socket_confirm.prompt.en") text="Continue? [y/N]: " ;;
+        "install.socket_confirm.cancelled.zh") text="安装已取消。如需启用 Worker 自动创建，请确保 Docker/Podman 正在运行，然后重新运行安装脚本。" ;;
+        "install.socket_confirm.cancelled.en") text="Installation cancelled. To enable automatic Worker creation, ensure Docker/Podman is running and re-run the installer." ;;
         # --- Container management ---
         "install.removing_existing.zh") text="正在移除现有 hiclaw-manager 容器..." ;;
         "install.removing_existing.en") text="Removing existing hiclaw-manager container..." ;;
@@ -1640,6 +1667,19 @@ EOF
             SOCKET_MOUNT_ARGS="-v ${CONTAINER_SOCK}:/var/run/docker.sock --security-opt label=disable"
         else
             log "$(msg install.socket_not_found)"
+            # Interactive confirmation when socket not found
+            if [ "${HICLAW_NON_INTERACTIVE}" != "1" ]; then
+                echo ""
+                echo -e "\033[33m$(msg install.socket_confirm.title)\033[0m"
+                echo ""
+                echo -e "$(msg install.socket_confirm.message)"
+                echo ""
+                read -p "$(msg install.socket_confirm.prompt)" SOCKET_CONFIRM
+                if [ "${SOCKET_CONFIRM}" != "y" ] && [ "${SOCKET_CONFIRM}" != "Y" ]; then
+                    log "$(msg install.socket_confirm.cancelled)"
+                    exit 0
+                fi
+            fi
         fi
     fi
 
