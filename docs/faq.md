@@ -225,10 +225,6 @@ In the TUI:
 
 If the session is stuck, try `/reset` to reset it and see if that restores normal behavior.
 
-### 4. Check model configuration
-
-The model's context window size might be misconfigured, causing the window to fill up before compression happens. See [How to switch the Manager's model](#how-to-switch-the-managers-model) and [How to switch a Worker's model](#how-to-switch-a-workers-model) for proper configuration.
-
 ---
 
 ## Manager not responding or returning error status codes
@@ -264,6 +260,10 @@ Search the log for the relevant status code. Common causes:
 - **404**: The model name is probably wrong.
 
 To determine whether the error came from the backend or from a Higress misconfiguration, check the `upstream_host` field in the log entry. If `upstream_host` has a value, the request reached the backend and the error was returned by the upstream service. If it's empty, Higress itself couldn't route the request.
+
+### 3. Check model configuration
+
+The model's context window size might be misconfigured, causing the window to fill up before compression happens. See [How to switch the Manager's model](#how-to-switch-the-managers-model) and [How to switch a Worker's model](#how-to-switch-a-workers-model) for proper configuration.
 
 ---
 

@@ -226,10 +226,6 @@ docker exec -it <worker-name> openclaw tui
 
 如果 session 确实卡住了，可以尝试用 `/reset` 重置 session，看是否恢复正常。
 
-### 4. 检查模型配置
-
-可能是模型的上下文窗口大小配置不正确，导致窗口耗尽前没有及时压缩。请参考 [如何切换 Manager 的模型](#如何切换-manager-的模型) 和 [如何切换 Worker 的模型](#如何切换-worker-的模型) 进行正确配置。
-
 ---
 
 ## 在房间里和 Manager 聊天没有响应或返回错误状态码
@@ -265,6 +261,10 @@ docker exec -it hiclaw-manager cat /var/log/hiclaw/higress-gateway.log
 - **404**：模型名称填写有误。
 
 要判断是后端服务出错还是 Higress 自身配置问题，查看日志中的 `upstream_host` 字段：如果该字段有值，说明请求已到达后端，异常状态码是由上游服务返回的；如果为空，说明 Higress 本身无法路由该请求。
+
+### 3. 检查模型配置
+
+可能是模型的上下文窗口大小配置不正确，导致窗口耗尽前没有及时压缩。请参考 [如何切换 Manager 的模型](#如何切换-manager-的模型) 和 [如何切换 Worker 的模型](#如何切换-worker-的模型) 进行正确配置。
 
 ---
 
