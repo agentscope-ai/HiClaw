@@ -269,7 +269,7 @@ def push_local(sync: FileSync, since: float = 0) -> list[str]:
         if rel.parts[0] == ".copaw" and rel.name in _COPAW_DERIVED_FILES:
             continue
 
-        key = f"{sync._prefix}/{rel}"
+        key = f"{sync._prefix}/{rel.as_posix()}"
         try:
             remote = sync._cat(key)
             local_content = path.read_text(errors="replace")
