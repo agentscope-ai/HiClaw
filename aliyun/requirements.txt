@@ -1,0 +1,16 @@
+# HiClaw Cloud - Python Dependencies
+
+# Alibaba Cloud SDKs
+alibabacloud-tea-openapi>=0.4.0
+alibabacloud-credentials>=1.0.0
+alibabacloud-vpc20160428>=7.0.0
+alibabacloud-ecs20140526>=5.0.0
+alibabacloud-apig20240327>=6.0.0
+alibabacloud-sae20190506>=2.11.0
+alibabacloud-fc20230330>=4.6.0
+alibabacloud-oss-v2>=1.2.0
+alibabacloud-sls20201230>=5.12.0
+alibabacloud-sts20150401>=1.0.0
+alibabacloud-ims20190815>=1.0.0
+alibabacloud_nlb20220430>=4.1.2
+alibabacloud_ram20150501>=1.2.0
