@@ -8,11 +8,30 @@ assign_when: Not assigned to workers — this is a manager-only capability
 
 ## Identity Recognition
 
-See AGENTS.md "Multi-Channel Identity & Permissions" for the priority rules. In brief:
+When receiving a message in any room, determine the sender's identity. The rules differ by context:
 
-1. **Human Admin**: any DM on any channel, OR group room message where sender_id matches `primary-channel.json`.`sender_id` (same channel type)
-2. **Trusted Contact**: `{channel, sender_id}` found in `trusted-contacts.json` — respond, but withhold all sensitive info and deny all management operations
-3. **Unknown**: silently ignore
+### DM (any channel)
+
+All DM senders are **Human Admin** — OpenClaw allowlist guarantees only the admin can DM you.
+
+### Matrix Group Room
+
+Matrix rooms may contain the admin, Workers, trusted contacts, and unknown users. Identify by Matrix user ID:
+
+| Sender | How to identify | Action |
+|--------|----------------|--------|
+| **Human Admin** | `@${HICLAW_ADMIN_USER}:${HICLAW_MATRIX_DOMAIN}` | Full trust — execute any request |
+| **Worker** | Registered in `~/workers-registry.json` | Normal Worker interaction (task handoffs, status updates) |
+| **Trusted Contact** | `{"channel": "matrix", "sender_id": "<matrix_user_id>"}` in `~/trusted-contacts.json` | Respond to general questions; withhold sensitive info; deny management operations |
+| **Unknown** | None of the above | **Silently ignore** — no response |
+
+### Non-Matrix Group Room (Discord, Telegram, etc.)
+
+| Sender | How to identify | Action |
+|--------|----------------|--------|
+| **Human Admin** | `sender_id` matches `primary-channel.json`'s `sender_id` (same channel type) | Full trust |
+| **Trusted Contact** | `{channel, sender_id}` in `~/trusted-contacts.json` | Restricted trust (same rules as above) |
+| **Unknown** | None of the above | **Silently ignore** |
 
 ## Trusted Contacts
 
@@ -82,8 +101,8 @@ File: `~/primary-channel.json`
 
 Fields:
 - `confirmed`: `true` = use this channel for proactive notifications; `false` = Matrix DM fallback
-- `channel`: channel identifier string passed to openclaw hook `channel` field (e.g. `"discord"`, `"telegram"`, `"slack"`)
-- `to`: recipient identifier passed directly to openclaw hook `to` field. Format varies by channel:
+- `channel`: channel identifier string, used as the `channel` parameter when calling the `message` tool (e.g. `"discord"`, `"telegram"`, `"slack"`)
+- `to`: recipient identifier, used as the `target` parameter when calling the `message` tool. Format varies by channel:
   - Discord DM: `user:USER_ID` (e.g. `user:123456789012345678`)
   - Feishu DM: open_id，即 `ou_` 开头的字符串（e.g. `ou_abc123def456`）；群聊则用 `chat_id`（`oc_` 开头）
   - Telegram: chat ID (e.g. `123456789`)
@@ -96,6 +115,44 @@ Read with fallback:
 ```bash
 cat ~/primary-channel.json 2>/dev/null || echo '{"confirmed":false}'
 ```
+
+## Sending Messages to Primary Channel
+
+Use the built-in `message` tool to send proactive notifications (daily reminders, heartbeat check-ins, task updates, escalation questions) to the admin on their primary channel.
+
+### Steps
+
+1. Read `primary-channel.json`:
+   ```bash
+   cat ~/primary-channel.json 2>/dev/null || echo '{"confirmed":false}'
+   ```
+2. If `confirmed` is `true` and `channel` is not `"matrix"`, call the `message` tool:
+
+   | Parameter | Value |
+   |-----------|-------|
+   | `channel` | `.channel` from the file (e.g. `"discord"`) |
+   | `target`  | `.to` from the file (e.g. `"user:123456789012345678"`) |
+   | `message` | Your notification text |
+
+3. If `confirmed` is `false`, `.channel` is `"matrix"`, or the file doesn't exist — fall back to Matrix DM.
+
+### Example
+
+Given `primary-channel.json`:
+```json
+{"confirmed": true, "channel": "discord", "to": "user:123456789012345678"}
+```
+
+Call the `message` tool with:
+- `channel`: `"discord"`
+- `target`: `"user:123456789012345678"`
+- `message`: `"You have 2 tasks pending review. Want me to summarize?"`
+
+### Notes
+
+- The `message` tool is a built-in OpenClaw tool — no HTTP calls or scripts needed.
+- When calling `message` from within a Matrix session, you MUST explicitly set `channel` and `target`; otherwise the message goes to the current Matrix room.
+- The `target` parameter corresponds to the `to` field in `primary-channel.json`. Despite the name difference, pass the value directly without transformation.
 
 ## First-Contact Protocol
 
@@ -140,40 +197,38 @@ When blocked on an admin decision while working in a Matrix room:
 - Worker/project is stalled and needs admin judgment call
 - Cannot wait for next heartbeat or scheduled DM check-in
 
-### How to Call
+### How to Escalate
 
-```bash
-bash /opt/hiclaw/scripts/escalate-to-admin.sh \
-  --source-session "agent:main:matrix:channel:!roomId:domain" \
-  --question "Describe the decision clearly"
-```
+1. Read `primary-channel.json` (see "Primary Channel State" above)
+2. If a non-Matrix primary channel is confirmed, use the `message` tool to send the question directly:
 
-- **Exit 0**: hook dispatched; wait for `[ADMIN_REPLY]` injection to continue
-- **Exit 1**: no primary channel configured; @mention admin in current Matrix room instead
+   | Parameter | Value |
+   |-----------|-------|
+   | `channel` | `.channel` from the file |
+   | `target`  | `.to` from the file |
+   | `message` | A clear, friendly escalation message containing the question and asking the admin to reply |
+
+3. After sending, note the pending escalation in your memory so you can connect the admin's reply back to the blocked workflow when it arrives.
 
 ### Reply Handling
 
-When `[ADMIN_REPLY] <decision>` appears in the session:
-1. Extract the decision text after `[ADMIN_REPLY]`
-2. Continue the blocked workflow
+When the admin replies on the primary channel, you will receive their message in a DM session for that channel. At that point:
+1. Recognize the reply as the answer to the pending escalation
+2. Continue the blocked workflow in the original Matrix room
 3. @mention relevant workers in the room with the outcome
-
-### How It Works
-
-The script POSTs to `/hooks/agent` with `sessionKey` set to `agent:main:{channel}:dm:{sender_id}` (derived from `primary-channel.json`). This runs the hook inside the admin's existing DM session. The admin's reply continues that session naturally, and the agent calls `sessions_send` to inject `[ADMIN_REPLY]` back into the originating Matrix session.
 
 ### Fallback
 
-If `primary-channel.json` is missing, `confirmed: false`, or channel is `matrix`, the script exits 1. Fall back to @mentioning admin in the current Matrix session.
+If `primary-channel.json` is missing, `confirmed` is `false`, or channel is `matrix`: fall back to @mentioning the admin in the current Matrix room.
 
 ## Troubleshooting
 
 **通知发送到错误目标**：管理员反映收不到通知。检查 `primary-channel.json` 的 `to` 字段是否正确，向管理员确认其频道 ID 后重新写入。
 
-**Hook dispatch failure**: `escalate-to-admin.sh` exits 1 despite confirmed primary channel. Check:
+**Message tool send failure**: 使用 `message` 工具发送到主用频道失败时：
 1. Is openclaw running? (`ps aux | grep openclaw`)
-2. Is `MANAGER_GATEWAY_KEY` set? (`echo $MANAGER_GATEWAY_KEY`)
-3. Is the hooks API enabled in openclaw config? (check `manager-openclaw.json.tmpl` → `hooks.enabled`)
+2. Is the target channel configured in openclaw? (check the corresponding channel config, e.g. `channels.discord.enabled`)
+3. Is the `to` value in `primary-channel.json` correct for the channel format? (see "Primary Channel State" field descriptions above)
 4. Fallback to Matrix DM is automatic; no manual intervention needed for individual failures
 
 **Admin confirmed wrong channel**: Admin wants to revert to Matrix DM. Write `{"confirmed": false}` to `primary-channel.json`.

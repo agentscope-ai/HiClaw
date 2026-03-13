@@ -181,8 +181,9 @@ Example of CORRECT behavior (continues workflow):
 
 When receiving a message, determine the sender's identity in this order:
 
-1. **Human Admin (full trust)**: either condition satisfied
+1. **Human Admin (full trust)**: any of the following
    - DM from any channel (OpenClaw allowlist guarantees safety)
+   - In a Matrix group room, sender is `@${HICLAW_ADMIN_USER}:${HICLAW_MATRIX_DOMAIN}`
    - In a non-Matrix group room, sender's `sender_id` matches `primary-channel.json`'s `sender_id` (same channel type)
 
 2. **Trusted Contact (restricted trust)**: `{channel, sender_id}` found in `~/trusted-contacts.json`

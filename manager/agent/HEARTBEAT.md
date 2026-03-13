@@ -11,16 +11,21 @@ cat ~/state.json
 
 The `active_tasks` field in state.json contains all in-progress tasks (both finite and infinite). No need to iterate over all meta.json files.
 
-**Check `admin_dm_room_id`**: If the field is `null`, discover it now and cache it for all future heartbeats:
+**Resolve admin notification channel** (used in Step 7 for heartbeat reports):
 
-1. List your joined rooms and find the DM room with the admin (a room with exactly 2 members: you and `@${HICLAW_ADMIN_USER}:${HICLAW_MATRIX_DOMAIN}`)
-2. Once found, persist it:
+1. Read primary channel config:
    ```bash
-   bash /opt/hiclaw/agent/skills/task-management/scripts/manage-state.sh \
-     --action set-admin-dm --room-id "<discovered-room-id>"
+   cat ~/primary-channel.json 2>/dev/null || echo '{"confirmed":false}'
    ```
+   If `confirmed` is `true` and `channel` is not `"matrix"`, use the primary channel for admin notifications (see Step 7).
 
-From this point on, use `admin_dm_room_id` from state.json whenever you need to message the admin.
+2. **Fallback — Matrix DM**: Check `admin_dm_room_id` in state.json. If `null`, discover it now:
+   - List joined rooms, find the DM room with exactly 2 members: you and `@${HICLAW_ADMIN_USER}:${HICLAW_MATRIX_DOMAIN}`
+   - Persist it:
+     ```bash
+     bash /opt/hiclaw/agent/skills/task-management/scripts/manage-state.sh \
+       --action set-admin-dm --room-id "<discovered-room-id>"
+     ```
 
 ---
 
@@ -37,7 +42,7 @@ Iterate over entries in `active_tasks` with `"type": "finite"`:
   message: @{worker}:{domain} How is your current task {task-id} going? Are you blocked on anything?
   ```
 - Determine if the Worker is making normal progress based on their reply
-- If the Worker has not responded (no response for more than one heartbeat cycle), flag the anomaly in the Room and **use the `message` tool** to notify the human admin in your DM room (see Step 7)
+- If the Worker has not responded (no response for more than one heartbeat cycle), flag the anomaly in the Room and notify the human admin (see Step 7)
 - If the Worker has replied that the task is complete but meta.json has not been updated, proactively update meta.json (status → completed, fill in completed_at), and remove the entry from `active_tasks`:
   ```bash
   bash /opt/hiclaw/agent/skills/task-management/scripts/manage-state.sh --action complete --task-id {task-id}
@@ -130,7 +135,7 @@ If the output is `available`, proceed with the following steps:
      message: Worker <name> container has been automatically paused due to idle timeout. It will be automatically resumed when a task is assigned.
      ```
 
-3. If a Worker has a running finite task but its container status is stopped (anomaly), start it and **use the `message` tool** to send an alert to the admin DM room (see Step 7):
+3. If a Worker has a running finite task but its container status is stopped (anomaly), start it and send an alert to the admin (see Step 7):
    ```bash
    bash /opt/hiclaw/agent/skills/worker-management/scripts/lifecycle-worker.sh --action start --worker <name>
    ```
@@ -139,11 +144,22 @@ If the output is `available`, proceed with the following steps:
 
 ### 7. Report to Admin
 
-**All heartbeat findings MUST be sent to the admin via the `message` tool in your DM room with the admin** (not as a reply in the current heartbeat context).
+**All heartbeat findings MUST be sent to the admin via the `message` tool** (not as a reply in the current heartbeat context).
 
 - If all Workers are healthy and there are no pending items: HEARTBEAT_OK (no message needed)
-- Otherwise: read `admin_dm_room_id` from state.json (already resolved in Step 1) and **use the `message` tool** to send a summary:
-  ```
-  room_id: <admin_dm_room_id from state.json>
-  message: [Heartbeat Report] <summarize findings and recommended actions>
-  ```
+- Otherwise, send a summary to the admin. **Priority order** (determined in Step 1):
+
+**Primary channel** (preferred) — if `primary-channel.json` has `confirmed: true` and `channel` is not `"matrix"`, use the `message` tool:
+
+| Parameter | Value |
+|-----------|-------|
+| `channel` | `.channel` from `primary-channel.json` |
+| `target`  | `.to` from `primary-channel.json` |
+| `message` | `[Heartbeat Report] <summarize findings and recommended actions>` |
+
+**Matrix DM** (fallback) — if no primary channel is configured, use `admin_dm_room_id` from state.json:
+
+| Parameter | Value |
+|-----------|-------|
+| `target`  | `room:<admin_dm_room_id>` |
+| `message` | `[Heartbeat Report] <summarize findings and recommended actions>` |
