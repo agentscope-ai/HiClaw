@@ -53,7 +53,7 @@ Ask admin: enable find-skills (recommended) or disable; optionally provide custo
 
 ---
 
-## Before Assigning Tasks: Container Status Check
+## Before Assigning Tasks: Worker Status Check
 
 The `find-worker.sh` output already includes `container_status` and `availability`. Use it directly:
 
@@ -106,7 +106,7 @@ Before creating a task, determine the correct type:
    ```
 4. Notify Worker in their Room:
    ```
-   @{worker}:{domain} New task [{task-id}]: {title}. Use your file-sync skill to pull the spec: hiclaw/hiclaw-storage/shared/tasks/{task-id}/spec.md. @mention me when complete.
+   @{worker}:{domain} New task [{task-id}]: {title}. Use your file-sync skill to pull the spec: shared/tasks/{task-id}/spec.md. @mention me when complete.
    ```
    - If Worker has `find-skills` skill (`test -d /root/hiclaw-fs/agents/{worker}/skills/find-skills`), add: `💡 Run \`skills find <keyword>\` if you need additional capabilities.`
 5. Add to `state.json`:

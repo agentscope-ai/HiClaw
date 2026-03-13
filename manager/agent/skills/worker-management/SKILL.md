@@ -224,11 +224,10 @@ For local deployment these are auto-resolved via container ExtraHosts.
 
 ### Post-creation verification
 
-After a local deployment (`mode: "local"`), verify the Worker is running:
+After a non-remote deployment, verify the Worker is running:
 
 ```bash
-bash -c 'source /opt/hiclaw/scripts/lib/container-api.sh && container_status_worker "<WORKER_NAME>"'
-bash -c 'source /opt/hiclaw/scripts/lib/container-api.sh && container_logs_worker "<WORKER_NAME>" 20'
+bash -c 'source /opt/hiclaw/scripts/lib/container-api.sh && worker_backend_status "<WORKER_NAME>"'
 ```
 
 ### Post-creation greeting
@@ -268,7 +267,7 @@ for meta in /root/hiclaw-fs/shared/tasks/*/meta.json; do
 done
 
 # Check a Worker's Room for recent activity:
-curl -s "http://127.0.0.1:6167/_matrix/client/v3/rooms/<ROOM_ID>/messages?dir=b&limit=5" \
+curl -s "${HICLAW_MATRIX_SERVER:-http://127.0.0.1:6167}/_matrix/client/v3/rooms/<ROOM_ID>/messages?dir=b&limit=5" \
   -H "Authorization: Bearer <MANAGER_TOKEN>" | jq '.chunk[].content.body'
 ```
 
@@ -295,7 +294,7 @@ The Manager automatically detects idle Workers during Heartbeat and stops their 
 ```
 
 Fields:
-- `container_status`: actual status synced from the Docker API (`running` / `stopped` / `not_found` / `remote`)
+- `container_status`: actual status synced from the worker backend (`running` / `stopped` / `not_found` / `remote`)
 - `idle_since`: timestamp when the Worker last had no active finite tasks; set to null when a finite task is active
 - `auto_stopped_at`: when the Manager auto-stopped the container (audit trail)
 - `last_started_at`: when the Manager last started/woke the container
@@ -399,11 +398,8 @@ This script:
 
 ## Reset a Worker
 
-1. Revoke the Worker's Higress Consumer (or update credentials)
-2. Remove Worker from AI route auth configs (`/v1/ai/routes` — GET, remove from allowedConsumers, PUT)
-3. Remove Worker from MCP Server consumer lists (`/v1/mcpServer/consumers`)
-4. Delete Worker's config directory: `rm -rf /root/hiclaw-fs/agents/<WORKER_NAME>/`
-5. Re-create: write a new SOUL.md and run `create-worker.sh` again (the script handles re-registration gracefully)
+1. Delete Worker's config directory: `rm -rf /root/hiclaw-fs/agents/<WORKER_NAME>/`
+2. Re-create: write a new SOUL.md and run `create-worker.sh` again (the script handles re-registration gracefully and re-configures gateway consumers/routes automatically)
 
 ## Manage Worker Skills
 
@@ -482,7 +478,7 @@ After pushing skills, the script notifies the affected Worker(s) via Matrix @men
 
 ## Important Notes
 
-- Workers are **stateless containers** -- all state is in MinIO. Resetting a Worker just means recreating its config files
+- Workers are **stateless** -- all state is in the centralized storage. Resetting a Worker just means recreating its config files
 - Worker Matrix accounts persist in Tuwunel (cannot be deleted via API). Reuse same username on reset
 - OpenClaw config hot-reload: file-watch (~300ms) or `config.patch` API
 - **File sync**: after writing any file that a Worker (or another Worker) needs to read, always notify the target Worker via Matrix to use their `file-sync` skill. This applies to config updates, task briefs, shared data, and cross-Worker collaboration artifacts. The exact sync command varies by runtime — the Worker's `file-sync` SKILL.md defines how to execute it. Background periodic sync (every 5 minutes) serves as fallback only
