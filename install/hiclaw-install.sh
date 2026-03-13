@@ -1576,6 +1576,16 @@ install_manager() {
     export HICLAW_DEFAULT_WORKER_RUNTIME
     log "$(msg worker_runtime.selected "${HICLAW_DEFAULT_WORKER_RUNTIME}")"
 
+    # Host directory sharing: for file sharing with agents (defaults to user's home)
+    if [ "${HICLAW_NON_INTERACTIVE}" != "1" ] && [ -z "${HICLAW_HOST_SHARE_DIR}" ]; then
+        read -e -p "$(msg host_share.prompt "$HOME"): " HICLAW_HOST_SHARE_DIR
+        HICLAW_HOST_SHARE_DIR="${HICLAW_HOST_SHARE_DIR:-$HOME}"
+        export HICLAW_HOST_SHARE_DIR
+    elif [ -z "${HICLAW_HOST_SHARE_DIR}" ]; then
+        HICLAW_HOST_SHARE_DIR="$HOME"
+        export HICLAW_HOST_SHARE_DIR
+    fi
+
     log ""
 
     # Generate secrets (only if not already set)
@@ -1606,6 +1616,7 @@ HICLAW_ADMIN_USER=${HICLAW_ADMIN_USER}
 HICLAW_ADMIN_PASSWORD=${HICLAW_ADMIN_PASSWORD}
 
 # Ports
+HICLAW_LOCAL_ONLY=${HICLAW_LOCAL_ONLY}
 HICLAW_PORT_GATEWAY=${HICLAW_PORT_GATEWAY}
 HICLAW_PORT_CONSOLE=${HICLAW_PORT_CONSOLE}
 HICLAW_PORT_ELEMENT_WEB=${HICLAW_PORT_ELEMENT_WEB}
@@ -1695,16 +1706,7 @@ EOF
     # Pass host timezone to container so date/time commands reflect local time
     TZ_ARGS="-e TZ=${HICLAW_TIMEZONE}"
 
-    # Host directory mount: for file sharing with agents (defaults to user's home)
-    if [ "${HICLAW_NON_INTERACTIVE}" != "1" ] && [ -z "${HICLAW_HOST_SHARE_DIR}" ]; then
-        read -e -p "$(msg host_share.prompt "$HOME"): " HICLAW_HOST_SHARE_DIR
-        HICLAW_HOST_SHARE_DIR="${HICLAW_HOST_SHARE_DIR:-$HOME}"
-        export HICLAW_HOST_SHARE_DIR
-    elif [ -z "${HICLAW_HOST_SHARE_DIR}" ]; then
-        HICLAW_HOST_SHARE_DIR="$HOME"
-        export HICLAW_HOST_SHARE_DIR
-    fi
-
+    # Host directory mount
     if [ -d "${HICLAW_HOST_SHARE_DIR}" ]; then
         HOST_SHARE_MOUNT_ARGS="-v ${HICLAW_HOST_SHARE_DIR}:/host-share"
         log "$(msg host_share.sharing "${HICLAW_HOST_SHARE_DIR}")"
