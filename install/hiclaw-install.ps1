@@ -1,5 +1,6 @@
-#!/usr/bin/env pwsh
+#!/usr/bin/env powershell
 # hiclaw-install.ps1 - One-click installation for HiClaw Manager and Worker on Windows
+# Compatible with PowerShell 5.1+ and PowerShell 7.0+
 #
 # Usage:
 #   .\hiclaw-install.ps1                  # Interactive installation (choose Quick Start or Manual)
@@ -30,7 +31,7 @@
 #   HICLAW_PORT_CONSOLE       Host port for Higress console (default: 18001)
 #   HICLAW_PORT_ELEMENT_WEB   Host port for Element Web direct access (default: 18088)
 
-#Requires -Version 7.0
+#Requires -Version 5.1
 
 [CmdletBinding()]
 param(
@@ -61,6 +62,9 @@ $script:HICLAW_NON_INTERACTIVE = if ($env:HICLAW_NON_INTERACTIVE -eq "1" -or $No
 $script:HICLAW_MOUNT_SOCKET = if ($env:HICLAW_MOUNT_SOCKET -eq "0") { $false } else { $true }
 $script:HICLAW_ENV_FILE = if ($EnvFile) { $EnvFile } elseif ($env:HICLAW_ENV_FILE) { $env:HICLAW_ENV_FILE } else { "$env:USERPROFILE\hiclaw-manager.env" }
 
+# ANSI escape character for PowerShell 5.1+ compatibility
+$script:ESC = [char]0x1B
+
 # ============================================================
 # Log all output to file
 # ============================================================
@@ -69,7 +73,7 @@ $script:HICLAW_LOG_FILE = "$env:USERPROFILE\hiclaw-install.log"
 
 # Start transcript for logging (PowerShell's built-in logging mechanism)
 try {
-    Start-Transcript -Path $script:HICLAW_LOG_FILE -Append -ErrorAction SilentlyContinue
+    Start-Transcript -Path $script:HICLAW_LOG_FILE -Append -ErrorAction SilentlyContinue | Out-Null
 } catch {
     # If transcript fails, continue without logging
 }
@@ -90,18 +94,18 @@ Write-Host ""
 
 function Write-Log {
     param([string]$Message)
-    Write-Host "`e[36m[HiClaw]`e[0m $Message"
+    Write-Host "$($script:ESC)[36m[HiClaw]$($script:ESC)[0m $Message"
 }
 
 function Write-Error {
     param([string]$Message)
-    Write-Host "`e[31m[HiClaw ERROR]`e[0m $Message" -ForegroundColor Red
+    Write-Host "$($script:ESC)[31m[HiClaw ERROR]$($script:ESC)[0m $Message" -ForegroundColor Red
     throw $Message
 }
 
 function Write-Warning {
     param([string]$Message)
-    Write-Host "`e[33m[HiClaw WARNING]`e[0m $Message"
+    Write-Host "$($script:ESC)[33m[HiClaw WARNING]$($script:ESC)[0m $Message"
 }
 
 function Test-DockerRunning {
@@ -217,8 +221,8 @@ $script:Messages = @{
     "install.existing.prompt" = @{ zh = "请选择 [1/2/3]"; en = "Enter choice [1/2/3]" }
     "install.existing.upgrade_noninteractive" = @{ zh = "非交互模式: 执行就地升级..."; en = "Non-interactive mode: performing in-place upgrade..." }
     "install.existing.upgrading" = @{ zh = "执行就地升级..."; en = "Performing in-place upgrade..." }
-    "install.existing.warn_manager_stop" = @{ zh = "⚠️  Manager 容器将被停止并重新创建。"; en = "⚠️  Manager container will be stopped and recreated." }
-    "install.existing.warn_worker_recreate" = @{ zh = "⚠️  Worker 容器也将被重新创建（以更新 Manager IP）。"; en = "⚠️  Worker containers will also be recreated (to update Manager IP in hosts)." }
+    "install.existing.warn_manager_stop" = @{ zh = "警告: Manager 容器将被停止并重新创建。"; en = "WARNING: Manager container will be stopped and recreated." }
+    "install.existing.warn_worker_recreate" = @{ zh = "警告: Worker 容器也将被重新创建（以更新 Manager IP）。"; en = "WARNING: Worker containers will also be recreated (to update Manager IP in hosts)." }
     "install.existing.continue_prompt" = @{ zh = "继续？[y/N]"; en = "Continue? [y/N]" }
     "install.existing.cancelled" = @{ zh = "安装已取消。"; en = "Installation cancelled." }
     "install.existing.stopping_manager" = @{ zh = "停止并移除现有 manager 容器..."; en = "Stopping and removing existing manager container..." }
@@ -227,8 +231,8 @@ $script:Messages = @{
 
     # --- Clean reinstall messages ---
     "install.reinstall.performing" = @{ zh = "执行全新重装..."; en = "Performing clean reinstall..." }
-    "install.reinstall.warn_stop" = @{ zh = "⚠️  以下运行中的容器将被停止:"; en = "⚠️  The following running containers will be stopped:" }
-    "install.reinstall.warn_delete" = @{ zh = "⚠️  警告: 以下内容将被删除:"; en = "⚠️  WARNING: This will DELETE the following:" }
+    "install.reinstall.warn_stop" = @{ zh = "警告: 以下运行中的容器将被停止:"; en = "WARNING: The following running containers will be stopped:" }
+    "install.reinstall.warn_delete" = @{ zh = "警告: 以下内容将被删除:"; en = "WARNING: This will DELETE the following:" }
     "install.reinstall.warn_volume" = @{ zh = "   - Docker 卷: hiclaw-data"; en = "   - Docker volume: hiclaw-data" }
     "install.reinstall.warn_env" = @{ zh = "   - Env 文件: {0}"; en = "   - Env file: {0}" }
     "install.reinstall.warn_workspace" = @{ zh = "   - Manager 工作空间: {0}"; en = "   - Manager workspace: {0}" }
@@ -255,7 +259,7 @@ $script:Messages = @{
     "llm.provider.qwen" = @{ zh = "  提供商: qwen（阿里云百炼）"; en = "  Provider: qwen (Alibaba Cloud Bailian)" }
     "llm.provider.qwen_default" = @{ zh = "  提供商: {0}（默认）"; en = "  Provider: {0} (default)" }
     "llm.model.default" = @{ zh = "  模型: {0}（默认）"; en = "  Model: {0} (default)" }
-    "llm.apikey_hint" = @{ zh = "  💡 获取阿里云百炼 API Key:"; en = "  💡 Get your Alibaba Cloud Bailian API Key from:" }
+    "llm.apikey_hint" = @{ zh = "  提示: 获取阿里云百炼 API Key:"; en = "  Hint: Get your Alibaba Cloud Bailian API Key from:" }
     "llm.apikey_url" = @{ zh = "     https://www.aliyun.com/product/bailian"; en = "     https://www.aliyun.com/product/bailian" }
     "llm.apikey_prompt" = @{ zh = "LLM API Key"; en = "LLM API Key" }
     "llm.providers_title" = @{ zh = "可用 LLM 提供商:"; en = "Available LLM Providers:" }
@@ -299,7 +303,7 @@ $script:Messages = @{
     "port.local_only.choice" = @{ zh = "请选择 [1/2]"; en = "Enter choice [1/2]" }
     "port.local_only.selected_local" = @{ zh = "端口已绑定到 127.0.0.1（仅本机访问）"; en = "Ports bound to 127.0.0.1 (localhost only)" }
     "port.local_only.selected_external" = @{ zh = "端口已绑定到所有网络接口（0.0.0.0）"; en = "Ports bound to all interfaces (0.0.0.0)" }
-    "port.local_only.https_hint" = @{ zh = "⚠️  建议在 Higress 控制台配置 TLS 证书并启用 HTTPS，避免明文传输。"; en = "⚠️  It is recommended to configure TLS certificates and enable HTTPS in the Higress Console to avoid plaintext transmission." }
+    "port.local_only.https_hint" = @{ zh = "警告: 建议在 Higress 控制台配置 TLS 证书并启用 HTTPS，避免明文传输。"; en = "WARNING: It is recommended to configure TLS certificates and enable HTTPS in the Higress Console to avoid plaintext transmission." }
     "port.local_only.https_docs" = @{ zh = ""; en = "" }
 
     # --- Domain Configuration ---
@@ -346,7 +350,7 @@ $script:Messages = @{
     # --- Container runtime socket ---
     "install.socket_detected" = @{ zh = "容器运行时 socket: {0}（已启用直接创建 Worker）"; en = "Container runtime socket: {0} (direct Worker creation enabled)" }
     "install.socket_not_found" = @{ zh = "未找到容器运行时 socket（Manager 无法直接创建 Worker 容器，需要你手动执行 docker 命令创建）"; en = "No container runtime socket found (Manager cannot create Worker containers directly, you will need to create them manually using docker commands)" }
-    "install.socket_confirm.title" = @{ zh = "⚠️ 未检测到容器运行时 Socket"; en = "⚠️ Container Runtime Socket Not Detected" }
+    "install.socket_confirm.title" = @{ zh = "警告: 未检测到容器运行时 Socket"; en = "WARNING: Container Runtime Socket Not Detected" }
     "install.socket_confirm.message" = @{ zh = "未找到 Docker/Podman socket，Manager 将无法自动创建 Worker 容器。`n你需要手动执行 docker run 命令来创建 Worker。`n`n是否继续安装？"; en = "Docker/Podman socket not found. Manager will not be able to create Worker containers automatically.`nYou will need to manually run docker commands to create Workers.`n`nContinue installation?" }
     "install.socket_confirm.prompt" = @{ zh = "继续安装? [y/N]: "; en = "Continue? [y/N]: " }
     "install.socket_confirm.cancelled" = @{ zh = "安装已取消。如需启用 Worker 自动创建，请确保 Docker/Podman 正在运行，然后重新运行安装脚本。"; en = "Installation cancelled. To enable automatic Worker creation, ensure Docker/Podman is running and re-run the installer." }
@@ -380,9 +384,9 @@ $script:Messages = @{
 
     # --- OpenAI-compatible connectivity test ---
     "llm.openai.test.testing" = @{ zh = "正在测试 API 联通性..."; en = "Testing API connectivity..." }
-    "llm.openai.test.ok" = @{ zh = "✅ API 联通性测试通过"; en = "✅ API connectivity test passed" }
-    "llm.openai.test.fail" = @{ zh = "⚠️  API 联通性测试失败（HTTP {0}）。响应内容:`n{1}`n请根据以上错误信息联系您的模型服务商解决。"; en = "⚠️  API connectivity test failed (HTTP {0}). Response body:`n{1}`nPlease contact your model provider to resolve the issue." }
-    "llm.openai.test.fail.codingplan" = @{ zh = "⚠️  提示: 请确认您的 API Key 已开通阿里云百炼 CodingPlan 服务。开通地址: https://www.aliyun.com/benefit/scene/codingplan"; en = "⚠️  Hint: Please verify that your API Key has CodingPlan service enabled on Alibaba Cloud Bailian. Enable at: https://www.aliyun.com/benefit/scene/codingplan" }
+    "llm.openai.test.ok" = @{ zh = "API 联通性测试通过"; en = "API connectivity test passed" }
+    "llm.openai.test.fail" = @{ zh = "API 联通性测试失败（HTTP {0}）。响应内容:`n{1}`n请根据以上错误信息联系您的模型服务商解决。"; en = "API connectivity test failed (HTTP {0}). Response body:`n{1}`nPlease contact your model provider to resolve the issue." }
+    "llm.openai.test.fail.codingplan" = @{ zh = "提示: 请确认您的 API Key 已开通阿里云百炼 CodingPlan 服务。开通地址: https://www.aliyun.com/benefit/scene/codingplan"; en = "Hint: Please verify that your API Key has CodingPlan service enabled on Alibaba Cloud Bailian. Enable at: https://www.aliyun.com/benefit/scene/codingplan" }
     "llm.openai.test.confirm" = @{ zh = "是否仍要继续安装？[y/N]"; en = "Continue with installation anyway? [y/N]" }
     "llm.openai.test.aborted" = @{ zh = "安装已中止。"; en = "Installation aborted." }
     # --- OpenAI-compatible provider creation ---
@@ -410,14 +414,14 @@ $script:Messages = @{
     # --- Final output panel ---
     "success.title" = @{ zh = "=== HiClaw Manager 已启动！==="; en = "=== HiClaw Manager Started! ===" }
     "success.domains_configured" = @{ zh = "以下域名已配置解析到 127.0.0.1:"; en = "The following domains are configured to resolve to 127.0.0.1:" }
-    "success.open_url" = @{ zh = "  ★ 在浏览器中打开以下 URL 开始使用:                           ★"; en = "  ★ Open the following URL in your browser to start:                           ★" }
+    "success.open_url" = @{ zh = "  在浏览器中打开以下 URL 开始使用:                           "; en = "  Open the following URL in your browser to start:                           " }
     "success.login_with" = @{ zh = "  登录信息:"; en = "  Login with:" }
     "success.username" = @{ zh = "    用户名: {0}"; en = "    Username: {0}" }
     "success.password" = @{ zh = "    密码: {0}"; en = "    Password: {0}" }
     "success.after_login" = @{ zh = "  登录后，开始与 Manager 聊天！"; en = "  After login, start chatting with the Manager!" }
     "success.tell_it" = @{ zh = "    告诉它: `"创建一个名为 alice 的前端开发 Worker`""; en = "    Tell it: `"Create a Worker named alice for frontend dev`"" }
     "success.manager_auto" = @{ zh = "    Manager 会自动处理一切。"; en = "    The Manager will handle everything automatically." }
-    "success.mobile_title" = @{ zh = "  📱 移动端访问（FluffyChat / Element Mobile）:"; en = "  📱 Mobile access (FluffyChat / Element Mobile):" }
+    "success.mobile_title" = @{ zh = "  移动端访问（FluffyChat / Element Mobile）:"; en = "  Mobile access (FluffyChat / Element Mobile):" }
     "success.mobile_step1" = @{ zh = "    1. 在手机上下载 FluffyChat 或 Element"; en = "    1. Download FluffyChat or Element on your phone" }
     "success.mobile_step2" = @{ zh = "    2. 设置 homeserver 为: {0}"; en = "    2. Set homeserver to: {0}" }
     "success.mobile_step2_noip" = @{ zh = "    2. 设置 homeserver 为: http://<本机局域网IP>:{0}"; en = "    2. Set homeserver to: http://<this-machine-LAN-IP>:{0}" }
@@ -500,6 +504,7 @@ function Get-Msg {
     if ($f) { return ($text -f $f) }
     return $text
 }
+
 function Get-LanIP {
     # Detect local LAN IP address on Windows
     try {
@@ -510,7 +515,10 @@ function Get-LanIP {
                 $_.PrefixOrigin -ne "WellKnown" -and
                 $_.InterfaceAlias -notlike "*Loopback*"
             } |
-            Sort-Object { $_.InterfaceAlias -like "*Wi-Fi*" -or $_.InterfaceAlias -like "*Ethernet*" ? 0 : 1 }
+            Sort-Object {
+                # PowerShell 5.1 compatible: use if-else instead of ternary operator
+                if ($_.InterfaceAlias -like "*Wi-Fi*" -or $_.InterfaceAlias -like "*Ethernet*") { 0 } else { 1 }
+            }
 
         if ($adapters) {
             return $adapters[0].IPAddress
@@ -532,8 +540,9 @@ function Get-LanIP {
 
 function New-RandomKey {
     # Generate 64 character hex string (32 bytes)
-    $bytes = [byte[]]::new(32)
-    [System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
+    $bytes = New-Object byte[] 32
+    $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+    $rng.GetBytes($bytes)
     return [BitConverter]::ToString($bytes).Replace("-", "").ToLower()
 }
 
@@ -577,7 +586,7 @@ function Wait-ManagerReady {
 
         Start-Sleep -Seconds 5
         $elapsed += 5
-        Write-Host "`r`e[36m[HiClaw]`e[0m $(Get-Msg 'install.wait_ready.waiting' -f $elapsed, $Timeout)" -NoNewline
+        Write-Host "`r$($script:ESC)[36m[HiClaw]$($script:ESC)[0m $(Get-Msg 'install.wait_ready.waiting' -f $elapsed, $Timeout)" -NoNewline
     }
 
     Write-Host ""
@@ -606,7 +615,7 @@ function Wait-MatrixReady {
 
         Start-Sleep -Seconds 5
         $elapsed += 5
-        Write-Host "`r`e[36m[HiClaw]`e[0m $(Get-Msg 'install.wait_matrix.waiting' -f $elapsed, $Timeout)" -NoNewline
+        Write-Host "`r$($script:ESC)[36m[HiClaw]$($script:ESC)[0m $(Get-Msg 'install.wait_matrix.waiting' -f $elapsed, $Timeout)" -NoNewline
     }
 
     Write-Host ""
@@ -1196,12 +1205,12 @@ function Install-Manager {
     } elseif (Get-Command "podman" -ErrorAction SilentlyContinue) {
         $dockerCmd = "podman"
     } else {
-        Write-Host "`e[31m[HiClaw ERROR]`e[0m $(Get-Msg 'error.docker_not_found')" -ForegroundColor Red
+        Write-Host "$($script:ESC)[31m[HiClaw ERROR]$($script:ESC)[0m $(Get-Msg 'error.docker_not_found')" -ForegroundColor Red
         exit 1
     }
 
     if (-not (Test-DockerRunning)) {
-        Write-Host "`e[31m[HiClaw ERROR]`e[0m $(Get-Msg 'error.docker_not_running')" -ForegroundColor Red
+        Write-Host "$($script:ESC)[31m[HiClaw ERROR]$($script:ESC)[0m $(Get-Msg 'error.docker_not_running')" -ForegroundColor Red
         exit 1
     }
 
@@ -1274,9 +1283,9 @@ function Install-Manager {
 
                 if ($runningManager -or $runningWorkers) {
                     Write-Host ""
-                    Write-Host "`e[33m$(Get-Msg 'install.existing.warn_manager_stop')`e[0m"
+                    Write-Host "$($script:ESC)[33m$(Get-Msg 'install.existing.warn_manager_stop')$($script:ESC)[0m"
                     if ($existingWorkers) {
-                        Write-Host "`e[33m$(Get-Msg 'install.existing.warn_worker_recreate')`e[0m"
+                        Write-Host "$($script:ESC)[33m$(Get-Msg 'install.existing.warn_worker_recreate')$($script:ESC)[0m"
                     }
 
                     if (-not $script:HICLAW_NON_INTERACTIVE) {
@@ -1306,19 +1315,19 @@ function Install-Manager {
                 }
 
                 Write-Host ""
-                Write-Host "`e[33m$(Get-Msg 'install.reinstall.warn_stop')`e[0m"
-                if ($runningManager) { Write-Host "`e[33m   - hiclaw-manager (manager)`e[0m" }
-                $runningWorkers | ForEach-Object { Write-Host "`e[33m   - $_ (worker)`e[0m" }
+                Write-Host "$($script:ESC)[33m$(Get-Msg 'install.reinstall.warn_stop')$($script:ESC)[0m"
+                if ($runningManager) { Write-Host "$($script:ESC)[33m   - hiclaw-manager (manager)$($script:ESC)[0m" }
+                $runningWorkers | ForEach-Object { Write-Host "$($script:ESC)[33m   - $_ (worker)$($script:ESC)[0m" }
 
                 Write-Host ""
-                Write-Host "`e[31m$(Get-Msg 'install.reinstall.warn_delete')`e[0m"
-                Write-Host "`e[31m$(Get-Msg 'install.reinstall.warn_volume')`e[0m"
-                Write-Host "`e[31m$(Get-Msg 'install.reinstall.warn_env' -f $script:HICLAW_ENV_FILE)`e[0m"
-                Write-Host "`e[31m$(Get-Msg 'install.reinstall.warn_workspace' -f $existingWorkspace)`e[0m"
-                Write-Host "`e[31m$(Get-Msg 'install.reinstall.warn_workers')`e[0m"
+                Write-Host "$($script:ESC)[31m$(Get-Msg 'install.reinstall.warn_delete')$($script:ESC)[0m"
+                Write-Host "$($script:ESC)[31m$(Get-Msg 'install.reinstall.warn_volume')$($script:ESC)[0m"
+                Write-Host "$($script:ESC)[31m$(Get-Msg 'install.reinstall.warn_env' -f $script:HICLAW_ENV_FILE)$($script:ESC)[0m"
+                Write-Host "$($script:ESC)[31m$(Get-Msg 'install.reinstall.warn_workspace' -f $existingWorkspace)$($script:ESC)[0m"
+                Write-Host "$($script:ESC)[31m$(Get-Msg 'install.reinstall.warn_workers')$($script:ESC)[0m"
                 Write-Host ""
-                Write-Host "`e[31m$(Get-Msg 'install.reinstall.confirm_type')`e[0m"
-                Write-Host "`e[31m  $existingWorkspace`e[0m"
+                Write-Host "$($script:ESC)[31m$(Get-Msg 'install.reinstall.confirm_type')$($script:ESC)[0m"
+                Write-Host "$($script:ESC)[31m  $existingWorkspace$($script:ESC)[0m"
                 Write-Host ""
 
                 $confirmPath = Read-Host (Get-Msg "install.reinstall.confirm_path")
@@ -1706,7 +1715,7 @@ function Install-Manager {
             # Interactive confirmation when socket not found
             if (-not $script:HICLAW_NON_INTERACTIVE) {
                 Write-Host ""
-                Write-Host "`e[33m$(Get-Msg 'install.socket_confirm.title')`e[0m"
+                Write-Host "$($script:ESC)[33m$(Get-Msg 'install.socket_confirm.title')$($script:ESC)[0m"
                 Write-Host ""
                 Write-Host (Get-Msg 'install.socket_confirm.message')
                 Write-Host ""
@@ -1835,38 +1844,38 @@ function Install-Manager {
 
     $lanIP = Get-LanIP
 
-    Write-Host "`e[33m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`e[0m"
-    Write-Host "`e[33m  $(Get-Msg 'success.open_url')`e[0m"
-    Write-Host "`e[33m                                                                                 `e[0m"
-    Write-Host "`e[1;36m    http://127.0.0.1:$($config.PORT_ELEMENT_WEB)/#/login`e[0m"
-    Write-Host "`e[33m                                                                                 `e[0m"
-    Write-Host "`e[33m  $(Get-Msg 'success.login_with')`e[0m"
-    Write-Host "`e[33m  $(Get-Msg 'success.username' -f $config.ADMIN_USER)`e[0m"
-    Write-Host "`e[33m  $(Get-Msg 'success.password' -f $config.ADMIN_PASSWORD)`e[0m"
-    Write-Host "`e[33m                                                                                 `e[0m"
-    Write-Host "`e[33m  $(Get-Msg 'success.after_login')`e[0m"
-    Write-Host "`e[33m  $(Get-Msg 'success.tell_it')`e[0m"
-    Write-Host "`e[33m  $(Get-Msg 'success.manager_auto')`e[0m"
-    Write-Host "`e[33m                                                                                 `e[0m"
-    Write-Host "`e[33m  ─────────────────────────────────────────────────────────────────────────────  `e[0m"
-    Write-Host "`e[33m  $(Get-Msg 'success.mobile_title')`e[0m"
-    Write-Host "`e[33m                                                                                 `e[0m"
+    Write-Host "$($script:ESC)[33m===============================================================$($script:ESC)[0m"
+    Write-Host "$($script:ESC)[33m  $(Get-Msg 'success.open_url')$($script:ESC)[0m"
+    Write-Host "$($script:ESC)[33m                                                                                 $($script:ESC)[0m"
+    Write-Host "$($script:ESC)[1;36m    http://127.0.0.1:$($config.PORT_ELEMENT_WEB)/#/login$($script:ESC)[0m"
+    Write-Host "$($script:ESC)[33m                                                                                 $($script:ESC)[0m"
+    Write-Host "$($script:ESC)[33m  $(Get-Msg 'success.login_with')$($script:ESC)[0m"
+    Write-Host "$($script:ESC)[33m  $(Get-Msg 'success.username' -f $config.ADMIN_USER)$($script:ESC)[0m"
+    Write-Host "$($script:ESC)[33m  $(Get-Msg 'success.password' -f $config.ADMIN_PASSWORD)$($script:ESC)[0m"
+    Write-Host "$($script:ESC)[33m                                                                                 $($script:ESC)[0m"
+    Write-Host "$($script:ESC)[33m  $(Get-Msg 'success.after_login')$($script:ESC)[0m"
+    Write-Host "$($script:ESC)[33m  $(Get-Msg 'success.tell_it')$($script:ESC)[0m"
+    Write-Host "$($script:ESC)[33m  $(Get-Msg 'success.manager_auto')$($script:ESC)[0m"
+    Write-Host "$($script:ESC)[33m                                                                                 $($script:ESC)[0m"
+    Write-Host "$($script:ESC)[33m  ---------------------------------------------------------------  $($script:ESC)[0m"
+    Write-Host "$($script:ESC)[33m  $(Get-Msg 'success.mobile_title')$($script:ESC)[0m"
+    Write-Host "$($script:ESC)[33m                                                                                 $($script:ESC)[0m"
     if ($lanIP) {
-        Write-Host "`e[33m  $(Get-Msg 'success.mobile_step1')`e[0m"
-        Write-Host "`e[33m  $(Get-Msg 'success.mobile_step2' -f "http://${lanIP}:$($config.PORT_GATEWAY)")`e[0m"
-        Write-Host "`e[33m  $(Get-Msg 'success.mobile_step3')`e[0m"
-        Write-Host "`e[33m  $(Get-Msg 'success.mobile_username' -f $config.ADMIN_USER)`e[0m"
-        Write-Host "`e[33m  $(Get-Msg 'success.mobile_password' -f $config.ADMIN_PASSWORD)`e[0m"
+        Write-Host "$($script:ESC)[33m  $(Get-Msg 'success.mobile_step1')$($script:ESC)[0m"
+        Write-Host "$($script:ESC)[33m  $(Get-Msg 'success.mobile_step2' -f "http://${lanIP}:$($config.PORT_GATEWAY)")$($script:ESC)[0m"
+        Write-Host "$($script:ESC)[33m  $(Get-Msg 'success.mobile_step3')$($script:ESC)[0m"
+        Write-Host "$($script:ESC)[33m  $(Get-Msg 'success.mobile_username' -f $config.ADMIN_USER)$($script:ESC)[0m"
+        Write-Host "$($script:ESC)[33m  $(Get-Msg 'success.mobile_password' -f $config.ADMIN_PASSWORD)$($script:ESC)[0m"
     } else {
-        Write-Host "`e[33m  $(Get-Msg 'success.mobile_step1')`e[0m"
-        Write-Host "`e[33m  $(Get-Msg 'success.mobile_step2_noip' -f $config.PORT_GATEWAY)`e[0m"
-        Write-Host "`e[33m  $(Get-Msg 'success.mobile_noip_hint')`e[0m"
-        Write-Host "`e[33m  $(Get-Msg 'success.mobile_step3')`e[0m"
-        Write-Host "`e[33m  $(Get-Msg 'success.mobile_username' -f $config.ADMIN_USER)`e[0m"
-        Write-Host "`e[33m  $(Get-Msg 'success.mobile_password' -f $config.ADMIN_PASSWORD)`e[0m"
+        Write-Host "$($script:ESC)[33m  $(Get-Msg 'success.mobile_step1')$($script:ESC)[0m"
+        Write-Host "$($script:ESC)[33m  $(Get-Msg 'success.mobile_step2_noip' -f $config.PORT_GATEWAY)$($script:ESC)[0m"
+        Write-Host "$($script:ESC)[33m  $(Get-Msg 'success.mobile_noip_hint')$($script:ESC)[0m"
+        Write-Host "$($script:ESC)[33m  $(Get-Msg 'success.mobile_step3')$($script:ESC)[0m"
+        Write-Host "$($script:ESC)[33m  $(Get-Msg 'success.mobile_username' -f $config.ADMIN_USER)$($script:ESC)[0m"
+        Write-Host "$($script:ESC)[33m  $(Get-Msg 'success.mobile_password' -f $config.ADMIN_PASSWORD)$($script:ESC)[0m"
     }
-    Write-Host "`e[33m                                                                                 `e[0m"
-    Write-Host "`e[33m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`e[0m"
+    Write-Host "$($script:ESC)[33m                                                                                 $($script:ESC)[0m"
+    Write-Host "$($script:ESC)[33m===============================================================$($script:ESC)[0m"
 
     Write-Log ""
     Write-Log (Get-Msg "success.other_consoles")
@@ -2034,7 +2043,7 @@ switch ($Command) {
 
 # Stop transcript logging
 try {
-    Stop-Transcript -ErrorAction SilentlyContinue
+    Stop-Transcript -ErrorAction SilentlyContinue | Out-Null
 } catch {
     # Ignore errors when stopping transcript
 }
