@@ -109,7 +109,7 @@ Other OpenAI-compatible model services (such as OpenAI, DeepSeek, etc.) are also
 2. In the PowerShell window, copy and paste the following command, then press Enter:
 
 ```powershell
-Set-ExecutionPolicy Bypass -Scope Process -Force; Invoke-Expression ((New-Object System.Net.WebClient).DownloadString('https://higress.ai/hiclaw/install.ps1'))
+Set-ExecutionPolicy Bypass -Scope Process -Force; $wc=New-Object Net.WebClient; $wc.Encoding=[Text.Encoding]::UTF8; iex $wc.DownloadString('https://higress.ai/hiclaw/install.ps1')
 ```
 
 > **Note**: This command temporarily allows the current PowerShell window to execute scripts (without affecting system security policy), then downloads and runs the HiClaw installation script from the network.
@@ -392,7 +392,7 @@ If you selected "Allow external access" during installation, you can manage your
 When a new version is released, simply re-run the installation command in PowerShell to upgrade in-place:
 
 ```powershell
-Set-ExecutionPolicy Bypass -Scope Process -Force; Invoke-Expression ((New-Object System.Net.WebClient).DownloadString('https://higress.ai/hiclaw/install.ps1'))
+Set-ExecutionPolicy Bypass -Scope Process -Force; $wc=New-Object Net.WebClient; $wc.Encoding=[Text.Encoding]::UTF8; iex $wc.DownloadString('https://higress.ai/hiclaw/install.ps1')
 ```
 
 When the installation script detects an existing installation, it will prompt you to choose:
@@ -405,7 +405,7 @@ When the installation script detects an existing installation, it will prompt yo
 To upgrade to a specific version:
 
 ```powershell
-$env:HICLAW_VERSION="v1.0.5"; Set-ExecutionPolicy Bypass -Scope Process -Force; Invoke-Expression ((New-Object System.Net.WebClient).DownloadString('https://higress.ai/hiclaw/install.ps1'))
+$env:HICLAW_VERSION="v1.0.5"; Set-ExecutionPolicy Bypass -Scope Process -Force; $wc=New-Object Net.WebClient; $wc.Encoding=[Text.Encoding]::UTF8; iex $wc.DownloadString('https://higress.ai/hiclaw/install.ps1')
 ```
 
 ---
