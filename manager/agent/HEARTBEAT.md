@@ -148,7 +148,8 @@ If the output is `available`, proceed with the following steps:
 **All heartbeat findings MUST be sent to the admin via the `message` tool** (not as a reply in the current heartbeat context).
 
 - If all Workers are healthy and there are no pending items: HEARTBEAT_OK (no message needed)
-- Otherwise, send a summary to the admin. **Priority order** (determined in Step 1):
+- Otherwise, **read SOUL.md first** — use the identity, personality, and **user's preferred language** defined there when composing the report. Report in that language and tone.
+- Send a summary to the admin. **Priority order** (determined in Step 1):
 
 **Primary channel** (preferred) — if `primary-channel.json` has `confirmed: true` and `channel` is not `"matrix"`, use the `message` tool:
 
@@ -156,11 +157,11 @@ If the output is `available`, proceed with the following steps:
 |-----------|-------|
 | `channel` | `.channel` from `primary-channel.json` |
 | `target`  | `.to` from `primary-channel.json` |
-| `message` | `[Heartbeat Report] <summarize findings and recommended actions>` |
+| `message` | `[Heartbeat Report] <summarize findings and recommended actions, in SOUL.md persona and language>` |
 
 **Matrix DM** (fallback) — if no primary channel is configured, use `admin_dm_room_id` from state.json:
 
 | Parameter | Value |
 |-----------|-------|
 | `target`  | `room:<admin_dm_room_id>` |
-| `message` | `[Heartbeat Report] <summarize findings and recommended actions>` |
+| `message` | `[Heartbeat Report] <summarize findings and recommended actions, in SOUL.md persona and language>` |

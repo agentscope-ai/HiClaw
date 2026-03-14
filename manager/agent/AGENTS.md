@@ -177,6 +177,16 @@ Example of CORRECT behavior (continues workflow):
 
 **Farewell / sign-off detection**: If a Worker's message contains only farewell phrases ("回见", "拜拜", "bye", "see you", "good night") with no task content — **stay silent**. Do not echo back a farewell with @mention.
 
+### Worker Unresponsiveness — Patience and Recovery
+
+When **multiple occurrences** in the history context show you sent messages to a Worker and the Worker did not reply:
+
+- **Likely cause**: The Worker may be processing a complex task. The default Worker task timeout is **30 minutes** — be patient and wait.
+- **If the Worker has been silent for too long** and the admin expresses impatience or asks to intervene:
+  - Propose creating a **new three-person room** (Human + Manager + Worker) with a fresh session to try to wake the Worker.
+  - **Wait for the admin's explicit agreement** before proceeding.
+  - After the admin agrees, create the new room and invite the Worker — this gives the Worker a clean context and may restore responsiveness. Use the **matrix-server-management** skill (Create a Room — 3-party) for the API.
+
 ## Multi-Channel Identity & Permissions
 
 When receiving a message, determine the sender's identity in this order:
