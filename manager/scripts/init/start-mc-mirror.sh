@@ -31,12 +31,65 @@ touch "${HICLAW_FS_ROOT}/.initialized"
 
 log "MinIO storage initialized and synced to ${HICLAW_FS_ROOT}/"
 
+# Store PID file for cleanup on restart
+PID_FILE="/var/run/mc-mirror-watch.pid"
+
+# Clean up any existing watch process from previous runs
+if [ -f "${PID_FILE}" ]; then
+    OLD_PID=$(cat "${PID_FILE}" 2>/dev/null)
+    if [ -n "${OLD_PID}" ] && kill -0 "${OLD_PID}" 2>/dev/null; then
+        log "Cleaning up previous watch process (PID: ${OLD_PID})"
+        kill "${OLD_PID}" 2>/dev/null || true
+        # Wait for process to terminate
+        for i in $(seq 1 10); do
+            if ! kill -0 "${OLD_PID}" 2>/dev/null; then
+                break
+            fi
+            sleep 1
+        done
+        # Force kill if still running
+        if kill -0 "${OLD_PID}" 2>/dev/null; then
+            kill -9 "${OLD_PID}" 2>/dev/null || true
+        fi
+    fi
+    rm -f "${PID_FILE}"
+fi
+
 # Start bidirectional sync (shared + worker data only — manager workspace excluded)
 # Local -> Remote: real-time watch (filesystem notify)
 mc mirror --watch "${HICLAW_FS_ROOT}/" hiclaw/hiclaw-storage/ --overwrite &
 LOCAL_TO_REMOTE_PID=$!
 
+# Store PID for cleanup
+echo "${LOCAL_TO_REMOTE_PID}" > "${PID_FILE}"
+
 log "Local->Remote sync started (PID: ${LOCAL_TO_REMOTE_PID})"
+
+# Cleanup function to terminate background process on exit
+_cleanup() {
+    log "Stopping mc mirror watch (PID: ${LOCAL_TO_REMOTE_PID})..."
+    if [ -n "${LOCAL_TO_REMOTE_PID}" ] && kill -0 "${LOCAL_TO_REMOTE_PID}" 2>/dev/null; then
+        kill "${LOCAL_TO_REMOTE_PID}" 2>/dev/null || true
+        # Wait for graceful termination
+        for i in $(seq 1 5); do
+            if ! kill -0 "${LOCAL_TO_REMOTE_PID}" 2>/dev/null; then
+                log "mc mirror watch terminated gracefully"
+                break
+            fi
+            sleep 1
+        done
+        # Force kill if still running
+        if kill -0 "${LOCAL_TO_REMOTE_PID}" 2>/dev/null; then
+            kill -9 "${LOCAL_TO_REMOTE_PID}" 2>/dev/null || true
+            log "mc mirror watch force terminated"
+        fi
+    fi
+    rm -f "${PID_FILE}"
+    exit 0
+}
+
+# Register cleanup function for common exit signals
+trap _cleanup EXIT INT TERM HUP QUIT
 
 # Remote -> Local: periodic pull every 5 minutes (aligned with heartbeat)
 while true; do

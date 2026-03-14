@@ -28,7 +28,7 @@ docker exec hiclaw-manager cat /opt/hiclaw/agent/.builtin-version
 安装时指定版本：
 
 ```bash
-HICLAW_VERSION=0.1.0 bash <(curl -sSL https://higress.ai/hiclaw/install.sh)
+HICLAW_VERSION=v1.0.5 bash <(curl -sSL https://higress.ai/hiclaw/install.sh)
 ```
 
 ---

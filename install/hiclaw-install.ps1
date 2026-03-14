@@ -297,6 +297,7 @@ $script:Messages = @{
     "port.gateway_prompt" = @{ zh = "网关主机端口（容器内 8080）"; en = "Host port for gateway (8080 inside container)" }
     "port.console_prompt" = @{ zh = "Higress 控制台主机端口（容器内 8001）"; en = "Host port for Higress console (8001 inside container)" }
     "port.element_prompt" = @{ zh = "Element Web 直接访问主机端口（容器内 8088）"; en = "Host port for Element Web direct access (8088 inside container)" }
+    "port.openclaw_console_prompt" = @{ zh = "OpenClaw 控制台主机端口（容器内 18888）"; en = "Host port for OpenClaw console (18888 inside container)" }
     "port.local_only.title" = @{ zh = "--- 网络访问模式 ---"; en = "--- Network Access Mode ---" }
     "port.local_only.hint_yes" = @{ zh = "  仅本机使用，无需开放外部端口（推荐）"; en = "  Local use only, no external port exposure (recommended)" }
     "port.local_only.hint_no" = @{ zh = "  允许外部访问（局域网 / 公网）"; en = "  Allow external access (LAN / public network)" }
@@ -312,6 +313,7 @@ $script:Messages = @{
     "domain.element_prompt" = @{ zh = "Element Web 域名"; en = "Element Web Domain" }
     "domain.gateway_prompt" = @{ zh = "AI 网关域名"; en = "AI Gateway Domain" }
     "domain.fs_prompt" = @{ zh = "文件系统域名"; en = "File System Domain" }
+    "domain.console_prompt" = @{ zh = "OpenClaw 控制台域名"; en = "OpenClaw Console Domain" }
 
     # --- GitHub Integration ---
     "github.title" = @{ zh = "--- GitHub 集成（可选，按回车跳过）---"; en = "--- GitHub Integration (optional, press Enter to skip) ---" }
@@ -433,6 +435,8 @@ $script:Messages = @{
     # --- Other consoles and tips ---
     "success.other_consoles" = @{ zh = "--- 其他控制台 ---"; en = "--- Other Consoles ---" }
     "success.higress_console" = @{ zh = "  Higress 控制台: http://localhost:{0}（用户名: {1} / 密码: {2}）"; en = "  Higress Console: http://localhost:{0} (Username: {1} / Password: {2})" }
+    "success.openclaw_console" = @{ zh = "  OpenClaw 控制台（本地）: http://localhost:{0}（无需登录）"; en = "  OpenClaw Console (local): http://localhost:{0} (no login required)" }
+    "success.openclaw_console_gateway" = @{ zh = "  OpenClaw 控制台（网关）: http://console-local.hiclaw.io（用户名: {0} / 密码: {1}）"; en = "  OpenClaw Console (gateway): http://console-local.hiclaw.io (Username: {0} / Password: {1})" }
     "success.switch_llm.title" = @{ zh = "--- 切换 LLM 提供商 ---"; en = "--- Switch LLM Providers ---" }
     "success.switch_llm.hint" = @{ zh = "  您可以通过 Higress 控制台切换到其他 LLM 提供商（OpenAI、Anthropic 等）。"; en = "  You can switch to other LLM providers (OpenAI, Anthropic, etc.) via Higress Console." }
     "success.switch_llm.docs" = @{ zh = "  详细说明请参阅:"; en = "  For detailed instructions, see:" }
@@ -643,9 +647,11 @@ HICLAW_ADMIN_USER=$($Config.ADMIN_USER)
 HICLAW_ADMIN_PASSWORD=$($Config.ADMIN_PASSWORD)
 
 # Ports
+HICLAW_LOCAL_ONLY=$($Config.LOCAL_ONLY)
 HICLAW_PORT_GATEWAY=$($Config.PORT_GATEWAY)
 HICLAW_PORT_CONSOLE=$($Config.PORT_CONSOLE)
 HICLAW_PORT_ELEMENT_WEB=$($Config.PORT_ELEMENT_WEB)
+HICLAW_PORT_OPENCLAW_CONSOLE=$($Config.PORT_OPENCLAW_CONSOLE)
 
 # Matrix
 HICLAW_MATRIX_DOMAIN=$($Config.MATRIX_DOMAIN)
@@ -657,6 +663,7 @@ HICLAW_MANAGER_GATEWAY_KEY=$($Config.MANAGER_GATEWAY_KEY)
 
 # File System
 HICLAW_FS_DOMAIN=$($Config.FS_DOMAIN)
+HICLAW_CONSOLE_DOMAIN=$($Config.CONSOLE_DOMAIN)
 HICLAW_MINIO_USER=$($Config.MINIO_USER)
 HICLAW_MINIO_PASSWORD=$($Config.MINIO_PASSWORD)
 
@@ -1577,6 +1584,7 @@ function Install-Manager {
     $config.PORT_GATEWAY = Read-Prompt -VarName "HICLAW_PORT_GATEWAY" -PromptText (Get-Msg "port.gateway_prompt") -Default "18080"
     $config.PORT_CONSOLE = Read-Prompt -VarName "HICLAW_PORT_CONSOLE" -PromptText (Get-Msg "port.console_prompt") -Default "18001"
     $config.PORT_ELEMENT_WEB = Read-Prompt -VarName "HICLAW_PORT_ELEMENT_WEB" -PromptText (Get-Msg "port.element_prompt") -Default "18088"
+    $config.PORT_OPENCLAW_CONSOLE = Read-Prompt -VarName "HICLAW_PORT_OPENCLAW_CONSOLE" -PromptText (Get-Msg "port.openclaw_console_prompt") -Default "18888"
 
     Write-Log ""
 
@@ -1586,6 +1594,7 @@ function Install-Manager {
     $config.MATRIX_CLIENT_DOMAIN = Read-Prompt -VarName "HICLAW_MATRIX_CLIENT_DOMAIN" -PromptText (Get-Msg "domain.element_prompt") -Default "matrix-client-local.hiclaw.io"
     $config.AI_GATEWAY_DOMAIN = Read-Prompt -VarName "HICLAW_AI_GATEWAY_DOMAIN" -PromptText (Get-Msg "domain.gateway_prompt") -Default "aigw-local.hiclaw.io"
     $config.FS_DOMAIN = Read-Prompt -VarName "HICLAW_FS_DOMAIN" -PromptText (Get-Msg "domain.fs_prompt") -Default "fs-local.hiclaw.io"
+    $config.CONSOLE_DOMAIN = Read-Prompt -VarName "HICLAW_CONSOLE_DOMAIN" -PromptText (Get-Msg "domain.console_prompt") -Default "console-local.hiclaw.io"
 
     Write-Log ""
 
@@ -1733,6 +1742,7 @@ function Install-Manager {
     $dockerArgs += @("-p", "${portPrefix}$($config.PORT_GATEWAY):8080")
     $dockerArgs += @("-p", "${portPrefix}$($config.PORT_CONSOLE):8001")
     $dockerArgs += @("-p", "${portPrefix}$($config.PORT_ELEMENT_WEB):8088")
+    $dockerArgs += @("-p", "127.0.0.1:$($config.PORT_OPENCLAW_CONSOLE):18888")
 
     # Data mount: Docker volume
     $dockerArgs += @("-v", "$($config.DATA_DIR):/data")
@@ -1839,7 +1849,7 @@ function Install-Manager {
     Write-Log (Get-Msg "success.title")
     Write-Log ""
     Write-Log (Get-Msg "success.domains_configured")
-    Write-Log "  $($config.MATRIX_DOMAIN.Split(':')[0]) $($config.MATRIX_CLIENT_DOMAIN) $($config.AI_GATEWAY_DOMAIN) $($config.FS_DOMAIN)"
+    Write-Log "  $($config.MATRIX_DOMAIN.Split(':')[0]) $($config.MATRIX_CLIENT_DOMAIN) $($config.AI_GATEWAY_DOMAIN) $($config.FS_DOMAIN) $($config.CONSOLE_DOMAIN)"
     Write-Log ""
 
     $lanIP = Get-LanIP
@@ -1880,6 +1890,8 @@ function Install-Manager {
     Write-Log ""
     Write-Log (Get-Msg "success.other_consoles")
     Write-Log (Get-Msg "success.higress_console" -f $config.PORT_CONSOLE, $config.ADMIN_USER, $config.ADMIN_PASSWORD)
+    Write-Log (Get-Msg "success.openclaw_console" -f $config.PORT_OPENCLAW_CONSOLE)
+    Write-Log (Get-Msg "success.openclaw_console_gateway" -f $config.ADMIN_USER, $config.ADMIN_PASSWORD)
     Write-Log ""
     Write-Log (Get-Msg "success.switch_llm.title")
     Write-Log (Get-Msg "success.switch_llm.hint")

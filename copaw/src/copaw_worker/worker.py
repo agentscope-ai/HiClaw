@@ -244,14 +244,19 @@ class Worker:
         arch_map = {"x86_64": "amd64", "aarch64": "arm64", "arm64": "arm64"}
         arch = arch_map.get(machine, machine)
 
-        if system not in ("linux", "darwin"):
+        if system == "windows":
+            url = "https://dl.min.io/client/mc/release/windows-amd64/mc.exe"
+            install_dir = Path.home() / ".local" / "bin"
+            install_dir.mkdir(parents=True, exist_ok=True)
+            dest = install_dir / "mc.exe"
+        elif system in ("linux", "darwin"):
+            url = f"https://dl.min.io/client/mc/release/{system}-{arch}/mc"
+            install_dir = Path.home() / ".local" / "bin"
+            install_dir.mkdir(parents=True, exist_ok=True)
+            dest = install_dir / "mc"
+        else:
             console.print(f"[yellow]mc auto-install not supported on {system}, please install mc manually[/yellow]")
             return
-
-        url = f"https://dl.min.io/client/mc/release/{system}-{arch}/mc"
-        install_dir = Path.home() / ".local" / "bin"
-        install_dir.mkdir(parents=True, exist_ok=True)
-        dest = install_dir / "mc"
 
         console.print(f"[yellow]mc not found, downloading from {url}...[/yellow]")
         try:
@@ -261,7 +266,8 @@ class Worker:
                 with open(dest, "wb") as f:
                     for chunk in resp.iter_bytes(chunk_size=65536):
                         f.write(chunk)
-            dest.chmod(dest.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+            if system != "windows":
+                dest.chmod(dest.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
             os.environ["PATH"] = str(install_dir) + os.pathsep + os.environ.get("PATH", "")
             console.print(f"[green]mc installed to {dest}[/green]")
         except Exception as exc:

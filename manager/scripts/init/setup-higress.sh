@@ -17,6 +17,7 @@ MATRIX_DOMAIN="${HICLAW_MATRIX_DOMAIN:-matrix-local.hiclaw.io:8080}"
 MATRIX_CLIENT_DOMAIN="${HICLAW_MATRIX_CLIENT_DOMAIN:-matrix-client-local.hiclaw.io}"
 AI_GATEWAY_DOMAIN="${HICLAW_AI_GATEWAY_DOMAIN:-aigw-local.hiclaw.io}"
 FS_DOMAIN="${HICLAW_FS_DOMAIN:-fs-local.hiclaw.io}"
+CONSOLE_DOMAIN="${HICLAW_CONSOLE_DOMAIN:-console-local.hiclaw.io}"
 
 LLM_PROVIDER="${HICLAW_LLM_PROVIDER:-qwen}"
 LLM_API_URL="${HICLAW_LLM_API_URL:-}"
@@ -102,22 +103,40 @@ if [ ! -f "${SETUP_MARKER}" ]; then
         '{"name":"element-web","type":"static","domain":"127.0.0.1:8088","port":8088,"properties":{},"authN":{"enabled":false}}'
     higress_api POST /v1/service-sources "Registering MinIO service source" \
         '{"name":"minio","type":"static","domain":"127.0.0.1:9000","port":9000,"properties":{},"authN":{"enabled":false}}'
+    higress_api POST /v1/service-sources "Registering OpenClaw Console service source" \
+        '{"name":"openclaw-console","type":"static","domain":"127.0.0.1:18888","port":18888,"properties":{},"authN":{"enabled":false}}'
 
-    # 1. Manager Consumer
+    # 1. Domains
+    higress_api POST /v1/domains "Creating Matrix Client domain" \
+        '{"name":"'"${MATRIX_CLIENT_DOMAIN}"'","enableHttps":"off"}'
+    higress_api POST /v1/domains "Creating File System domain" \
+        '{"name":"'"${FS_DOMAIN}"'","enableHttps":"off"}'
+    higress_api POST /v1/domains "Creating OpenClaw Console domain" \
+        '{"name":"'"${CONSOLE_DOMAIN}"'","enableHttps":"off"}'
+
+    # 2. Manager Consumer
     higress_api POST /v1/consumers "Creating Manager consumer" \
         '{"name":"manager","credentials":[{"type":"key-auth","source":"BEARER","values":["'"${HICLAW_MANAGER_GATEWAY_KEY}"'"]}]}'
 
-    # 2. Matrix Homeserver Route
+    # 3. Matrix Homeserver Route
     higress_api POST /v1/routes "Creating Matrix Homeserver route" \
         '{"name":"matrix-homeserver","domains":[],"path":{"matchType":"PRE","matchValue":"/_matrix"},"services":[{"name":"tuwunel.static","port":6167,"weight":100}]}'
 
-    # 3. Element Web Route
+    # 4. Element Web Route
     higress_api POST /v1/routes "Creating Element Web route" \
         '{"name":"matrix-web-client","domains":["'"${MATRIX_CLIENT_DOMAIN}"'"],"path":{"matchType":"PRE","matchValue":"/"},"services":[{"name":"element-web.static","port":8088,"weight":100}]}'
 
-    # 4. HTTP File System Route
+    # 5. HTTP File System Route
     higress_api POST /v1/routes "Creating HTTP file system route" \
         '{"name":"http-filesystem","domains":["'"${FS_DOMAIN}"'"],"path":{"matchType":"PRE","matchValue":"/"},"services":[{"name":"minio.static","port":9000,"weight":100}]}'
+
+    # 6. OpenClaw Console Route (reverse-proxied via nginx with auto-token injection)
+    higress_api POST /v1/routes "Creating OpenClaw Console route" \
+        '{"name":"openclaw-console","domains":["'"${CONSOLE_DOMAIN}"'"],"path":{"matchType":"PRE","matchValue":"/"},"services":[{"name":"openclaw-console.static","port":18888,"weight":100}]}'
+
+    # 6a. Enable basic-auth on OpenClaw Console route
+    higress_api PUT /v1/routes/openclaw-console/plugin-instances/basic-auth "Enabling basic-auth on OpenClaw Console route" \
+        '{"version":null,"scope":"ROUTE","target":"openclaw-console","targets":{"ROUTE":"openclaw-console"},"pluginName":"basic-auth","pluginVersion":null,"internal":false,"enabled":true,"rawConfigurations":"consumers:\n  - name: admin\n    credential: '"${HICLAW_ADMIN_USER:-admin}"':'"${HICLAW_ADMIN_PASSWORD}"'"}'
 
     touch "${SETUP_MARKER}"
     log "First-boot setup complete"
@@ -131,11 +150,17 @@ fi
 # ============================================================
 
 # ============================================================
-# 5. LLM Provider + AI Gateway Route
+# AI Gateway Domain (idempotent: POST returns 409 if exists)
+# ============================================================
+higress_api POST /v1/domains "Creating AI Gateway domain" \
+    '{"name":"'"${AI_GATEWAY_DOMAIN}"'","enableHttps":"off"}'
+
+# ============================================================
+# LLM Provider + AI Gateway Route
 # ============================================================
 if [ -n "${HICLAW_LLM_API_KEY}" ]; then
 
-    # 5a. Create/update LLM provider (GET → PUT if exists, POST if not)
+    # Create/update LLM provider (GET → PUT if exists, POST if not)
     case "${LLM_PROVIDER}" in
         qwen)
             PROVIDER_BODY='{"type":"qwen","name":"qwen","tokens":["'"${HICLAW_LLM_API_KEY}"'"],"protocol":"openai/v1","tokenFailoverConfig":{"enabled":false},"rawConfigs":{"qwenEnableSearch":false,"qwenEnableCompatible":true,"qwenFileIds":[]}}'

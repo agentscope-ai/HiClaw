@@ -1,5 +1,5 @@
 <h1 align="center">
-    <img src="https://img.alicdn.com/imgextra/i3/O1CN01JLLvVU21EWyG90gbi_!!6000000006953-2-tps-2539-575.png" alt="HiClaw"  width="290" height="72.5">
+    <img src="https://img.alicdn.com/imgextra/i1/O1CN014DQemZ257thQOBg8L_!!6000000007480-55-tps-1489-391.svg" alt="HiClaw"  width="290" height="72.5">
   <br>
 </h1>
 
@@ -7,11 +7,11 @@
 
 <p align="center">
   <a href="https://deepwiki.com/higress-group/hiclaw"><img src="https://img.shields.io/badge/DeepWiki-Ask_AI-navy.svg?logo=data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACwAAAAyCAYAAAAnWDnqAAAAAXNSR0IArs4c6QAAA05JREFUaEPtmUtyEzEQhtWTQyQLHNak2AB7ZnyXZMEjXMGeK/AIi+QuHrMnbChYY7MIh8g01fJoopFb0uhhEqqcbWTp06/uv1saEDv4O3n3dV60RfP947Mm9/SQc0ICFQgzfc4CYZoTPAswgSJCCUJUnAAoRHOAUOcATwbmVLWdGoH//PB8mnKqScAhsD0kYP3j/Yt5LPQe2KvcXmGvRHcDnpxfL2zOYJ1mFwrryWTz0advv1Ut4CJgf5uhDuDj5eUcAUoahrdY/56ebRWeraTjMt/00Sh3UDtjgHtQNHwcRGOC98BJEAEymycmYcWwOprTgcB6VZ5JK5TAJ+fXGLBm3FDAmn6oPPjR4rKCAoJCal2eAiQp2x0vxTPB3ALO2CRkwmDy5WohzBDwSEFKRwPbknEggCPB/imwrycgxX2NzoMCHhPkDwqYMr9tRcP5qNrMZHkVnOjRMWwLCcr8ohBVb1OMjxLwGCvjTikrsBOiA6fNyCrm8V1rP93iVPpwaE+gO0SsWmPiXB+jikdf6SizrT5qKasx5j8ABbHpFTx+vFXp9EnYQmLx02h1QTTrl6eDqxLnGjporxl3NL3agEvXdT0WmEost648sQOYAeJS9Q7bfUVoMGnjo4AZdUMQku50McDcMWcBPvr0SzbTAFDfvJqwLzgxwATnCgnp4wDl6Aa+Ax283gghmj+vj7feE2KBBRMW3FzOpLOADl0Isb5587h/U4gGvkt5v60Z1VLG8BhYjbzRwyQZemwAd6cCR5/XFWLYZRIMpX39AR0tjaGGiGzLVyhse5C9RKC6ai42ppWPKiBagOvaYk8lO7DajerabOZP46Lby5wKjw1HCRx7p9sVMOWGzb/vA1hwiWc6jm3MvQDTogQkiqIhJV0nBQBTU+3okKCFDy9WwferkHjtxib7t3xIUQtHxnIwtx4mpg26/HfwVNVDb4oI9RHmx5WGelRVlrtiw43zboCLaxv46AZeB3IlTkwouebTr1y2NjSpHz68WNFjHvupy3q8TFn3Hos2IAk4Ju5dCo8B3wP7VPr/FGaKiG+T+v+TQqIrOqMTL1VdWV1DdmcbO8KXBz6esmYWYKPwDL5b5FA1a0hwapHiom0r/cKaoqr+27/XcrS5UwSMbQAAAABJRU5ErkJggg==" alt="DeepWiki"></a>
-  <a href="https://discord.gg/n6mV8xEYUF"><img src="https://img.shields.io/badge/Discord-Join_Us-blueviolet.svg?logo=discord" alt="Discord"></a>
-  <a href="https://qr.dingtalk.com/action/joingroup?code=v1,k1,0etR5l8fxeb/6/mzE5hRE1uy4tkiwxvPV9+TdBv7sEM=&_dt_no_comment=1&origin=11"><img src="https://img.shields.io/badge/DingTalk-Join_Us-orange.svg" alt="DingTalk"></a>
+  <a href="https://discord.com/invite/NVjNA4BAVw"><img src="https://img.shields.io/badge/Discord-Join_Us-blueviolet.svg?logo=discord" alt="Discord"></a>
+  <a href="https://qr.dingtalk.com/action/joingroup?code=v1,k1,q3lHf2AY4o0W2aBsoyJE0kgYnGcBFqpBuwDTjJ36iu8=&_dt_no_comment=1&origin=11"><img src="https://img.shields.io/badge/DingTalk-Join_Us-orange.svg" alt="DingTalk"></a>
 </p>
 
-**HiClaw is an open-source multi-agent collaboration system. It enables multiple agents to collaborate within Matrix rooms, ensuring that the entire process is visible to humans and allows for intervention at any time.
+**HiClaw is an open-source Collaborative Multi-Agent OS for transparent, human-in-the-loop task coordination via Matrix rooms, ensuring that the entire process is visible to humans and allows for intervention at any time.
 Designed with a Manager-Workers architecture, it allows humans to coordinate multiple Worker Agents through a Manager Agent to complete complex tasks. This accelerates the realization of OPOC (One-Person-One-Company) and the deployment of enterprise digital employees.**
 
 HiClaw is not positioned as a competitor to other "xxClaw" products; it is fundamentally an Agent Collaboration System.
@@ -54,7 +54,7 @@ Key Features:
 
 ## Quick Start
 
-**Prerequisites**: Docker Desktop (Windows/macOS) or Docker Engine (Linux). That's all.
+**Prerequisites**: Docker Desktop (Windows/macOS) or Docker Engine (Linux). If deploying on virtual machines such as ECS or cloud desktops, please use a Linux operating system. For requirements involving a graphical interface, Ubuntu is recommended.Please note that the official image package currently does not support Windows systems on virtual machines, as Windows in a VM environment is not a Linux Container.
 
 - [Docker Desktop](https://www.docker.com/products/docker-desktop/) (Windows / macOS)
 - [Docker Engine](https://docs.docker.com/engine/install/) (Linux) or [Podman Desktop](https://podman-desktop.io/) (alternative)
@@ -91,11 +91,15 @@ Step 8: Select the network access mode. Here, we choose Local Use Only. If you w
 
 Step 9: For configurations regarding GitHub Integration, Skills Registry, Data Persistence, Docker Volumes, and Manager Workspace, simply press Enter to accept the default configurations.
 
-Step 10: Wait for the installation to complete.Upon completion, a login password will be automatically generated.
+Step 10: Select the Manager Worker runtime, OpenClaw and Copaw are currently supported, with future support for NanoClaw, ZeroClaw, and others
+
+Step 11: Wait for the installation to complete.Upon completion, a login password will be automatically generated.
 - To access and use the system via mobile devices, you will need an US-region Apple ID (or equivalent region setting) to download FluffyChat or Element Mobile. (These specific IM clients are used because they support the Matrix protocol).
 - After downloading, connect to your Matrix server address to manage your Agent team anytime, anywhere.
 
-Step 11: In your web browser, navigate to http://127.0.0.1:18088/#/login. Log in to Element using your username and password. You are now ready to start using "Claw"! Tell the Manager to create Workers and assign tasks.
+Step 112: In your web browser, navigate to http://127.0.0.1:18088/#/login. Log in to Element using your username and password. You are now ready to start using "Claw"! Tell the Manager to create Workers and assign tasks.
+
+⚠️ Note: HiClaw has Higress AI Gateway built-in, which is responsible for managing model API Keys and securing ingress traffic. The switching and addition of model API Keys, as well as the management of routing, domains, and certificates, can all be handled within the Higress Console.
 
 
 ## Upgrade
@@ -111,18 +115,9 @@ bash <(curl -sSL https://higress.ai/hiclaw/install.sh)
 To upgrade to a specific version:
 
 ```bash
-HICLAW_VERSION=0.2.0 bash <(curl -sSL https://higress.ai/hiclaw/install.sh)
+HICLAW_VERSION=v1.0.5 bash <(curl -sSL https://higress.ai/hiclaw/install.sh)
 ```
 
-### After install
-
-![Installation complete](https://img.alicdn.com/imgextra/i2/O1CN01uXyp0Q1Z0y039PC6F_!!6000000003133-2-tps-832-300.png)
-
-1. Open `http://127.0.0.1:18088` in your browser
-2. Login with the credentials shown during install
-3. Tell the Manager to create a Worker and assign it a task
-
-For mobile: download Element or FluffyChat, connect to your Matrix server address, and manage your agents from your phone.
 
 ## How It Works
 
@@ -298,11 +293,11 @@ make help  # All available targets
 ## Community
 
 - [Discord](https://discord.gg/NVjNA4BAVw)
-- [DingTalk Group](https://qr.dingtalk.com/action/joingroup?code=v1,k1,0etR5l8fxeb/6/mzE5hRE1uy4tkiwxvPV9+TdBv7sEM=&_dt_no_comment=1&origin=11)
+- [DingTalk Group](https://qr.dingtalk.com/action/joingroup?code=v1,k1,q3lHf2AY4o0W2aBsoyJE0kgYnGcBFqpBuwDTjJ36iu8=&_dt_no_comment=1&origin=11)
 - WeChat Group — scan to join:
 
 <p align="center">
-  <img src="https://img.alicdn.com/imgextra/i2/O1CN01ga2NAM1QOTnByKW4l_!!6000000001966-2-tps-772-742.png" width="200" alt="WeChat Group" />
+  <img src="https://img.alicdn.com/imgextra/i4/O1CN011Gb82b1TNyCQlA5eh_!!6000000002371-2-tps-790-752.png" width="200" alt="WeChat Group" />
 </p>
 
 ## License

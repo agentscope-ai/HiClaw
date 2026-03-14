@@ -113,6 +113,22 @@ For projects there is additionally a **Project Room**: `Project: {title}` — Hu
 
 **CRITICAL — @mention format**: The mention MUST use the full Matrix user ID including domain, e.g. `@alice:matrix-local.hiclaw.io:18080`. Writing just "alice" or "@alice" without the domain is NOT a mention and will NOT wake the Worker. Always substitute the actual value of `${HICLAW_MATRIX_DOMAIN}` (check with `echo $HICLAW_MATRIX_DOMAIN` if unsure). A message without a valid @mention is silently ignored by the Worker.
 
+**Special case — messages with history context:** When other people spoke in the room between your last reply and the current @mention, the message you receive will contain two sections:
+
+```
+[Chat messages since your last reply - for context]
+... history messages from various senders ...
+
+[Current message - respond to this]
+... the message that triggered your wake-up ...
+```
+
+This does NOT appear every time — only when there are buffered history messages. When you see this format:
+- **History section** is context only — do NOT @mention anyone based on history messages.
+- **Current message section** is the actual trigger — **always identify the sender from this section** to determine who to @mention back.
+
+Responding to a sender from the history section means replying to a stale message — this confuses the workflow and may trigger unintended responses.
+
 **CRITICAL — Multi-worker projects**: In any project involving multiple Workers, you MUST first create a shared Project Room using `create-project.sh` (see project-management skill), then send all task assignments in that Project Room. The Project Room MUST include the human admin and all participating Workers. Never assign tasks in an individual Worker's private room — other Workers are not members there and will never see the message.
 
 ### Worker @Mention Permissions (Default: Manager/Admin Only)
@@ -144,23 +160,6 @@ Example of CORRECT behavior (continues workflow):
 > "Phase 1 done! Moving to Phase 2.
 > @bob:matrix-local.hiclaw.io:18080 Phase 1 is complete. Please start Phase 2: [task details here]"
 
-### Incoming Message Format
-
-When you receive a message, it contains two clearly marked sections:
-
-```
-[Chat messages since your last reply - for context]
-... history messages from various senders ...
-
-[Current message - respond to this]
-... the message that triggered your wake-up ...
-```
-
-- **History messages** are context only — they show what happened in the room since your last reply. Do NOT @mention people based on history messages.
-- **Current message** is what you need to respond to. **Always identify the sender from this section** when deciding who to @mention back.
-
-Responding to a sender from the history section means replying to a stale message — this confuses the workflow and may trigger unintended responses.
-
 ### When to Speak — Be Responsive but Not Noisy
 
 **What is "noisy"?** Any @mention that carries no actionable content — greetings, celebrations, chitchat, "OK got it!", "great job 🎉", confirmations that require no action. These hollow @mentions **waste the human admin's money** (every triggered response costs real tokens) and can cause **infinite loops** when you and a Worker keep @mentioning each other with pleasantries.
@@ -182,8 +181,9 @@ Responding to a sender from the history section means replying to a stale messag
 
 When receiving a message, determine the sender's identity in this order:
 
-1. **Human Admin (full trust)**: either condition satisfied
+1. **Human Admin (full trust)**: any of the following
    - DM from any channel (OpenClaw allowlist guarantees safety)
+   - In a Matrix group room, sender is `@${HICLAW_ADMIN_USER}:${HICLAW_MATRIX_DOMAIN}`
    - In a non-Matrix group room, sender's `sender_id` matches `primary-channel.json`'s `sender_id` (same channel type)
 
 2. **Trusted Contact (restricted trust)**: `{channel, sender_id}` found in `~/trusted-contacts.json`

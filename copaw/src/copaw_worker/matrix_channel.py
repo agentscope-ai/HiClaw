@@ -147,6 +147,21 @@ class MatrixChannel(BaseChannel):
         self._room_histories: Dict[str, List[HistoryEntry]] = {}  # per-room history buffer
 
     # ------------------------------------------------------------------
+    # Debounce key — use room_id so same-room messages from different
+    # senders are serialised (not processed concurrently), preventing
+    # race conditions on the shared session state.
+    # ------------------------------------------------------------------
+
+    def get_debounce_key(self, payload: Any) -> str:
+        if isinstance(payload, dict):
+            meta = payload.get("meta") or {}
+            room_id = meta.get("room_id")
+            if room_id:
+                return f"matrix:{room_id}"
+            return payload.get("sender_id") or ""
+        return getattr(payload, "session_id", "") or ""
+
+    # ------------------------------------------------------------------
     # Factory
     # ------------------------------------------------------------------
 
@@ -588,6 +603,7 @@ class MatrixChannel(BaseChannel):
                 "is_dm": is_dm,
                 "worker_name": worker_name,
                 "event_id": event.event_id,
+                "sender_id": sender_id,
             },
         }
 
@@ -693,6 +709,7 @@ class MatrixChannel(BaseChannel):
                 "is_dm": is_dm,
                 "worker_name": worker_name,
                 "event_id": event.event_id,
+                "sender_id": sender_id,
             },
         }
 
@@ -822,9 +839,13 @@ class MatrixChannel(BaseChannel):
         if not content:
             content = [TextContent(type=ContentType.TEXT, text="")]
 
+        # Use room_id as the AgentRequest user_id so that all participants
+        # in the same room share one session (CoPaw keys session state on
+        # both session_id AND user_id).  The real sender is preserved in
+        # meta["sender_id"] for reply mentions.
         req = self.build_agent_request_from_user_content(
             channel_id=CHANNEL_KEY,
-            sender_id=sender_id,
+            sender_id=room_id,
             session_id=session_id,
             content_parts=content,
             channel_meta=meta,
@@ -839,6 +860,46 @@ class MatrixChannel(BaseChannel):
     def get_to_handle_from_request(self, request: Any) -> str:
         meta = getattr(request, "channel_meta", {}) or {}
         return meta.get("room_id", getattr(request, "user_id", ""))
+
+    # ------------------------------------------------------------------
+    # Mention helper — build spec-compliant Matrix mention
+    # ------------------------------------------------------------------
+
+    def _apply_mention(
+        self, content: dict[str, Any], user_id: str, room_id: str
+    ) -> None:
+        """Add a full Matrix mention to an outgoing event content dict.
+
+        Sets ``m.mentions`` (for push notifications) and adds a
+        ``formatted_body`` with an HTML pill so clients render the
+        mention visually.
+        """
+        content["m.mentions"] = {"user_ids": [user_id]}
+
+        display_name = self._resolve_display_name(user_id, room_id)
+        pill = (
+            f'<a href="https://matrix.to/#/{user_id}">'
+            f"{display_name}</a>"
+        )
+
+        body = content.get("body", "")
+        content["format"] = "org.matrix.custom.html"
+        content["formatted_body"] = f"{pill} {body}" if body else pill
+        # Prepend plain-text fallback so non-HTML clients also see the mention
+        content["body"] = f"{display_name} {body}" if body else display_name
+
+    def _resolve_display_name(self, user_id: str, room_id: str) -> str:
+        """Best-effort display name for *user_id* in *room_id*."""
+        if self._client:
+            room = self._client.rooms.get(room_id)
+            if room:
+                try:
+                    name = room.user_name(user_id)
+                    if name:
+                        return name
+                except Exception:
+                    pass
+        return user_id.split(":")[0].lstrip("@") or user_id
 
     # ------------------------------------------------------------------
     # Outgoing send — text
@@ -857,10 +918,9 @@ class MatrixChannel(BaseChannel):
         room_id = to_handle
         content: dict[str, Any] = {"msgtype": "m.text", "body": text}
 
-        # Mention the original sender if available
         sender_id = (meta or {}).get("sender_id") or (meta or {}).get("user_id")
         if sender_id:
-            content["m.mentions"] = {"user_ids": [sender_id]}
+            self._apply_mention(content, sender_id, room_id)
 
         try:
             await self._client.room_send(room_id, "m.room.message", content)
@@ -869,7 +929,6 @@ class MatrixChannel(BaseChannel):
                 "MatrixChannel: send failed to %s: %s", room_id, exc
             )
         finally:
-            # Stop typing indicator after reply is sent (or failed)
             await self._send_typing(room_id, False)
 
     # ------------------------------------------------------------------
@@ -938,7 +997,7 @@ class MatrixChannel(BaseChannel):
             }
             sender_id = (meta or {}).get("sender_id") or (meta or {}).get("user_id")
             if sender_id:
-                event_content["m.mentions"] = {"user_ids": [sender_id]}
+                self._apply_mention(event_content, sender_id, room_id)
 
             await self._client.room_send(room_id, "m.room.message", event_content)
             logger.debug(

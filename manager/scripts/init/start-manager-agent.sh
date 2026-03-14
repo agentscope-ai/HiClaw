@@ -303,7 +303,8 @@ if [ -f /root/manager-workspace/openclaw.json ]; then
         | .models.providers["hiclaw-gateway"].models[0].maxTokens = $max
         | .models.providers["hiclaw-gateway"].models[0].input = $input
         | .agents.defaults.model.primary = ("hiclaw-gateway/" + $model)
-        | .commands.restart = true' \
+        | .commands.restart = true
+        | .gateway.controlUi.dangerouslyDisableDeviceAuth = true' \
        /root/manager-workspace/openclaw.json > /tmp/openclaw.json.tmp && \
         mv /tmp/openclaw.json.tmp /root/manager-workspace/openclaw.json
     # Verify the token was written correctly
@@ -366,9 +367,22 @@ if container_api_available; then
             _creds_file="/data/worker-creds/${_worker_name}.env"
             if [ -f "${_creds_file}" ]; then
                 source "${_creds_file}"
-                container_create_worker "${_worker_name}" "${_worker_name}" "${WORKER_MINIO_PASSWORD}" 2>&1 \
-                    && log "  Recreated worker: ${_worker_name}" \
-                    || log "  WARNING: Failed to recreate worker: ${_worker_name}"
+                _runtime=$(jq -r --arg w "${_worker_name}" '.workers[$w].runtime // "openclaw"' "${REGISTRY_FILE}" 2>/dev/null)
+                _recreated=false
+                for _attempt in 1 2 3; do
+                    if [ "${_runtime}" = "copaw" ]; then
+                        container_create_copaw_worker "${_worker_name}" "${_worker_name}" "${WORKER_MINIO_PASSWORD}" 2>&1 && _recreated=true && break
+                    else
+                        container_create_worker "${_worker_name}" "${_worker_name}" "${WORKER_MINIO_PASSWORD}" 2>&1 && _recreated=true && break
+                    fi
+                    log "  Attempt ${_attempt}/3 failed for ${_worker_name}, retrying in $((5 * _attempt))s..."
+                    sleep $((5 * _attempt))
+                done
+                if [ "${_recreated}" = true ]; then
+                    log "  Recreated ${_runtime} worker: ${_worker_name}"
+                else
+                    log "  ERROR: Failed to recreate ${_worker_name} after 3 attempts"
+                fi
             else
                 log "  WARNING: No credentials found for ${_worker_name} (${_creds_file} missing), skipping"
             fi

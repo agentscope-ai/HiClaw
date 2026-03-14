@@ -139,6 +139,7 @@ STATE_SCRIPT=/opt/hiclaw/agent/skills/task-management/scripts/manage-state.sh
 
 ```json
 {
+  "admin_dm_room_id": "!abc:matrix-domain",
   "active_tasks": [
     {
       "task_id": "task-20260219-120000",
@@ -163,6 +164,8 @@ STATE_SCRIPT=/opt/hiclaw/agent/skills/task-management/scripts/manage-state.sh
 }
 ```
 
+- `admin_dm_room_id`: Cached room ID for the Manager-Admin DM room. Set once via `set-admin-dm`, used by heartbeat to report findings directly to the admin.
+
 ### Script Reference
 
 | When | Command |
@@ -172,6 +175,7 @@ STATE_SCRIPT=/opt/hiclaw/agent/skills/task-management/scripts/manage-state.sh
 | Create an infinite task | `bash $STATE_SCRIPT --action add-infinite --task-id T --title TITLE --assigned-to W --room-id R --schedule CRON --timezone TZ --next-scheduled-at ISO` |
 | Finite task completed | `bash $STATE_SCRIPT --action complete --task-id T` |
 | Infinite task executed | `bash $STATE_SCRIPT --action executed --task-id T --next-scheduled-at ISO` |
+| Cache admin DM room | `bash $STATE_SCRIPT --action set-admin-dm --room-id R` |
 | View active tasks | `bash $STATE_SCRIPT --action list` |
 
 The script auto-creates `~/state.json` if missing, skips duplicate additions, and updates `updated_at` on every write.

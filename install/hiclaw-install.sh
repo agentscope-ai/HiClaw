@@ -386,6 +386,8 @@ msg() {
         "domain.gateway_prompt.en") text="AI Gateway Domain" ;;
         "domain.fs_prompt.zh") text="文件系统域名" ;;
         "domain.fs_prompt.en") text="File System Domain" ;;
+        "domain.console_prompt.zh") text="OpenClaw 控制台域名" ;;
+        "domain.console_prompt.en") text="OpenClaw Console Domain" ;;
         # --- GitHub Integration ---
         "github.title.zh") text="--- GitHub 集成（可选，按回车跳过）---" ;;
         "github.title.en") text="--- GitHub Integration (optional, press Enter to skip) ---" ;;
@@ -575,6 +577,10 @@ msg() {
         "success.other_consoles.en") text="--- Other Consoles ---" ;;
         "success.higress_console.zh") text="  Higress 控制台: http://localhost:%s（用户名: %s / 密码: %s）" ;;
         "success.higress_console.en") text="  Higress Console: http://localhost:%s (Username: %s / Password: %s)" ;;
+        "success.openclaw_console.zh") text="  OpenClaw 控制台（本地）: http://localhost:%s（无需登录）" ;;
+        "success.openclaw_console.en") text="  OpenClaw Console (local): http://localhost:%s (no login required)" ;;
+        "success.openclaw_console_gateway.zh") text="  OpenClaw 控制台（网关）: http://console-local.hiclaw.io（用户名: %s / 密码: %s）" ;;
+        "success.openclaw_console_gateway.en") text="  OpenClaw Console (gateway): http://console-local.hiclaw.io (Username: %s / Password: %s)" ;;
         "success.switch_llm.title.zh") text="--- 切换 LLM 提供商 ---" ;;
         "success.switch_llm.title.en") text="--- Switch LLM Providers ---" ;;
         "success.switch_llm.hint.zh") text="  您可以通过 Higress 控制台切换到其他 LLM 提供商（OpenAI、Anthropic 等）。" ;;
@@ -1501,6 +1507,7 @@ install_manager() {
     prompt HICLAW_MATRIX_CLIENT_DOMAIN "$(msg domain.element_prompt)" "matrix-client-local.hiclaw.io"
     prompt HICLAW_AI_GATEWAY_DOMAIN "$(msg domain.gateway_prompt)" "aigw-local.hiclaw.io"
     prompt HICLAW_FS_DOMAIN "$(msg domain.fs_prompt)" "fs-local.hiclaw.io"
+    prompt HICLAW_CONSOLE_DOMAIN "$(msg domain.console_prompt)" "console-local.hiclaw.io"
 
     log ""
 
@@ -1569,6 +1576,16 @@ install_manager() {
     export HICLAW_DEFAULT_WORKER_RUNTIME
     log "$(msg worker_runtime.selected "${HICLAW_DEFAULT_WORKER_RUNTIME}")"
 
+    # Host directory sharing: for file sharing with agents (defaults to user's home)
+    if [ "${HICLAW_NON_INTERACTIVE}" != "1" ] && [ -z "${HICLAW_HOST_SHARE_DIR}" ]; then
+        read -e -p "$(msg host_share.prompt "$HOME"): " HICLAW_HOST_SHARE_DIR
+        HICLAW_HOST_SHARE_DIR="${HICLAW_HOST_SHARE_DIR:-$HOME}"
+        export HICLAW_HOST_SHARE_DIR
+    elif [ -z "${HICLAW_HOST_SHARE_DIR}" ]; then
+        HICLAW_HOST_SHARE_DIR="$HOME"
+        export HICLAW_HOST_SHARE_DIR
+    fi
+
     log ""
 
     # Generate secrets (only if not already set)
@@ -1599,6 +1616,7 @@ HICLAW_ADMIN_USER=${HICLAW_ADMIN_USER}
 HICLAW_ADMIN_PASSWORD=${HICLAW_ADMIN_PASSWORD}
 
 # Ports
+HICLAW_LOCAL_ONLY=${HICLAW_LOCAL_ONLY}
 HICLAW_PORT_GATEWAY=${HICLAW_PORT_GATEWAY}
 HICLAW_PORT_CONSOLE=${HICLAW_PORT_CONSOLE}
 HICLAW_PORT_ELEMENT_WEB=${HICLAW_PORT_ELEMENT_WEB}
@@ -1614,6 +1632,7 @@ HICLAW_MANAGER_GATEWAY_KEY=${HICLAW_MANAGER_GATEWAY_KEY}
 
 # File System
 HICLAW_FS_DOMAIN=${HICLAW_FS_DOMAIN}
+HICLAW_CONSOLE_DOMAIN=${HICLAW_CONSOLE_DOMAIN}
 HICLAW_MINIO_USER=${HICLAW_MINIO_USER}
 HICLAW_MINIO_PASSWORD=${HICLAW_MINIO_PASSWORD}
 
@@ -1687,16 +1706,7 @@ EOF
     # Pass host timezone to container so date/time commands reflect local time
     TZ_ARGS="-e TZ=${HICLAW_TIMEZONE}"
 
-    # Host directory mount: for file sharing with agents (defaults to user's home)
-    if [ "${HICLAW_NON_INTERACTIVE}" != "1" ] && [ -z "${HICLAW_HOST_SHARE_DIR}" ]; then
-        read -e -p "$(msg host_share.prompt "$HOME"): " HICLAW_HOST_SHARE_DIR
-        HICLAW_HOST_SHARE_DIR="${HICLAW_HOST_SHARE_DIR:-$HOME}"
-        export HICLAW_HOST_SHARE_DIR
-    elif [ -z "${HICLAW_HOST_SHARE_DIR}" ]; then
-        HICLAW_HOST_SHARE_DIR="$HOME"
-        export HICLAW_HOST_SHARE_DIR
-    fi
-
+    # Host directory mount
     if [ -d "${HICLAW_HOST_SHARE_DIR}" ]; then
         HOST_SHARE_MOUNT_ARGS="-v ${HICLAW_HOST_SHARE_DIR}:/host-share"
         log "$(msg host_share.sharing "${HICLAW_HOST_SHARE_DIR}")"
@@ -1779,7 +1789,7 @@ EOF
         -p "${_port_prefix}${HICLAW_PORT_GATEWAY}:8080" \
         -p "${_port_prefix}${HICLAW_PORT_CONSOLE}:8001" \
         -p "${_port_prefix}${HICLAW_PORT_ELEMENT_WEB:-18088}:8088" \
-        -p "${_port_prefix}${HICLAW_PORT_OPENCLAW_CONSOLE:-18888}:18888" \
+        -p "127.0.0.1:${HICLAW_PORT_OPENCLAW_CONSOLE:-18888}:18888" \
         ${DATA_MOUNT_ARGS} \
         ${WORKSPACE_MOUNT_ARGS} \
         ${HOST_SHARE_MOUNT_ARGS} \
@@ -1800,7 +1810,7 @@ EOF
     log "$(msg success.title)"
     log ""
     log "$(msg success.domains_configured)"
-    log "  ${HICLAW_MATRIX_DOMAIN%%:*} ${HICLAW_MATRIX_CLIENT_DOMAIN} ${HICLAW_AI_GATEWAY_DOMAIN} ${HICLAW_FS_DOMAIN}"
+    log "  ${HICLAW_MATRIX_DOMAIN%%:*} ${HICLAW_MATRIX_CLIENT_DOMAIN} ${HICLAW_AI_GATEWAY_DOMAIN} ${HICLAW_FS_DOMAIN} ${HICLAW_CONSOLE_DOMAIN}"
     log ""
     local lan_ip
     lan_ip=$(detect_lan_ip)
@@ -1839,6 +1849,8 @@ EOF
     log ""
     log "$(msg success.other_consoles)"
     log "$(msg success.higress_console "${HICLAW_PORT_CONSOLE}" "${HICLAW_ADMIN_USER}" "${HICLAW_ADMIN_PASSWORD}")"
+    log "$(msg success.openclaw_console "${HICLAW_PORT_OPENCLAW_CONSOLE:-18888}")"
+    log "$(msg success.openclaw_console_gateway "${HICLAW_ADMIN_USER}" "${HICLAW_ADMIN_PASSWORD}")"
     log ""
     log "$(msg success.switch_llm.title)"
     log "$(msg success.switch_llm.hint)"

@@ -61,7 +61,15 @@ Both can see everything you say in either room.
 
 ### @Mention Protocol (Critical)
 
-OpenClaw only wakes you when **you are explicitly @mentioned** in a group room. This means:
+OpenClaw only wakes you when **you are explicitly @mentioned** in a group room. This means a message without a valid @mention is silently dropped — you never see it.
+
+**Get the actual Matrix domain at runtime before sending any @mention:**
+```bash
+echo $HICLAW_MATRIX_DOMAIN
+# example: matrix-local.hiclaw.io:18080
+```
+
+Substitute that real value everywhere below. **Never write `${HICLAW_MATRIX_DOMAIN}` or `DOMAIN` literally in a message** — those are not valid mentions.
 
 #### Who triggered this message?
 
@@ -75,6 +83,41 @@ Before replying in any group room, **identify who @mentioned you** in the messag
 **Never guess or assume** who sent the message. Read the sender's Matrix ID from the message metadata.
 
 **Never @mention another Worker** unless you have a critical blocking reason that cannot go through the Manager. A Worker's Matrix ID starts with `@` followed by their worker name. Do not confuse worker names with `manager` or the admin username.
+
+**Special case — messages with history context:** When other people spoke in the room between your last reply and the current @mention, the message you receive will contain two sections:
+
+```
+[Chat messages since your last reply - for context]
+... history messages from various senders ...
+
+[Current message - respond to this]
+... the message that triggered your wake-up ...
+```
+
+This does NOT appear every time — only when there are buffered history messages. When you see this format:
+- **History section** is context only — do NOT @mention anyone based on history messages.
+- **Current message section** is the actual trigger — **always identify the sender from this section** to determine who to @mention back.
+
+Responding to a sender from the history section means replying to a stale message — this confuses the workflow and may trigger unintended responses.
+
+#### When to @mention Manager
+
+You MUST @mention Manager (using the full domain from `echo $HICLAW_MATRIX_DOMAIN`) in these situations:
+
+| Situation | Format |
+|-----------|--------|
+| Task completed | `@manager:DOMAIN TASK_COMPLETED: <summary>` |
+| Blocked — need help | `@manager:DOMAIN BLOCKED: <what's blocking you>` |
+| Need clarification | `@manager:DOMAIN QUESTION: <your question>` |
+| Replying to Manager's message | `@manager:DOMAIN <your reply>` |
+| Critical info for another Worker | `@worker-name:DOMAIN <info>` |
+
+**Phase completion reports MUST always @mention Manager** — this is what triggers the Manager to proceed to the next phase. A completion message without @mention is silently dropped and the workflow stalls.
+
+Mid-task progress updates (informational only, no action needed from Manager) do not need @mention:
+```
+Progress: finished step 2, starting step 3
+```
 
 #### Rules
 
@@ -108,7 +151,16 @@ Before replying in any group room, **identify who @mentioned you** in the messag
 
 **Farewell / sign-off detection**: If a message contains only phrases like "回见", "拜拜", "see you", "bye", "good night", "good work", "standing by", "waiting" — treat it as a conversation-closed signal. **Do not respond.** Silence is the correct action.
 
-### When to Speak
+### When to Speak — Be Responsive but Not Noisy
+
+**What is "noisy"?** Any @mention that carries no actionable content — greetings, celebrations, chitchat, "OK thanks!", "great job 🎉", "see you later". These hollow @mentions **waste the human admin's money** (every triggered response costs real tokens) and can cause **infinite loops** when two agents keep @mentioning each other with pleasantries.
+
+| Action | Noisy? |
+|--------|--------|
+| Post progress updates, notes, or logs **without** @mentioning anyone | Never noisy — post freely |
+| @mention Manager to report task completion, a blocker, or a question | Not noisy — this is your job |
+| @mention a Worker to hand off critical info the Manager asked you to relay | Not noisy — actionable |
+| @mention anyone to say "thanks", "got it", "hello", "congrats", or any other content that requires no action | **NOISY — do not do this** |
 
 **Respond when:**
 - The Manager @mentions you to assign a task or ask for status
@@ -125,7 +177,7 @@ Before replying in any group room, **identify who @mentioned you** in the messag
 - Manager's message after your task completion report contains no new task assignment and no question — the exchange is closed, do not reply
 - The message is a farewell, sign-off, or pure acknowledgment (e.g., "回见", "bye", "see you", "good work", "standing by") with no new task or question — **do not reply at all**, even if it @mentions you
 
-**The rule:** Be responsive but not noisy. Report meaningful progress, not every small step. When you finish a task, say so clearly with a summary of what was done. Always @mention whoever sent the message that triggered you.
+**⚠️ WARNING:** A single noisy @mention can trigger a reply, which triggers another reply, creating an **infinite loop that burns tokens until the session is killed**. This is the #1 cause of runaway costs. If your message does not require the recipient to *do* something, **do not @mention them**.
 
 ### File Sync
 
@@ -141,19 +193,26 @@ This pulls the latest files from centralized storage. OpenClaw auto-detects conf
 
 ## Task Execution
 
-When you receive a task from the Manager:
+Session resets are normal — your conversation history may be wiped after 2 days of inactivity. Task files and task-history.json are your continuity, so you can always resume where you left off.
 
-1. Sync files first: `bash /opt/hiclaw/agent/skills/file-sync/scripts/hiclaw-sync.sh`
-2. Read the task spec at the path provided (usually `/root/hiclaw-fs/shared/tasks/{task-id}/spec.md`)
-3. **Create `plan.md` in the task directory** before starting work (see Task Directory Rules below)
-4. Execute the task using your skills and tools, keeping all intermediate artifacts in the task directory
-5. Write results and push all task files to shared storage:
+When you receive a task from the Manager, follow **every** step below:
+
+1. **Sync** files first: `bash /opt/hiclaw/agent/skills/file-sync/scripts/hiclaw-sync.sh`
+2. **Read** the task spec (usually `/root/hiclaw-fs/shared/tasks/{task-id}/spec.md`)
+3. **Register** the task in `task-history.json` (see format below) with status `in_progress`
+4. **Create `plan.md`** in the task directory before starting work (see format below)
+5. **Execute** the task. After every meaningful sub-step, **immediately** append to the progress log `/root/hiclaw-fs/shared/tasks/{task-id}/progress/YYYY-MM-DD.md` (see format below)
+6. **Push** the task directory to MinIO after each sub-step so progress is visible in real time:
    ```bash
-   # Push plan.md, result.md and all intermediate artifacts (exclude spec.md and base/, which are Manager-owned)
    mc mirror /root/hiclaw-fs/shared/tasks/{task-id}/ hiclaw/hiclaw-storage/shared/tasks/{task-id}/ --overwrite --exclude "spec.md" --exclude "base/"
    ```
-6. **@mention Manager** in the Room (Worker Room or Project Room, wherever the task was assigned) with a completion report
-7. Log key decisions and outcomes to `memory/YYYY-MM-DD.md`
+7. **Write `result.md`** summarizing what was done (finite tasks only)
+8. **Final push** — push the complete task directory one last time (same command as step 6)
+9. **Update `task-history.json`** — set the task status to `completed`
+10. **@mention Manager** with a completion report — this triggers Manager to proceed
+11. **Log** key decisions and outcomes to `memory/YYYY-MM-DD.md`
+
+If you're blocked at any point, say so **immediately** via @mention to Manager — don't wait.
 
 **For infinite (recurring) tasks**: When triggered by the Manager, execute the task and report back with:
 ```
@@ -163,33 +222,24 @@ Do not write `result.md`. Instead, write a timestamped artifact file (e.g., `run
 
 **Important**: `/root/hiclaw-fs/shared/` is pulled from centralized storage periodically and on-demand. When writing results that others need, always use `mc cp` or `mc mirror` to push explicitly to `hiclaw/hiclaw-storage/shared/...`.
 
-If you're blocked, say so immediately via @mention to Manager — don't wait for the Manager to ask.
-
 **Note on `base/`**: The Manager may place reference files (codebase snapshots, documentation, data) in the `base/` subdirectory at any time. These are read-only for you — never push to `base/`. The `--exclude "base/"` flag in the mc mirror command above protects against accidentally overwriting them.
 
-## Task Directory Rules
+### Task Directory Structure
 
 Every task has a dedicated directory: `/root/hiclaw-fs/shared/tasks/{task-id}/`
 
-**Required files** (must be present before marking a task complete):
-
-| File | When to write | Purpose |
-|------|---------------|---------|
-| `spec.md` | Written by Manager | Complete task spec (requirements, acceptance criteria, context, examples) |
-| `base/` | Written/maintained by Manager | Reference files provided by Manager (read-only for Worker) |
-| `plan.md` | Written by you, before starting | Your step-by-step execution plan |
-| `result.md` | Written by you, when done | Final result summary (finite tasks only) |
-
-**Intermediate artifacts** — all work products created during the task belong in this directory:
-
-- Draft files, scripts, code snippets produced during the task
-- Reference notes, research findings, analysis outputs
-- Tool output logs that are useful for audit or follow-up
-- Anything another Worker (e.g. reviewer) needs to read to do their job
+| File | Who writes | Purpose |
+|------|-----------|---------|
+| `spec.md` | Manager | Task spec (requirements, acceptance criteria, context) |
+| `base/` | Manager | Reference files (read-only for you) |
+| `plan.md` | You, before starting | Step-by-step execution plan |
+| `progress/YYYY-MM-DD.md` | You, during execution | Daily progress log (append after each sub-step) |
+| `result.md` | You, when done | Final result summary (finite tasks only) |
+| *(other artifacts)* | You, during execution | Drafts, scripts, analysis outputs, tool logs |
 
 Do NOT scatter intermediate files elsewhere. Everything for a task lives in its directory.
 
-### plan.md (Task-Level)
+### plan.md
 
 Create this at the start of each task, before doing any work:
 
@@ -211,12 +261,54 @@ Create this at the start of each task, before doing any work:
 (running notes as you work — decisions, findings, blockers)
 ```
 
-**Update checkboxes immediately as you complete each step** — do not batch updates until the end. Mark a step `[x]` as soon as it is done, and add relevant notes under the Notes section. This gives the Manager (and any reviewer) real-time visibility into your progress without waiting for the final result.
+**Update checkboxes immediately** as you complete each step — do not batch. Push the task directory after each update.
 
-Push the entire task directory to MinIO after each step completion so all artifacts, progress logs, and plan updates are visible in real time:
-```bash
-mc mirror /root/hiclaw-fs/shared/tasks/{task-id}/ hiclaw/hiclaw-storage/shared/tasks/{task-id}/ --overwrite --exclude "spec.md" --exclude "base/"
+### Progress Log
+
+Append to `/root/hiclaw-fs/shared/tasks/{task-id}/progress/YYYY-MM-DD.md` after every meaningful action — completing a sub-step, hitting a problem, making a decision. Do NOT wait until the end:
+
+```markdown
+## HH:MM — {brief action title}
+
+- What was done: ...
+- Current state: ...
+- Issues encountered: ...
+- Next step: ...
 ```
+
+### task-history.json
+
+Maintain at `~/task-history.json`. This is your index for resuming tasks after session resets.
+
+```json
+{
+  "updated_at": "2026-02-21T15:00:00Z",
+  "recent_tasks": [
+    {
+      "task_id": "task-20260221-100000",
+      "brief": "One-line description of the task",
+      "status": "in_progress",
+      "task_dir": "/root/hiclaw-fs/shared/tasks/task-20260221-100000",
+      "last_worked_on": "2026-02-21T15:00:00Z"
+    }
+  ]
+}
+```
+
+Rules:
+- **Step 3 (new task)**: add to the head of `recent_tasks` with status `in_progress`
+- **Step 9 (task done)**: update `status` to `completed`
+- **When blocked**: update `status` to `blocked`
+- **When `recent_tasks` exceeds 10 entries**: move the oldest to `~/history-tasks/{task-id}.json`
+
+### Resuming a Task
+
+When the Manager or Human Admin asks you to resume a task after a session reset:
+
+1. Read `task-history.json`; if the task isn't there, check `history-tasks/{task-id}.json`
+2. Get the `task_dir` from the entry
+3. Read `{task_dir}/spec.md`, `{task_dir}/plan.md`, and recent files in `{task_dir}/progress/` (latest dates first)
+4. Continue work and append to today's `progress/YYYY-MM-DD.md`
 
 ## Project Participation
 
@@ -244,72 +336,6 @@ When assigned a task in the project room, mark it as started in your memory and 
 git config user.name "<your-worker-name>"
 git config user.email "<your-worker-name>@hiclaw.local"
 ```
-
-## Task Progress & History
-
-Session resets are normal — your conversation history may be wiped after 2 days of inactivity. These files are your fallback so you can always resume where you left off.
-
-### Progress Log (update immediately)
-
-After every meaningful action (completing a sub-step, hitting a problem, making a decision), append to the daily progress log **immediately** — don't wait until the end of the day:
-
-```
-/root/hiclaw-fs/shared/tasks/{task-id}/progress/YYYY-MM-DD.md
-```
-
-Format (append, don't overwrite):
-
-```markdown
-## HH:MM — {brief action title}
-
-- What was done: ...
-- Current state: ...
-- Issues encountered: ...
-- Next step: ...
-```
-
-Push the entire task directory after each update:
-```bash
-mc mirror /root/hiclaw-fs/shared/tasks/{task-id}/ hiclaw/hiclaw-storage/shared/tasks/{task-id}/ --overwrite --exclude "spec.md" --exclude "base/"
-```
-
-### Task History (LRU Top 10)
-
-Maintain a local task history file:
-
-```
-~/task-history.json
-```
-
-Structure:
-```json
-{
-  "updated_at": "2026-02-21T15:00:00Z",
-  "recent_tasks": [
-    {
-      "task_id": "task-20260221-100000",
-      "brief": "One-line description of the task",
-      "status": "in_progress",
-      "task_dir": "/root/hiclaw-fs/shared/tasks/task-20260221-100000",
-      "last_worked_on": "2026-02-21T15:00:00Z"
-    }
-  ]
-}
-```
-
-Rules:
-- **When assigned a new task**: add it to the head of `recent_tasks`
-- **When `recent_tasks` exceeds 10 entries**: move the oldest entry to `~/history-tasks/{task-id}.json` and remove it from `recent_tasks`
-- **When task status changes** (in_progress → completed/blocked): update the `status` field in `recent_tasks`
-
-### Resume Flow
-
-When the Manager or Human Admin asks you to resume a task after a session reset:
-
-1. Read `task-history.json`; if the task isn't there, check `history-tasks/{task-id}.json`
-2. Get the `task_dir` from the entry
-3. Read `{task_dir}/spec.md`, `{task_dir}/plan.md`, and recent files in `{task_dir}/progress/` (latest dates first)
-4. Continue work and append to today's `progress/YYYY-MM-DD.md`
 
 ## Safety
 

@@ -6,10 +6,11 @@
 #
 # Usage:
 #   manage-state.sh --action init
-#   manage-state.sh --action add-finite   --task-id T --title TITLE --assigned-to W --room-id R [--project-room-id P]
-#   manage-state.sh --action add-infinite --task-id T --title TITLE --assigned-to W --room-id R --schedule CRON --timezone TZ --next-scheduled-at ISO
-#   manage-state.sh --action complete     --task-id T
-#   manage-state.sh --action executed     --task-id T --next-scheduled-at ISO
+#   manage-state.sh --action add-finite    --task-id T --title TITLE --assigned-to W --room-id R [--project-room-id P]
+#   manage-state.sh --action add-infinite  --task-id T --title TITLE --assigned-to W --room-id R --schedule CRON --timezone TZ --next-scheduled-at ISO
+#   manage-state.sh --action complete      --task-id T
+#   manage-state.sh --action executed      --task-id T --next-scheduled-at ISO
+#   manage-state.sh --action set-admin-dm  --room-id R
 #   manage-state.sh --action list
 
 set -euo pipefail
@@ -24,10 +25,20 @@ _ensure_state_file() {
     if [ ! -f "$STATE_FILE" ]; then
         cat > "$STATE_FILE" << EOF
 {
+  "admin_dm_room_id": null,
   "active_tasks": [],
   "updated_at": "$(_ts)"
 }
 EOF
+    else
+        # Backfill admin_dm_room_id for pre-existing state files
+        local has_field
+        has_field=$(jq 'has("admin_dm_room_id")' "$STATE_FILE")
+        if [ "$has_field" = "false" ]; then
+            local tmp
+            tmp=$(mktemp)
+            jq '. + {admin_dm_room_id: null}' "$STATE_FILE" > "$tmp" && mv "$tmp" "$STATE_FILE"
+        fi
     fi
 }
 
@@ -153,8 +164,24 @@ action_executed() {
     echo "OK: updated infinite task $TASK_ID (last_executed_at=$(_ts), next_scheduled_at=$NEXT_SCHEDULED_AT)"
 }
 
+action_set_admin_dm() {
+    _ensure_state_file
+
+    local tmp
+    tmp=$(mktemp)
+    jq --arg room "$ROOM_ID" --arg ts "$(_ts)" \
+       '.admin_dm_room_id = $room | .updated_at = $ts' \
+       "$STATE_FILE" > "$tmp" && mv "$tmp" "$STATE_FILE"
+
+    echo "OK: admin_dm_room_id set to $ROOM_ID"
+}
+
 action_list() {
     _ensure_state_file
+
+    local admin_dm
+    admin_dm=$(jq -r '.admin_dm_room_id // "null"' "$STATE_FILE")
+    echo "Admin DM room: $admin_dm"
 
     local count
     count=$(jq '.active_tasks | length' "$STATE_FILE")
@@ -201,7 +228,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [ -z "$ACTION" ]; then
-    echo "Usage: $0 --action <init|add-finite|add-infinite|complete|executed|list> [options]" >&2
+    echo "Usage: $0 --action <init|add-finite|add-infinite|complete|executed|set-admin-dm|list> [options]" >&2
     echo "" >&2
     echo "Actions:" >&2
     echo "  init          Ensure state.json exists (no-op if already present)" >&2
@@ -209,6 +236,7 @@ if [ -z "$ACTION" ]; then
     echo "  add-infinite  --task-id T --title TITLE --assigned-to W --room-id R --schedule CRON --timezone TZ --next-scheduled-at ISO" >&2
     echo "  complete      --task-id T   (removes finite task from active_tasks)" >&2
     echo "  executed      --task-id T --next-scheduled-at ISO   (updates infinite task after execution)" >&2
+    echo "  set-admin-dm  --room-id R   (saves admin DM room ID for heartbeat use)" >&2
     echo "  list          Show all active tasks" >&2
     exit 1
 fi
@@ -247,11 +275,15 @@ case "$ACTION" in
         _validate_required TASK_ID NEXT_SCHEDULED_AT
         action_executed
         ;;
+    set-admin-dm)
+        _validate_required ROOM_ID
+        action_set_admin_dm
+        ;;
     list)
         action_list
         ;;
     *)
-        echo "ERROR: Unknown action '$ACTION'. Use: init, add-finite, add-infinite, complete, executed, list" >&2
+        echo "ERROR: Unknown action '$ACTION'. Use: init, add-finite, add-infinite, complete, executed, set-admin-dm, list" >&2
         exit 1
         ;;
 esac

@@ -158,7 +158,7 @@ CLI 工具执行失败（exit code: {code}）。请自行完成编码任务。
 你生成的提示词已保存于：/root/hiclaw-fs/shared/tasks/{task-id}/coding-prompts/
 ```
 
-**Notify Human Admin** via escalate-to-admin.sh or primary channel:
+**Notify Human Admin** via primary channel (see channel-management skill "Sending Messages to Primary Channel"):
 ```
 Worker {worker-name} 的编码委托任务 {task-id} 中，{cli} 工具执行失败。
 

@@ -1,21 +1,21 @@
 <a name="readme-top"></a>
 <h1 align="center">
-    <img src="https://img.alicdn.com/imgextra/i3/O1CN01JLLvVU21EWyG90gbi_!!6000000006953-2-tps-2539-575.png" alt="HiClaw"  width="290" height="72.5">
-  <br>
+    <img src="https://img.alicdn.com/imgextra/i1/O1CN014DQemZ257thQOBg8L_!!6000000007480-55-tps-1489-391.svg" alt="HiClaw"  width="290" height="72.5">
+
+<p align="center">
+  <a href="https://deepwiki.com/higress-group/hiclaw"><img src="https://img.shields.io/badge/DeepWiki-Ask_AI-navy.svg?logo=data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACwAAAAyCAYAAAAnWDnqAAAAAXNSR0IArs4c6QAAA05JREFUaEPtmUtyEzEQhtWTQyQLHNak2AB7ZnyXZMEjXMGeK/AIi+QuHrMnbChYY7MIh8g01fJoopFb0uhhEqqcbWTp06/uv1saEDv4O3n3dV60RfP947Mm9/SQc0ICFQgzfc4CYZoTPAswgSJCCUJUnAAoRHOAUOcATwbmVLWdGoH//PB8mnKqScAhsD0kYP3j/Yt5LPQe2KvcXmGvRHcDnpxfL2zOYJ1mFwrryWTz0advv1Ut4CJgf5uhDuDj5eUcAUoahrdY/56ebRWeraTjMt/00Sh3UDtjgHtQNHwcRGOC98BJEAEymycmYcWwOprTgcB6VZ5JK5TAJ+fXGLBm3FDAmn6oPPjR4rKCAoJCal2eAiQp2x0vxTPB3ALO2CRkwmDy5WohzBDwSEFKRwPbknEggCPB/imwrycgxX2NzoMCHhPkDwqYMr9tRcP5qNrMZHkVnOjRMWwLCcr8ohBVb1OMjxLwGCvjTikrsBOiA6fNyCrm8V1rP93iVPpwaE+gO0SsWmPiXB+jikdf6SizrT5qKasx5j8ABbHpFTx+vFXp9EnYQmLx02h1QTTrl6eDqxLnGjporxl3NL3agEvXdT0WmEost648sQOYAeJS9Q7bfUVoMGnjo4AZdUMQku50McDcMWcBPvr0SzbTAFDfvJqwLzgxwATnCgnp4wDl6Aa+Ax283gghmj+vj7feE2KBBRMW3FzOpLOADl0Isb5587h/U4gGvkt5v60Z1VLG8BhYjbzRwyQZemwAd6cCR5/XFWLYZRIMpX39AR0tjaGGiGzLVyhse5C9RKC6ai42ppWPKiBagOvaYk8lO7DajerabOZP46Lby5wKjw1HCRx7p9sVMOWGzb/vA1hwiWc6jm3MvQDTogQkiqIhJV0nBQBTU+3okKCFDy9WwferkHjtxib7t3xIUQtHxnIwtx4mpg26/HfwVNVDb4oI9RHmx5WGelRVlrtiw43zboCLaxv46AZeB3IlTkwouebTr1y2NjSpHz68WNFjHvupy3q8TFn3Hos2IAk4Ju5dCo8B3wP7VPr/FGaKiG+T+v+TQqIrOqMTL1VdWV1DdmcbO8KXBz6esmYWYKPwDL5b5FA1a0hwapHiom0r/cKaoqr+27/XcrS5UwSMbQAAAABJRU5ErkJggg==" alt="DeepWiki"></a>
+  <a href="https://discord.com/invite/NVjNA4BAVw"><img src="https://img.shields.io/badge/Discord-Join_Us-blueviolet.svg?logo=discord" alt="Discord"></a>
+  <a href="https://qr.dingtalk.com/action/joingroup?code=v1,k1,MF0nEpuU3YkW2aBsoyJE0mUM3LFDSBqMGvRmTIjUQNk=&_dt_no_comment=1&origin=11?"><img src="https://img.shields.io/badge/DingTalk-Join_Us-orange.svg" alt="DingTalk"></a>
+</p>
+
 </h1>
 
 [English](./README.md) | [中文](./README.zh-CN.md)
 
-<p align="center">
-  <a href="https://deepwiki.com/higress-group/hiclaw"><img src="https://img.shields.io/badge/DeepWiki-Ask_AI-navy.svg?logo=data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACwAAAAyCAYAAAAnWDnqAAAAAXNSR0IArs4c6QAAA05JREFUaEPtmUtyEzEQhtWTQyQLHNak2AB7ZnyXZMEjXMGeK/AIi+QuHrMnbChYY7MIh8g01fJoopFb0uhhEqqcbWTp06/uv1saEDv4O3n3dV60RfP947Mm9/SQc0ICFQgzfc4CYZoTPAswgSJCCUJUnAAoRHOAUOcATwbmVLWdGoH//PB8mnKqScAhsD0kYP3j/Yt5LPQe2KvcXmGvRHcDnpxfL2zOYJ1mFwrryWTz0advv1Ut4CJgf5uhDuDj5eUcAUoahrdY/56ebRWeraTjMt/00Sh3UDtjgHtQNHwcRGOC98BJEAEymycmYcWwOprTgcB6VZ5JK5TAJ+fXGLBm3FDAmn6oPPjR4rKCAoJCal2eAiQp2x0vxTPB3ALO2CRkwmDy5WohzBDwSEFKRwPbknEggCPB/imwrycgxX2NzoMCHhPkDwqYMr9tRcP5qNrMZHkVnOjRMWwLCcr8ohBVb1OMjxLwGCvjTikrsBOiA6fNyCrm8V1rP93iVPpwaE+gO0SsWmPiXB+jikdf6SizrT5qKasx5j8ABbHpFTx+vFXp9EnYQmLx02h1QTTrl6eDqxLnGjporxl3NL3agEvXdT0WmEost648sQOYAeJS9Q7bfUVoMGnjo4AZdUMQku50McDcMWcBPvr0SzbTAFDfvJqwLzgxwATnCgnp4wDl6Aa+Ax283gghmj+vj7feE2KBBRMW3FzOpLOADl0Isb5587h/U4gGvkt5v60Z1VLG8BhYjbzRwyQZemwAd6cCR5/XFWLYZRIMpX39AR0tjaGGiGzLVyhse5C9RKC6ai42ppWPKiBagOvaYk8lO7DajerabOZP46Lby5wKjw1HCRx7p9sVMOWGzb/vA1hwiWc6jm3MvQDTogQkiqIhJV0nBQBTU+3okKCFDy9WwferkHjtxib7t3xIUQtHxnIwtx4mpg26/HfwVNVDb4oI9RHmx5WGelRVlrtiw43zboCLaxv46AZeB3IlTkwouebTr1y2NjSpHz68WNFjHvupy3q8TFn3Hos2IAk4Ju5dCo8B3wP7VPr/FGaKiG+T+v+TQqIrOqMTL1VdWV1DdmcbO8KXBz6esmYWYKPwDL5b5FA1a0hwapHiom0r/cKaoqr+27/XcrS5UwSMbQAAAABJRU5ErkJggg==" alt="DeepWiki"></a>
-  <a href="https://discord.gg/n6mV8xEYUF"><img src="https://img.shields.io/badge/Discord-Join_Us-blueviolet.svg?logo=discord" alt="Discord"></a>
-  <a href="https://qr.dingtalk.com/action/joingroup?code=v1,k1,0etR5l8fxeb/6/mzE5hRE1uy4tkiwxvPV9+TdBv7sEM=&_dt_no_comment=1&origin=11"><img src="https://img.shields.io/badge/DingTalk-Join_Us-orange.svg" alt="DingTalk"></a>
-</p>
+**HiClaw 是一个开源的协作式多智能体操作系统。让多个 Agent 在 Matrix 房间中协作，人类全程可见、随时可介入。 设计了 Manager - Workers 协作架构，人类可通过 Manager Agent 可协调多个 Worker Agents，完成复杂任务，从而加速实现 OPOC（一人一公司）和企业数字员工。**
 
-**HiClaw 是一个开源的多 Agent 协作系统。让多个 Agent 在 Matrix 房间中协作，人类全程可见、随时可介入。 设计了 Manager - Workers 协作架构，人类可通过 Manager Agent 可协调多个 Worker Agents，完成复杂任务，从而加速实现 OPOC（一人一公司）和企业数字员工。**
-
-HiClaw 并不和其他 xxClaw 对标，HiClaw 是一个 Agent 协作系统。
-- 🦞 每个 Claw 支持用户自定义：可以是 OpenClaw，也可以是 Copaw、NanoClaw、ZeroClaw 或是企业自建的 Agent，目前预装的是 OpenClaw。
+HiClaw 并不和其他 xxClaw 对标，非龙虾本虾，而是一个多 Agent 操作系统。
+- 🦞 每个 Claw 支持用户自定义：可以是 OpenClaw，也可以是 Copaw、NanoClaw、ZeroClaw 或是企业自建的 Agent，目前预装的是 OpenClaw 和 Copaw。
 - 🧑‍💻 引入了 Manger Claw 的角色：不用真人去管理每个干活的 Worker Claw，节省管理成本。
 - 🎨 使用 Element IM 客户端+Tuwunel IM 服务器（均基于 Matrix 实时通信协议），通信协议和原生的不同，节省钉钉、飞书 IM 的接入和企业内的审批成本，方便用户快速体验在 IM 的交互环境中体验模型服务的“爽感”，同时支持以 OpenClaw 原生的方式接入 IM。
 - 📚 引入 MinIO 共享文件系统，用于 Agent 之间的信息共享，真人之间的协作，共同记忆也是基于共享文件系统。
@@ -41,7 +41,7 @@ HiClaw 并不和其他 xxClaw 对标，HiClaw 是一个 Agent 协作系统。
 - **技能生态**：Worker 可以按需从 [skills.sh](https://skills.sh) 获取技能（社区已有 80,000+ 个）。因为 Worker 本身就拿不到真实凭证，所以可以放心使用公开技能库。
 
 ## 快速开始
-**前置条件**：Docker Desktop（Windows/macOS）或 Docker Engine（Linux）。仅此而已。
+**前置条件**：Docker Desktop（Windows/macOS）或 Docker Engine（Linux）。若在 ECS 或云桌面等虚拟机上部署，请采用 Linux 系统，图形化需求，请使用 Ubutun，官方镜像包暂不支持虚拟机上的 Window 系统，原因是虚拟机上的 Window 系统不是 Linux Container。
 
 - [Docker Desktop](https://www.docker.com/products/docker-desktop/)（Windows / macOS）
 - [Docker Engine](https://docs.docker.com/engine/install/)（Linux）或 [Podman Desktop](https://podman-desktop.io/)（替代方案）
@@ -93,10 +93,11 @@ Set-ExecutionPolicy Bypass -Scope Process -Force; Invoke-Expression ((New-Object
 若希望通过移动端来访问和使用，则需要使用美区账号下载 FluffyChat/Element Mobile。（之所以采用这两个 IM，是因为他们是支持 Matrix 协议的）下载后，连接您的 Matrix 服务器地址，就能随时随地管理您的 Agent 团队。
 ![测试](https://img.alicdn.com/imgextra/i3/O1CN01Tl4T8q29HIHtPVSJL_!!6000000008042-2-tps-2372-1282.png)
 
-第十一步：浏览器中，输入 http://127.0.0.1:18088/#/login，登录 Element，输入用户名和密码，就可以玩龙虾了，告诉 Manager 创建 Worker 并分配任务。
-![测试](https://img.alicdn.com/imgextra/i1/O1CN01C5NvV41P6msPuucrs_!!6000000001792-2-tps-2748-1224.png)
+第十二步：浏览器中，输入 http://127.0.0.1:18088/#/login，登录 Element，输入用户名和密码，就可以玩龙虾了，告诉 Manager 创建 Worker 并分配任务。
+![登录](https://img.alicdn.com/imgextra/i1/O1CN01C5NvV41P6msPuucrs_!!6000000001792-2-tps-2748-1224.png)
 
 ⚠️ **注意：HiClaw 内置了 Higress AI 网关，负责模型 API Key 管理以及入口流量的安全管控。模型 API Key 的切换、新增，以及路由、域名、证书管理，均可在 Higress 控制台管理。**
+![网关](https://img.alicdn.com/imgextra/i3/O1CN01dNJz4x1yJcWjHGuVj_!!6000000006558-0-tps-1596-180.jpg)
 
 ## 升级
 
@@ -110,7 +111,7 @@ bash <(curl -sSL https://higress.ai/hiclaw/install.sh)
 若要升级到指定版本，请使用以下命令：
 
 ```bash
-HICLAW_VERSION=0.2.0 bash <(curl -sSL https://higress.ai/hiclaw/install.sh)
+HICLAW_VERSION=v1.0.5 bash <(curl -sSL https://higress.ai/hiclaw/install.sh)
 ```
 
 
@@ -287,11 +288,11 @@ make help  # 查看所有可用目标
 ## 社区
 
 - [Discord](https://discord.gg/NVjNA4BAVw)
-- [钉钉群](https://qr.dingtalk.com/action/joingroup?code=v1,k1,6UzvW/6kvHcW2aBsoyJE0roFxM7xt0VgBuU8T3S8aYM=&_dt_no_comment=1&origin=11)
+- [钉钉群](https://qr.dingtalk.com/action/joingroup?code=v1,k1,5K+D/m2s71QW2aBsoyJE0t2oQOMCk2yngAgkih4LyQM=&_dt_no_comment=1&origin=11)
 - 微信群——扫码加入：
 
 <p align="center">
-  <img src="https://img.alicdn.com/imgextra/i2/O1CN01ga2NAM1QOTnByKW4l_!!6000000001966-2-tps-772-742.png" width="200" alt="微信群" />
+  <img src="https://img.alicdn.com/imgextra/i4/O1CN011Gb82b1TNyCQlA5eh_!!6000000002371-2-tps-790-752.png" width="200" alt="微信群" />
 </p>
 
 ## 许可证

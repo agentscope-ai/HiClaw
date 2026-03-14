@@ -28,7 +28,7 @@ docker exec hiclaw-manager cat /opt/hiclaw/agent/.builtin-version
 To install a specific version, use the `HICLAW_VERSION` environment variable during installation:
 
 ```bash
-HICLAW_VERSION=0.1.0 bash <(curl -sSL https://higress.ai/hiclaw/install.sh)
+HICLAW_VERSION=v1.0.5 bash <(curl -sSL https://higress.ai/hiclaw/install.sh)
 ```
 
 ---

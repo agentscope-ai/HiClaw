@@ -262,7 +262,8 @@ action_stop() {
     fi
 }
 
-# Start (wake up) a stopped worker container
+# Start (wake up) a stopped worker container, or recreate if the container
+# no longer exists (e.g. after Manager upgrade where old containers were removed).
 action_start() {
     local worker="$1"
     _init_lifecycle_file
@@ -273,8 +274,31 @@ action_start() {
         return 1
     fi
 
-    _log "Starting worker $worker"
-    if container_start_worker "$worker"; then
+    local status
+    status=$(container_status_worker "$worker")
+
+    local ok=false
+    if [ "$status" = "not_found" ]; then
+        _log "Worker $worker container not found — recreating"
+        local creds_file="/data/worker-creds/${worker}.env"
+        if [ ! -f "$creds_file" ]; then
+            _log "ERROR: No credentials found for $worker ($creds_file missing)"
+            return 1
+        fi
+        source "$creds_file"
+        local runtime
+        runtime=$(jq -r --arg w "$worker" '.workers[$w].runtime // "openclaw"' "$REGISTRY_FILE" 2>/dev/null)
+        if [ "$runtime" = "copaw" ]; then
+            container_create_copaw_worker "$worker" "$worker" "$WORKER_MINIO_PASSWORD" 2>&1 && ok=true
+        else
+            container_create_worker "$worker" "$worker" "$WORKER_MINIO_PASSWORD" 2>&1 && ok=true
+        fi
+    else
+        _log "Starting worker $worker (status: $status)"
+        container_start_worker "$worker" && ok=true
+    fi
+
+    if [ "$ok" = true ]; then
         local tmp
         tmp=$(mktemp)
         jq --arg w "$worker" --arg ts "$(_ts)" \
@@ -283,9 +307,9 @@ action_start() {
             | .workers[$w].last_started_at = $ts
             | .updated_at = $ts' \
             "$LIFECYCLE_FILE" > "$tmp" && mv "$tmp" "$LIFECYCLE_FILE"
-        _log "Worker $worker started and lifecycle file updated"
+        _log "Worker $worker running and lifecycle file updated"
     else
-        _log "ERROR: Failed to start worker $worker"
+        _log "ERROR: Failed to start/recreate worker $worker"
         return 1
     fi
 }

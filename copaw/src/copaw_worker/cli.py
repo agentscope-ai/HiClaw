@@ -50,8 +50,13 @@ def main() -> None:
             def _shutdown() -> None:
                 asyncio.create_task(worker.stop())
 
-            for sig in (signal.SIGINT, signal.SIGTERM):
-                loop.add_signal_handler(sig, _shutdown)
+            # Windows ProactorEventLoop does not support add_signal_handler;
+            # fall back to KeyboardInterrupt handling below.
+            try:
+                for sig in (signal.SIGINT, signal.SIGTERM):
+                    loop.add_signal_handler(sig, _shutdown)
+            except NotImplementedError:
+                pass
 
             await worker.run()
 

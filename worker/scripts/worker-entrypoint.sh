@@ -69,7 +69,12 @@ ln -sf "${WORKSPACE}/openclaw.json" "${HOME}/.openclaw/openclaw.json"
 # Skills in ~/skills/ will be synced to MinIO and persist across container restarts
 mkdir -p "${HOME}/skills"
 mkdir -p "${HOME}/.agents"
-ln -sf "${HOME}/skills" "${HOME}/.agents/skills"
+# Clean up circular symlink from previous buggy ln -sf (which followed
+# the existing symlink-to-directory and created skills/skills -> skills inside it).
+[ -L "${HOME}/skills/skills" ] && rm -f "${HOME}/skills/skills"
+# Use -n (--no-dereference) so ln replaces an existing symlink-to-directory
+# instead of creating a nested symlink inside the target directory.
+ln -sfn "${HOME}/skills" "${HOME}/.agents/skills"
 
 log "Worker config pulled successfully"
 
@@ -102,7 +107,7 @@ log "HOME set to ${HOME} (workspace files will be synced to MinIO)"
             if ! mc mirror "${WORKSPACE}/" "hiclaw/hiclaw-storage/agents/${WORKER_NAME}/" --overwrite \
                 --exclude "openclaw.json" --exclude "AGENTS.md" --exclude "SOUL.md" \
                 --exclude "mcporter-servers.json" --exclude ".agents/**" \
-                --exclude ".openclaw/**" --exclude ".cache/**" --exclude ".npm/**" \
+                --exclude ".cache/**" --exclude ".npm/**" \
                 --exclude ".local/**" --exclude ".mc/**" 2>&1; then
                 log "WARNING: Local->Remote sync failed"
             fi
