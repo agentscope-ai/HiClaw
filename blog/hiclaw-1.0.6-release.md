@@ -282,45 +282,6 @@ It's like having an AI that writes its own documentation — and improves it ove
 
 ---
 
-## Slash Commands: Cross-Scenario Control
-
-Version 1.0.6 also introduces slash commands that work anywhere:
-
-### /reset — Fix Stuck or Misconfigured Claws
-
-```
-You: @alice /reset
-
-Alice: Context cleared. Ready for new tasks.
-```
-
-Useful when:
-- A claw is stuck in a loop
-- A misconfiguration is causing issues
-- You want a fresh start on a task
-
-### /stop — Interrupt Long-Running Tasks
-
-```
-You: @bob /stop
-
-Bob: Task interrupted. Here's what I was doing:
-     - Analyzed 45% of the codebase
-     - Found 3 potential issues
-     - Had not yet started the fix
-     
-     Why did you stop me? Do you want me to change direction?
-```
-
-Useful when:
-- A task is taking too long
-- You want to provide mid-task guidance
-- Manager wants to intervene on a Worker's approach
-
-**Manager can use `/stop` on Workers** to provide course corrections without waiting for task completion.
-
----
-
 ## Security Model: Defense in Depth
 
 Let's be explicit about what Workers can and cannot do:
@@ -356,6 +317,51 @@ This release completes the **"Universal MCP Service Support"** item from our roa
 - ✅ **Fine-grained permission control**: Manager authorizes Workers per-MCP-server
 
 **Any MCP-compatible tool can now be safely exposed to Workers with zero credential leakage.**
+
+---
+
+## Other Improvements
+
+### Slash Commands: Cross-Scenario Control
+
+Version 1.0.6 also introduces slash commands that work anywhere — in DM or group chats:
+
+#### /reset — Fix Stuck or Misconfigured Claws
+
+```
+You: @alice /reset
+
+Alice: Context cleared. Ready for new tasks.
+```
+
+Useful when:
+- A claw is stuck in a loop
+- A misconfiguration is causing issues
+- You want a fresh start on a task
+
+#### /stop — Interrupt Long-Running Tasks
+
+```
+You: @bob /stop
+
+Bob: Task interrupted. Here's what I was doing:
+     - Analyzed 45% of the codebase
+     - Found 3 potential issues
+     - Had not yet started the fix
+     
+     Why did you stop me? Do you want me to change direction?
+```
+
+Useful when:
+- A task is taking too long
+- You want to provide mid-task guidance
+- Manager wants to intervene on a Worker's approach
+
+**Manager can use `/stop` on Workers** to provide course corrections without waiting for task completion.
+
+### Optimized File Sync
+
+The file sync design principle has been unified: **"Writer pushes and notifies, receiver pulls on demand"**, with 5-min periodic pull as fallback only. Manager adds on-demand `mc mirror` pull in task/project completion flows to ensure reading fresh Worker results.
 
 ---
 
@@ -398,10 +404,8 @@ Join our community: [Discord](https://discord.com/invite/NVjNA4BAVw) | [DingTalk
 ### What's New
 
 - **MCP Server Management Skill Enhancement** — Unified `setup-mcp-server.sh` script for runtime MCP server creation/update. Workers get independent mcporter skill with tool discovery and automatic SKILL generation.
-
-- **Slash Command Cross-Scenario Control** — `/reset` to clear context, `/stop` to interrupt long-running tasks. Works in DM and group chats.
-
-- **Optimized file sync** — "Writer pushes and notifies, receiver pulls on demand" design principle with 5-min periodic pull as fallback.
+- **Slash Commands** — `/reset` to clear context, `/stop` to interrupt tasks. Works in DM and group chats.
+- **Optimized file sync** — "Writer pushes and notifies, receiver pulls on demand" design principle.
 
 ### Bug Fixes
 
