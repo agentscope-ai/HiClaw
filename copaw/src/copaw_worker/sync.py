@@ -201,16 +201,29 @@ class FileSync:
                 changed.append(name)
 
         # Manager-managed: skills/
+        # Use mc mirror to pull entire skill directories (including scripts/ and references/)
+        # instead of only pulling SKILL.md, to match OpenClaw worker's mc mirror behavior.
         for skill_name in self.list_skills():
-            skill_md = self.get_skill_md(skill_name)
-            if skill_md is None:
-                continue
-            local = self.local_dir / "skills" / skill_name / "SKILL.md"
-            existing = local.read_text() if local.exists() else None
-            if skill_md != existing:
-                local.parent.mkdir(parents=True, exist_ok=True)
-                local.write_text(skill_md)
-                changed.append(f"skills/{skill_name}/SKILL.md")
+            remote_prefix = f"{self._prefix}/skills/{skill_name}/"
+            local_skill_dir = self.local_dir / "skills" / skill_name
+            local_skill_dir.mkdir(parents=True, exist_ok=True)
+            try:
+                result = _mc(
+                    "mirror",
+                    self._object_path(remote_prefix),
+                    str(local_skill_dir) + "/",
+                    "--overwrite",
+                    check=False,
+                )
+                if result.returncode == 0:
+                    # Restore +x on scripts (MinIO does not preserve Unix permission bits)
+                    for sh in local_skill_dir.rglob("*.sh"):
+                        sh.chmod(sh.stat().st_mode | 0o111)
+                    changed.append(f"skills/{skill_name}/")
+                else:
+                    logger.warning("mc mirror failed for skill %s: %s", skill_name, result.stderr)
+            except Exception as exc:
+                logger.warning("Failed to mirror skill %s: %s", skill_name, exc)
 
         return changed
 
