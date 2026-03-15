@@ -275,7 +275,8 @@ $script:Messages = @{
     "llm.providers_title" = @{ zh = "可用 LLM 提供商:"; en = "Available LLM Providers:" }
     "llm.provider.alibaba" = @{ zh = "  1) 阿里云百炼  - 推荐中国用户使用"; en = "  1) Alibaba Cloud Bailian  - Recommended for Chinese users" }
     "llm.provider.openai_compat" = @{ zh = "  2) OpenAI 兼容 API  - 自定义 Base URL（OpenAI、DeepSeek 等）"; en = "  2) OpenAI-compatible API  - Custom Base URL (OpenAI, DeepSeek, etc.)" }
-    "llm.provider.select" = @{ zh = "选择提供商 [1/2]"; en = "Select provider [1/2]" }
+    "llm.provider.minimax" = @{ zh = "  3) MiniMax  - MiniMax M2.5 系列模型"; en = "  3) MiniMax  - MiniMax M2.5 series models" }
+    "llm.provider.select" = @{ zh = "选择提供商 [1/2/3]"; en = "Select provider [1/2/3]" }
     "llm.alibaba.models_title" = @{ zh = "选择百炼模型系列:"; en = "Select Bailian model series:" }
     "llm.alibaba.model.codingplan" = @{ zh = "  1) CodingPlan  - 专为编程任务优化（推荐）"; en = "  1) CodingPlan  - Optimized for coding tasks (recommended)" }
     "llm.alibaba.model.qwen" = @{ zh = "  2) 百炼通用接口"; en = "  2) qwen general  - General purpose LLM" }
@@ -286,10 +287,17 @@ $script:Messages = @{
     "llm.codingplan.model.kimi" = @{ zh = "  3) kimi-k2.5  - Moonshot Kimi K2.5"; en = "  3) kimi-k2.5  - Moonshot Kimi K2.5" }
     "llm.codingplan.model.minimax" = @{ zh = "  4) MiniMax-M2.5  - MiniMax M2.5"; en = "  4) MiniMax-M2.5  - MiniMax M2.5" }
     "llm.codingplan.model.select" = @{ zh = "选择模型 [1/2/3/4]"; en = "Select model [1/2/3/4]" }
+    "llm.provider.selected_minimax" = @{ zh = "  提供商: MiniMax"; en = "  Provider: MiniMax" }
+    "llm.minimax.models_title" = @{ zh = "选择 MiniMax 默认模型:"; en = "Select MiniMax default model:" }
+    "llm.minimax.model.m25" = @{ zh = "  1) MiniMax-M2.5  - Peak Performance（推荐）"; en = "  1) MiniMax-M2.5  - Peak Performance (recommended)" }
+    "llm.minimax.model.m25hs" = @{ zh = "  2) MiniMax-M2.5-highspeed  - Same performance, faster"; en = "  2) MiniMax-M2.5-highspeed  - Same performance, faster" }
+    "llm.minimax.model.select" = @{ zh = "选择模型 [1/2]"; en = "Select model [1/2]" }
+    "llm.minimax.apikey_hint" = @{ zh = "  💡 获取 MiniMax API Key:"; en = "  💡 Get your MiniMax API Key from:" }
+    "llm.minimax.apikey_url" = @{ zh = "     https://platform.minimax.io"; en = "     https://platform.minimax.io" }
     "llm.provider.selected_codingplan" = @{ zh = "  提供商: 阿里云百炼 CodingPlan"; en = "  Provider: Alibaba Cloud Bailian CodingPlan" }
     "llm.provider.selected_qwen" = @{ zh = "  提供商: 阿里云百炼"; en = "  Provider: Alibaba Cloud Bailian" }
     "llm.provider.selected_openai" = @{ zh = "  提供商: {0}（OpenAI 兼容）"; en = "  Provider: {0} (OpenAI-compatible)" }
-    "llm.provider.invalid" = @{ zh = "无效选择: {0}（请输入 1 或 2）"; en = "Invalid choice: {0} (please enter 1 or 2)" }
+    "llm.provider.invalid" = @{ zh = "无效选择: {0}（请输入 1、2 或 3）"; en = "Invalid choice: {0} (please enter 1, 2, or 3)" }
     "llm.qwen.model_prompt" = @{ zh = "默认模型 ID [qwen3.5-plus]"; en = "Default Model ID [qwen3.5-plus]" }
     "llm.openai.base_url_prompt" = @{ zh = "Base URL（例如 https://api.openai.com/v1）"; en = "Base URL (e.g., https://api.openai.com/v1)" }
     "llm.openai.model_prompt" = @{ zh = "默认模型 ID [gpt-5.4]"; en = "Default Model ID [gpt-5.4]" }
@@ -1391,6 +1399,7 @@ function Install-Manager {
         Write-Host (Get-Msg "llm.providers_title")
         Write-Host (Get-Msg "llm.provider.alibaba")
         Write-Host (Get-Msg "llm.provider.openai_compat")
+        Write-Host (Get-Msg "llm.provider.minimax")
         Write-Host ""
 
         if ($script:HICLAW_QUICKSTART) {
@@ -1488,6 +1497,41 @@ function Install-Manager {
 
                 Write-Log (Get-Msg "llm.openai.base_url_label" -f $config.OPENAI_BASE_URL)
                 Write-Log (Get-Msg "llm.model.label" -f $config.DEFAULT_MODEL)
+                Write-Log ""
+                $config.LLM_API_KEY = Read-Prompt -VarName "HICLAW_LLM_API_KEY" -PromptText (Get-Msg "llm.apikey_prompt") -Secret
+                Test-LlmConnectivity -BaseUrl $config.OPENAI_BASE_URL -ApiKey $config.LLM_API_KEY -Model $config.DEFAULT_MODEL
+            }
+            "^(3|minimax)$" {
+                $config.LLM_PROVIDER = "minimax"
+                $config.OPENAI_BASE_URL = "https://api.minimax.io/v1"
+                Write-Log (Get-Msg "llm.provider.selected_minimax")
+
+                # Sub-menu: Select MiniMax model
+                Write-Host ""
+                Write-Host (Get-Msg "llm.minimax.models_title")
+                Write-Host (Get-Msg "llm.minimax.model.m25")
+                Write-Host (Get-Msg "llm.minimax.model.m25hs")
+                Write-Host ""
+
+                $minimaxModelChoice = Read-Host "$(Get-Msg 'llm.minimax.model.select') [1]"
+                $minimaxModelChoice = if ($minimaxModelChoice) { $minimaxModelChoice } else { "1" }
+
+                switch -Regex ($minimaxModelChoice) {
+                    "^(1|MiniMax-M2\.5)$" {
+                        $config.DEFAULT_MODEL = "MiniMax-M2.5"
+                    }
+                    "^(2|MiniMax-M2\.5-highspeed)$" {
+                        $config.DEFAULT_MODEL = "MiniMax-M2.5-highspeed"
+                    }
+                    default {
+                        $config.DEFAULT_MODEL = "MiniMax-M2.5"
+                    }
+                }
+
+                Write-Log (Get-Msg "llm.model.label" -f $config.DEFAULT_MODEL)
+                Write-Log ""
+                Write-Log (Get-Msg "llm.minimax.apikey_hint")
+                Write-Log (Get-Msg "llm.minimax.apikey_url")
                 Write-Log ""
                 $config.LLM_API_KEY = Read-Prompt -VarName "HICLAW_LLM_API_KEY" -PromptText (Get-Msg "llm.apikey_prompt") -Secret
                 Test-LlmConnectivity -BaseUrl $config.OPENAI_BASE_URL -ApiKey $config.LLM_API_KEY -Model $config.DEFAULT_MODEL

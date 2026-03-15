@@ -203,6 +203,34 @@ if [ -n "${HICLAW_LLM_API_KEY}" ]; then
                 fi
             fi
             ;;
+        minimax)
+            MINIMAX_BASE_URL="${HICLAW_OPENAI_BASE_URL:-https://api.minimax.io/v1}"
+            # Parse domain, port, protocol from base URL
+            MM_PROTO="https"
+            MM_PORT="443"
+            MM_URL_STRIP="${MINIMAX_BASE_URL#https://}"
+            MM_URL_STRIP="${MM_URL_STRIP#http://}"
+            echo "${MINIMAX_BASE_URL}" | grep -q '^http://' && { MM_PROTO="http"; MM_PORT="80"; }
+            MM_DOMAIN="${MM_URL_STRIP%%/*}"
+            echo "${MM_DOMAIN}" | grep -q ':' && { MM_PORT="${MM_DOMAIN##*:}"; MM_DOMAIN="${MM_DOMAIN%:*}"; }
+
+            # Service source: GET → PUT if exists, POST if not
+            existing_svc=$(higress_get /v1/service-sources/minimax)
+            SVC_BODY='{"type":"dns","name":"minimax","port":'"${MM_PORT}"',"protocol":"'"${MM_PROTO}"'","proxyName":"","domain":"'"${MM_DOMAIN}"'"}'
+            if [ -n "${existing_svc}" ]; then
+                higress_api PUT /v1/service-sources/minimax "Updating MiniMax DNS service source" "${SVC_BODY}"
+            else
+                higress_api POST /v1/service-sources "Registering MiniMax DNS service source" "${SVC_BODY}"
+            fi
+
+            PROVIDER_BODY='{"type":"openai","name":"minimax","tokens":["'"${HICLAW_LLM_API_KEY}"'"],"version":0,"protocol":"openai/v1","tokenFailoverConfig":{"enabled":false},"rawConfigs":{"openaiCustomUrl":"'"${MINIMAX_BASE_URL}"'","openaiCustomServiceName":"minimax.dns","openaiCustomServicePort":'"${MM_PORT}"'}}'
+            existing_provider=$(higress_get /v1/ai/providers/minimax)
+            if [ -n "${existing_provider}" ]; then
+                higress_api PUT /v1/ai/providers/minimax "Updating LLM provider (minimax)" "${PROVIDER_BODY}"
+            else
+                higress_api POST /v1/ai/providers "Creating LLM provider (minimax)" "${PROVIDER_BODY}"
+            fi
+            ;;
         *)
             PROVIDER_BODY='{"name":"'"${LLM_PROVIDER}"'","type":"openai","tokens":["'"${HICLAW_LLM_API_KEY}"'"],"modelMapping":{},"protocol":"openai/v1"'
             [ -n "${LLM_API_URL}" ] && PROVIDER_BODY="${PROVIDER_BODY}"',"rawConfigs":{"apiUrl":"'"${LLM_API_URL}"'"}'

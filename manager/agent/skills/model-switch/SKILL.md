@@ -65,7 +65,7 @@ No changes are made to `openclaw.json` in this case.
 | claude-haiku-4-5 | 200,000 | 64,000 |
 | qwen3.5-plus | 200,000 | 64,000 |
 | deepseek-chat / deepseek-reasoner / kimi-k2.5 | 256,000 | 128,000 |
-| glm-5 / MiniMax-M2.5 | 200,000 | 128,000 |
+| glm-5 / MiniMax-M2.5 / MiniMax-M2.5-highspeed | 200,000 | 128,000 |
 | *(other)* | 150,000 | 128,000 |
 
 ## Switching to an unknown model

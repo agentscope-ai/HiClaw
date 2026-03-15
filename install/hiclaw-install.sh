@@ -296,8 +296,10 @@ msg() {
         "llm.provider.alibaba.en") text="  1) Alibaba Cloud Bailian  - Recommended for Chinese users" ;;
         "llm.provider.openai_compat.zh") text="  2) OpenAI 兼容 API  - 自定义 Base URL（OpenAI、DeepSeek 等）" ;;
         "llm.provider.openai_compat.en") text="  2) OpenAI-compatible API  - Custom Base URL (OpenAI, DeepSeek, etc.)" ;;
-        "llm.provider.select.zh") text="选择提供商 [1/2]" ;;
-        "llm.provider.select.en") text="Select provider [1/2]" ;;
+        "llm.provider.minimax.zh") text="  3) MiniMax  - MiniMax M2.5 系列模型" ;;
+        "llm.provider.minimax.en") text="  3) MiniMax  - MiniMax M2.5 series models" ;;
+        "llm.provider.select.zh") text="选择提供商 [1/2/3]" ;;
+        "llm.provider.select.en") text="Select provider [1/2/3]" ;;
         "llm.alibaba.models_title.zh") text="选择百炼模型系列:" ;;
         "llm.alibaba.models_title.en") text="Select Bailian model series:" ;;
         "llm.alibaba.model.codingplan.zh") text="  1) CodingPlan  - 专为编程任务优化（推荐）" ;;
@@ -318,14 +320,28 @@ msg() {
         "llm.codingplan.model.minimax.en") text="  4) MiniMax-M2.5  - MiniMax M2.5" ;;
         "llm.codingplan.model.select.zh") text="选择模型 [1/2/3/4]" ;;
         "llm.codingplan.model.select.en") text="Select model [1/2/3/4]" ;;
+        "llm.provider.selected_minimax.zh") text="  提供商: MiniMax" ;;
+        "llm.provider.selected_minimax.en") text="  Provider: MiniMax" ;;
+        "llm.minimax.models_title.zh") text="选择 MiniMax 默认模型:" ;;
+        "llm.minimax.models_title.en") text="Select MiniMax default model:" ;;
+        "llm.minimax.model.m25.zh") text="  1) MiniMax-M2.5  - Peak Performance（推荐）" ;;
+        "llm.minimax.model.m25.en") text="  1) MiniMax-M2.5  - Peak Performance (recommended)" ;;
+        "llm.minimax.model.m25hs.zh") text="  2) MiniMax-M2.5-highspeed  - Same performance, faster" ;;
+        "llm.minimax.model.m25hs.en") text="  2) MiniMax-M2.5-highspeed  - Same performance, faster" ;;
+        "llm.minimax.model.select.zh") text="选择模型 [1/2]" ;;
+        "llm.minimax.model.select.en") text="Select model [1/2]" ;;
+        "llm.minimax.apikey_hint.zh") text="  💡 获取 MiniMax API Key:" ;;
+        "llm.minimax.apikey_hint.en") text="  💡 Get your MiniMax API Key from:" ;;
+        "llm.minimax.apikey_url.zh") text="     https://platform.minimax.io" ;;
+        "llm.minimax.apikey_url.en") text="     https://platform.minimax.io" ;;
         "llm.provider.selected_codingplan.zh") text="  提供商: 阿里云百炼 CodingPlan" ;;
         "llm.provider.selected_codingplan.en") text="  Provider: Alibaba Cloud Bailian CodingPlan" ;;
         "llm.provider.selected_qwen.zh") text="  提供商: 阿里云百炼" ;;
         "llm.provider.selected_qwen.en") text="  Provider: Alibaba Cloud Bailian" ;;
         "llm.provider.selected_openai.zh") text="  提供商: %s（OpenAI 兼容）" ;;
         "llm.provider.selected_openai.en") text="  Provider: %s (OpenAI-compatible)" ;;
-        "llm.provider.invalid.zh") text="无效选择: %s（请输入 1 或 2）" ;;
-        "llm.provider.invalid.en") text="Invalid choice: %s (please enter 1 or 2)" ;;
+        "llm.provider.invalid.zh") text="无效选择: %s（请输入 1、2 或 3）" ;;
+        "llm.provider.invalid.en") text="Invalid choice: %s (please enter 1, 2, or 3)" ;;
         "llm.qwen.model_prompt.zh") text="默认模型 ID [qwen3.5-plus]" ;;
         "llm.qwen.model_prompt.en") text="Default Model ID [qwen3.5-plus]" ;;
         "llm.openai.base_url_prompt.zh") text="Base URL（例如 https://api.openai.com/v1）" ;;
@@ -1338,6 +1354,7 @@ install_manager() {
         echo "$(msg llm.providers_title)"
         echo "$(msg llm.provider.alibaba)"
         echo "$(msg llm.provider.openai_compat)"
+        echo "$(msg llm.provider.minimax)"
         echo ""
         if [ "${HICLAW_QUICKSTART}" = "1" ]; then
             read -e -p "$(msg llm.provider.select) [1]: " PROVIDER_CHOICE
@@ -1436,6 +1453,40 @@ install_manager() {
                 HICLAW_DEFAULT_MODEL="${HICLAW_DEFAULT_MODEL:-gpt-5.4}"
                 log "$(msg llm.openai.base_url_label "${HICLAW_OPENAI_BASE_URL}")"
                 log "$(msg llm.model.label "${HICLAW_DEFAULT_MODEL}")"
+                log ""
+                prompt HICLAW_LLM_API_KEY "$(msg llm.apikey_prompt)" "" "true"
+                test_llm_connectivity "${HICLAW_OPENAI_BASE_URL}" "${HICLAW_LLM_API_KEY}" "${HICLAW_DEFAULT_MODEL}"
+                ;;
+            3|minimax)
+                HICLAW_LLM_PROVIDER="minimax"
+                HICLAW_OPENAI_BASE_URL="https://api.minimax.io/v1"
+                log "$(msg llm.provider.selected_minimax)"
+
+                # Sub-menu: Select MiniMax model
+                echo ""
+                echo "$(msg llm.minimax.models_title)"
+                echo "$(msg llm.minimax.model.m25)"
+                echo "$(msg llm.minimax.model.m25hs)"
+                echo ""
+                read -e -p "$(msg llm.minimax.model.select) [1]: " MINIMAX_MODEL_CHOICE
+                MINIMAX_MODEL_CHOICE="${MINIMAX_MODEL_CHOICE:-1}"
+
+                case "${MINIMAX_MODEL_CHOICE}" in
+                    1|MiniMax-M2.5)
+                        HICLAW_DEFAULT_MODEL="MiniMax-M2.5"
+                        ;;
+                    2|MiniMax-M2.5-highspeed)
+                        HICLAW_DEFAULT_MODEL="MiniMax-M2.5-highspeed"
+                        ;;
+                    *)
+                        HICLAW_DEFAULT_MODEL="MiniMax-M2.5"
+                        ;;
+                esac
+
+                log "$(msg llm.model.label "${HICLAW_DEFAULT_MODEL}")"
+                log ""
+                log "$(msg llm.minimax.apikey_hint)"
+                log "$(msg llm.minimax.apikey_url)"
                 log ""
                 prompt HICLAW_LLM_API_KEY "$(msg llm.apikey_prompt)" "" "true"
                 test_llm_connectivity "${HICLAW_OPENAI_BASE_URL}" "${HICLAW_LLM_API_KEY}" "${HICLAW_DEFAULT_MODEL}"
