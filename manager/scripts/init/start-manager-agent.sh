@@ -401,30 +401,52 @@ fi
 # ============================================================
 # Notify workers of builtin updates if upgrade happened
 # Builtin files (AGENTS.md, skills) are already synced by upgrade-builtins.sh
+#
+# Cooldown: skip notification if the last successful notify was within
+# NOTIFY_COOLDOWN_SECS (default 3600s / 1 hour). This prevents repeated
+# notifications when the Manager crash-loops and re-runs upgrade-builtins
+# on every restart (e.g. IMAGE_VERSION=latest always triggers upgrade).
 # ============================================================
+NOTIFY_COOLDOWN_SECS="${HICLAW_NOTIFY_COOLDOWN_SECS:-3600}"
+NOTIFY_TS_FILE="/root/manager-workspace/.last-worker-notify-ts"
+
 if [ -f /root/manager-workspace/.upgrade-pending-worker-notify ]; then
-    log "Notifying workers about builtin updates..."
-    REGISTRY_FILE="/root/manager-workspace/workers-registry.json"
-    if [ -f "${REGISTRY_FILE}" ]; then
-        for _worker_name in $(jq -r '.workers | keys[]' "${REGISTRY_FILE}" 2>/dev/null); do
-            [ -z "${_worker_name}" ] && continue
-            _room_id=$(jq -r --arg w "${_worker_name}" '.workers[$w].room_id // empty' "${REGISTRY_FILE}" 2>/dev/null)
-            if [ -n "${_room_id}" ]; then
-                _worker_id="@${_worker_name}:${MATRIX_DOMAIN}"
-                _txn_id="upgrade-$(date +%s%N)"
-                _msg="@${_worker_name}:${MATRIX_DOMAIN} Manager upgraded builtin files (AGENTS.md, skills). Please use your file-sync skill to sync the latest config."
-                curl -sf -X PUT \
-                    "http://127.0.0.1:6167/_matrix/client/v3/rooms/${_room_id}/send/m.room.message/${_txn_id}" \
-                    -H "Authorization: Bearer ${MANAGER_TOKEN}" \
-                    -H 'Content-Type: application/json' \
-                    -d "{\"msgtype\":\"m.text\",\"body\":\"${_msg}\",\"m.mentions\":{\"user_ids\":[\"${_worker_id}\"]}}" \
-                    > /dev/null 2>&1 \
-                    && log "  Notified ${_worker_name}" \
-                    || log "  WARNING: Failed to notify ${_worker_name}"
-            fi
-        done
+    _now=$(date +%s)
+    _last_notify=$(cat "${NOTIFY_TS_FILE}" 2>/dev/null || echo "0")
+    _elapsed=$(( _now - _last_notify ))
+
+    if [ "${_elapsed}" -lt "${NOTIFY_COOLDOWN_SECS}" ]; then
+        log "Skipping worker builtin notification (last notify ${_elapsed}s ago, cooldown ${NOTIFY_COOLDOWN_SECS}s)"
+        rm -f /root/manager-workspace/.upgrade-pending-worker-notify
+    else
+        log "Notifying workers about builtin updates..."
+        REGISTRY_FILE="/root/manager-workspace/workers-registry.json"
+        _notify_ok=false
+        if [ -f "${REGISTRY_FILE}" ]; then
+            for _worker_name in $(jq -r '.workers | keys[]' "${REGISTRY_FILE}" 2>/dev/null); do
+                [ -z "${_worker_name}" ] && continue
+                _room_id=$(jq -r --arg w "${_worker_name}" '.workers[$w].room_id // empty' "${REGISTRY_FILE}" 2>/dev/null)
+                if [ -n "${_room_id}" ]; then
+                    _worker_id="@${_worker_name}:${MATRIX_DOMAIN}"
+                    _txn_id="upgrade-$(date +%s%N)"
+                    _msg="@${_worker_name}:${MATRIX_DOMAIN} Manager upgraded builtin files (AGENTS.md, skills). Please use your file-sync skill to sync the latest config."
+                    curl -sf -X PUT \
+                        "http://127.0.0.1:6167/_matrix/client/v3/rooms/${_room_id}/send/m.room.message/${_txn_id}" \
+                        -H "Authorization: Bearer ${MANAGER_TOKEN}" \
+                        -H 'Content-Type: application/json' \
+                        -d "{\"msgtype\":\"m.text\",\"body\":\"${_msg}\",\"m.mentions\":{\"user_ids\":[\"${_worker_id}\"]}}" \
+                        > /dev/null 2>&1 \
+                        && { log "  Notified ${_worker_name}"; _notify_ok=true; } \
+                        || log "  WARNING: Failed to notify ${_worker_name}"
+                fi
+            done
+        fi
+        # Record timestamp only if at least one notification succeeded
+        if [ "${_notify_ok}" = true ]; then
+            echo "${_now}" > "${NOTIFY_TS_FILE}"
+        fi
+        rm -f /root/manager-workspace/.upgrade-pending-worker-notify
     fi
-    rm -f /root/manager-workspace/.upgrade-pending-worker-notify
 fi
 
 # ============================================================

@@ -23,3 +23,4 @@ Record image-affecting changes to `manager/`, `worker/`, `openclaw-base/` here b
 - feat(manager): task-management SKILL.md Step 0 decision flow now explicitly marks Worker delegation as preferred and self-execution as last resort
 - fix(worker): fix `hiclaw-sync: Permission denied` after upgrade — replace symlink with `/bin/sh` wrapper so execution does not depend on `+x` permission bit (MinIO does not preserve Unix permissions); add `chmod +x` in `hiclaw-sync.sh` and entrypoint fallback sync to restore script permissions after pull
 - fix(install): upgrade now pulls both openclaw and copaw worker images when the other runtime's image exists locally, ensuring all worker containers get updated regardless of the selected default runtime
+- fix(manager): add cooldown (default 1h) to worker builtin-upgrade notification — prevents repeated Matrix messages wasting Worker tokens when Manager crash-loops
