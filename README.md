@@ -182,9 +182,9 @@ Goal: Reduce per-Worker memory from ~500MB to <100MB.
 
 A built-in dashboard for observing and controlling your Agent Teams — real-time observation, active interruption, task timeline, resource monitoring.
 
-### Universal MCP Service Support
+### Universal MCP Service Support ✅
 
-Any MCP server can be safely exposed to Workers through the gateway. Pre-built connectors for GitHub, Slack, Notion, Linear, and more.
+[Released in 1.0.6](blog/hiclaw-1.0.6-release.md) — Any MCP server can be safely exposed to Workers through the gateway. Workers access tools using only Higress-issued tokens; real credentials never leave the gateway.
 
 ---
 
