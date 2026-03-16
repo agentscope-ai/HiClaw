@@ -50,6 +50,11 @@ if [ -z "${WORKER_NAME}" ]; then
     exit 1
 fi
 
+# Normalize worker name to lowercase
+# Tuwunel (Matrix server) stores usernames in lowercase, so we must ensure
+# consistency to avoid issues when inviting workers to rooms.
+WORKER_NAME=$(echo "${WORKER_NAME}" | tr 'A-Z' 'a-z')
+
 # copaw runtime supports both container and pip-installed modes
 # (previously forced REMOTE_MODE=true; now containers are supported)
 

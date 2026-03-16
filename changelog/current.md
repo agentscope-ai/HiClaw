@@ -4,3 +4,5 @@ Record image-affecting changes to `manager/`, `worker/`, `openclaw-base/` here b
 
 ---
 
+- fix(manager): normalize worker name to lowercase in create-worker.sh to match Tuwunel's username storage behavior, fixing invite failures when worker names contain uppercase letters
+
