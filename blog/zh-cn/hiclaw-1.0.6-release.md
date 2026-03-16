@@ -103,7 +103,7 @@ SKILL 迭代优化
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                              你（人类）                                       │
 │                                                                              │
-│  "添加一个天气 API：GET https://api.weather.com/v1/forecast?city={city}"    │
+│  "添加一个股票指数 API：GET https://api.finance.com/v1/index?symbol={symbol}"│
 │  "通过 X-API-Key header 认证，这是我的 key：sk_xxx"                          │
 └────────────────────────────────────┬────────────────────────────────────────┘
                                      │
@@ -112,9 +112,9 @@ SKILL 迭代优化
 │                           MANAGER CLAW                                       │
 │                                                                              │
 │  1. 根据你的描述生成 MCP Server YAML 配置                                    │
-│  2. 运行 setup-mcp-server.sh weather "sk_xxx" --yaml-file /tmp/weather.yaml │
-│  3. 用 mcporter 验证：mcporter call weather.get_forecast city=Tokyo         │
-│  4. 通知 Worker："新 MCP 服务器 'weather' 已就绪"                            │
+│  2. 运行 setup-mcp-server.sh stock-index "sk_xxx" --yaml-file /tmp/stock.yaml │
+│  3. 用 mcporter 验证：mcporter call stock-index.get_index symbol=000001.SH  │
+│  4. 通知 Worker："新 MCP 服务器 'stock-index' 已就绪"                        │
 └────────────────────────────────────┬────────────────────────────────────────┘
                                      │
                                      ▼
@@ -122,9 +122,9 @@ SKILL 迭代优化
 │                        HIGRESS AI GATEWAY                                    │
 │                                                                              │
 │  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │  MCP Server: weather-mcp-server                                      │   │
+│  │  MCP Server: stock-index-mcp-server                                  │   │
 │  │  ├─ 真实凭证: sk_xxx（安全存储，永不暴露）                            │   │
-│  │  ├─ 工具: get_forecast(city: string) → 天气数据                      │   │
+│  │  ├─ 工具: get_index(symbol: string) → 股票指数数据                   │   │
 │  │  └─ 授权消费者: manager, worker-alice, worker-bob                    │   │
 │  └─────────────────────────────────────────────────────────────────────┘   │
 │                                                                              │
@@ -139,19 +139,29 @@ SKILL 迭代优化
 │                                                                              │
 │  1. 收到 Manager 的通知                                                       │
 │  2. 从 MinIO 拉取最新的 mcporter 配置                                         │
-│  3. 发现工具：mcporter list weather --schema                                 │
-│  4. 测试工具：mcporter call weather.get_forecast city=Shanghai               │
+│  3. 发现工具：mcporter list stock-index --schema                             │
+│  4. 测试工具：mcporter call stock-index.get_index symbol=000001.SH           │
 │  5. 基于理解生成 SKILL.md                                                     │
 │  6. 后续任务中即可使用该工具！                                                 │
 │                                                                              │
 │  ┌─────────────────────────────────────────────────────────────────────┐   │
 │  │  Worker 的视角：                                                      │   │
 │  │  ├─ 拥有：Consumer token（就像一张"工牌"）                            │   │
-│  │  ├─ 可以：通过网关调用 weather.get_forecast                          │   │
+│  │  ├─ 可以：通过网关调用 stock-index.get_index                         │   │
 │  │  └─ 不可以：看到真实的 API key sk_xxx                                 │   │
 │  └─────────────────────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
+
+配置完成后，Manager 可以在 **Higress 控制台**查看 MCP Server 下的工具列表，并进行进一步的权限管理：
+
+![Higress MCP 工具管理界面](https://img.alicdn.com/imgextra/i3/O1CN01armHyk1Lc9XTGz7ZX_!!6000000001319-2-tps-1452-849.png)
+
+通过控制台，你可以：
+- 查看 MCP Server 包含的所有工具
+- 为每个 Consumer（Worker）配置工具级别的访问权限
+- 监控工具调用情况和性能指标
+- 动态调整权限策略，无需重启服务
 
 **核心安全原则：Worker 永远看不到真实凭证。**
 
