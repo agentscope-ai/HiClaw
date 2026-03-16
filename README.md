@@ -28,6 +28,12 @@ Think of it as your AI team in a chat room: tell the Manager what you need, it s
 
 - 🔐 **Secure Entry via Higress AI Gateway**: Workers never hold real API keys. They only get consumer tokens. Even if compromised, attackers get nothing useful.
 
+## News
+
+- **2026-03-14**: HiClaw 1.0.6 — enterprise-grade MCP Server management, zero credential exposure. [Blog](blog/hiclaw-1.0.6-release.md)
+- **2026-03-10**: HiClaw 1.0.4 — CoPaw Worker support, 80% less memory. [Blog](blog/hiclaw-1.0.4-release.md)
+- **2026-03-04**: HiClaw open sourced. [Announcement](blog/hiclaw-announcement.md)
+
 ## Why HiClaw
 
 - **Enterprise-Grade Security**: Worker Agents operate with consumer tokens only. Real credentials (API keys, GitHub PATs) stay in the gateway — Workers can't see them, and neither can attackers.
@@ -230,12 +236,6 @@ make help
 
 - [Discord](https://discord.gg/NVjNA4BAVw)
 - [GitHub Issues](https://github.com/higress-group/hiclaw/issues)
-
-## News
-
-- **2026-03-14**: HiClaw 1.0.6 — enterprise-grade MCP Server management, zero credential exposure. [Blog](blog/hiclaw-1.0.6-release.md)
-- **2026-03-10**: HiClaw 1.0.4 — CoPaw Worker support, 80% less memory. [Blog](blog/hiclaw-1.0.4-release.md)
-- **2026-03-04**: HiClaw open sourced. [Announcement](blog/hiclaw-announcement.md)
 
 ## License
 
