@@ -452,10 +452,12 @@ else
 fi
 
 if [ -d "${WORKER_AGENT_SRC}" ]; then
-    log "  Pushing AGENTS.md (runtime=${WORKER_RUNTIME}) to worker MinIO..."
-    mc cp "${WORKER_AGENT_SRC}/AGENTS.md" \
+    log "  Merging AGENTS.md (runtime=${WORKER_RUNTIME}) to worker MinIO..."
+    source /opt/hiclaw/scripts/lib/builtin-merge.sh
+    update_builtin_section_minio \
         "hiclaw/hiclaw-storage/agents/${WORKER_NAME}/AGENTS.md" \
-        || log "  WARNING: Failed to push AGENTS.md"
+        "${WORKER_AGENT_SRC}/AGENTS.md" \
+        || log "  WARNING: Failed to merge AGENTS.md"
     
     if [ -d "${FILESYNC_SRC}" ]; then
         log "  Pushing file-sync skill (${WORKER_RUNTIME}) to worker MinIO..."

@@ -130,6 +130,25 @@ class FileSync:
             logger.debug("mc ls error for %s: %s", prefix, exc)
             return []
 
+    def mirror_all(self) -> None:
+        """Full mirror of the worker's MinIO prefix to local_dir.
+
+        Called once at startup to restore all state (config, sessions, sync
+        token, etc.) — mirrors the OpenClaw worker's ``mc mirror`` approach.
+        After this, the running sync uses pull_all (Manager-managed only)
+        and push_local (Worker-managed only).
+        """
+        self._ensure_alias()
+        remote = self._object_path(f"{self._prefix}/")
+        local = str(self.local_dir) + "/"
+        try:
+            _mc("mirror", remote, local, "--overwrite", check=True)
+            logger.info("mirror_all: full mirror completed from %s", remote)
+        except subprocess.CalledProcessError as exc:
+            logger.warning("mirror_all: mc mirror failed: %s", exc.stderr)
+            raise
+
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -296,6 +315,31 @@ def push_local(sync: FileSync, since: float = 0) -> list[str]:
     local_dir = sync.local_dir
     if not local_dir.exists():
         return pushed
+
+    # ── Inner → Outer sync ──────────────────────────────────────────────
+    # CoPaw Agent reads/writes .copaw/AGENTS.md and .copaw/SOUL.md at
+    # runtime.  These are "inner" copies derived from the "outer" files at
+    # the sync root.  If the Agent modifies them, propagate changes back to
+    # the outer layer so the normal push cycle uploads them to MinIO.
+    _INNER_OUTER_FILES = ("AGENTS.md", "SOUL.md")
+    copaw_dir = local_dir / ".copaw"
+    for name in _INNER_OUTER_FILES:
+        inner = copaw_dir / name
+        outer = local_dir / name
+        if not inner.exists():
+            continue
+        try:
+            inner_mtime = inner.stat().st_mtime
+        except OSError:
+            continue
+        # Only copy if inner is newer than outer (or outer doesn't exist)
+        outer_mtime = outer.stat().st_mtime if outer.exists() else 0
+        if inner_mtime > outer_mtime:
+            inner_content = inner.read_text(errors="replace")
+            outer_content = outer.read_text(errors="replace") if outer.exists() else ""
+            if inner_content != outer_content:
+                outer.write_text(inner_content)
+                logger.debug("Inner→Outer sync: .copaw/%s → %s", name, name)
 
     sync._ensure_alias()
 

@@ -134,17 +134,17 @@ update_worker_model() {
         '[.models.providers["hiclaw-gateway"].models[] | select(.id == $model)] | length' \
         "${tmp_in}" 2>/dev/null)
 
-    local restart_required=false
+    local restart_required=true
     if [ "${model_exists}" -gt 0 ]; then
-        # Known model: just switch the primary model pointer (hot-reload, no restart)
+        # Known model: switch the primary model pointer and update reasoning
         jq --arg model "${new_model}" \
            --argjson reasoning "${REASONING}" \
            '(.models.providers["hiclaw-gateway"].models[] | select(.id == $model)).reasoning = $reasoning
-            | .agents.defaults.model.primary = ("hiclaw-gateway/" + $model)' \
+            | .agents.defaults.model.primary = ("hiclaw-gateway/" + $model)
+            | .agents.defaults.models["hiclaw-gateway/" + $model] = { "alias": $model }' \
            "${tmp_in}" > "${tmp_out}"
     else
-        # Unknown model: add to models array and switch primary
-        restart_required=true
+        # New model: add to models array and switch primary
         jq --arg model "${new_model}" \
            --argjson ctx "${CTX}" \
            --argjson max "${MAX}" \
@@ -158,7 +158,8 @@ update_worker_model() {
                "maxTokens": $max,
                "input": $input
              }]
-            | .agents.defaults.model.primary = ("hiclaw-gateway/" + $model)' \
+            | .agents.defaults.model.primary = ("hiclaw-gateway/" + $model)
+            | .agents.defaults.models["hiclaw-gateway/" + $model] = { "alias": $model }' \
            "${tmp_in}" > "${tmp_out}"
     fi
 
@@ -194,11 +195,7 @@ update_worker_model() {
         local txn_id
         txn_id=$(openssl rand -hex 8)
         local msg_body
-        if [ "${restart_required}" = true ]; then
-            msg_body="@${worker}:${matrix_domain} Your model has been updated to \`${new_model}\` (reasoning=${REASONING}). This is a new model not in the pre-configured list — a restart is needed for it to take effect. Please use your file-sync skill to sync the latest config, then restart."
-        else
-            msg_body="@${worker}:${matrix_domain} Your model has been updated to \`${new_model}\` (reasoning=${REASONING}). Please use your file-sync skill to sync the latest config."
-        fi
+        msg_body="@${worker}:${matrix_domain} Your model has been updated to \`${new_model}\` (reasoning=${REASONING}). Please use your file-sync skill to sync the latest config."
         curl -sf -X PUT \
             "http://127.0.0.1:6167/_matrix/client/v3/rooms/${room_id}/send/m.room.message/${txn_id}" \
             -H "Authorization: Bearer ${manager_token}" \
@@ -212,11 +209,8 @@ update_worker_model() {
     fi
 
     _log "Model update complete for ${worker}: ${new_model} (ctx=${CTX}, max=${MAX}, reasoning=${REASONING}, input=${INPUT})"
-    if [ "${restart_required}" = true ]; then
-        _log "IMPORTANT: Model '${new_model}' was not in the pre-configured list. The Worker needs to restart for it to take effect."
-        echo ""
-        echo "RESTART_REQUIRED: Model '${new_model}' was added to openclaw.json but the Worker '${worker}' needs a restart for it to take effect."
-    fi
+    echo ""
+    echo "RESTART_REQUIRED: Worker '${worker}' needs a restart for the model switch to '${new_model}' to take effect."
 }
 
 # ─── Argument parsing ─────────────────────────────────────────────────────────

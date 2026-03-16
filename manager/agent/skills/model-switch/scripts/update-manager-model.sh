@@ -129,17 +129,17 @@ MODEL_EXISTS=$(jq --arg model "${MODEL_NAME}" \
 
 TMP=$(mktemp)
 if [ "${MODEL_EXISTS}" -gt 0 ]; then
-    # Known model: just switch the primary model pointer (hot-reload, no restart)
+    # Known model: switch the primary model pointer and update reasoning
     jq --arg model "${MODEL_NAME}" \
        --argjson reasoning "${REASONING}" \
        '(.models.providers["hiclaw-gateway"].models[] | select(.id == $model)).reasoning = $reasoning
-        | .agents.defaults.model.primary = ("hiclaw-gateway/" + $model)' \
+        | .agents.defaults.model.primary = ("hiclaw-gateway/" + $model)
+        | .agents.defaults.models["hiclaw-gateway/" + $model] = { "alias": $model }' \
        "${CONFIG_FILE}" > "${TMP}" && mv "${TMP}" "${CONFIG_FILE}"
 
-    log "Done. OpenClaw will hot-reload the config within ~300ms."
-    log "Model is now: ${MODEL_NAME}"
+    log "Done. Model is now: ${MODEL_NAME}"
 else
-    # Unknown model: add to models array and switch primary
+    # New model: add to models array and switch primary
     jq --arg model "${MODEL_NAME}" \
        --argjson ctx "${CTX}" \
        --argjson max "${MAX}" \
@@ -153,12 +153,12 @@ else
            "maxTokens": $max,
            "input": $input
          }]
-        | .agents.defaults.model.primary = ("hiclaw-gateway/" + $model)' \
+        | .agents.defaults.model.primary = ("hiclaw-gateway/" + $model)
+        | .agents.defaults.models["hiclaw-gateway/" + $model] = { "alias": $model }' \
        "${CONFIG_FILE}" > "${TMP}" && mv "${TMP}" "${CONFIG_FILE}"
 
     log "Done. Model '${MODEL_NAME}' has been added to the models list."
-    log "IMPORTANT: This is a new model not in the pre-configured list. You need to restart to pick up the new model entry."
-    log "Run: bash -c 'openclaw gateway restart' or use the restart command."
-    echo ""
-    echo "RESTART_REQUIRED: Model '${MODEL_NAME}' was added to openclaw.json but a restart is needed for it to take effect."
 fi
+
+echo ""
+echo "RESTART_REQUIRED: Run 'openclaw gateway restart' to apply the model switch."

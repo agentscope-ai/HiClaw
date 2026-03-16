@@ -118,11 +118,29 @@ Alternatively, you can click the Worker's avatar and open a **direct message** (
 
 ## How to switch the Manager's model
 
+HiClaw supports two ways to switch models: **switch the current session model** (instant, non-persistent) and **switch the primary model** (persistent, requires restart).
+
+### Option 1: Switch the current session model (instant, non-persistent)
+
+Use the `/model` slash command in IM to instantly switch the model for the current session, no restart needed:
+
+```
+/model qwen3.5-plus
+```
+
+This only affects the current session — the primary model is restored after a restart. Only pre-configured known models are supported; see [`manager/configs/known-models.json`](../manager/configs/known-models.json) for the full list.
+
+For more `/model` command usage, see the "Model selection" section in [Session management via IM](#session-management-via-im).
+
+### Option 2: Switch the primary model (persistent, requires restart)
+
+Use Manager's built-in **model-switch skill** to persistently change the primary model. This approach supports any model name (not limited to the pre-configured list), but if the target model is not already in the config, a container restart is required for it to take effect.
+
 **Why use Manager instead of manual config?**
 
 OpenClaw requires setting the model's context window size (`contextWindow`) in its config. HiClaw defaults to qwen3.5-plus's 200K token window. If you switch to a model with a different window without updating this setting, the session may fail when approaching the window limit — OpenClaw won't know when to compress context.
 
-Manager has a built-in **model-switch skill** that:
+The model-switch skill:
 1. Looks up the correct `contextWindow` and `maxTokens` for the target model
 2. Updates OpenClaw's config accordingly
 3. Tests connectivity before applying the change
@@ -150,7 +168,21 @@ Manager will use the model-switch skill to update the config and verify connecti
 
 ## How to switch a Worker's model
 
-The process is similar to switching the Manager's model, and Manager handles it for you in both cases.
+Two options are available: **switch the current session model** and **switch the primary model**.
+
+### Option 1: Switch the current session model (instant, non-persistent)
+
+In the Worker's group chat or DM, use @mention with the `/model` command to switch instantly:
+
+```
+@alice /model qwen3.5-plus
+```
+
+Only affects the current session — the primary model is restored after a restart. Only pre-configured known models are supported; see [`manager/configs/known-models.json`](../manager/configs/known-models.json) for the full list.
+
+### Option 2: Switch the primary model (persistent, requires restart)
+
+Manager handles this for you, and supports any model name (not limited to the pre-configured list).
 
 **At creation time**: When asking Manager to create a Worker, specify the model name directly, e.g. "Create a Worker named alice using `qwen3.5-plus`."
 

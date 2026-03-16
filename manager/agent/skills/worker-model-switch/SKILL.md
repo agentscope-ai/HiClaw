@@ -31,17 +31,16 @@ bash /opt/hiclaw/agent/skills/worker-model-switch/scripts/update-worker-model.sh
 1. Strips any `hiclaw-gateway/` prefix from the model name
 2. Tests the model via `POST /v1/chat/completions` on the AI Gateway — exits with error if unreachable
 3. Pulls the Worker's `openclaw.json` from MinIO
-4. If the model is already in the `models` array: switches `agents.defaults.model.primary` (hot-reload after file-sync)
-5. If the model is new: adds it to the `models` array and switches primary, outputs `RESTART_REQUIRED`
+4. If the model is already in the `models` array: switches `agents.defaults.model.primary`
+5. If the model is new: adds it to the `models` array and switches primary
 6. Pushes the updated `openclaw.json` back to MinIO
 7. Updates `workers-registry.json` with the new model name
-8. Sends a Matrix @mention to the Worker asking it to file-sync (includes restart notice if needed)
+8. Sends a Matrix @mention to the Worker asking it to file-sync and restart
+9. Always outputs `RESTART_REQUIRED`
 
 ## After running the script
 
-Check the script output:
-- If the output contains `RESTART_REQUIRED`, tell the human admin: **"The model has been added to the Worker's configuration, but a restart of the Worker container is needed for it to take effect. Would you like me to recreate the Worker?"**
-- Otherwise the switch takes effect after the Worker runs file-sync, no further action needed.
+The script always outputs `RESTART_REQUIRED`. You must recreate the Worker container for the change to take effect. Ask the human admin: **"The model config has been updated. Would you like me to recreate the Worker now?"**
 
 ## Reasoning control
 
@@ -52,6 +51,10 @@ If the Worker container is stopped, the config is still updated in MinIO — it 
 ## On failure
 
 If the gateway test fails (non-200), the script prints an error with details. No changes are made to `openclaw.json` in this case.
+
+## Important
+
+This skill switches the Worker's **primary model** (persisted in `openclaw.json` in MinIO). After running the script, the Worker container must be restarted (recreated) for the change to take effect. The human admin can also use `@worker /model <model>` to switch the current session's model instantly without restart, but that is non-persistent and only supports pre-configured models.
 
 ## Switching to an unknown model
 

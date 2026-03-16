@@ -165,11 +165,12 @@ if [ -d "${WORKER_AGENT_SRC}" ] && mc alias ls hiclaw > /dev/null 2>&1; then
                 _worker_agent_src="${WORKER_AGENT_SRC}"
             fi
 
-            # Push AGENTS.md
-            mc cp "${_worker_agent_src}/AGENTS.md" \
-                "hiclaw/hiclaw-storage/agents/${_worker_name}/AGENTS.md" 2>/dev/null \
-                && log "    Updated AGENTS.md" \
-                || log "    WARNING: Failed to sync AGENTS.md"
+            # Merge AGENTS.md (preserve user content after builtin-end marker)
+            update_builtin_section_minio \
+                "hiclaw/hiclaw-storage/agents/${_worker_name}/AGENTS.md" \
+                "${_worker_agent_src}/AGENTS.md" \
+                && log "    Merged AGENTS.md" \
+                || log "    WARNING: Failed to merge AGENTS.md"
 
             # Push TOOLS.md
             if [ -f "${WORKER_AGENT_SRC}/TOOLS.md" ]; then

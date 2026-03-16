@@ -19,8 +19,14 @@ from typing import Any, AsyncIterator, Callable, Dict, List, Optional
 
 from nio import (
     AsyncClient,
+    AsyncClientConfig,
     LoginResponse,
     MatrixRoom,
+    MegolmEvent,
+    RoomEncryptedAudio,
+    RoomEncryptedFile,
+    RoomEncryptedImage,
+    RoomEncryptedVideo,
     RoomMessageAudio,
     RoomMessageFile,
     RoomMessageImage,
@@ -137,6 +143,8 @@ class MatrixChannelConfig:
         self.username: str = raw.get("username", "")
         self.password: str = raw.get("password", "")
         self.device_name: str = raw.get("device_name", "copaw-worker")
+        # E2EE: when True, enable end-to-end encryption via matrix-nio + libolm
+        self.encryption: bool = raw.get("encryption", False)
 
         # Allowlist / policy
         self.dm_policy: str = raw.get("dm_policy", "allowlist")
@@ -259,7 +267,25 @@ class MatrixChannel(BaseChannel):
             logger.warning("MatrixChannel: homeserver not configured, skipping")
             return
 
-        self._client = AsyncClient(self._cfg.homeserver, user="")
+        # E2EE: when encryption is enabled, provide store_path so matrix-nio
+        # persists Olm/Megolm keys, and set config to auto-trust all devices
+        # (appropriate for bot use cases where interactive verification is
+        # impractical).
+        if self._cfg.encryption:
+            store_path = self._e2ee_store_path()
+            store_path.mkdir(parents=True, exist_ok=True)
+            client_config = AsyncClientConfig(
+                store_sync_tokens=False,
+                encryption_enabled=True,
+            )
+            self._client = AsyncClient(
+                self._cfg.homeserver,
+                user="",
+                store_path=str(store_path),
+                config=client_config,
+            )
+        else:
+            self._client = AsyncClient(self._cfg.homeserver, user="")
 
         # Login
         if self._cfg.access_token:
@@ -269,7 +295,19 @@ class MatrixChannel(BaseChannel):
                 self._user_id = whoami.user_id
                 self._client.user_id = whoami.user_id
                 self._client.user = whoami.user_id
-                logger.info("MatrixChannel: logged in as %s (token)", self._user_id)
+                # E2EE requires device_id to associate Olm keys with this device
+                if whoami.device_id:
+                    self._client.device_id = whoami.device_id
+                logger.info("MatrixChannel: logged in as %s (token, device=%s)", self._user_id, whoami.device_id)
+                # Load crypto store after user_id and device_id are set
+                if self._cfg.encryption and self._client.store_path:
+                    if self._client.device_id:
+                        self._client.load_store()
+                        logger.info("MatrixChannel: crypto store loaded from %s", self._client.store_path)
+                    else:
+                        logger.error("MatrixChannel: E2EE enabled but whoami returned no device_id — encryption disabled"
+                                     " (token may lack device scope)")
+                        self._cfg.encryption = False
             else:
                 logger.error("MatrixChannel: token login failed: %s", whoami)
                 return
@@ -295,6 +333,21 @@ class MatrixChannel(BaseChannel):
             self._on_room_media_event,
             (RoomMessageImage, RoomMessageFile, RoomMessageAudio, RoomMessageVideo),
         )
+
+        # E2EE: upload device keys and register encrypted event callbacks
+        if self._cfg.encryption:
+            if self._client.should_upload_keys:
+                await self._client.keys_upload()
+                logger.info("MatrixChannel: E2E keys uploaded")
+            # Encrypted media events (decrypted by nio, delivered as RoomEncrypted* types)
+            self._client.add_event_callback(
+                self._on_room_encrypted_media_event,
+                (RoomEncryptedImage, RoomEncryptedAudio, RoomEncryptedVideo, RoomEncryptedFile),
+            )
+            # Undecryptable events (missing session key)
+            self._client.add_event_callback(self._on_megolm_event, (MegolmEvent,))
+            logger.info("MatrixChannel: E2EE enabled, encrypted event handlers registered")
+
         self._sync_task = asyncio.create_task(self._sync_loop())
         logger.info("MatrixChannel: sync loop started")
 
@@ -313,21 +366,141 @@ class MatrixChannel(BaseChannel):
     # Sync loop
     # ------------------------------------------------------------------
 
+    # ------------------------------------------------------------------
+    # Sync token persistence
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _sync_token_path() -> Optional[Path]:
+        """Return the file path for persisting the Matrix sync token."""
+        wd = os.environ.get("COPAW_WORKING_DIR")
+        if wd:
+            return Path(wd) / "matrix_sync_token"
+        return None
+
+    def _load_sync_token(self) -> Optional[str]:
+        """Load persisted next_batch token from disk, or None.
+
+        The token file is pulled from MinIO by FileSync.pull_all() during
+        startup, so it's already on disk when this runs — even on a fresh
+        container after destroy/recreate.
+        """
+        path = self._sync_token_path()
+        if path and path.exists():
+            try:
+                token = path.read_text().strip()
+                if token:
+                    logger.info("MatrixChannel: restored sync token from %s", path)
+                    return token
+            except Exception as exc:
+                logger.warning("MatrixChannel: failed to read sync token: %s", exc)
+        return None
+
+    def _save_sync_token(self, token: str) -> None:
+        """Persist next_batch token to disk (push_loop uploads it to MinIO)."""
+        path = self._sync_token_path()
+        if path:
+            try:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(token)
+            except Exception as exc:
+                logger.warning("MatrixChannel: failed to save sync token: %s", exc)
+
+    async def _e2ee_maintenance(self) -> None:
+        """Perform E2EE key maintenance tasks after each sync.
+
+        Mirrors what nio's sync_forever() does between syncs:
+        - Upload device keys when needed
+        - Query device keys for new/changed users
+        - Claim one-time keys to establish Olm sessions
+        - Send outgoing to-device messages (key shares, key requests)
+        """
+        if not self._cfg.encryption or not self._client or not self._client.olm:
+            return
+        try:
+            if self._client.should_upload_keys:
+                await self._client.keys_upload()
+            if self._client.should_query_keys:
+                await self._client.keys_query()
+            if self._client.should_claim_keys:
+                await self._client.keys_claim(
+                    self._client.get_users_for_key_claiming()
+                )
+            await self._client.send_to_device_messages()
+        except Exception as exc:
+            logger.warning("MatrixChannel: E2EE maintenance error: %s", exc)
+
     async def _sync_loop(self) -> None:
-        next_batch: Optional[str] = None
+        next_batch: Optional[str] = self._load_sync_token()
+
+        # When no persisted token exists (old version upgrade or first deploy),
+        # do an initial sync with callbacks suppressed — only capture next_batch
+        # so subsequent syncs are incremental.  This prevents replaying old
+        # messages when the token file doesn't exist yet.
+        #
+        # To truly suppress callbacks, temporarily remove event callbacks
+        # before the sync and restore them after, because nio's sync()
+        # internally calls receive_response() which fires callbacks.
+        if next_batch is None:
+            logger.info("MatrixChannel: no sync token found, performing catch-up sync (messages suppressed)")
+            try:
+                saved_cbs = self._client.event_callbacks[:]
+                self._client.event_callbacks.clear()
+                try:
+                    resp = await self._client.sync(timeout=30000, full_state=True)
+                finally:
+                    self._client.event_callbacks.extend(saved_cbs)
+                if isinstance(resp, SyncResponse):
+                    next_batch = resp.next_batch
+                    self._save_sync_token(next_batch)
+                    # Still auto-join invited rooms during catch-up
+                    for room_id in resp.rooms.invite:
+                        logger.info("MatrixChannel: auto-joining %s", room_id)
+                        await self._client.join(room_id)
+                    await self._e2ee_maintenance()
+                    logger.info("MatrixChannel: catch-up sync done, will process messages from next sync")
+                else:
+                    logger.warning("MatrixChannel: catch-up sync error: %s", resp)
+            except Exception as exc:
+                logger.exception("MatrixChannel: catch-up sync exception: %s", exc)
+        else:
+            # Restored from token — do a full_state sync to populate room
+            # member display names (nio needs full state for user_name()).
+            # Event callbacks are already registered so any messages received
+            # during the offline window will be processed normally.
+            logger.info("MatrixChannel: restored token, performing full-state sync to load room state")
+            try:
+                resp = await self._client.sync(
+                    timeout=30000, since=next_batch, full_state=True,
+                )
+                if isinstance(resp, SyncResponse):
+                    next_batch = resp.next_batch
+                    self._save_sync_token(next_batch)
+                    for room_id in resp.rooms.invite:
+                        logger.info("MatrixChannel: auto-joining %s", room_id)
+                        await self._client.join(room_id)
+                    await self._e2ee_maintenance()
+                else:
+                    logger.warning("MatrixChannel: full-state sync error: %s", resp)
+            except Exception as exc:
+                logger.exception("MatrixChannel: full-state sync exception: %s", exc)
+
         while True:
             try:
                 resp = await self._client.sync(
                     timeout=30000,
                     since=next_batch,
-                    full_state=(next_batch is None),
+                    full_state=False,
                 )
                 if isinstance(resp, SyncResponse):
                     next_batch = resp.next_batch
+                    self._save_sync_token(next_batch)
                     # Auto-join invited rooms
                     for room_id in resp.rooms.invite:
                         logger.info("MatrixChannel: auto-joining %s", room_id)
                         await self._client.join(room_id)
+                    # E2EE: full key maintenance (upload, query, claim, to-device)
+                    await self._e2ee_maintenance()
                 else:
                     logger.warning("MatrixChannel: sync error: %s", resp)
                     await asyncio.sleep(5)
@@ -414,11 +587,18 @@ class MatrixChannel(BaseChannel):
         #    the shorter localpart "math".
         if room and self._user_id:
             display_name = self._get_display_name(room, self._user_id)
+            logger.debug(
+                "strip_mention_prefix: user_id=%s display_name=%r room_users=%d",
+                self._user_id, display_name, len(getattr(room, 'users', {})),
+            )
             if display_name and display_name != self._user_id:
                 result = re.sub(
                     rf"^{re.escape(display_name)}\s*:?\s*", "", text, flags=re.IGNORECASE,
                 )
                 if result != text:
+                    # Clean leftover decoration (e.g. emoji suffix) between
+                    # the display name and the actual message content.
+                    result = re.sub(r"^[^\w/]+", "", result)
                     return result.strip()
         # 3. Strip localpart (e.g. "math") at start — only if display name
         #    didn't match.
@@ -428,6 +608,11 @@ class MatrixChannel(BaseChannel):
                 rf"^{re.escape(localpart)}\s*:?\s*", "", text, flags=re.IGNORECASE,
             )
             if result != text:
+                # After stripping localpart, there may be leftover decoration
+                # from the display name (e.g. emoji suffix "💕: " from
+                # "math 💕: /clear").  Strip non-alphanumeric prefix so the
+                # slash command is exposed.
+                result = re.sub(r"^[^\w/]+", "", result)
                 return result.strip()
         return text
 
@@ -435,16 +620,43 @@ class MatrixChannel(BaseChannel):
     # History accumulation (requireMention + context buffering)
     # ------------------------------------------------------------------
 
-    @staticmethod
-    def _get_display_name(room: Any, user_id: str) -> str:
-        """Best-effort human-readable name for a Matrix user in *room*."""
+    def _get_display_name(self, room: Any, user_id: str) -> str:
+        """Best-effort human-readable name for a Matrix user in *room*.
+
+        Tries the room object passed by nio first, then falls back to
+        looking up the room in the nio client's rooms dict (which is
+        populated by full_state sync at startup).
+        """
+        # 1. Try the room object directly (passed by nio callback)
         try:
             name = room.user_name(user_id)
             if name:
                 return name
         except Exception:
             pass
-        # Fallback: localpart of MXID (e.g. "@alice:hs" → "alice")
+        # 2. Fallback: look up from nio client's rooms dict
+        if self._client:
+            room_id = getattr(room, "room_id", None)
+            if room_id:
+                client_room = self._client.rooms.get(room_id)
+                if client_room and client_room is not room:
+                    try:
+                        name = client_room.user_name(user_id)
+                        if name:
+                            logger.debug(
+                                "display_name resolved via client.rooms fallback: %s -> %r",
+                                user_id, name,
+                            )
+                            return name
+                    except Exception:
+                        pass
+        # 3. Fallback: localpart of MXID (e.g. "@alice:hs" → "alice")
+        logger.debug(
+            "display_name fallback to localpart for %s (room.users=%d, client_rooms=%d)",
+            user_id,
+            len(getattr(room, "users", {})),
+            len(self._client.rooms) if self._client else 0,
+        )
         return user_id.split(":")[0].lstrip("@") or user_id
 
     def _record_history(self, room_id: str, entry: HistoryEntry) -> None:
@@ -605,6 +817,161 @@ class MatrixChannel(BaseChannel):
             return None
 
     # ------------------------------------------------------------------
+    # E2EE helpers
+    # ------------------------------------------------------------------
+
+    def _e2ee_store_path(self) -> Path:
+        """Return the directory for persisting Olm/Megolm crypto state."""
+        wd = os.environ.get("COPAW_WORKING_DIR")
+        if wd:
+            return Path(wd) / "matrix_crypto_store"
+        return Path.home() / ".copaw" / "matrix_crypto_store"
+
+    async def _download_encrypted_mxc(
+        self, mxc_url: str, filename: str, key: dict, hashes: dict, iv: str
+    ) -> Optional[str]:
+        """Download an encrypted mxc:// URI, decrypt it, and save locally."""
+        if not mxc_url.startswith("mxc://") or not self._client:
+            return None
+        try:
+            rest = mxc_url[6:]
+            server, media_id = rest.split("/", 1)
+            url = (
+                f"{self._cfg.homeserver}/_matrix/media/v3/download"
+                f"/{server}/{media_id}"
+            )
+            headers = {"Authorization": f"Bearer {self._cfg.access_token}"}
+            import httpx
+            async with httpx.AsyncClient(follow_redirects=True, timeout=60) as http:
+                resp = await http.get(url, headers=headers)
+                resp.raise_for_status()
+
+            from nio.crypto.attachments import decrypt_attachment
+            jwk_key = key.get("k", "")
+            sha256_hash = hashes.get("sha256", "")
+            plaintext = decrypt_attachment(resp.content, jwk_key, sha256_hash, iv)
+
+            dest = self._media_dir() / filename
+            dest.write_bytes(plaintext)
+            logger.debug("MatrixChannel: downloaded+decrypted %s → %s", mxc_url, dest)
+            return str(dest)
+        except Exception as exc:
+            logger.warning(
+                "MatrixChannel: failed to download encrypted %s: %s", mxc_url, exc
+            )
+            return None
+
+    async def _on_megolm_event(self, room: MatrixRoom, event: MegolmEvent) -> None:
+        """Handle undecryptable encrypted events (missing session key)."""
+        logger.warning(
+            "MatrixChannel: could not decrypt event %s in %s (session_id=%s)",
+            event.event_id, room.room_id, getattr(event, "session_id", "?"),
+        )
+
+    async def _on_room_encrypted_media_event(self, room: MatrixRoom, event: Any) -> None:
+        """Handle decrypted encrypted media events (RoomEncryptedImage, etc.).
+
+        These events are delivered by matrix-nio after successful decryption of
+        the Megolm payload. The file content itself is still encrypted with AES
+        and must be downloaded + decrypted using the key/iv/hashes from the event.
+        """
+        if event.sender == self._user_id:
+            return
+
+        sender_id = event.sender
+        room_id = room.room_id
+        is_dm = len(room.users) == 2
+
+        if not self._check_allowed(sender_id, room_id, is_dm):
+            return
+
+        if not is_dm:
+            if self._require_mention(room_id) and not self._was_mentioned(event, ""):
+                # Record as history (text description only)
+                body = event.body or ""
+                if isinstance(event, RoomEncryptedImage):
+                    desc = f"[sent an encrypted image: {body}]" if body else "[sent an encrypted image]"
+                elif isinstance(event, RoomEncryptedAudio):
+                    desc = f"[sent encrypted audio: {body}]" if body else "[sent encrypted audio]"
+                elif isinstance(event, RoomEncryptedVideo):
+                    desc = f"[sent an encrypted video: {body}]" if body else "[sent an encrypted video]"
+                else:
+                    desc = f"[sent an encrypted file: {body}]" if body else "[sent an encrypted file]"
+                self._record_history(room_id, HistoryEntry(
+                    sender=self._get_display_name(room, sender_id),
+                    body=desc,
+                    timestamp=getattr(event, "server_timestamp", None),
+                    message_id=event.event_id,
+                ))
+                return
+
+        await self._send_read_receipt(room_id, event.event_id)
+        await self._send_typing(room_id, True)
+
+        body = event.body or ""
+        mxc_url = getattr(event, "url", "") or ""
+        key = getattr(event, "key", {}) or {}
+        hashes = getattr(event, "hashes", {}) or {}
+        iv = getattr(event, "iv", "") or ""
+
+        content_parts: list[dict[str, Any]] = []
+        if body:
+            content_parts.append({"type": "text", "text": body})
+
+        if mxc_url and key and iv:
+            eid = event.event_id[:8].lstrip("$")
+            filename = body or f"matrix_media_{eid}"
+            filename = f"{eid}_{filename}"
+            local_path = await self._download_encrypted_mxc(mxc_url, filename, key, hashes, iv)
+            if local_path:
+                file_uri = Path(local_path).as_uri()
+                if isinstance(event, RoomEncryptedImage):
+                    if self._cfg.vision_enabled:
+                        content_parts.append({"type": "image", "image_url": file_uri})
+                    else:
+                        content_parts.append({
+                            "type": "text",
+                            "text": f"[User sent an image (current model does not support image input): {body or filename}]",
+                        })
+                elif isinstance(event, RoomEncryptedAudio):
+                    content_parts.append({"type": "audio", "data": file_uri})
+                elif isinstance(event, RoomEncryptedVideo):
+                    content_parts.append({"type": "video", "video_url": file_uri})
+                else:
+                    content_parts.append({
+                        "type": "file",
+                        "file_url": file_uri,
+                        "filename": body or filename,
+                    })
+            else:
+                content_parts.append({"type": "text", "text": f"[Encrypted media unavailable: {body}]"})
+
+        if not content_parts:
+            return
+
+        if not is_dm:
+            content_parts = self._apply_history_to_parts(room_id, content_parts)
+
+        worker_name = (self._user_id or "").split(":")[0].lstrip("@")
+        payload = {
+            "channel_id": CHANNEL_KEY,
+            "sender_id": sender_id,
+            "content_parts": content_parts,
+            "meta": {
+                "room_id": room_id,
+                "is_dm": is_dm,
+                "worker_name": worker_name,
+                "event_id": event.event_id,
+                "sender_id": sender_id,
+            },
+        }
+
+        if self._enqueue:
+            self._enqueue(payload)
+            if not is_dm:
+                self._clear_history(room_id)
+
+    # ------------------------------------------------------------------
     # Media upload (local file → mxc://)
     # ------------------------------------------------------------------
 
@@ -647,6 +1014,10 @@ class MatrixChannel(BaseChannel):
     # ------------------------------------------------------------------
 
     async def _on_room_event(self, room: MatrixRoom, event: RoomMessageText) -> None:
+        logger.debug(
+            "_on_room_event: sender=%s body=%r room_users=%d",
+            event.sender, (event.body or "")[:80], len(getattr(room, 'users', {})),
+        )
         # Skip own messages
         if event.sender == self._user_id:
             return
@@ -689,9 +1060,12 @@ class MatrixChannel(BaseChannel):
             if stripped != text:
                 logger.info("Stripped mention prefix for slash command: %r -> %r", text, command_text)
 
-        # Build content parts, prepending accumulated history for group rooms
+        # Build content parts, prepending accumulated history for group rooms.
+        # Skip history prepend for slash commands — CoPaw's command parser
+        # requires the message to start with "/" to recognise it.
         content_parts: list[dict[str, Any]] = [{"type": "text", "text": command_text}]
-        if not is_dm:
+        is_slash_cmd = command_text.startswith("/")
+        if not is_dm and not is_slash_cmd:
             content_parts = self._apply_history_to_parts(room_id, content_parts)
 
         worker_name = (self._user_id or "").split(":")[0].lstrip("@")
@@ -1031,7 +1405,10 @@ class MatrixChannel(BaseChannel):
             self._apply_mention(content, sender_id, room_id)
 
         try:
-            await self._client.room_send(room_id, "m.room.message", content)
+            await self._client.room_send(
+                room_id, "m.room.message", content,
+                ignore_unverified_devices=True,
+            )
         except Exception as exc:
             logger.exception(
                 "MatrixChannel: send failed to %s: %s", room_id, exc
@@ -1107,7 +1484,10 @@ class MatrixChannel(BaseChannel):
             if sender_id:
                 self._apply_mention(event_content, sender_id, room_id)
 
-            await self._client.room_send(room_id, "m.room.message", event_content)
+            await self._client.room_send(
+                room_id, "m.room.message", event_content,
+                ignore_unverified_devices=True,
+            )
             logger.debug(
                 "MatrixChannel: sent %s %s to %s", matrix_msgtype, filename, room_id
             )

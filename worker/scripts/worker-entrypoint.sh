@@ -42,7 +42,8 @@ mc alias set hiclaw "${FS_ENDPOINT}" "${FS_ACCESS_KEY}" "${FS_SECRET_KEY}"
 mkdir -p "${WORKSPACE}" "${HICLAW_ROOT}/shared"
 
 log "Pulling Worker config from centralized storage..."
-mc mirror "hiclaw/hiclaw-storage/agents/${WORKER_NAME}/" "${WORKSPACE}/" --overwrite
+mc mirror "hiclaw/hiclaw-storage/agents/${WORKER_NAME}/" "${WORKSPACE}/" --overwrite \
+    --exclude ".openclaw/matrix/**" --exclude ".openclaw/canvas/**"
 mc mirror "hiclaw/hiclaw-storage/shared/" "${HICLAW_ROOT}/shared/" --overwrite 2>/dev/null || true
 
 # Verify essential files exist, retry if sync is still in progress
@@ -56,7 +57,8 @@ while [ ! -f "${WORKSPACE}/openclaw.json" ] || [ ! -f "${WORKSPACE}/SOUL.md" ] \
     fi
     log "Waiting for config files to appear in MinIO (attempt ${RETRY}/6)..."
     sleep 5
-    mc mirror "hiclaw/hiclaw-storage/agents/${WORKER_NAME}/" "${WORKSPACE}/" --overwrite 2>/dev/null || true
+    mc mirror "hiclaw/hiclaw-storage/agents/${WORKER_NAME}/" "${WORKSPACE}/" --overwrite \
+        --exclude ".openclaw/matrix/**" --exclude ".openclaw/canvas/**" 2>/dev/null || true
 done
 
 # HOME is already set to WORKSPACE via docker run -e HOME=...
@@ -120,7 +122,8 @@ log "HOME set to ${HOME} (workspace files will be synced to MinIO)"
             if ! mc mirror "${WORKSPACE}/" "hiclaw/hiclaw-storage/agents/${WORKER_NAME}/" --overwrite \
                 --exclude "openclaw.json" --exclude "config/mcporter.json" --exclude "mcporter-servers.json" --exclude ".agents/**" \
                 --exclude ".cache/**" --exclude ".npm/**" \
-                --exclude ".local/**" --exclude ".mc/**" --exclude "*.lock" 2>&1; then
+                --exclude ".local/**" --exclude ".mc/**" --exclude "*.lock" \
+                --exclude ".openclaw/matrix/**" --exclude ".openclaw/canvas/**" 2>&1; then
                 log "WARNING: Local->Remote sync failed"
             fi
         fi
@@ -178,5 +181,10 @@ cd "${WORKSPACE}"
 # Prevents "session file locked (timeout 10000ms)" when PID was reused
 find "${HOME}/.openclaw/agents" -name "*.jsonl.lock" -delete 2>/dev/null || true
 log "Cleaned up any orphaned session write locks"
+
+# Clean Matrix crypto storage (SQLite WAL may be corrupted after unclean shutdown)
+# Crypto state is re-negotiated on startup; losing it only means re-establishing E2EE sessions
+rm -rf "${HOME}/.openclaw/matrix" 2>/dev/null || true
+log "Cleaned Matrix crypto storage (will re-establish E2EE sessions)"
 
 exec openclaw gateway run --verbose --force

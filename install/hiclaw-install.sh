@@ -456,10 +456,12 @@ msg() {
         # --- Matrix E2EE ---
         "matrix_e2ee.title.zh") text="--- Matrix 端到端加密（E2EE）---" ;;
         "matrix_e2ee.title.en") text="--- Matrix End-to-End Encryption (E2EE) ---" ;;
-        "matrix_e2ee.enable.zh") text="启用 E2EE（Manager 和 Worker 通信加密，注意：E2EE 需要 matrix-sdk-crypto 支持）" ;;
-        "matrix_e2ee.enable.en") text="Enable E2EE (encrypted Manager-Worker communication, note: requires matrix-sdk-crypto)" ;;
-        "matrix_e2ee.disable.zh") text="禁用 E2EE（默认，兼容性更好）" ;;
-        "matrix_e2ee.disable.en") text="Disable E2EE (default, better compatibility)" ;;
+        "matrix_e2ee.desc.zh") text="E2EE 会对 Manager 与 Worker 之间的 Matrix 消息进行端到端加密。\n  启用后，即使 Matrix 服务器被入侵，消息内容也无法被窃取。\n  但 E2EE 会增加首次握手耗时，且要求所有 Agent 都支持 matrix-sdk-crypto。\n  如果不确定，建议保持禁用。" ;;
+        "matrix_e2ee.desc.en") text="E2EE encrypts Matrix messages between Manager and Workers end-to-end.\n  When enabled, message content stays private even if the Matrix server is compromised.\n  However, E2EE adds overhead to the initial handshake and requires all Agents\n  to support matrix-sdk-crypto. If unsure, keep it disabled." ;;
+        "matrix_e2ee.enable.zh") text="启用 E2EE" ;;
+        "matrix_e2ee.enable.en") text="Enable E2EE" ;;
+        "matrix_e2ee.disable.zh") text="禁用 E2EE（推荐）" ;;
+        "matrix_e2ee.disable.en") text="Disable E2EE (recommended)" ;;
         "matrix_e2ee.choice.zh") text="请选择 [1/2]" ;;
         "matrix_e2ee.choice.en") text="Enter choice [1/2]" ;;
         "matrix_e2ee.selected_enabled.zh") text="Matrix E2EE: 已启用" ;;
@@ -1592,10 +1594,12 @@ install_manager() {
     export HICLAW_DEFAULT_WORKER_RUNTIME
     log "$(msg worker_runtime.selected "${HICLAW_DEFAULT_WORKER_RUNTIME}")"
 
-    # Matrix E2EE (only shown in manual mode; default is disabled)
-    if [ "${HICLAW_NON_INTERACTIVE}" != "1" ] && [ "${HICLAW_QUICKSTART}" != "1" ]; then
+    # Matrix E2EE (shown in manual mode for fresh install; always shown during upgrade)
+    if [ "${HICLAW_NON_INTERACTIVE}" != "1" ] && { [ "${HICLAW_QUICKSTART}" != "1" ] || [ "${HICLAW_UPGRADE}" = "1" ]; }; then
         log ""
         log "$(msg matrix_e2ee.title)"
+        echo ""
+        echo -e "  $(msg matrix_e2ee.desc)"
         echo ""
         echo "  1) $(msg matrix_e2ee.disable)"
         echo "  2) $(msg matrix_e2ee.enable)"

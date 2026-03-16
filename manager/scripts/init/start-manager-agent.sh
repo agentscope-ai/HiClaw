@@ -298,15 +298,29 @@ log "Model: ${MODEL_NAME} (context=${MODEL_CONTEXT_WINDOW}, maxTokens=${MODEL_MA
 
 if [ -f /root/manager-workspace/openclaw.json ]; then
     log "Manager openclaw.json already exists, updating dynamic fields only (preserving user customizations)..."
+    # Merge known models into existing config (add missing, preserve user-added)
+    # Use known-models.json (valid JSON) instead of template (contains ${VAR} placeholders)
+    KNOWN_MODELS=$(cat /opt/hiclaw/configs/known-models.json 2>/dev/null || echo '[]')
     jq --arg token "${MANAGER_TOKEN}" \
        --arg key "${HICLAW_MANAGER_GATEWAY_KEY}" \
        --arg model "${MODEL_NAME}" \
        --argjson e2ee "${MATRIX_E2EE_ENABLED}" \
-       '.channels.matrix.accessToken = $token | .hooks.token = $key | .models.providers["hiclaw-gateway"].apiKey = $key
+       --argjson known_models "${KNOWN_MODELS}" \
+       '
+        # Merge known models: add any model id not already present
+        .models.providers["hiclaw-gateway"].models as $existing
+        | ($existing | map(.id)) as $existing_ids
+        | ($known_models | map(select(.id as $id | $existing_ids | index($id) | not))) as $new
+        | .models.providers["hiclaw-gateway"].models = ($existing + $new)
+        # Rebuild model aliases from the full models list
+        | (.models.providers["hiclaw-gateway"].models | map({ ("hiclaw-gateway/" + .id): { "alias": .id } }) | add // {}) as $aliases
+        | .agents.defaults.models = ((.agents.defaults.models // {}) + $aliases)
+        | .channels.matrix.accessToken = $token | .hooks.token = $key | .models.providers["hiclaw-gateway"].apiKey = $key
         | .agents.defaults.model.primary = ("hiclaw-gateway/" + $model)
         | .commands.restart = true
         | .gateway.controlUi.dangerouslyDisableDeviceAuth = true
-        | .channels.matrix.encryption = $e2ee' \
+        | .channels.matrix.encryption = $e2ee
+       ' \
        /root/manager-workspace/openclaw.json > /tmp/openclaw.json.tmp && \
         mv /tmp/openclaw.json.tmp /root/manager-workspace/openclaw.json
     # Verify the token was written correctly
@@ -333,6 +347,47 @@ if container_api_available; then
 else
     log "No container runtime socket found — Worker creation will output install commands"
     export HICLAW_CONTAINER_RUNTIME="none"
+fi
+
+# ============================================================
+# Upgrade Worker openclaw.json: merge known models + E2EE flag into existing configs
+# Existing workers in MinIO may have old single-model configs or missing encryption field.
+# Merge template models so they can hot-switch without restart.
+# ============================================================
+REGISTRY_FILE="/root/manager-workspace/workers-registry.json"
+if [ -f "${REGISTRY_FILE}" ]; then
+    # Use known-models.json (valid JSON) instead of template (contains ${VAR} placeholders)
+    KNOWN_MODELS_FILE="/opt/hiclaw/configs/known-models.json"
+    if [ -f "${KNOWN_MODELS_FILE}" ]; then
+        _KNOWN_MODELS=$(cat "${KNOWN_MODELS_FILE}")
+        for _wname in $(jq -r '.workers | keys[]' "${REGISTRY_FILE}" 2>/dev/null); do
+            [ -z "${_wname}" ] && continue
+            _minio_path="hiclaw/hiclaw-storage/agents/${_wname}/openclaw.json"
+            _tmp_in="/tmp/openclaw-${_wname}-models-upgrade-in.json"
+            if mc cp "${_minio_path}" "${_tmp_in}" 2>/dev/null; then
+                _tmp_out="/tmp/openclaw-${_wname}-models-upgrade-out.json"
+                # Idempotent merge: add missing known models, rebuild aliases, set e2ee.
+                # Always runs — jq deduplicates by model id, so re-runs are safe.
+                jq --argjson known_models "${_KNOWN_MODELS}" \
+                   --argjson e2ee "${MATRIX_E2EE_ENABLED}" '
+                    .models.providers["hiclaw-gateway"].models as $existing
+                    | ($existing | map(.id)) as $existing_ids
+                    | ($known_models | map(select(.id as $id | $existing_ids | index($id) | not))) as $new
+                    | .models.providers["hiclaw-gateway"].models = ($existing + $new)
+                    | (.models.providers["hiclaw-gateway"].models | map({ ("hiclaw-gateway/" + .id): { "alias": .id } }) | add // {}) as $aliases
+                    | .agents.defaults.models = ((.agents.defaults.models // {}) + $aliases)
+                    | .channels.matrix.encryption = $e2ee
+                ' "${_tmp_in}" > "${_tmp_out}" 2>/dev/null
+                if ! diff -q "${_tmp_in}" "${_tmp_out}" > /dev/null 2>&1; then
+                    if mc cp "${_tmp_out}" "${_minio_path}" 2>/dev/null; then
+                        _new_count=$(jq '.models.providers["hiclaw-gateway"].models | length' "${_tmp_out}" 2>/dev/null)
+                        log "Worker ${_wname}: upgraded openclaw.json (models: ${_new_count}, e2ee: ${MATRIX_E2EE_ENABLED})"
+                    fi
+                fi
+                rm -f "${_tmp_in}" "${_tmp_out}"
+            fi
+        done
+    fi
 fi
 
 # ============================================================
@@ -475,5 +530,10 @@ cd "${HOME}"
 # Prevents "session file locked (timeout 10000ms)" when PID was reused
 find "${HOME}/.openclaw/agents" -name "*.jsonl.lock" -delete 2>/dev/null || true
 log "Cleaned up any orphaned session write locks"
+
+# Clean Matrix crypto storage (SQLite WAL may be corrupted after unclean shutdown)
+# Crypto state is re-negotiated on startup; losing it only means re-establishing E2EE sessions
+rm -rf "${HOME}/.openclaw/matrix" 2>/dev/null || true
+log "Cleaned Matrix crypto storage (will re-establish E2EE sessions)"
 
 exec openclaw gateway run --verbose --force

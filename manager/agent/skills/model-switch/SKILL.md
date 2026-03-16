@@ -24,14 +24,13 @@ bash /opt/hiclaw/agent/skills/model-switch/scripts/update-manager-model.sh deeps
 
 1. Strips any `hiclaw-gateway/` prefix from the model name
 2. Tests the model via `POST /v1/chat/completions` on the AI Gateway — exits with error if unreachable
-3. If the model is already in the `models` array: switches `agents.defaults.model.primary` (hot-reload, ~300ms)
-4. If the model is new: adds it to the `models` array and switches primary, outputs `RESTART_REQUIRED`
+3. If the model is already in the `models` array: switches `agents.defaults.model.primary`
+4. If the model is new: adds it to the `models` array and switches primary
+5. Always outputs `RESTART_REQUIRED`
 
 ## After running the script
 
-Check the script output:
-- If the output contains `RESTART_REQUIRED`, tell the human admin: **"The model has been added to the configuration, but a restart of the Manager container is needed for it to take effect."**
-- Otherwise the switch is immediate, no further action needed.
+The script always outputs `RESTART_REQUIRED`. Run `openclaw gateway restart` to apply the change, then tell the human admin the switch is complete.
 
 ## Reasoning control
 
@@ -43,7 +42,7 @@ If the gateway test fails (non-200), the script prints an error with details. No
 
 ## Important
 
-**NEVER use `session_status` tool to change the model** — that only affects the current session temporarily and does not persist. Always use this script.
+This skill switches the **primary model** (persisted in `openclaw.json`). After running the script, you must run `openclaw gateway restart` for the change to take effect. The human admin can also use the `/model` slash command to switch the current session's model instantly without restart, but that is non-persistent and only supports pre-configured models.
 
 ## Switching to an unknown model
 

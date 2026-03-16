@@ -115,11 +115,29 @@ http://<局域网IP>:18080
 
 ## 如何切换 Manager 的模型
 
+HiClaw 支持两种模型切换方式：**切换当前会话模型**（即时生效，不持久化）和**切换主用模型**（持久化，需重启生效）。
+
+### 方式一：切换当前会话模型（即时，不持久化）
+
+通过 IM 斜杠命令 `/model` 可以即时切换当前会话使用的模型，无需重启：
+
+```
+/model qwen3.5-plus
+```
+
+这种方式仅对当前会话生效，重启后会恢复为主用模型。且仅支持预置的已知模型列表中的模型，完整列表见 [`manager/configs/known-models.json`](../../manager/configs/known-models.json)。
+
+更多 `/model` 命令用法见 [会话管理（通过 IM 指令）](#会话管理通过-im-指令) 中的"模型选择"部分。
+
+### 方式二：切换主用模型（持久化，需重启）
+
+通过 Manager 的**模型切换技能**可以持久化切换主用模型。这种方式支持任意模型名（不限于预置列表），但如果目标模型不在已有配置中，需要重启容器才能生效。
+
 **为什么让 Manager 切换而不是手动改配置？**
 
 OpenClaw 需要在配置中设置模型的上下文窗口大小（`contextWindow`）。HiClaw 默认使用 qwen3.5-plus 的 200K token 窗口。如果切换到窗口不同的模型但没有更新这个设置，当对话接近窗口上限时，OpenClaw 不知道何时压缩上下文，可能导致 session 无法使用。
 
-为此，HiClaw 给 Manager 配备了**模型切换技能**，会根据模型名自动修改 OpenClaw 配置中的 `contextWindow` 和 `maxTokens`。
+模型切换技能会根据模型名自动修改 OpenClaw 配置中的 `contextWindow` 和 `maxTokens`。
 
 **切换步骤**
 
@@ -151,7 +169,21 @@ Manager 会使用模型切换技能完成配置更新。
 
 ## 如何切换 Worker 的模型
 
-流程与切换 Manager 模型类似，两种情况都由 Manager 代为操作。
+同样支持两种方式：**切换当前会话模型**和**切换主用模型**。
+
+### 方式一：切换当前会话模型（即时，不持久化）
+
+在 Worker 所在的群聊或私聊中，通过 @Worker 加 `/model` 命令即时切换：
+
+```
+@alice /model qwen3.5-plus
+```
+
+仅对当前会话生效，重启后恢复为主用模型。仅支持预置的已知模型，完整列表见 [`manager/configs/known-models.json`](../../manager/configs/known-models.json)。
+
+### 方式二：切换主用模型（持久化，需重启）
+
+由 Manager 代为操作，支持任意模型名。
 
 **创建时指定**：在让 Manager 创建 Worker 时直接说明模型，例如"帮我创建一个名为 alice 的 Worker，使用 `qwen3.5-plus`"。
 

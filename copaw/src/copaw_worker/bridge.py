@@ -200,6 +200,7 @@ def _write_config_json(
         "enabled": matrix_raw.get("enabled", True),
         "homeserver": homeserver,
         "access_token": access_token,
+        "encryption": matrix_raw.get("encryption", False),
         "dm_policy": dm_policy,
         "allow_from": dm_allow_from,
         "group_policy": group_policy,
