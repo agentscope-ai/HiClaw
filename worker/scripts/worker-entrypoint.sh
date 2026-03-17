@@ -34,7 +34,7 @@ WORKSPACE="${HICLAW_ROOT}/agents/${WORKER_NAME}"
 # ============================================================
 # Step 1: Configure mc alias for centralized file system
 # ============================================================
-if [ "${HICLAW_RUNTIME}" = "cloud-aliyun" ]; then
+if [ "${HICLAW_RUNTIME}" = "aliyun" ]; then
     log "Configuring mc alias for cloud (RRSA OIDC)..."
     ensure_mc_credentials
 else

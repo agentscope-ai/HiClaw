@@ -211,7 +211,7 @@ chmod 600 "${WORKER_CREDS_FILE}"
 # ============================================================
 # Step 1b: Create storage user with restricted permissions
 # ============================================================
-if [ "${HICLAW_RUNTIME}" != "cloud-aliyun" ]; then
+if [ "${HICLAW_RUNTIME}" != "aliyun" ]; then
     log "Step 1b: Creating MinIO user for ${WORKER_NAME}..."
     POLICY_NAME="worker-${WORKER_NAME}"
     POLICY_FILE=$(mktemp /tmp/minio-policy-XXXXXX.json)
@@ -564,7 +564,7 @@ _build_extra_env() {
 if [ "${REMOTE_MODE}" = true ]; then
     log "Step 9: Remote mode requested"
     INSTALL_CMD=$(_build_install_cmd)
-elif [ "${HICLAW_RUNTIME}" = "cloud-aliyun" ]; then
+elif [ "${HICLAW_RUNTIME}" = "aliyun" ]; then
     log "Step 9: Creating Worker via cloud backend (SAE)..."
 
     # Build complete SAE environment variables (Worker needs these to connect)

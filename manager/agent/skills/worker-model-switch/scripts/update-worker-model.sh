@@ -111,7 +111,7 @@ update_worker_model() {
         rm -f /tmp/model-test-resp-${worker}.json
         _log "ERROR: Model test failed (HTTP ${http_code}): ${resp_body}"
         _log "The model '${new_model}' is not reachable via the AI Gateway."
-        if [ "${HICLAW_RUNTIME:-}" = "cloud-aliyun" ]; then
+        if [ "${HICLAW_RUNTIME:-}" = "aliyun" ]; then
             _log "Please check the Alibaba Cloud AI Gateway console to confirm the model route is configured."
         else
             _log "Please check the Higress Console to confirm the AI route is configured for this model:"

@@ -5,7 +5,7 @@
 # Source this file instead of manually setting up Matrix/storage variables.
 #
 # Provides:
-#   HICLAW_RUNTIME         — "cloud-aliyun" | "docker" | "none"
+#   HICLAW_RUNTIME         — "aliyun" | "docker" | "none"
 #   HICLAW_MATRIX_SERVER   — Matrix server URL (works in both local and cloud)
 #   HICLAW_STORAGE_BUCKET  — bucket name for mc commands
 #   HICLAW_STORAGE_PREFIX  — "hiclaw/<bucket>" ready for mc paths
@@ -22,7 +22,7 @@ source /opt/hiclaw/scripts/lib/base.sh 2>/dev/null || true
 # ── Runtime detection ─────────────────────────────────────────────────────────
 if [ -n "${ALIBABA_CLOUD_OIDC_TOKEN_FILE:-}" ] && \
    [ -f "${ALIBABA_CLOUD_OIDC_TOKEN_FILE:-/nonexistent}" ]; then
-    HICLAW_RUNTIME="cloud-aliyun"
+    HICLAW_RUNTIME="aliyun"
 elif [ -S "${HICLAW_CONTAINER_SOCKET:-/var/run/docker.sock}" ]; then
     HICLAW_RUNTIME="docker"
 else

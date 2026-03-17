@@ -584,10 +584,10 @@ unset _provider_file
 _detect_worker_backend() {
     if container_api_available 2>/dev/null; then
         echo "docker"
-    elif [ "${HICLAW_RUNTIME:-}" = "cloud-aliyun" ]; then
-        echo "cloud-aliyun"
+    elif [ "${HICLAW_RUNTIME:-}" = "aliyun" ]; then
+        echo "aliyun"
     elif type cloud_sae_available &>/dev/null && cloud_sae_available; then
-        echo "cloud-aliyun"
+        echo "aliyun"
     else
         echo "none"
     fi
@@ -605,7 +605,7 @@ worker_backend_create() {
         docker)
             container_create_worker "${worker_name}" "${fs_access_key}" "${fs_secret_key}" "${extra_env_json}"
             ;;
-        cloud-aliyun)
+        aliyun)
             local envs_obj="{}"
             if [ "${extra_env_json}" != "[]" ] && [ -n "${extra_env_json}" ]; then
                 envs_obj=$(echo "${extra_env_json}" | jq '[.[] | split("=") | {(.[0]): (.[1:] | join("="))}] | add // {}')
@@ -627,7 +627,7 @@ worker_backend_status() {
 
     case "${backend}" in
         docker)       container_status_worker "${worker_name}" ;;
-        cloud-aliyun) sae_status_worker "${worker_name}" ;;
+        aliyun) sae_status_worker "${worker_name}" ;;
         none)         echo "unknown" ;;
     esac
 }
@@ -639,7 +639,7 @@ worker_backend_stop() {
 
     case "${backend}" in
         docker)       container_stop_worker "${worker_name}" ;;
-        cloud-aliyun) sae_stop_worker "${worker_name}" ;;
+        aliyun) sae_stop_worker "${worker_name}" ;;
         none)         return 1 ;;
     esac
 }
@@ -651,7 +651,7 @@ worker_backend_start() {
 
     case "${backend}" in
         docker)       container_start_worker "${worker_name}" ;;
-        cloud-aliyun) sae_start_worker "${worker_name}" ;;
+        aliyun) sae_start_worker "${worker_name}" ;;
         none)         return 1 ;;
     esac
 }
@@ -663,7 +663,7 @@ worker_backend_delete() {
 
     case "${backend}" in
         docker)       container_remove_worker "${worker_name}" ;;
-        cloud-aliyun) sae_delete_worker "${worker_name}" ;;
+        aliyun) sae_delete_worker "${worker_name}" ;;
         none)         return 1 ;;
     esac
 }

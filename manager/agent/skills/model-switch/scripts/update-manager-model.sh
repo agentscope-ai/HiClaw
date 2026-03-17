@@ -114,7 +114,7 @@ if [ "${HTTP_CODE}" != "200" ]; then
     echo "ERROR: Model test failed (HTTP ${HTTP_CODE}): ${RESP_BODY}"
     echo ""
     echo "The model '${MODEL_NAME}' is not reachable via the AI Gateway."
-    if [ "${HICLAW_RUNTIME:-}" = "cloud-aliyun" ]; then
+    if [ "${HICLAW_RUNTIME:-}" = "aliyun" ]; then
         echo "Please check the Alibaba Cloud AI Gateway console to confirm the model route is configured."
     else
         echo "Please check the Higress Console to confirm the AI route is configured for this model:"

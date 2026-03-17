@@ -9,7 +9,7 @@ description: Manage MCP Servers on the Higress AI Gateway -- create, update, lis
 
 You manage MCP Servers on the Higress AI Gateway. MCP Servers expose REST APIs as tools that you and Workers can invoke. Use the unified setup script to create/update servers from YAML templates, and the curl/mcporter commands below for listing, deleting, calling tools, and fine-grained access control.
 
-> **Cloud deployment (SAE) note:** The `setup-mcp-server.sh` script and Higress Console API commands in this document are only available in local deployment mode. In cloud mode (`HICLAW_RUNTIME=cloud-aliyun`), MCP Servers are managed through the Alibaba Cloud AI Gateway console. Cloud MCP Server management via script will be supported in a future release. If the admin asks to configure an MCP Server in cloud mode, direct them to the AI Gateway console.
+> **Cloud deployment (SAE) note:** The `setup-mcp-server.sh` script and Higress Console API commands in this document are only available in local deployment mode. In cloud mode (`HICLAW_RUNTIME=aliyun`), MCP Servers are managed through the Alibaba Cloud AI Gateway console. Cloud MCP Server management via script will be supported in a future release. If the admin asks to configure an MCP Server in cloud mode, direct them to the AI Gateway console.
 
 Built-in YAML templates are at `/opt/hiclaw/agent/skills/mcp-server-management/references/mcp-*.yaml`.
 

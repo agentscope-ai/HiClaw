@@ -1,8 +1,8 @@
 #!/bin/bash
 # start-manager-agent.sh - Initialize and start the Manager Agent
-# This is the last component to start (priority 800).
-# It waits for all dependencies, creates Matrix users, configures Higress,
-# creates symlinks for host directory access, and launches OpenClaw.
+# Supports both local (supervisord) and cloud (SAE single-process) deployments.
+# In local mode this is the last supervisord component to start (priority 800).
+# In cloud mode (HICLAW_RUNTIME=aliyun) this is the container entrypoint.
 
 source /opt/hiclaw/scripts/lib/hiclaw-env.sh
 
@@ -19,38 +19,68 @@ MATRIX_DOMAIN="${HICLAW_MATRIX_DOMAIN:-matrix-local.hiclaw.io:8080}"
 AI_GATEWAY_DOMAIN="${HICLAW_AI_GATEWAY_DOMAIN:-aigw-local.hiclaw.io}"
 
 # ============================================================
-# Create symlink for host directory access
-# If /host-share is mounted, create a symlink using the original host's HOME path
+# Cloud mode: validate required environment variables + initial credentials
 # ============================================================
-if [ -d "/host-share" ]; then
-    # Determine the original host's home directory path for consistent access
-    # The user can set HOST_ORIGINAL_HOME via environment variable if needed
-    ORIGINAL_HOST_HOME="${HOST_ORIGINAL_HOME:-$HOME}"
-
-    # Only create the symlink if it won't conflict with existing paths in the container
-    if [ ! -e "${ORIGINAL_HOST_HOME}" ] && [ "${ORIGINAL_HOST_HOME}" != "/" ] && [ "${ORIGINAL_HOST_HOME}" != "/root" ] && [ "${ORIGINAL_HOST_HOME}" != "/data" ] && [ "${ORIGINAL_HOST_HOME}" != "/host-share" ]; then
-        # Create parent directories if they don't exist
-        mkdir -p "$(dirname "${ORIGINAL_HOST_HOME}")"
-
-        # Create symlink from original host home path to the mounted host share
-        ln -sfn /host-share "${ORIGINAL_HOST_HOME}"
-        log "Created symlink: ${ORIGINAL_HOST_HOME} -> /host-share"
-        log "Host files now accessible at: ${ORIGINAL_HOST_HOME}/"
-    else
-        log "Skipping symlink creation to avoid conflict with existing path: ${ORIGINAL_HOST_HOME}"
-        # Create a fallback symlink with a different name
-        ln -sfn /host-share /root/host-home
-        log "Created fallback symlink: /root/host-home -> /host-share"
-    fi
-else
-    log "Host share directory (/host-share) not found, skipping symlink creation"
+if [ "${HICLAW_RUNTIME}" = "aliyun" ]; then
+    : "${HICLAW_MATRIX_URL:?HICLAW_MATRIX_URL is required}"
+    : "${HICLAW_MATRIX_DOMAIN:?HICLAW_MATRIX_DOMAIN is required}"
+    : "${HICLAW_AI_GATEWAY_URL:?HICLAW_AI_GATEWAY_URL is required}"
+    : "${HICLAW_MANAGER_GATEWAY_KEY:?HICLAW_MANAGER_GATEWAY_KEY is required}"
+    : "${HICLAW_REGISTRATION_TOKEN:?HICLAW_REGISTRATION_TOKEN is required}"
+    : "${HICLAW_ADMIN_USER:?HICLAW_ADMIN_USER is required}"
+    : "${HICLAW_ADMIN_PASSWORD:?HICLAW_ADMIN_PASSWORD is required}"
+    log "Cloud mode: validating environment... OK"
+    log "  Matrix: ${HICLAW_MATRIX_SERVER}, AI Gateway: ${HICLAW_AI_GATEWAY_URL}, OSS: ${HICLAW_STORAGE_BUCKET}"
+    ensure_mc_credentials || { log "FATAL: Initial STS credential fetch failed"; exit 1; }
 fi
 
-# Add local domains to /etc/hosts so they resolve inside the container
-HOSTS_DOMAINS="${MATRIX_DOMAIN%%:*} ${HICLAW_MATRIX_CLIENT_DOMAIN:-matrix-client-local.hiclaw.io} ${AI_GATEWAY_DOMAIN} ${HICLAW_FS_DOMAIN:-fs-local.hiclaw.io}"
-if ! grep -q "${AI_GATEWAY_DOMAIN}" /etc/hosts 2>/dev/null; then
-    echo "127.0.0.1 ${HOSTS_DOMAINS}" >> /etc/hosts
-    log "Added local domains to /etc/hosts"
+# ============================================================
+# Local mode: host symlinks, /etc/hosts, wait for local services
+# ============================================================
+if [ "${HICLAW_RUNTIME}" != "aliyun" ]; then
+    # Create symlink for host directory access
+    if [ -d "/host-share" ]; then
+        ORIGINAL_HOST_HOME="${HOST_ORIGINAL_HOME:-$HOME}"
+        if [ ! -e "${ORIGINAL_HOST_HOME}" ] && [ "${ORIGINAL_HOST_HOME}" != "/" ] && [ "${ORIGINAL_HOST_HOME}" != "/root" ] && [ "${ORIGINAL_HOST_HOME}" != "/data" ] && [ "${ORIGINAL_HOST_HOME}" != "/host-share" ]; then
+            mkdir -p "$(dirname "${ORIGINAL_HOST_HOME}")"
+            ln -sfn /host-share "${ORIGINAL_HOST_HOME}"
+            log "Created symlink: ${ORIGINAL_HOST_HOME} -> /host-share"
+        else
+            ln -sfn /host-share /root/host-home
+            log "Created fallback symlink: /root/host-home -> /host-share"
+        fi
+    fi
+
+    # Add local domains to /etc/hosts
+    HOSTS_DOMAINS="${MATRIX_DOMAIN%%:*} ${HICLAW_MATRIX_CLIENT_DOMAIN:-matrix-client-local.hiclaw.io} ${AI_GATEWAY_DOMAIN} ${HICLAW_FS_DOMAIN:-fs-local.hiclaw.io}"
+    if ! grep -q "${AI_GATEWAY_DOMAIN}" /etc/hosts 2>/dev/null; then
+        echo "127.0.0.1 ${HOSTS_DOMAINS}" >> /etc/hosts
+        log "Added local domains to /etc/hosts"
+    fi
+
+    # Wait for local infrastructure
+    waitForService "Higress Gateway" "127.0.0.1" 8080 180
+    waitForService "Higress Console" "127.0.0.1" 8001 180
+    waitForService "Tuwunel" "127.0.0.1" 6167 120
+    waitForHTTP "Tuwunel Matrix API" "${HICLAW_MATRIX_SERVER}/_tuwunel/server_version" 120
+    waitForService "MinIO" "127.0.0.1" 9000 120
+else
+    # Cloud mode: wait for external Tuwunel
+    log "Waiting for Tuwunel Matrix server at ${HICLAW_MATRIX_SERVER}..."
+    _retry=0
+    while [ "${_retry}" -lt 30 ]; do
+        if curl -sf "${HICLAW_MATRIX_SERVER}/_matrix/client/versions" > /dev/null 2>&1; then
+            log "Tuwunel is ready"
+            break
+        fi
+        _retry=$((_retry + 1))
+        log "  Waiting for Tuwunel (attempt ${_retry}/30)..."
+        sleep 5
+    done
+    if [ "${_retry}" -ge 30 ]; then
+        log "ERROR: Tuwunel not reachable at ${HICLAW_MATRIX_SERVER}"
+        exit 1
+    fi
 fi
 
 # ============================================================
@@ -80,17 +110,21 @@ export HICLAW_MANAGER_PASSWORD="${HICLAW_MANAGER_PASSWORD}"
 EOF
 chmod 600 "${SECRETS_FILE}"
 
-# ============================================================
-# Wait for all dependencies
-# ============================================================
-waitForService "Higress Gateway" "127.0.0.1" 8080 180
-waitForService "Higress Console" "127.0.0.1" 8001 180
-waitForService "Tuwunel" "127.0.0.1" 6167 120
-waitForHTTP "Tuwunel Matrix API" "http://127.0.0.1:6167/_tuwunel/server_version" 120
-waitForService "MinIO" "127.0.0.1" 9000 120
+# Cloud mode: pull workspace from OSS before initialization
+if [ "${HICLAW_RUNTIME}" = "aliyun" ]; then
+    HICLAW_FS="/root/hiclaw-fs"
+    mkdir -p "${HICLAW_FS}/shared" "${HICLAW_FS}/agents"
+    log "Pulling workspace from OSS..."
+    ensure_mc_credentials
+    mc mirror "${HICLAW_STORAGE_PREFIX}/manager/" /root/manager-workspace/ --overwrite 2>/dev/null || true
+    mc mirror "${HICLAW_STORAGE_PREFIX}/shared/" "${HICLAW_FS}/shared/" --overwrite 2>/dev/null || true
+    mc mirror "${HICLAW_STORAGE_PREFIX}/agents/" "${HICLAW_FS}/agents/" --overwrite 2>/dev/null || true
+    # Symlink hiclaw-fs into workspace for agent access
+    ln -sfn "${HICLAW_FS}" /root/manager-workspace/hiclaw-fs
+fi
 
 # ============================================================
-# Initialize / upgrade Manager workspace (local only, not synced to MinIO)
+# Initialize / upgrade Manager workspace
 # First boot: full init via upgrade-builtins.sh
 # Subsequent boots: compare image version; upgrade only if changed
 # ============================================================
@@ -112,16 +146,18 @@ else
     log "Workspace up to date (version: ${IMAGE_VERSION})"
 fi
 
-# Wait for mc mirror initialization (shared + worker data in /root/hiclaw-fs/)
-log "Waiting for MinIO storage initialization..."
-while [ ! -f /root/hiclaw-fs/.initialized ]; do sleep 2; done
-log "MinIO storage initialized"
+# Local mode: wait for mc mirror initialization (shared + worker data in /root/hiclaw-fs/)
+if [ "${HICLAW_RUNTIME}" != "aliyun" ]; then
+    log "Waiting for MinIO storage initialization..."
+    while [ ! -f /root/hiclaw-fs/.initialized ]; do sleep 2; done
+    log "MinIO storage initialized"
+fi
 
 # ============================================================
 # Register Matrix users via Registration API (single-step, no UIAA)
 # ============================================================
 log "Registering human admin Matrix account..."
-curl -sf -X POST http://127.0.0.1:6167/_matrix/client/v3/register \
+curl -sf -X POST ${HICLAW_MATRIX_SERVER}/_matrix/client/v3/register \
     -H 'Content-Type: application/json' \
     -d '{
         "username": "'"${HICLAW_ADMIN_USER}"'",
@@ -133,7 +169,7 @@ curl -sf -X POST http://127.0.0.1:6167/_matrix/client/v3/register \
     }' > /dev/null 2>&1 || log "Admin account may already exist"
 
 log "Registering Manager Agent Matrix account..."
-curl -sf -X POST http://127.0.0.1:6167/_matrix/client/v3/register \
+curl -sf -X POST ${HICLAW_MATRIX_SERVER}/_matrix/client/v3/register \
     -H 'Content-Type: application/json' \
     -d '{
         "username": "manager",
@@ -146,7 +182,7 @@ curl -sf -X POST http://127.0.0.1:6167/_matrix/client/v3/register \
 
 # Get Manager Agent's Matrix access token
 log "Obtaining Manager Matrix access token..."
-_LOGIN_RESPONSE=$(curl -sf -X POST http://127.0.0.1:6167/_matrix/client/v3/login \
+_LOGIN_RESPONSE=$(curl -sf -X POST ${HICLAW_MATRIX_SERVER}/_matrix/client/v3/login \
     -H 'Content-Type: application/json' \
     -d '{
         "type": "m.login.password",
@@ -167,87 +203,186 @@ fi
 log "Manager Matrix token obtained (token prefix: ${MANAGER_TOKEN:0:10}...)"
 
 # ============================================================
-# Initialize Higress Console (Session Cookie auth)
+# Local mode: Initialize Higress Console + configure routes
+# Cloud mode: Create admin DM room + schedule welcome message
 # ============================================================
-COOKIE_FILE="/tmp/higress-session-cookie"
+if [ "${HICLAW_RUNTIME}" != "aliyun" ]; then
+    COOKIE_FILE="/tmp/higress-session-cookie"
 
-# Wait for Higress Console Java app to be fully ready (not just port open)
-# The Spring Boot app may take 10-30s after port opens to serve requests.
-# On first boot: /system/init creates admin. On restart: init returns "already initialized".
-# IMPORTANT: Always attempt /system/init first (idempotent), then login.
-log "Waiting for Higress Console to be fully ready and initializing admin..."
-INIT_DONE=false
-for i in $(seq 1 90); do
-    INIT_RESULT=$(curl -s -X POST http://127.0.0.1:8001/system/init \
-        -H 'Content-Type: application/json' \
-        -d '{"adminUser":{"name":"'"${HICLAW_ADMIN_USER}"'","password":"'"${HICLAW_ADMIN_PASSWORD}"'","displayName":"'"${HICLAW_ADMIN_USER}"'"}}' 2>/dev/null) || true
-    if echo "${INIT_RESULT}" | grep -qE '"success":true|already.?init' 2>/dev/null; then
-        INIT_DONE=true
-        break
-    fi
-    if echo "${INIT_RESULT}" | grep -q '"name"' 2>/dev/null; then
-        INIT_DONE=true
-        break
-    fi
-    sleep 2
-done
-
-if [ "${INIT_DONE}" != "true" ]; then
-    log "ERROR: Higress Console did not become ready within 180s"
-    exit 1
-fi
-log "Higress Console init done"
-
-# Login: init uses "name", login uses "username"
-log "Logging into Higress Console..."
-LOGIN_OK=false
-for i in $(seq 1 10); do
-    HTTP_CODE=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8001/session/login \
-        -H 'Content-Type: application/json' \
-        -c "${COOKIE_FILE}" \
-        -d '{"username":"'"${HICLAW_ADMIN_USER}"'","password":"'"${HICLAW_ADMIN_PASSWORD}"'"}' 2>/dev/null) || true
-    if { [ "${HTTP_CODE}" = "200" ] || [ "${HTTP_CODE}" = "201" ]; } && [ -f "${COOKIE_FILE}" ] && [ -s "${COOKIE_FILE}" ]; then
-        LOGIN_OK=true
-        break
-    fi
-    log "Login attempt $i (HTTP ${HTTP_CODE}), retrying in 3s..."
-    sleep 3
-done
-
-if [ "${LOGIN_OK}" != "true" ]; then
-    log "ERROR: Could not login to Higress Console after retries"
-    exit 1
-fi
-log "Higress Console login successful"
-
-# Verify cookie is valid by calling an API endpoint
-VERIFY_CODE=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8001/v1/consumers -b "${COOKIE_FILE}" 2>/dev/null) || true
-if [ "${VERIFY_CODE}" = "200" ]; then
-    log "Console session verified (cookie valid)"
-else
-    log "WARNING: Console session may be invalid (verify returned HTTP ${VERIFY_CODE})"
-    # Try re-login with a fresh cookie file
-    rm -f "${COOKIE_FILE}"
-    for i in $(seq 1 5); do
-        curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8001/session/login \
+    log "Waiting for Higress Console to be fully ready and initializing admin..."
+    INIT_DONE=false
+    for i in $(seq 1 90); do
+        INIT_RESULT=$(curl -s -X POST http://127.0.0.1:8001/system/init \
             -H 'Content-Type: application/json' \
-            -c "${COOKIE_FILE}" \
-            -d '{"username":"'"${HICLAW_ADMIN_USER}"'","password":"'"${HICLAW_ADMIN_PASSWORD}"'"}' 2>/dev/null
-        VERIFY2=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8001/v1/consumers -b "${COOKIE_FILE}" 2>/dev/null) || true
-        if [ "${VERIFY2}" = "200" ]; then
-            log "Re-login successful, session verified"
+            -d '{"adminUser":{"name":"'"${HICLAW_ADMIN_USER}"'","password":"'"${HICLAW_ADMIN_PASSWORD}"'","displayName":"'"${HICLAW_ADMIN_USER}"'"}}' 2>/dev/null) || true
+        if echo "${INIT_RESULT}" | grep -qE '"success":true|already.?init' 2>/dev/null; then
+            INIT_DONE=true
+            break
+        fi
+        if echo "${INIT_RESULT}" | grep -q '"name"' 2>/dev/null; then
+            INIT_DONE=true
             break
         fi
         sleep 2
     done
+
+    if [ "${INIT_DONE}" != "true" ]; then
+        log "ERROR: Higress Console did not become ready within 180s"
+        exit 1
+    fi
+    log "Higress Console init done"
+
+    log "Logging into Higress Console..."
+    LOGIN_OK=false
+    for i in $(seq 1 10); do
+        HTTP_CODE=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8001/session/login \
+            -H 'Content-Type: application/json' \
+            -c "${COOKIE_FILE}" \
+            -d '{"username":"'"${HICLAW_ADMIN_USER}"'","password":"'"${HICLAW_ADMIN_PASSWORD}"'"}' 2>/dev/null) || true
+        if { [ "${HTTP_CODE}" = "200" ] || [ "${HTTP_CODE}" = "201" ]; } && [ -f "${COOKIE_FILE}" ] && [ -s "${COOKIE_FILE}" ]; then
+            LOGIN_OK=true
+            break
+        fi
+        log "Login attempt $i (HTTP ${HTTP_CODE}), retrying in 3s..."
+        sleep 3
+    done
+
+    if [ "${LOGIN_OK}" != "true" ]; then
+        log "ERROR: Could not login to Higress Console after retries"
+        exit 1
+    fi
+    log "Higress Console login successful"
+
+    VERIFY_CODE=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8001/v1/consumers -b "${COOKIE_FILE}" 2>/dev/null) || true
+    if [ "${VERIFY_CODE}" = "200" ]; then
+        log "Console session verified (cookie valid)"
+    else
+        log "WARNING: Console session may be invalid (verify returned HTTP ${VERIFY_CODE})"
+        rm -f "${COOKIE_FILE}"
+        for i in $(seq 1 5); do
+            curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8001/session/login \
+                -H 'Content-Type: application/json' \
+                -c "${COOKIE_FILE}" \
+                -d '{"username":"'"${HICLAW_ADMIN_USER}"'","password":"'"${HICLAW_ADMIN_PASSWORD}"'"}' 2>/dev/null
+            VERIFY2=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8001/v1/consumers -b "${COOKIE_FILE}" 2>/dev/null) || true
+            if [ "${VERIFY2}" = "200" ]; then
+                log "Re-login successful, session verified"
+                break
+            fi
+            sleep 2
+        done
+    fi
+
+    export HIGRESS_COOKIE_FILE="${COOKIE_FILE}"
+
+    # Configure Higress routes, consumers, MCP servers
+    /opt/hiclaw/scripts/init/setup-higress.sh
+else
+    # Cloud mode: create admin DM room and schedule welcome message
+    MANAGER_FULL_ID="@manager:${MATRIX_DOMAIN}"
+    ADMIN_FULL_ID="@${HICLAW_ADMIN_USER}:${MATRIX_DOMAIN}"
+
+    log "Logging in as admin to create DM room..."
+    _ADMIN_LOGIN=$(curl -sf -X POST "${HICLAW_MATRIX_SERVER}/_matrix/client/v3/login" \
+        -H 'Content-Type: application/json' \
+        -d '{
+            "type": "m.login.password",
+            "identifier": {"type": "m.id.user", "user": "'"${HICLAW_ADMIN_USER}"'"},
+            "password": "'"${HICLAW_ADMIN_PASSWORD}"'"
+        }' 2>&1) || true
+
+    ADMIN_MATRIX_TOKEN=$(echo "${_ADMIN_LOGIN}" | jq -r '.access_token // empty' 2>/dev/null)
+    if [ -z "${ADMIN_MATRIX_TOKEN}" ]; then
+        log "WARNING: Failed to login as admin, skipping DM room creation"
+    else
+        # Search for existing DM room with Manager (idempotent)
+        DM_ROOM_ID=""
+        _JOINED_ROOMS=$(curl -sf "${HICLAW_MATRIX_SERVER}/_matrix/client/v3/joined_rooms" \
+            -H "Authorization: Bearer ${ADMIN_MATRIX_TOKEN}" 2>/dev/null \
+            | jq -r '.joined_rooms[]' 2>/dev/null) || true
+        for _rid in ${_JOINED_ROOMS}; do
+            _members=$(curl -sf "${HICLAW_MATRIX_SERVER}/_matrix/client/v3/rooms/${_rid}/members" \
+                -H "Authorization: Bearer ${ADMIN_MATRIX_TOKEN}" 2>/dev/null \
+                | jq -r '.chunk[].state_key' 2>/dev/null) || continue
+            _count=$(echo "${_members}" | wc -l | xargs)
+            if [ "${_count}" = "2" ] && echo "${_members}" | grep -q "@manager:"; then
+                DM_ROOM_ID="${_rid}"
+                break
+            fi
+        done
+
+        if [ -n "${DM_ROOM_ID}" ]; then
+            log "Existing DM room found: ${DM_ROOM_ID}"
+        else
+            log "Creating DM room with Manager..."
+            _CREATE_RESP=$(curl -sf -X POST "${HICLAW_MATRIX_SERVER}/_matrix/client/v3/createRoom" \
+                -H "Authorization: Bearer ${ADMIN_MATRIX_TOKEN}" \
+                -H 'Content-Type: application/json' \
+                -d "{\"is_direct\":true,\"invite\":[\"${MANAGER_FULL_ID}\"],\"preset\":\"trusted_private_chat\"}" 2>/dev/null) || true
+            DM_ROOM_ID=$(echo "${_CREATE_RESP}" | jq -r '.room_id // empty' 2>/dev/null)
+            if [ -n "${DM_ROOM_ID}" ]; then
+                log "DM room created: ${DM_ROOM_ID}"
+            else
+                log "WARNING: Failed to create DM room: ${_CREATE_RESP}"
+            fi
+        fi
+
+        # Schedule welcome message in background (only on first boot)
+        if [ -n "${DM_ROOM_ID}" ] && [ ! -f "/root/manager-workspace/soul-configured" ]; then
+            log "Scheduling welcome message (background, waiting for OpenClaw to start)..."
+            (
+                _HICLAW_LANGUAGE="${HICLAW_LANGUAGE:-zh}"
+                _HICLAW_TIMEZONE="${TZ:-Asia/Shanghai}"
+                _wait=0
+                _joined=false
+                while [ "${_wait}" -lt 120 ]; do
+                    _m=$(curl -sf "${HICLAW_MATRIX_SERVER}/_matrix/client/v3/rooms/${DM_ROOM_ID}/members" \
+                        -H "Authorization: Bearer ${ADMIN_MATRIX_TOKEN}" 2>/dev/null \
+                        | jq -r '.chunk[].state_key' 2>/dev/null) || true
+                    if echo "${_m}" | grep -q "${MANAGER_FULL_ID}"; then
+                        _joined=true
+                        break
+                    fi
+                    sleep 3
+                    _wait=$((_wait + 3))
+                done
+                if [ "${_joined}" != "true" ]; then
+                    echo "[cloud-manager] WARNING: Manager did not join DM room within 120s, skipping welcome message"
+                    exit 0
+                fi
+                _welcome_msg="This is an automated message from the HiClaw cloud deployment. This is a fresh installation.
+
+--- Installation Context ---
+User Language: ${_HICLAW_LANGUAGE}  (zh = Chinese, en = English)
+User Timezone: ${_HICLAW_TIMEZONE}  (IANA timezone identifier)
+---
+
+You are an AI agent that manages a team of worker agents. Your identity and personality have not been configured yet — the human admin is about to meet you for the first time.
+
+Please begin the onboarding conversation:
+
+1. Greet the admin warmly and briefly describe what you can do (coordinate workers, manage tasks, run multi-agent projects)
+2. The user has selected \"${_HICLAW_LANGUAGE}\" as their preferred language during installation. Use this language for your greeting and all subsequent communication.
+3. The user's timezone is ${_HICLAW_TIMEZONE}. Based on this timezone, you may infer their likely region and suggest additional language options.
+4. Ask them: a) What would they like to call you? b) Communication style preference? c) Any behavior guidelines? d) Confirm default language
+5. After they reply, write their preferences to ~/SOUL.md
+6. Confirm what you wrote, and ask if they would like to adjust anything
+7. Once confirmed, run: touch ~/soul-configured
+
+The human admin will start chatting shortly."
+                _txn_id="welcome-cloud-$(date +%s)"
+                _payload=$(jq -nc --arg body "${_welcome_msg}" '{"msgtype":"m.text","body":$body}')
+                curl -sf -X PUT "${HICLAW_MATRIX_SERVER}/_matrix/client/v3/rooms/${DM_ROOM_ID}/send/m.room.message/${_txn_id}" \
+                    -H "Authorization: Bearer ${ADMIN_MATRIX_TOKEN}" \
+                    -H 'Content-Type: application/json' \
+                    -d "${_payload}" > /dev/null 2>&1 \
+                    && echo "[cloud-manager] Welcome message sent to DM room" \
+                    || echo "[cloud-manager] WARNING: Failed to send welcome message"
+            ) &
+            log "Welcome message background process started (PID: $!)"
+        fi
+    fi
 fi
-
-export HIGRESS_COOKIE_FILE="${COOKIE_FILE}"
-
-# ============================================================
-# Configure Higress routes, consumers, MCP servers
-# ============================================================
-/opt/hiclaw/scripts/init/setup-higress.sh
 
 # ============================================================
 # Generate Manager Agent openclaw.json from template
@@ -335,6 +470,25 @@ else
     envsubst < /opt/hiclaw/configs/manager-openclaw.json.tmpl > /root/manager-workspace/openclaw.json
     _written_token=$(jq -r '.channels.matrix.accessToken' /root/manager-workspace/openclaw.json 2>/dev/null)
     log "Matrix token written from template (prefix: ${_written_token:0:10}...)"
+fi
+
+# Cloud mode: overlay cloud-specific settings onto generated config
+if [ "${HICLAW_RUNTIME}" = "aliyun" ]; then
+    log "Applying cloud overlay to openclaw.json..."
+    jq --arg homeserver "${HICLAW_MATRIX_SERVER}" \
+       --arg gateway "${HICLAW_AI_GATEWAY_URL}/v1" \
+       --arg key "${HICLAW_MANAGER_GATEWAY_KEY}" \
+       '.gateway.port = 9000
+        | .gateway.bind = "lan"
+        | .channels.matrix.homeserver = $homeserver
+        | .models.providers["hiclaw-gateway"].baseUrl = $gateway
+        | .models.providers["hiclaw-gateway"].apiKey = $key
+        | .hooks.token = $key
+        | .commands.restart = false
+        | .session.group = {"mode": "idle", "idleMinutes": 2880}' \
+       /root/manager-workspace/openclaw.json > /tmp/openclaw-cloud.json && \
+        mv /tmp/openclaw-cloud.json /root/manager-workspace/openclaw.json
+    log "Cloud overlay applied"
 fi
 
 # ============================================================
@@ -514,7 +668,7 @@ if [ -f /root/manager-workspace/.upgrade-pending-worker-notify ]; then
                     _txn_id="upgrade-$(date +%s%N)"
                     _msg="@${_worker_name}:${MATRIX_DOMAIN} Manager upgraded builtin files (AGENTS.md, skills). Please use your file-sync skill to sync the latest config."
                     curl -sf -X PUT \
-                        "http://127.0.0.1:6167/_matrix/client/v3/rooms/${_room_id}/send/m.room.message/${_txn_id}" \
+                        "${HICLAW_MATRIX_SERVER}/_matrix/client/v3/rooms/${_room_id}/send/m.room.message/${_txn_id}" \
                         -H "Authorization: Bearer ${MANAGER_TOKEN}" \
                         -H 'Content-Type: application/json' \
                         -d "{\"msgtype\":\"m.text\",\"body\":\"${_msg}\",\"m.mentions\":{\"user_ids\":[\"${_worker_id}\"]}}" \
@@ -562,4 +716,43 @@ log "Cleaned up any orphaned session write locks"
 rm -rf "${HOME}/.openclaw/matrix" 2>/dev/null || true
 log "Cleaned Matrix crypto storage (will re-establish E2EE sessions)"
 
-exec openclaw gateway run --verbose --force
+# Cloud mode: start background file sync (workspace ↔ OSS) and initial push
+if [ "${HICLAW_RUNTIME}" = "aliyun" ]; then
+    log "Syncing initial workspace to OSS..."
+    ensure_mc_credentials
+    mc mirror /root/manager-workspace/ "${HICLAW_STORAGE_PREFIX}/manager/" --overwrite \
+        --exclude ".openclaw/**" --exclude ".cache/**" 2>/dev/null || true
+
+    # Local → OSS: change-triggered sync
+    (
+        while true; do
+            CHANGED=$(find /root/manager-workspace/ -type f -newermt "15 seconds ago" 2>/dev/null | head -1)
+            if [ -n "${CHANGED}" ]; then
+                ensure_mc_credentials 2>/dev/null || true
+                mc mirror /root/manager-workspace/ "${HICLAW_STORAGE_PREFIX}/manager/" --overwrite \
+                    --exclude ".openclaw/**" --exclude ".cache/**" --exclude ".npm/**" \
+                    --exclude ".local/**" --exclude ".mc/**" 2>/dev/null || true
+            fi
+            sleep 10
+        done
+    ) &
+    log "Local→OSS sync started (PID: $!)"
+
+    # OSS → Local: periodic pull (shared data, agent configs)
+    (
+        while true; do
+            sleep 300
+            ensure_mc_credentials 2>/dev/null || true
+            mc mirror "${HICLAW_STORAGE_PREFIX}/shared/" /root/hiclaw-fs/shared/ --overwrite --newer-than "5m" 2>/dev/null || true
+            mc mirror "${HICLAW_STORAGE_PREFIX}/agents/" /root/hiclaw-fs/agents/ --overwrite --newer-than "5m" 2>/dev/null || true
+        done
+    ) &
+    log "OSS→Local sync started (every 5m, PID: $!)"
+fi
+
+# Launch OpenClaw
+OPENCLAW_ARGS="--verbose --force"
+if [ "${HICLAW_RUNTIME}" = "aliyun" ]; then
+    OPENCLAW_ARGS="${OPENCLAW_ARGS} --bind lan"
+fi
+exec openclaw gateway run ${OPENCLAW_ARGS}

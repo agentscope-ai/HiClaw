@@ -67,7 +67,7 @@ export WORKER_GATEWAY_KEY
 # Matrix Server URL:
 #   Cloud mode: Worker connects directly via NLB (HICLAW_MATRIX_URL), not through Higress
 #   Local mode: Worker connects via Higress internal network (domain:8080)
-if [ "${HICLAW_RUNTIME}" = "cloud-aliyun" ] && [ -n "${HICLAW_MATRIX_URL:-}" ]; then
+if [ "${HICLAW_RUNTIME}" = "aliyun" ] && [ -n "${HICLAW_MATRIX_URL:-}" ]; then
     export HICLAW_MATRIX_SERVER="${HICLAW_MATRIX_URL}"
 else
     export HICLAW_MATRIX_SERVER="http://${MATRIX_DOMAIN%%:*}:${MATRIX_SERVER_PORT}"
@@ -77,7 +77,7 @@ export HICLAW_MATRIX_DOMAIN="${MATRIX_DOMAIN_FOR_ID}"
 # AI Gateway URL:
 #   Cloud mode: Worker connects via external NLB (HICLAW_AI_GATEWAY_URL)
 #   Local mode: Worker connects via Higress internal network (domain:8080)
-if [ "${HICLAW_RUNTIME}" = "cloud-aliyun" ] && [ -n "${HICLAW_AI_GATEWAY_URL:-}" ]; then
+if [ "${HICLAW_RUNTIME}" = "aliyun" ] && [ -n "${HICLAW_AI_GATEWAY_URL:-}" ]; then
     export HICLAW_AI_GATEWAY="${HICLAW_AI_GATEWAY_URL}"
 else
     export HICLAW_AI_GATEWAY="http://${AI_GATEWAY_DOMAIN}:8080"

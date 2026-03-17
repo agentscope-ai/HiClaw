@@ -27,8 +27,8 @@ unset _gw_provider_file
 # ── Backend detection ─────────────────────────────────────────────────────────
 
 _detect_gateway_backend() {
-    if [ "${HICLAW_RUNTIME:-}" = "cloud-aliyun" ]; then
-        echo "cloud-aliyun"
+    if [ "${HICLAW_RUNTIME:-}" = "aliyun" ]; then
+        echo "aliyun"
     else
         echo "higress"
     fi
@@ -73,7 +73,7 @@ gateway_create_consumer() {
     backend=$(_detect_gateway_backend)
 
     case "${backend}" in
-        cloud-aliyun)
+        aliyun)
             _gateway_cloud_create_consumer "${consumer_name}" "${credential_key}"
             ;;
         higress)
@@ -137,7 +137,7 @@ gateway_authorize_routes() {
     backend=$(_detect_gateway_backend)
 
     case "${backend}" in
-        cloud-aliyun)
+        aliyun)
             _gateway_cloud_authorize_routes "${consumer_name}"
             ;;
         higress)
@@ -209,7 +209,7 @@ gateway_authorize_mcp() {
     backend=$(_detect_gateway_backend)
 
     case "${backend}" in
-        cloud-aliyun)
+        aliyun)
             # Cloud: MCP authorization is managed via AI Gateway console
             TARGET_MCP_LIST="${mcp_servers_csv}"
             ;;

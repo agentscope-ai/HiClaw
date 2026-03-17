@@ -1,8 +1,8 @@
 # ============================================================
-# HiClaw Cloud Manager Agent - Lightweight FC Container
+# HiClaw Cloud Manager Agent - Lightweight SAE Container
 # ============================================================
 # Based on openclaw-base (same as Worker), but carries Manager
-# agent definitions and a cloud-adapted entrypoint.
+# agent definitions and the unified start-manager-agent.sh entrypoint.
 #
 # Does NOT include Higress, Tuwunel, MinIO, or Element Web.
 # All infrastructure is external (SAE + AI Gateway + OSS).
@@ -43,23 +43,21 @@ ENV PATH="/opt/openclaw/packages/clawdbot/node_modules/.bin:${PATH}"
 COPY manager/agent/ /opt/hiclaw/agent/
 COPY manager/configs/ /opt/hiclaw/configs/
 
-# ---- Copy shared libraries (shared first, then manager-only overlays) ----
+# ---- Copy scripts: shared libs first, then manager scripts (includes init/) ----
 COPY shared/lib/ /opt/hiclaw/scripts/lib/
-COPY manager/scripts/lib/ /opt/hiclaw/scripts/lib/
+COPY manager/scripts/ /opt/hiclaw/scripts/
 
-# ---- Copy cloud entrypoint and configs ----
+# ---- Copy cloud-specific scripts (SAE + AI Gateway Python API) ----
 COPY cloud-manager/cloud-scripts/ /opt/hiclaw/cloud-scripts/
-COPY cloud-manager/cloud-configs/ /opt/hiclaw/cloud-configs/
-
-RUN chmod +x /opt/hiclaw/cloud-scripts/*.sh && \
-    chmod +x /opt/hiclaw/scripts/lib/*.sh 2>/dev/null || true
 
 ARG BUILTIN_VERSION=latest
 RUN echo "${BUILTIN_VERSION}" > /opt/hiclaw/agent/.builtin-version
 
-# Make skill scripts executable
-RUN find /opt/hiclaw/agent/skills/*/scripts -name '*.sh' -exec chmod +x {} + 2>/dev/null || true && \
-    find /opt/hiclaw/agent/worker-skills/*/scripts -name '*.sh' -exec chmod +x {} + 2>/dev/null || true
+# Make all scripts executable
+RUN find /opt/hiclaw/scripts -name '*.sh' -exec chmod +x {} + && \
+    find /opt/hiclaw/agent/skills/*/scripts -name '*.sh' -exec chmod +x {} + 2>/dev/null || true && \
+    find /opt/hiclaw/agent/worker-skills/*/scripts -name '*.sh' -exec chmod +x {} + 2>/dev/null || true && \
+    find /opt/hiclaw/agent/worker-agent/skills/*/scripts -name '*.sh' -exec chmod +x {} + 2>/dev/null || true
 
 # Workspace directory
 RUN mkdir -p /root/manager-workspace /root/hiclaw-fs /root/.openclaw
@@ -69,4 +67,6 @@ WORKDIR /root/manager-workspace
 # FC custom container listens on this port (OpenClaw gateway)
 EXPOSE 9000
 
-ENTRYPOINT ["/opt/hiclaw/cloud-scripts/cloud-manager-entrypoint.sh"]
+# Reuse the unified start-manager-agent.sh — it detects HICLAW_RUNTIME=aliyun
+# and branches accordingly (no supervisord needed for cloud)
+ENTRYPOINT ["/opt/hiclaw/scripts/init/start-manager-agent.sh"]
