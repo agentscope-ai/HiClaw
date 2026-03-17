@@ -169,13 +169,11 @@ def sae_create(args):
         print(json.dumps({"error": "No worker image. Set HICLAW_SAE_WORKER_IMAGE or --image."}))
         sys.exit(1)
 
-    # Base envs for worker
+    # Base envs for worker (runtime-specific envs are passed via --envs by caller)
     base_envs = {
         "HICLAW_WORKER_NAME": args.name,
         "HICLAW_REGION": region,
         "TZ": "Asia/Shanghai",
-        "OPENCLAW_DISABLE_BONJOUR": "1",
-        "OPENCLAW_MDNS_HOSTNAME": f"hiclaw-w-{args.name}",
     }
     base_envs.update(envs)
 

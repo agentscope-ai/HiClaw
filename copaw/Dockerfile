@@ -40,6 +40,7 @@ RUN if [ -n "${APT_MIRROR}" ]; then \
         libjemalloc2 \
         curl \
         git \
+        jq \
         tzdata \
     && rm -rf /var/lib/apt/lists/*
 
@@ -103,6 +104,9 @@ RUN rm -rf /tmp/copaw-worker/ /tmp/lite-copaw/
 # Entrypoint script
 COPY scripts/copaw-worker-entrypoint.sh /opt/hiclaw/scripts/copaw-worker-entrypoint.sh
 RUN chmod +x /opt/hiclaw/scripts/copaw-worker-entrypoint.sh
+
+# Shared environment bootstrap and credential management (hiclaw-env.sh, oss-credentials.sh)
+COPY --from=shared . /opt/hiclaw/scripts/lib/
 
 # Create workspace directories for both modes
 RUN mkdir -p /root/.copaw-worker
