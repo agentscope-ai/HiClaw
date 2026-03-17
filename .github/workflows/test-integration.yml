@@ -149,9 +149,11 @@ jobs:
         continue-on-error: true
         run: |
           mkdir -p baseline-metrics
-          # Find latest release with a metrics asset
-          LATEST=$(gh release list --limit 20 --json tagName,assets \
-            --jq '[.[] | select(.assets | map(.name) | contains(["metrics-baseline.json"]))] | .[0].tagName' \
+          # Find latest release with a metrics-baseline.json asset
+          # Note: gh release list --json does not support the "assets" field,
+          # so we use the GitHub API directly.
+          LATEST=$(gh api repos/${{ github.repository }}/releases --paginate --jq \
+            '[.[] | select(.assets | map(.name) | any(. == "metrics-baseline.json"))] | .[0].tag_name' \
             2>/dev/null || true)
           if [ -n "$LATEST" ] && [ "$LATEST" != "null" ]; then
             echo "Downloading baseline from release $LATEST"
