@@ -78,7 +78,7 @@ jobs:
 
       - name: Build and push multi-arch images
         run: |
-          make push-manager push-worker push-copaw-worker \
+          make push-manager push-manager-aliyun push-worker push-copaw-worker \
             VERSION=${{ inputs.version }} \
             OPENCLAW_BASE_VERSION=${{ inputs.version }} \
             REGISTRY=${{ env.REGISTRY }} \
@@ -90,6 +90,7 @@ jobs:
         env:
           BASE_IMAGE: ${{ env.REGISTRY }}/${{ env.REPO }}/openclaw-base
           MANAGER_IMAGE: ${{ env.REGISTRY }}/${{ env.REPO }}/hiclaw-manager
+          MANAGER_ALIYUN_IMAGE: ${{ env.REGISTRY }}/${{ env.REPO }}/hiclaw-manager-aliyun
           WORKER_IMAGE: ${{ env.REGISTRY }}/${{ env.REPO }}/hiclaw-worker
           COPAW_WORKER_IMAGE: ${{ env.REGISTRY }}/${{ env.REPO }}/hiclaw-copaw-worker
         run: |
@@ -98,6 +99,7 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Images:**" >> $GITHUB_STEP_SUMMARY
           echo "- Manager: \`${MANAGER_IMAGE}:${{ inputs.version }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Manager Aliyun: \`${MANAGER_ALIYUN_IMAGE}:${{ inputs.version }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- Worker: \`${WORKER_IMAGE}:${{ inputs.version }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- CoPaw Worker: \`${COPAW_WORKER_IMAGE}:${{ inputs.version }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- Base (RC): \`${BASE_IMAGE}:${{ inputs.version }}\`" >> $GITHUB_STEP_SUMMARY
