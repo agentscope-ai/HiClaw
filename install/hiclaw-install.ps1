@@ -1008,12 +1008,14 @@ function Send-WelcomeMessage {
 MATRIX_URL="http://127.0.0.1:6167"
 MANAGER_FULL_ID="@manager:${MATRIX_DOMAIN}"
 
-login_resp=$(curl -s -X POST "${MATRIX_URL}/_matrix/client/v3/login" \
+_raw=$(curl -s -w '\nHTTP_CODE:%{http_code}' -X POST "${MATRIX_URL}/_matrix/client/v3/login" \
     -H 'Content-Type: application/json' \
     -d "{\"type\":\"m.login.password\",\"identifier\":{\"type\":\"m.id.user\",\"user\":\"${ADMIN_USER}\"},\"password\":\"${ADMIN_PASSWORD}\"}" 2>&1) || true
+_http_code=$(echo "${_raw}" | tail -1 | sed 's/HTTP_CODE://')
+login_resp=$(echo "${_raw}" | sed '$d')
 access_token=$(echo "${login_resp}" | jq -r '.access_token // empty' 2>/dev/null)
 if [ -z "${access_token}" ]; then
-    echo "LOGIN_FAILED: ${login_resp}"; exit 0
+    echo "LOGIN_FAILED (HTTP ${_http_code}): ${login_resp}"; exit 0
 fi
 
 room_id=""
@@ -1029,13 +1031,15 @@ for rid in ${rooms}; do
 done
 
 if [ -z "${room_id}" ]; then
-    create_resp=$(curl -s -X POST "${MATRIX_URL}/_matrix/client/v3/createRoom" \
+    _raw=$(curl -s -w '\nHTTP_CODE:%{http_code}' -X POST "${MATRIX_URL}/_matrix/client/v3/createRoom" \
         -H "Authorization: Bearer ${access_token}" \
         -H 'Content-Type: application/json' \
         -d "{\"is_direct\":true,\"invite\":[\"${MANAGER_FULL_ID}\"],\"preset\":\"trusted_private_chat\"}" 2>&1) || true
+    _http_code=$(echo "${_raw}" | tail -1 | sed 's/HTTP_CODE://')
+    create_resp=$(echo "${_raw}" | sed '$d')
     room_id=$(echo "${create_resp}" | jq -r '.room_id // empty' 2>/dev/null)
     if [ -z "${room_id}" ]; then
-        echo "NO_ROOM: ${create_resp}"; exit 0
+        echo "NO_ROOM (HTTP ${_http_code}): ${create_resp}"; exit 0
     fi
 fi
 
@@ -1082,14 +1086,16 @@ The human admin will start chatting shortly."
 
 txn_id="welcome-$(date +%s)"
 payload=$(jq -nc --arg body "${welcome_msg}" '{"msgtype":"m.text","body":$body}')
-send_resp=$(curl -s -X PUT "${MATRIX_URL}/_matrix/client/v3/rooms/${room_id}/send/m.room.message/${txn_id}" \
+_raw=$(curl -s -w '\nHTTP_CODE:%{http_code}' -X PUT "${MATRIX_URL}/_matrix/client/v3/rooms/${room_id}/send/m.room.message/${txn_id}" \
     -H "Authorization: Bearer ${access_token}" \
     -H 'Content-Type: application/json' \
     -d "${payload}" 2>&1) || true
+_http_code=$(echo "${_raw}" | tail -1 | sed 's/HTTP_CODE://')
+send_resp=$(echo "${_raw}" | sed '$d')
 if echo "${send_resp}" | jq -e '.event_id' > /dev/null 2>&1; then
     echo "OK"
 else
-    echo "SEND_FAILED: ${send_resp}"; exit 0
+    echo "SEND_FAILED (HTTP ${_http_code}): ${send_resp}"; exit 0
 fi
 '@
 
