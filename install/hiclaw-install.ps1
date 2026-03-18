@@ -308,6 +308,14 @@ $script:Messages = @{
     "llm.openai.model_prompt" = @{ zh = "默认模型 ID [gpt-5.4]"; en = "Default Model ID [gpt-5.4]" }
     "llm.openai.base_url_label" = @{ zh = "  Base URL: {0}"; en = "  Base URL: {0}" }
 
+    # --- Custom model parameters ---
+    "llm.custom_model.detected" = @{ zh = "  ⚠️  模型 '{0}' 不在内置模型列表中，请配置模型参数:"; en = "  ⚠️  Model '{0}' is not in the built-in model list. Please configure model parameters:" }
+    "llm.custom_model.context_prompt" = @{ zh = "最大上下文长度（token 数）[150000]"; en = "Max context window (tokens) [150000]" }
+    "llm.custom_model.max_tokens_prompt" = @{ zh = "最大输出长度（token 数）[128000]"; en = "Max output tokens [128000]" }
+    "llm.custom_model.reasoning_prompt" = @{ zh = "是否支持推理/思考模式？[Y/n]"; en = "Does it support reasoning/thinking mode? [Y/n]" }
+    "llm.custom_model.vision_prompt" = @{ zh = "是否支持图片输入？[y/N]"; en = "Does it support image input? [y/N]" }
+    "llm.custom_model.summary" = @{ zh = "  自定义模型参数: 上下文={0}, 最大输出={1}, 推理={2}, 图片={3}"; en = "  Custom model params: context={0}, maxTokens={1}, reasoning={2}, vision={3}" }
+
     # --- Admin Credentials ---
     "admin.title" = @{ zh = "--- 管理员凭据 ---"; en = "--- Admin Credentials ---" }
     "admin.username_prompt" = @{ zh = "管理员用户名"; en = "Admin Username" }
@@ -582,6 +590,42 @@ function Get-LanIP {
     return ""
 }
 
+# Known models list — used to detect custom models during install
+$script:KnownModels = @(
+    "gpt-5.4", "gpt-5.3-codex", "gpt-5-mini", "gpt-5-nano",
+    "claude-opus-4-6", "claude-sonnet-4-6", "claude-haiku-4-5",
+    "qwen3.5-plus", "deepseek-chat", "deepseek-reasoner",
+    "kimi-k2.5", "glm-5", "MiniMax-M2.5"
+)
+
+function Test-KnownModel {
+    param([string]$Model)
+    return $script:KnownModels -contains $Model
+}
+
+function Request-CustomModelParams {
+    param([string]$Model)
+    if (Test-KnownModel $Model) {
+        $config.MODEL_CONTEXT_WINDOW = ""
+        $config.MODEL_MAX_TOKENS = ""
+        $config.MODEL_REASONING = ""
+        $config.MODEL_VISION = ""
+        return
+    }
+    Write-Host ""
+    Write-Log (Get-Msg "llm.custom_model.detected" -f $Model)
+    Write-Host ""
+    $ctxInput = Read-Host "  $(Get-Msg 'llm.custom_model.context_prompt')"
+    $config.MODEL_CONTEXT_WINDOW = if ($ctxInput) { $ctxInput } else { "150000" }
+    $maxInput = Read-Host "  $(Get-Msg 'llm.custom_model.max_tokens_prompt')"
+    $config.MODEL_MAX_TOKENS = if ($maxInput) { $maxInput } else { "128000" }
+    $reasoningInput = Read-Host "  $(Get-Msg 'llm.custom_model.reasoning_prompt')"
+    $config.MODEL_REASONING = if ($reasoningInput -match "^[nN]") { "false" } else { "true" }
+    $visionInput = Read-Host "  $(Get-Msg 'llm.custom_model.vision_prompt')"
+    $config.MODEL_VISION = if ($visionInput -match "^[yY]") { "true" } else { "false" }
+    Write-Log (Get-Msg "llm.custom_model.summary" -f $config.MODEL_CONTEXT_WINDOW, $config.MODEL_MAX_TOKENS, $config.MODEL_REASONING, $config.MODEL_VISION)
+}
+
 function New-RandomKey {
     # Generate 64 character hex string (32 bytes)
     $bytes = New-Object byte[] 32
@@ -681,6 +725,10 @@ HICLAW_LLM_PROVIDER=$($Config.LLM_PROVIDER)
 HICLAW_DEFAULT_MODEL=$($Config.DEFAULT_MODEL)
 HICLAW_LLM_API_KEY=$($Config.LLM_API_KEY)
 HICLAW_OPENAI_BASE_URL=$($Config.OPENAI_BASE_URL)
+HICLAW_MODEL_CONTEXT_WINDOW=$($Config.MODEL_CONTEXT_WINDOW)
+HICLAW_MODEL_MAX_TOKENS=$($Config.MODEL_MAX_TOKENS)
+HICLAW_MODEL_REASONING=$($Config.MODEL_REASONING)
+HICLAW_MODEL_VISION=$($Config.MODEL_VISION)
 
 # Admin
 HICLAW_ADMIN_USER=$($Config.ADMIN_USER)
@@ -1008,12 +1056,14 @@ function Send-WelcomeMessage {
 MATRIX_URL="http://127.0.0.1:6167"
 MANAGER_FULL_ID="@manager:${MATRIX_DOMAIN}"
 
-login_resp=$(curl -sf -X POST "${MATRIX_URL}/_matrix/client/v3/login" \
+_raw=$(curl -s -w '\nHTTP_CODE:%{http_code}' -X POST "${MATRIX_URL}/_matrix/client/v3/login" \
     -H 'Content-Type: application/json' \
-    -d "{\"type\":\"m.login.password\",\"identifier\":{\"type\":\"m.id.user\",\"user\":\"${ADMIN_USER}\"},\"password\":\"${ADMIN_PASSWORD}\"}" 2>/dev/null) || true
+    -d "{\"type\":\"m.login.password\",\"identifier\":{\"type\":\"m.id.user\",\"user\":\"${ADMIN_USER}\"},\"password\":\"${ADMIN_PASSWORD}\"}" 2>&1) || true
+_http_code=$(echo "${_raw}" | tail -1 | sed 's/HTTP_CODE://')
+login_resp=$(echo "${_raw}" | sed '$d')
 access_token=$(echo "${login_resp}" | jq -r '.access_token // empty' 2>/dev/null)
 if [ -z "${access_token}" ]; then
-    echo "LOGIN_FAILED: ${login_resp}" >&2; echo "LOGIN_FAILED"; exit 0
+    echo "LOGIN_FAILED (HTTP ${_http_code}): ${login_resp}"; exit 0
 fi
 
 room_id=""
@@ -1029,13 +1079,17 @@ for rid in ${rooms}; do
 done
 
 if [ -z "${room_id}" ]; then
-    create_resp=$(curl -sf -X POST "${MATRIX_URL}/_matrix/client/v3/createRoom" \
+    _raw=$(curl -s -w '\nHTTP_CODE:%{http_code}' -X POST "${MATRIX_URL}/_matrix/client/v3/createRoom" \
         -H "Authorization: Bearer ${access_token}" \
         -H 'Content-Type: application/json' \
-        -d "{\"is_direct\":true,\"invite\":[\"${MANAGER_FULL_ID}\"],\"preset\":\"trusted_private_chat\"}" 2>/dev/null) || true
+        -d "{\"is_direct\":true,\"invite\":[\"${MANAGER_FULL_ID}\"],\"preset\":\"trusted_private_chat\"}" 2>&1) || true
+    _http_code=$(echo "${_raw}" | tail -1 | sed 's/HTTP_CODE://')
+    create_resp=$(echo "${_raw}" | sed '$d')
     room_id=$(echo "${create_resp}" | jq -r '.room_id // empty' 2>/dev/null)
+    if [ -z "${room_id}" ]; then
+        echo "NO_ROOM (HTTP ${_http_code}): ${create_resp}"; exit 0
+    fi
 fi
-[ -z "${room_id}" ] && { echo "NO_ROOM" >&2; echo "NO_ROOM"; exit 0; }
 
 # Wait for Manager to join; bail out if it never does (avoids 403 on send)
 manager_joined=false
@@ -1049,7 +1103,7 @@ while [ "${wait_elapsed}" -lt 60 ]; do
     sleep 2; wait_elapsed=$((wait_elapsed + 2))
 done
 if [ "${manager_joined}" != "true" ]; then
-    echo "NO_ROOM" >&2; echo "NO_ROOM"; exit 0
+    echo "NO_ROOM: Manager did not join room ${room_id} within 60s"; exit 0
 fi
 
 # HICLAW_LANGUAGE and HICLAW_TIMEZONE are passed in via -e flags; use them directly
@@ -1080,11 +1134,17 @@ The human admin will start chatting shortly."
 
 txn_id="welcome-$(date +%s)"
 payload=$(jq -nc --arg body "${welcome_msg}" '{"msgtype":"m.text","body":$body}')
-curl -sf -X PUT "${MATRIX_URL}/_matrix/client/v3/rooms/${room_id}/send/m.room.message/${txn_id}" \
+_raw=$(curl -s -w '\nHTTP_CODE:%{http_code}' -X PUT "${MATRIX_URL}/_matrix/client/v3/rooms/${room_id}/send/m.room.message/${txn_id}" \
     -H "Authorization: Bearer ${access_token}" \
     -H 'Content-Type: application/json' \
-    -d "${payload}" > /dev/null 2>&1 || { echo "SEND_FAILED" >&2; echo "SEND_FAILED"; exit 0; }
-echo "OK"
+    -d "${payload}" 2>&1) || true
+_http_code=$(echo "${_raw}" | tail -1 | sed 's/HTTP_CODE://')
+send_resp=$(echo "${_raw}" | sed '$d')
+if echo "${send_resp}" | jq -e '.event_id' > /dev/null 2>&1; then
+    echo "OK"
+else
+    echo "SEND_FAILED (HTTP ${_http_code}): ${send_resp}"; exit 0
+fi
 '@
 
     # Pass credentials and language/timezone as env vars (-e) so they never
@@ -1100,14 +1160,20 @@ echo "OK"
     switch -Wildcard ($result) {
         "*LOGIN_FAILED*" {
             Write-Log (Get-Msg "install.welcome_msg.login_failed" -f $AdminUser)
+            $detail = ($result -split "LOGIN_FAILED: ", 2)[1]
+            if ($detail) { Write-Log "  Detail: $detail" }
             return $false
         }
         "*NO_ROOM*" {
             Write-Log (Get-Msg "install.welcome_msg.no_room")
+            $detail = ($result -split "NO_ROOM: ", 2)[1]
+            if ($detail) { Write-Log "  Detail: $detail" }
             return $false
         }
         "*SEND_FAILED*" {
             Write-Log (Get-Msg "install.welcome_msg.send_failed")
+            $detail = ($result -split "SEND_FAILED: ", 2)[1]
+            if ($detail) { Write-Log "  Detail: $detail" }
             return $false
         }
         "*OK*" {
@@ -1551,6 +1617,7 @@ function Install-Manager {
                         $config.DEFAULT_MODEL = if ($qwenModelInput) { $qwenModelInput } elseif ($env:HICLAW_DEFAULT_MODEL) { $env:HICLAW_DEFAULT_MODEL } else { "qwen3.5-plus" }
                         $config.OPENAI_BASE_URL = ""
                         Write-Log (Get-Msg "llm.provider.selected_qwen")
+                        Request-CustomModelParams $config.DEFAULT_MODEL
                     } else {
                         $config.LLM_PROVIDER = "openai-compat"
                         $config.OPENAI_BASE_URL = "https://coding.dashscope.aliyuncs.com/v1"
@@ -1617,6 +1684,7 @@ function Install-Manager {
 
                 Write-Log (Get-Msg "llm.openai.base_url_label" -f $config.OPENAI_BASE_URL)
                 Write-Log (Get-Msg "llm.model.label" -f $config.DEFAULT_MODEL)
+                Request-CustomModelParams $config.DEFAULT_MODEL
                 Write-Log ""
                 $config.LLM_API_KEY = Read-Prompt -VarName "HICLAW_LLM_API_KEY" -PromptText (Get-Msg "llm.apikey_prompt") -Secret
                 Test-LlmConnectivity -BaseUrl $config.OPENAI_BASE_URL -ApiKey $config.LLM_API_KEY -Model $config.DEFAULT_MODEL

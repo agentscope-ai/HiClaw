@@ -356,6 +356,19 @@ msg() {
         "llm.openai.model_prompt.en") text="Default Model ID [gpt-5.4]" ;;
         "llm.openai.base_url_label.zh") text="  Base URL: %s" ;;
         "llm.openai.base_url_label.en") text="  Base URL: %s" ;;
+        # --- Custom model parameters ---
+        "llm.custom_model.detected.zh") text="  ⚠️  模型 '%s' 不在内置模型列表中，请配置模型参数:" ;;
+        "llm.custom_model.detected.en") text="  ⚠️  Model '%s' is not in the built-in model list. Please configure model parameters:" ;;
+        "llm.custom_model.context_prompt.zh") text="最大上下文长度（token 数）[150000]" ;;
+        "llm.custom_model.context_prompt.en") text="Max context window (tokens) [150000]" ;;
+        "llm.custom_model.max_tokens_prompt.zh") text="最大输出长度（token 数）[128000]" ;;
+        "llm.custom_model.max_tokens_prompt.en") text="Max output tokens [128000]" ;;
+        "llm.custom_model.reasoning_prompt.zh") text="是否支持推理/思考模式？[Y/n]" ;;
+        "llm.custom_model.reasoning_prompt.en") text="Does it support reasoning/thinking mode? [Y/n]" ;;
+        "llm.custom_model.vision_prompt.zh") text="是否支持图片输入？[y/N]" ;;
+        "llm.custom_model.vision_prompt.en") text="Does it support image input? [y/N]" ;;
+        "llm.custom_model.summary.zh") text="  自定义模型参数: 上下文=%s, 最大输出=%s, 推理=%s, 图片=%s" ;;
+        "llm.custom_model.summary.en") text="  Custom model params: context=%s, maxTokens=%s, reasoning=%s, vision=%s" ;;
         # --- Admin Credentials ---
         "admin.title.zh") text="--- 管理员凭据 ---" ;;
         "admin.title.en") text="--- Admin Credentials ---" ;;
@@ -742,6 +755,51 @@ WORKER_IMAGE="${HICLAW_INSTALL_WORKER_IMAGE:-${HICLAW_REGISTRY}/higress/hiclaw-w
 COPAW_WORKER_IMAGE="${HICLAW_INSTALL_COPAW_WORKER_IMAGE:-${HICLAW_REGISTRY}/higress/hiclaw-copaw-worker:${HICLAW_VERSION}}"
 
 # ============================================================
+# Known models list — used to detect custom models during install
+# ============================================================
+KNOWN_MODELS="gpt-5.4 gpt-5.3-codex gpt-5-mini gpt-5-nano claude-opus-4-6 claude-sonnet-4-6 claude-haiku-4-5 qwen3.5-plus deepseek-chat deepseek-reasoner kimi-k2.5 glm-5 MiniMax-M2.5"
+
+is_known_model() {
+    local model="$1"
+    for m in ${KNOWN_MODELS}; do
+        [ "${m}" = "${model}" ] && return 0
+    done
+    return 1
+}
+
+# Prompt user for custom model parameters when model is not in the known list.
+# Sets: HICLAW_MODEL_CONTEXT_WINDOW, HICLAW_MODEL_MAX_TOKENS, HICLAW_MODEL_REASONING, HICLAW_MODEL_VISION
+prompt_custom_model_params() {
+    local model="$1"
+    if is_known_model "${model}"; then
+        # Clear any stale custom params for known models
+        HICLAW_MODEL_CONTEXT_WINDOW=""
+        HICLAW_MODEL_MAX_TOKENS=""
+        HICLAW_MODEL_REASONING=""
+        HICLAW_MODEL_VISION=""
+        return
+    fi
+    echo ""
+    log "$(msg llm.custom_model.detected "${model}")"
+    echo ""
+    read -e -p "  $(msg llm.custom_model.context_prompt): " HICLAW_MODEL_CONTEXT_WINDOW
+    HICLAW_MODEL_CONTEXT_WINDOW="${HICLAW_MODEL_CONTEXT_WINDOW:-150000}"
+    read -e -p "  $(msg llm.custom_model.max_tokens_prompt): " HICLAW_MODEL_MAX_TOKENS
+    HICLAW_MODEL_MAX_TOKENS="${HICLAW_MODEL_MAX_TOKENS:-128000}"
+    read -e -p "  $(msg llm.custom_model.reasoning_prompt): " _reasoning
+    case "${_reasoning}" in
+        n|N|no|NO) HICLAW_MODEL_REASONING="false" ;;
+        *) HICLAW_MODEL_REASONING="true" ;;
+    esac
+    read -e -p "  $(msg llm.custom_model.vision_prompt): " _vision
+    case "${_vision}" in
+        y|Y|yes|YES) HICLAW_MODEL_VISION="true" ;;
+        *) HICLAW_MODEL_VISION="false" ;;
+    esac
+    log "$(msg llm.custom_model.summary "${HICLAW_MODEL_CONTEXT_WINDOW}" "${HICLAW_MODEL_MAX_TOKENS}" "${HICLAW_MODEL_REASONING}" "${HICLAW_MODEL_VISION}")"
+}
+
+# ============================================================
 # Wait for Manager agent to be ready
 # Uses `openclaw gateway health` inside the container to confirm the gateway is running
 # ============================================================
@@ -821,12 +879,14 @@ send_welcome_message() {
 MATRIX_URL="http://127.0.0.1:6167"
 MANAGER_FULL_ID="@manager:${MATRIX_DOMAIN}"
 
-login_resp=$(curl -sf -X POST "${MATRIX_URL}/_matrix/client/v3/login" \
+_raw=$(curl -s -w '\nHTTP_CODE:%{http_code}' -X POST "${MATRIX_URL}/_matrix/client/v3/login" \
     -H 'Content-Type: application/json' \
-    -d "{\"type\":\"m.login.password\",\"identifier\":{\"type\":\"m.id.user\",\"user\":\"${ADMIN_USER}\"},\"password\":\"${ADMIN_PASSWORD}\"}" 2>/dev/null) || true
+    -d "{\"type\":\"m.login.password\",\"identifier\":{\"type\":\"m.id.user\",\"user\":\"${ADMIN_USER}\"},\"password\":\"${ADMIN_PASSWORD}\"}" 2>&1) || true
+_http_code=$(echo "${_raw}" | tail -1 | sed 's/HTTP_CODE://')
+login_resp=$(echo "${_raw}" | sed '$d')
 access_token=$(echo "${login_resp}" | jq -r '.access_token // empty' 2>/dev/null)
 if [ -z "${access_token}" ]; then
-    echo "LOGIN_FAILED: ${login_resp}" >&2; echo "LOGIN_FAILED"; exit 0
+    echo "LOGIN_FAILED (HTTP ${_http_code}): ${login_resp}"; exit 0
 fi
 
 room_id=""
@@ -842,13 +902,17 @@ for rid in ${rooms}; do
 done
 
 if [ -z "${room_id}" ]; then
-    create_resp=$(curl -sf -X POST "${MATRIX_URL}/_matrix/client/v3/createRoom" \
+    _raw=$(curl -s -w '\nHTTP_CODE:%{http_code}' -X POST "${MATRIX_URL}/_matrix/client/v3/createRoom" \
         -H "Authorization: Bearer ${access_token}" \
         -H 'Content-Type: application/json' \
-        -d "{\"is_direct\":true,\"invite\":[\"${MANAGER_FULL_ID}\"],\"preset\":\"trusted_private_chat\"}" 2>/dev/null) || true
+        -d "{\"is_direct\":true,\"invite\":[\"${MANAGER_FULL_ID}\"],\"preset\":\"trusted_private_chat\"}" 2>&1) || true
+    _http_code=$(echo "${_raw}" | tail -1 | sed 's/HTTP_CODE://')
+    create_resp=$(echo "${_raw}" | sed '$d')
     room_id=$(echo "${create_resp}" | jq -r '.room_id // empty' 2>/dev/null)
+    if [ -z "${room_id}" ]; then
+        echo "NO_ROOM (HTTP ${_http_code}): ${create_resp}"; exit 0
+    fi
 fi
-[ -z "${room_id}" ] && { echo "NO_ROOM" >&2; echo "NO_ROOM"; exit 0; }
 
 # Wait for Manager to join; bail out if it never does (avoids 403 on send)
 manager_joined=false
@@ -862,7 +926,7 @@ while [ "${wait_elapsed}" -lt 60 ]; do
     sleep 2; wait_elapsed=$((wait_elapsed + 2))
 done
 if [ "${manager_joined}" != "true" ]; then
-    echo "NO_ROOM" >&2; echo "NO_ROOM"; exit 0
+    echo "NO_ROOM: Manager did not join room ${room_id} within 60s"; exit 0
 fi
 
 # HICLAW_LANGUAGE and HICLAW_TIMEZONE are passed in via -e flags; use them directly
@@ -893,11 +957,17 @@ The human admin will start chatting shortly."
 
 txn_id="welcome-$(date +%s)"
 payload=$(jq -nc --arg body "${welcome_msg}" '{"msgtype":"m.text","body":$body}')
-curl -sf -X PUT "${MATRIX_URL}/_matrix/client/v3/rooms/${room_id}/send/m.room.message/${txn_id}" \
+_raw=$(curl -s -w '\nHTTP_CODE:%{http_code}' -X PUT "${MATRIX_URL}/_matrix/client/v3/rooms/${room_id}/send/m.room.message/${txn_id}" \
     -H "Authorization: Bearer ${access_token}" \
     -H 'Content-Type: application/json' \
-    -d "${payload}" > /dev/null 2>&1 || { echo "SEND_FAILED" >&2; echo "SEND_FAILED"; exit 0; }
-echo "OK"
+    -d "${payload}" 2>&1) || true
+_http_code=$(echo "${_raw}" | tail -1 | sed 's/HTTP_CODE://')
+send_resp=$(echo "${_raw}" | sed '$d')
+if echo "${send_resp}" | jq -e '.event_id' > /dev/null 2>&1; then
+    echo "OK"
+else
+    echo "SEND_FAILED (HTTP ${_http_code}): ${send_resp}"; exit 0
+fi
 INNER_SCRIPT
 )
 
@@ -914,13 +984,19 @@ INNER_SCRIPT
 
     case "${result}" in
         *LOGIN_FAILED*)
+            local detail="${result#*LOGIN_FAILED: }"
             log "$(msg install.welcome_msg.login_failed "${admin_user}")"
+            [ -n "${detail}" ] && [ "${detail}" != "${result}" ] && log "  Detail: ${detail}"
             return 1 ;;
         *NO_ROOM*)
+            local detail="${result#*NO_ROOM: }"
             log "$(msg install.welcome_msg.no_room)"
+            [ -n "${detail}" ] && [ "${detail}" != "${result}" ] && log "  Detail: ${detail}"
             return 1 ;;
         *SEND_FAILED*)
+            local detail="${result#*SEND_FAILED: }"
             log "$(msg install.welcome_msg.send_failed)"
+            [ -n "${detail}" ] && [ "${detail}" != "${result}" ] && log "  Detail: ${detail}"
             return 1 ;;
         *OK*)
             log "$(msg install.welcome_msg.sent)"
@@ -1518,6 +1594,7 @@ install_manager() {
                             HICLAW_DEFAULT_MODEL="${HICLAW_DEFAULT_MODEL:-qwen3.5-plus}"
                             log "$(msg llm.provider.selected_qwen)"
                             log "$(msg llm.model.label "${HICLAW_DEFAULT_MODEL}")"
+                            prompt_custom_model_params "${HICLAW_DEFAULT_MODEL}"
                             ;;
                         *)
                             HICLAW_LLM_PROVIDER="openai-compat"
@@ -1583,6 +1660,7 @@ install_manager() {
                 HICLAW_DEFAULT_MODEL="${HICLAW_DEFAULT_MODEL:-gpt-5.4}"
                 log "$(msg llm.openai.base_url_label "${HICLAW_OPENAI_BASE_URL}")"
                 log "$(msg llm.model.label "${HICLAW_DEFAULT_MODEL}")"
+                prompt_custom_model_params "${HICLAW_DEFAULT_MODEL}"
                 log ""
                 prompt HICLAW_LLM_API_KEY "$(msg llm.apikey_prompt)" "" "true"
                 test_llm_connectivity "${HICLAW_OPENAI_BASE_URL}" "${HICLAW_LLM_API_KEY}" "${HICLAW_DEFAULT_MODEL}"
@@ -1817,6 +1895,10 @@ HICLAW_LLM_PROVIDER=${HICLAW_LLM_PROVIDER}
 HICLAW_DEFAULT_MODEL=${HICLAW_DEFAULT_MODEL}
 HICLAW_LLM_API_KEY=${HICLAW_LLM_API_KEY}
 HICLAW_OPENAI_BASE_URL=${HICLAW_OPENAI_BASE_URL:-}
+HICLAW_MODEL_CONTEXT_WINDOW=${HICLAW_MODEL_CONTEXT_WINDOW:-}
+HICLAW_MODEL_MAX_TOKENS=${HICLAW_MODEL_MAX_TOKENS:-}
+HICLAW_MODEL_REASONING=${HICLAW_MODEL_REASONING:-}
+HICLAW_MODEL_VISION=${HICLAW_MODEL_VISION:-}
 
 # Admin
 HICLAW_ADMIN_USER=${HICLAW_ADMIN_USER}

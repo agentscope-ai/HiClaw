@@ -50,6 +50,10 @@ case "${MODEL_NAME}" in
         CTX=150000; MAX=128000 ;;
 esac
 
+# Override with user-supplied custom model parameters from env (set during install)
+[ -n "${HICLAW_MODEL_CONTEXT_WINDOW:-}" ] && CTX="${HICLAW_MODEL_CONTEXT_WINDOW}"
+[ -n "${HICLAW_MODEL_MAX_TOKENS:-}" ] && MAX="${HICLAW_MODEL_MAX_TOKENS}"
+
 # Resolve input modalities: only vision-capable models get "image"
 case "${MODEL_NAME}" in
     gpt-5.4|gpt-5.3-codex|gpt-5-mini|gpt-5-nano|claude-opus-4-6|claude-sonnet-4-6|claude-haiku-4-5|qwen3.5-plus|kimi-k2.5)
@@ -57,6 +61,12 @@ case "${MODEL_NAME}" in
     *)
         INPUT='["text"]' ;;
 esac
+# Override with user-supplied vision setting from env
+if [ "${HICLAW_MODEL_VISION:-}" = "true" ]; then
+    INPUT='["text", "image"]'
+elif [ "${HICLAW_MODEL_VISION:-}" = "false" ]; then
+    INPUT='["text"]'
+fi
 
 GATEWAY_AUTH_TOKEN=$(openssl rand -hex 32)
 
@@ -85,6 +95,8 @@ fi
 export HICLAW_ADMIN_USER="${ADMIN_USER}"
 export HICLAW_DEFAULT_MODEL="${MODEL_NAME}"
 export MODEL_REASONING=true
+# Override with user-supplied reasoning setting from env
+[ -n "${HICLAW_MODEL_REASONING:-}" ] && export MODEL_REASONING="${HICLAW_MODEL_REASONING}"
 export MODEL_CONTEXT_WINDOW="${CTX}"
 export MODEL_MAX_TOKENS="${MAX}"
 export MODEL_INPUT="${INPUT}"
@@ -100,5 +112,20 @@ OUTPUT_DIR="/root/hiclaw-fs/agents/${WORKER_NAME}"
 mkdir -p "${OUTPUT_DIR}"
 
 envsubst < /opt/hiclaw/agent/skills/worker-management/references/worker-openclaw.json.tmpl > "${OUTPUT_DIR}/openclaw.json"
+
+# Inject custom model if not in the built-in list
+if ! jq -e --arg model "${MODEL_NAME}" '.models.providers["hiclaw-gateway"].models | map(.id) | index($model)' "${OUTPUT_DIR}/openclaw.json" > /dev/null 2>&1; then
+    log "Custom model '${MODEL_NAME}' not in built-in list, injecting into worker config..."
+    jq --arg model "${MODEL_NAME}" \
+       --argjson ctx "${CTX}" \
+       --argjson max "${MAX}" \
+       --argjson reasoning "${MODEL_REASONING}" \
+       --argjson input "${INPUT}" \
+       '
+        .models.providers["hiclaw-gateway"].models += [{"id": $model, "name": $model, "reasoning": $reasoning, "contextWindow": $ctx, "maxTokens": $max, "input": $input}]
+        | .agents.defaults.models += {("hiclaw-gateway/" + $model): {"alias": $model}}
+       ' "${OUTPUT_DIR}/openclaw.json" > "${OUTPUT_DIR}/openclaw.json.tmp" && \
+        mv "${OUTPUT_DIR}/openclaw.json.tmp" "${OUTPUT_DIR}/openclaw.json"
+fi
 
 log "Generated ${OUTPUT_DIR}/openclaw.json (model=${MODEL_NAME}, ctx=${CTX}, max=${MAX})"
