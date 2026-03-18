@@ -157,7 +157,7 @@ jobs:
             2>/dev/null || true)
           if [ -n "$LATEST" ] && [ "$LATEST" != "null" ]; then
             echo "Downloading baseline from release $LATEST"
-            gh release download "$LATEST" --pattern "metrics-baseline.json" --dir baseline-metrics
+            gh release download "$LATEST" --pattern "metrics-baseline.json" --dir baseline-metrics --repo "${{ github.repository }}"
           else
             echo "No release baseline found"
           fi
