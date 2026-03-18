@@ -73,42 +73,23 @@ cp -r migrate/skill/ ~/.openclaw/workspace/skills/hiclaw-migrate/
 安装 hiclaw-migrate skill，路径在 /path/to/hiclaw/migrate/skill/
 ```
 
-### 第 2 步：运行分析
+### 第 2 步：生成迁移包
 
-让你的 OpenClaw 分析当前环境：
+让你的 OpenClaw 分析当前环境并生成迁移包：
 
 ```
 分析我当前的配置和环境，生成 HiClaw 迁移包。
 ```
 
-或者直接运行脚本：
+OpenClaw 会阅读迁移 Skill 的说明，理解 HiClaw 的 Worker 架构，然后：
 
-```bash
-# 2a: 分析环境
-bash ~/.openclaw/workspace/skills/hiclaw-migrate/scripts/analyze.sh \
-    --state-dir ~/.openclaw \
-    --output /tmp/hiclaw-migration
+1. 运行 `analyze.sh` 扫描工具依赖（Skill 脚本、Shell 历史、Cron 任务、AGENTS.md 代码块）
+2. 智能适配你的 AGENTS.md —— 保留你的自定义角色和行为定义，移除与 HiClaw 内置 Worker 配置冲突的部分（通信协议、文件同步、任务执行规范等）
+3. 适配 SOUL.md 为 HiClaw 的 Worker 身份格式
+4. 生成基于 HiClaw Worker 基础镜像的 Dockerfile，包含所需的系统工具
+5. 将所有内容打包为 ZIP 并输出文件路径
 
-# 2b: 生成 ZIP 包
-bash ~/.openclaw/workspace/skills/hiclaw-migrate/scripts/generate-zip.sh \
-    --name my-worker \
-    --state-dir ~/.openclaw \
-    --output /tmp/hiclaw-migration
-```
-
-分析过程会扫描：
-- Skill 脚本中的命令依赖
-- Shell 历史记录中的常用工具
-- Cron 任务中引用的命令
-- AGENTS.md 代码块中的工具使用
-
-生成的 ZIP 包含：
-- 适配后的 AGENTS.md（你的自定义内容，兼容 HiClaw 的 builtin-merge 系统）
-- SOUL.md（Worker 身份定义）
-- 自定义 Skills（排除 HiClaw 内置的 file-sync 等）
-- 适配后的 Cron 任务（移除了渠道投递配置）
-- 基于 HiClaw Worker 基础镜像的 Dockerfile，包含所需的系统工具
-- 记忆文件
+这一步需要 OpenClaw AI 参与 —— 脚本本身无法智能地适配你的配置。OpenClaw 会阅读 SKILL.md 来理解 HiClaw 的规范，然后对配置内容做出保留、修改或移除的判断。
 
 ### 第 3 步：审查包内容（建议）
 

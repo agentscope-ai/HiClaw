@@ -75,42 +75,23 @@ Or ask your OpenClaw to install it:
 Install the hiclaw-migrate skill from /path/to/hiclaw/migrate/skill/
 ```
 
-### Step 2: Run the Analysis
+### Step 2: Generate the Migration Package
 
-Ask your OpenClaw to analyze its environment:
+Ask your OpenClaw to analyze its environment and generate the migration package:
 
 ```
 Analyze my current setup and generate a HiClaw migration package.
 ```
 
-Or run the scripts directly:
+The OpenClaw will read the migration skill's instructions, understand HiClaw's Worker architecture, and then:
 
-```bash
-# Step 2a: Analyze environment
-bash ~/.openclaw/workspace/skills/hiclaw-migrate/scripts/analyze.sh \
-    --state-dir ~/.openclaw \
-    --output /tmp/hiclaw-migration
+1. Run `analyze.sh` to scan tool dependencies (skill scripts, shell history, cron payloads, AGENTS.md code blocks)
+2. Intelligently adapt your AGENTS.md — keeping your custom role and behavior definitions while removing parts that conflict with HiClaw's builtin Worker configuration (communication protocol, file sync, task execution rules, etc.)
+3. Adapt SOUL.md for HiClaw's Worker identity format
+4. Generate a Dockerfile that extends the HiClaw Worker base image with your required system tools
+5. Package everything into a ZIP and output the file path
 
-# Step 2b: Generate ZIP package
-bash ~/.openclaw/workspace/skills/hiclaw-migrate/scripts/generate-zip.sh \
-    --name my-worker \
-    --state-dir ~/.openclaw \
-    --output /tmp/hiclaw-migration
-```
-
-The analysis scans:
-- Skill scripts for command dependencies
-- Shell history for frequently used tools
-- Cron job payloads for referenced commands
-- AGENTS.md code blocks for tool usage
-
-The generated ZIP includes:
-- Adapted AGENTS.md (your custom content, compatible with HiClaw's builtin-merge system)
-- SOUL.md (your worker's identity)
-- Custom skills (excluding HiClaw built-ins like file-sync)
-- Adapted cron jobs (channel-specific delivery config removed)
-- A Dockerfile that extends the HiClaw Worker base image with your required system tools
-- Memory files
+This step requires the OpenClaw AI to be involved — the scripts alone cannot intelligently adapt your configuration. The OpenClaw reads the SKILL.md to understand HiClaw's conventions and makes informed decisions about what to keep, modify, or remove.
 
 ### Step 3: Review the Package (Recommended)
 
