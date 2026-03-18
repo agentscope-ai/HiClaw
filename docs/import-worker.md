@@ -245,7 +245,7 @@ Parameters mirror the Bash version.
 
 ## HTTP Proxy Configuration
 
-For Workers running in China or behind a corporate firewall, use `--proxy` to configure runtime HTTP proxy:
+For Workers behind a firewall or needing proxy access to external services, use `--proxy` to configure runtime HTTP proxy:
 
 ```bash
 bash hiclaw-import.sh --zip worker.zip --proxy http://192.168.1.100:7890

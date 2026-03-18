@@ -243,7 +243,7 @@ bash hiclaw-import.sh --zip <路径或URL> [选项]
 
 ## HTTP 代理配置
 
-对于在中国或企业防火墙后运行的 Worker，使用 `--proxy` 配置运行时 HTTP 代理：
+对于需要通过代理访问外部服务的 Worker，使用 `--proxy` 配置运行时 HTTP 代理：
 
 ```bash
 bash hiclaw-import.sh --zip worker.zip --proxy http://192.168.1.100:7890
