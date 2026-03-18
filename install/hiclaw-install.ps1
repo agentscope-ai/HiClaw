@@ -1734,7 +1734,8 @@ function Install-Manager {
         $localOnly = $env:HICLAW_LOCAL_ONLY
     } else {
         $localChoice = Read-Host "$(Get-Msg 'port.local_only.choice')"
-        if (-not $localChoice) { $localChoice = "1" }
+        # Handle empty input (user pressed Enter without typing anything)
+        if ([string]::IsNullOrEmpty($localChoice)) { $localChoice = "1" }
         $localOnly = if ($localChoice -match '^(2|n|N|no|NO)$') { "0" } else { "1" }
     }
     $config.LOCAL_ONLY = $localOnly

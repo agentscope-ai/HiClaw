@@ -35,17 +35,36 @@ logger = logging.getLogger(__name__)
 _MC_ALIAS = "hiclaw"
 
 
+class McError(RuntimeError):
+    """Error raised when mc command fails."""
+
+    def __init__(self, message: str, command: str, stdout: str, stderr: str) -> None:
+        super().__init__(message)
+        self.command = command
+        self.stdout = stdout
+        self.stderr = stderr
+
+
 def _mc(*args: str, check: bool = True) -> subprocess.CompletedProcess:
     """Run an mc command and return the result."""
     mc_bin = shutil.which("mc")
     if not mc_bin:
-        raise RuntimeError("mc binary not found on PATH. Please install mc first.")
+        raise RuntimeError(
+            "mc binary not found on PATH. Please install mc first:\n"
+            "  • Linux/macOS: curl https://dl.min.io/client/mc/release/linux-amd64/mc -o /usr/local/bin/mc && chmod +x /usr/local/bin/mc\n"
+            "  • Or with package manager: apt install mc (Debian/Ubuntu), brew install minio/stable/mc (macOS)"
+        )
     cmd = [mc_bin, *args]
-    logger.info("mc cmd: %s", " ".join(cmd))
+    cmd_str = " ".join(cmd)
+    logger.debug("mc cmd: %s", cmd_str)
     result = subprocess.run(cmd, capture_output=True, text=True, check=check)
-    logger.info("mc stdout (%d chars): %r", len(result.stdout), result.stdout[:200])
-    if result.stderr:
-        logger.info("mc stderr: %r", result.stderr[:200])
+
+    if result.stderr and "mc <" in result.stderr.lower():
+        # mc is showing usage/help - likely invalid arguments
+        logger.error("mc command failed (invalid arguments): %s\nstderr: %s", cmd_str, result.stderr)
+    elif result.returncode != 0:
+        logger.debug("mc cmd (exit %d): %s", result.returncode, cmd_str)
+
     return result
 
 
@@ -87,7 +106,47 @@ class FileSync:
         else:
             scheme = "https" if self._secure else "http"
             url = f"{scheme}://{self.endpoint}"
-        _mc("alias", "set", _MC_ALIAS, url, self.access_key, self.secret_key)
+
+        # Validate that the endpoint looks like a MinIO/S3 server
+        # Common mistake: using Higress Console port (18080) instead of MinIO port (9000)
+        if ":18080" in url or ":18001" in url:
+            logger.warning(
+                "WARNING: The MinIO endpoint appears to be using a Higress Console port (%s).\n"
+                "MinIO typically runs on port 9000 (or 9001 for HTTPS).\n"
+                "If you're trying to connect to HiClaw's MinIO, check your --fs parameter.",
+                url
+            )
+
+        try:
+            _mc("alias", "set", _MC_ALIAS, url, self.access_key, self.secret_key)
+        except subprocess.CalledProcessError as exc:
+            # Provide helpful error message for common issues
+            error_msg = (
+                f"Failed to configure MinIO connection.\n"
+                f"  Endpoint: {url}\n"
+                f"  Access Key: {self.access_key[:10]}{'*' if len(self.access_key) > 10 else ''}\n"
+                f"  Command: mc alias set {_MC_ALIAS} <url> <access-key> <secret-key>\n"
+            )
+
+            if "connection" in (exc.stderr or "").lower() or "refused" in (exc.stderr or "").lower():
+                error_msg += (
+                    f"\n\nConnection refused. Possible causes:\n"
+                    f"  1. MinIO server is not running\n"
+                    f"  2. Wrong host/port - MinIO default is port 9000, not {url.split(':')[2] if ':' in url else '<unknown>'}\n"
+                    f"  3. Firewall blocking the connection\n"
+                    f"  4. Using wrong endpoint URL (e.g., Higress Console instead of MinIO)"
+                )
+            elif "credentials" in (exc.stderr or "").lower() or "access" in (exc.stderr or "").lower() or "401" in (exc.stderr or "") or "403" in (exc.stderr or ""):
+                error_msg += (
+                    f"\n\nAuthentication failed. Check:\n"
+                    f"  1. Access key (--fs-key) is correct\n"
+                    f"  2. Secret key (--fs-secret) is correct\n"
+                    f"  3. MinIO user has necessary permissions"
+                )
+
+            error_msg += f"\n\nmc stderr:\n{exc.stderr or '(empty)'}"
+            raise RuntimeError(error_msg) from exc
+
         self._alias_set = True
 
     # ------------------------------------------------------------------
@@ -156,11 +215,24 @@ class FileSync:
 
     def get_config(self) -> dict[str, Any]:
         """Pull openclaw.json and return parsed dict."""
+        self._ensure_alias()
         text = self._cat(f"{self._prefix}/openclaw.json")
         if not text:
-            raise RuntimeError(f"openclaw.json not found in MinIO for worker {self.worker_name}")
+            raise RuntimeError(
+                f"openclaw.json not found in MinIO for worker '{self.worker_name}'.\n"
+                f"  Expected path: {_MC_ALIAS}/{self.bucket}/{self._prefix}/openclaw.json\n"
+                f"  Please ensure the Manager has created this Worker's configuration first.\n"
+                f"  You can check if the file exists using: mc ls {_MC_ALIAS}/{self.bucket}/agents/"
+            )
         logger.info("openclaw.json raw content (%d chars): %r", len(text), text[:500])
-        return json.loads(text)
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(
+                f"Failed to parse openclaw.json for worker '{self.worker_name}'.\n"
+                f"  JSON decode error: {exc}\n"
+                f"  Content preview: {text[:200]}..."
+            ) from exc
 
     def get_soul(self) -> Optional[str]:
         return self._cat(f"{self._prefix}/SOUL.md")
