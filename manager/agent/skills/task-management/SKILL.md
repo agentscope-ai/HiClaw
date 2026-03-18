@@ -47,7 +47,7 @@ Act on choice: A → ensure container ready then assign; B → create Worker the
 
 **Step 4 — Find-Skills (only when creating a new Worker):**
 
-Check default: `echo "${HICLAW_SKILLS_API_URL:-https://skills.sh}"`
+Check default: `echo "${HICLAW_SKILLS_API_URL}"`
 
 Ask admin: enable find-skills (recommended) or disable; optionally provide custom registry URL. Pass to `create-worker.sh` via `--find-skills` / `--skills-api-url`.
 

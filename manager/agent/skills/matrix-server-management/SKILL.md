@@ -11,7 +11,7 @@ This skill allows you to manage the Tuwunel Matrix Homeserver at `${HICLAW_MATRI
 
 **Set the Matrix server URL at the top of your scripts:**
 ```bash
-MATRIX_URL="${HICLAW_MATRIX_SERVER:-http://127.0.0.1:6167}"
+MATRIX_URL="${HICLAW_MATRIX_SERVER}"
 ```
 
 Use `${MATRIX_URL}` in all API calls below.

@@ -10,6 +10,11 @@ shift
 
 source /opt/hiclaw/scripts/lib/hiclaw-env.sh 2>/dev/null || true
 
+# Defaults for variables that may not be set in all environments
+export HICLAW_MATRIX_SERVER="${HICLAW_MATRIX_SERVER:-http://127.0.0.1:6167}"
+export HICLAW_DEFAULT_WORKER_RUNTIME="${HICLAW_DEFAULT_WORKER_RUNTIME:-openclaw}"
+export HICLAW_SKILLS_API_URL="${HICLAW_SKILLS_API_URL:-https://skills.sh}"
+
 # Whitelist: only replace these known variables, leave $task_id etc. untouched
 VARS='${HICLAW_STORAGE_PREFIX} ${HICLAW_MATRIX_DOMAIN} ${HICLAW_MATRIX_SERVER}
 ${HICLAW_ADMIN_USER} ${HICLAW_ADMIN_PASSWORD} ${HICLAW_REGISTRATION_TOKEN}

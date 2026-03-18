@@ -93,7 +93,7 @@ Before anything else, determine which runtime to use based on the admin's reques
 **Rules:**
 - If the admin mentions "copaw" anywhere in the request (e.g., "帮我创建一个 copaw"、"create a copaw worker"), use `--runtime copaw`. Do NOT fall through to the default openclaw path.
 - If the admin mentions "local" / "本地" / "local mode" / "local environment" / "run on my machine" — meaning they want the Worker to run as a native process on their own machine with local environment access — always use `--runtime copaw --remote`. This outputs a `pip install copaw-worker && copaw-worker ...` command for the admin to run directly. The `--remote` flag means "remote from the Manager" (i.e., not a Manager-managed container), which is actually **local from the admin's perspective**.
-- If the admin does not mention any runtime keyword, use `${HICLAW_DEFAULT_WORKER_RUNTIME:-openclaw}` as the default.
+- If the admin does not mention any runtime keyword, use `${HICLAW_DEFAULT_WORKER_RUNTIME}` as the default.
 - When in doubt, ask the admin: "Should this be a copaw (Python, ~150MB RAM) worker or an openclaw (Node.js, ~500MB RAM) worker?"
 
 ### Step 0.5: Receive configuration from AGENTS.md interaction
@@ -101,7 +101,7 @@ Before anything else, determine which runtime to use based on the admin's reques
 By the time you reach this skill, the admin has already confirmed:
 - Worker name, role description, and any custom model/MCP server preferences
 - `enable_find_skills`: true/false
-- `skills_api_url`: custom URL or empty (uses `${HICLAW_SKILLS_API_URL:-https://skills.sh}` as default)
+- `skills_api_url`: custom URL or empty (uses `${HICLAW_SKILLS_API_URL}` as default)
 
 These are determined during the Task Workflow Step 0 / Step 4 interaction in AGENTS.md. Do not re-ask.
 
@@ -269,7 +269,7 @@ for meta in /root/hiclaw-fs/shared/tasks/*/meta.json; do
 done
 
 # Check a Worker's Room for recent activity:
-curl -s "${HICLAW_MATRIX_SERVER:-http://127.0.0.1:6167}/_matrix/client/v3/rooms/<ROOM_ID>/messages?dir=b&limit=5" \
+curl -s "${HICLAW_MATRIX_SERVER}/_matrix/client/v3/rooms/<ROOM_ID>/messages?dir=b&limit=5" \
   -H "Authorization: Bearer <MANAGER_TOKEN>" | jq '.chunk[].content.body'
 ```
 

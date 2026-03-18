@@ -40,6 +40,7 @@ RUN if [ -n "${APT_MIRROR}" ]; then \
         libjemalloc2 \
         curl \
         git \
+        gettext-base \
         tzdata \
     && rm -rf /var/lib/apt/lists/*
 
