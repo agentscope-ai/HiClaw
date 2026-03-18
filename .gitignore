@@ -12,6 +12,9 @@ logs/
 # OS files
 .DS_Store
 
+# Worktrees
+.worktrees/
+
 # Design docs
 design/
 poc-verification/
