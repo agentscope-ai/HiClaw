@@ -430,6 +430,7 @@ Format:
       "runtime": "openclaw",
       "deployment": "local",
       "skills": ["file-sync", "github-operations"],
+      "image": null,
       "created_at": "2026-01-01T00:00:00Z",
       "skills_updated_at": "2026-01-01T00:00:00Z"
     }
@@ -440,6 +441,8 @@ Format:
 `runtime` is `"openclaw"` (default, container-based) or `"copaw"` (pip-installed Python process). Omitted field defaults to `"openclaw"` for backward compatibility.
 
 `deployment` is `"local"` (Manager-managed container) or `"remote"` (admin-managed, runs on a separate machine). Omitted field defaults to `"local"` for backward compatibility. Remote workers are excluded from automatic container lifecycle management (auto-stop/start/recreate on Manager restart). After a Manager upgrade, remote workers must be restarted by the admin manually.
+
+`image` is the custom Docker image for this Worker. When `null` or omitted, the default `HICLAW_WORKER_IMAGE` (or `HICLAW_COPAW_WORKER_IMAGE` for copaw) is used. Migrated workers typically have a custom image built from their migration package.
 
 `file-sync` is the bootstrap skill (image-managed) and is always included.
 
@@ -492,4 +495,50 @@ After pushing skills, the script notifies the affected Worker(s) via Matrix @men
 - OpenClaw config hot-reload: file-watch (~300ms) or `config.patch` API
 - **File sync**: after writing any file that a Worker (or another Worker) needs to read, always notify the target Worker via Matrix to use their `file-sync` skill. This applies to config updates, task briefs, shared data, and cross-Worker collaboration artifacts. The exact sync command varies by runtime — the Worker's `file-sync` SKILL.md defines how to execute it. Background periodic sync (every 5 minutes) serves as fallback only
 - **Skills are Manager-controlled**: Workers cannot modify their own skills (local→remote sync excludes `skills/**`). Only Manager can push skill changes via `push-worker-skills.sh`
+
+## Imported Worker Pull-Up
+
+When the admin (or the `hiclaw-import.sh` script) sends a message like:
+
+> Worker xxx 的所有配置已通过导入脚本创建完毕（Matrix 账号、Room、MinIO、Higress、openclaw.json、workers-registry 均已就绪）。请使用镜像 yyy 启动此 Worker 的容器。
+
+Or (when no custom image, using standard Worker image):
+
+> Worker xxx 的所有配置已通过导入脚本创建完毕（...均已就绪）。请使用标准 Worker 镜像启动此 Worker 的容器。
+
+This means the import script has already completed **all** Worker creation steps:
+- Matrix account registration and room creation
+- MinIO user, policy, and config push (SOUL.md, AGENTS.md, openclaw.json, skills, memory)
+- Higress consumer and route authorization
+- workers-registry.json update (with `image` field set to the custom image)
+- Worker credentials persisted in `/data/worker-creds/`
+
+**You do NOT need to run `create-worker.sh`.** All configuration is already in place.
+
+Your only job is to **start the container**. Check the `image` field in `workers-registry.json`:
+
+```bash
+# Read the worker's image from registry
+IMAGE=$(jq -r '.workers["<WORKER_NAME>"].image // empty' ~/workers-registry.json)
+
+# Start the container via container API
+# If IMAGE is empty/null, the 5th param is empty and container_create_worker uses the default HICLAW_WORKER_IMAGE
+bash -c 'source /opt/hiclaw/scripts/lib/container-api.sh && \
+    source /opt/hiclaw/scripts/lib/hiclaw-env.sh && \
+    container_create_worker "<WORKER_NAME>" "<WORKER_NAME>" "<MINIO_PASSWORD>" "[]" "'"${IMAGE}"'"'
+```
+
+To get the MinIO password:
+```bash
+source /data/worker-creds/<WORKER_NAME>.env
+echo "${WORKER_MINIO_PASSWORD}"
+```
+
+If the message includes proxy environment variables (e.g., `HTTP_PROXY=... NO_PROXY=...`), pass them as extra_env:
+```bash
+EXTRA_ENV='["HTTP_PROXY=http://proxy:port","HTTPS_PROXY=http://proxy:port","NO_PROXY=*.hiclaw.io,127.0.0.1,localhost","http_proxy=http://proxy:port","https_proxy=http://proxy:port","no_proxy=*.hiclaw.io,127.0.0.1,localhost"]'
+container_create_worker "<WORKER_NAME>" "<WORKER_NAME>" "${WORKER_MINIO_PASSWORD}" "${EXTRA_ENV}" "${IMAGE}"
+```
+
+After the container starts, follow the normal post-creation verification and greeting flow.
 

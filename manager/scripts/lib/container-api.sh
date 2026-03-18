@@ -115,8 +115,9 @@ _ensure_image() {
 }
 
 # Create and start a Worker container
-# Usage: container_create_worker <worker_name> [fs_access_key] [fs_secret_key] [extra_env_json]
+# Usage: container_create_worker <worker_name> [fs_access_key] [fs_secret_key] [extra_env_json] [custom_image]
 #   extra_env_json: optional JSON array of additional environment variables, e.g. '["SKILLS_API_URL=https://example.com"]'
+#   custom_image: optional custom Docker image to use instead of the default WORKER_IMAGE
 # Returns: container ID on success, empty on failure
 container_create_worker() {
     local worker_name="$1"
@@ -136,6 +137,8 @@ container_create_worker() {
     local fs_access_key="${2:-${HICLAW_MINIO_USER:-${HICLAW_ADMIN_USER:-admin}}}"
     local fs_secret_key="${3:-${HICLAW_MINIO_PASSWORD:-${HICLAW_ADMIN_PASSWORD:-admin}}}"
     local extra_env="${4:-[]}"
+    local custom_image="${5:-}"
+    local image="${custom_image:-${WORKER_IMAGE}}"
 
     # Build ExtraHosts for local domains (*-local.hiclaw.io) that need
     # in-container resolution back to the Manager. Skip if user provides
@@ -154,12 +157,12 @@ container_create_worker() {
     extra_hosts="${extra_hosts%,}"
 
     _log "Creating Worker container: ${container_name}"
-    _log "  Image: ${WORKER_IMAGE}"
+    _log "  Image: ${image}"
     _log "  FS endpoint: ${fs_endpoint}"
     _log "  Manager IP: ${manager_ip}"
 
     # Pull image if not available locally
-    if ! _ensure_image "${WORKER_IMAGE}"; then
+    if ! _ensure_image "${image}"; then
         return 1
     fi
 
@@ -195,7 +198,7 @@ container_create_worker() {
     local create_payload
     create_payload=$(cat <<PAYLOAD
 {
-    "Image": "${WORKER_IMAGE}",
+    "Image": "${image}",
     "Env": ${all_env},
     "WorkingDir": "${worker_home}",
     "HostConfig": ${host_config}
@@ -357,7 +360,7 @@ container_wait_worker_ready() {
 
 # Create and start a CoPaw Worker container
 # Uses the CoPaw worker image and sets appropriate working directory.
-# Usage: container_create_copaw_worker <worker_name> [fs_access_key] [fs_secret_key] [extra_env_json]
+# Usage: container_create_copaw_worker <worker_name> [fs_access_key] [fs_secret_key] [extra_env_json] [custom_image]
 container_create_copaw_worker() {
     local worker_name="$1"
     local container_name="${WORKER_CONTAINER_PREFIX}${worker_name}"
@@ -374,6 +377,8 @@ container_create_copaw_worker() {
     local fs_access_key="${2:-${HICLAW_MINIO_USER:-${HICLAW_ADMIN_USER:-admin}}}"
     local fs_secret_key="${3:-${HICLAW_MINIO_PASSWORD:-${HICLAW_ADMIN_PASSWORD:-admin}}}"
     local extra_env="${4:-[]}"
+    local custom_image="${5:-}"
+    local image="${custom_image:-${COPAW_WORKER_IMAGE}}"
 
     # Build ExtraHosts (same as openclaw workers)
     local extra_hosts=""
@@ -390,12 +395,12 @@ container_create_copaw_worker() {
     extra_hosts="${extra_hosts%,}"
 
     _log "Creating CoPaw Worker container: ${container_name}"
-    _log "  Image: ${COPAW_WORKER_IMAGE}"
+    _log "  Image: ${image}"
     _log "  FS endpoint: ${fs_endpoint}"
     _log "  Manager IP: ${manager_ip}"
 
     # Pull image if not available locally
-    if ! _ensure_image "${COPAW_WORKER_IMAGE}"; then
+    if ! _ensure_image "${image}"; then
         return 1
     fi
 
@@ -460,7 +465,7 @@ container_create_copaw_worker() {
         local create_payload
         create_payload=$(cat <<PAYLOAD
 {
-    "Image": "${COPAW_WORKER_IMAGE}",
+    "Image": "${image}",
     "Env": ${all_env},
     "WorkingDir": "/root/.copaw-worker",
     "ExposedPorts": ${exposed_ports},

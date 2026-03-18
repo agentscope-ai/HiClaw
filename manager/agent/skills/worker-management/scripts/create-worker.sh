@@ -6,7 +6,7 @@
 # MinIO sync, skills push, and container startup.
 #
 # Usage:
-#   create-worker.sh --name <NAME> [--model <MODEL_ID>] [--mcp-servers s1,s2] [--skills s1,s2] [--find-skills] [--skills-api-url <URL>] [--remote]
+#   create-worker.sh --name <NAME> [--model <MODEL_ID>] [--image <IMAGE>] [--mcp-servers s1,s2] [--skills s1,s2] [--find-skills] [--skills-api-url <URL>] [--remote]
 #
 # Prerequisites:
 #   - SOUL.md must already exist at /root/hiclaw-fs/agents/<NAME>/SOUL.md
@@ -43,11 +43,13 @@ ENABLE_FIND_SKILLS=false
 SKILLS_API_URL=""
 WORKER_RUNTIME="${HICLAW_DEFAULT_WORKER_RUNTIME:-openclaw}"   # openclaw | copaw
 CONSOLE_PORT=""             # copaw only: web console port (e.g. 8088)
+CUSTOM_IMAGE=""             # optional: custom Docker image for this worker
 
 while [ $# -gt 0 ]; do
     case "$1" in
         --name)       WORKER_NAME="$2"; shift 2 ;;
         --model)      MODEL_ID="$2"; shift 2 ;;
+        --image)      CUSTOM_IMAGE="$2"; shift 2 ;;
         --mcp-servers) MCP_SERVERS="$2"; shift 2 ;;
         --skills)     WORKER_SKILLS="$2"; shift 2 ;;
         --find-skills) ENABLE_FIND_SKILLS=true; shift ;;
@@ -60,7 +62,7 @@ while [ $# -gt 0 ]; do
 done
 
 if [ -z "${WORKER_NAME}" ]; then
-    echo "Usage: create-worker.sh --name <NAME> [--model <MODEL_ID>] [--mcp-servers s1,s2] [--skills s1,s2] [--find-skills] [--skills-api-url <URL>] [--remote] [--runtime openclaw|copaw] [--console-port <PORT>]"
+    echo "Usage: create-worker.sh --name <NAME> [--model <MODEL_ID>] [--image <IMAGE>] [--mcp-servers s1,s2] [--skills s1,s2] [--find-skills] [--skills-api-url <URL>] [--remote] [--runtime openclaw|copaw] [--console-port <PORT>]"
     exit 1
 fi
 
@@ -481,6 +483,7 @@ jq --arg w "${WORKER_NAME}" \
    --arg ts "${NOW_TS}" \
    --arg runtime "${WORKER_RUNTIME}" \
    --arg deployment "${DEPLOY_MODE_HINT}" \
+   --arg image "${CUSTOM_IMAGE:-}" \
    --argjson skills "${SKILLS_JSON}" \
    '.workers[$w] = {
      "matrix_user_id": $uid,
@@ -488,6 +491,7 @@ jq --arg w "${WORKER_NAME}" \
      "runtime": $runtime,
      "deployment": $deployment,
      "skills": $skills,
+     "image": (if $image == "" then null else $image end),
      "created_at": (if .workers[$w].created_at? then .workers[$w].created_at else $ts end),
      "skills_updated_at": $ts
    } | .updated_at = $ts' \
@@ -604,9 +608,9 @@ elif container_api_available; then
     EXTRA_ENV_JSON=$(_build_extra_env)
 
     if [ "${WORKER_RUNTIME}" = "copaw" ]; then
-        CREATE_OUTPUT=$(container_create_copaw_worker "${WORKER_NAME}" "${WORKER_NAME}" "${WORKER_MINIO_PASSWORD}" "${EXTRA_ENV_JSON}" 2>&1) || true
+        CREATE_OUTPUT=$(container_create_copaw_worker "${WORKER_NAME}" "${WORKER_NAME}" "${WORKER_MINIO_PASSWORD}" "${EXTRA_ENV_JSON}" "${CUSTOM_IMAGE}" 2>&1) || true
     else
-        CREATE_OUTPUT=$(container_create_worker "${WORKER_NAME}" "${WORKER_NAME}" "${WORKER_MINIO_PASSWORD}" "${EXTRA_ENV_JSON}" 2>&1) || true
+        CREATE_OUTPUT=$(container_create_worker "${WORKER_NAME}" "${WORKER_NAME}" "${WORKER_MINIO_PASSWORD}" "${EXTRA_ENV_JSON}" "${CUSTOM_IMAGE}" 2>&1) || true
     fi
 
     CONTAINER_ID=$(echo "${CREATE_OUTPUT}" | tail -1)
