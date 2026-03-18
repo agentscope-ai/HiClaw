@@ -51,14 +51,15 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
 # 1. Clone with single branch to minimize .git size
 # 2. Install dependencies and build
 # 3. Remove unnecessary files (tests, .git, etc.) - keep all node_modules for extensions
-RUN git clone --depth 1 --single-branch -b hiclaw-v1.1 \
+RUN git clone --depth 1 --single-branch -b hiclaw-v1 \
         https://github.com/johnlanni/openclaw.git /opt/openclaw && \
     cd /opt/openclaw && \
-    git fetch --depth 1 origin 17e955b91a025fd960ff4d3354e940839ca36a47 && \
-    git checkout 17e955b91a025fd960ff4d3354e940839ca36a47 && \
+    git fetch --depth 1 origin fe10963e081bcb176f9c543ccc4205dd9af6ef0a && \
+    git checkout fe10963e081bcb176f9c543ccc4205dd9af6ef0a && \
     pnpm config set registry ${NPM_REGISTRY} && \
     pnpm install && \
     pnpm build && \
+    pnpm ui:build && \
     echo "==> Verifying critical native addons..." && \
     ADDON_DIR=/opt/openclaw/node_modules/.pnpm/@matrix-org+matrix-sdk-crypto-nodejs@0.4.0/node_modules/@matrix-org/matrix-sdk-crypto-nodejs && \
     ls "$ADDON_DIR"/matrix-sdk-crypto.linux-*.node 2>/dev/null | grep -q . \
@@ -76,7 +77,6 @@ RUN git clone --depth 1 --single-branch -b hiclaw-v1.1 \
         .detect-secrets.cfg .npmrc \
         .env.example appcast.xml \
         vitest*.config.ts tsdown.config.ts fly*.toml render.yaml && \
-    find extensions -name '*.ts' -delete && \
     rm -rf /root/.local/share/pnpm /root/.npm
 
 # Install mcporter
