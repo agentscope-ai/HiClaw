@@ -518,6 +518,23 @@ if ($DmRoomId) {
         $Message += " 容器环境变量需设置 HTTP_PROXY=$Proxy HTTPS_PROXY=$Proxy NO_PROXY=$NoProxyList"
     }
 
+    # Append cron job info if present
+    $cronFile = Join-Path $TmpDir "crons/jobs.json"
+    if (Test-Path $cronFile) {
+        try {
+            $cronJobs = Get-Content -Raw $cronFile | ConvertFrom-Json
+            if ($cronJobs.Count -gt 0) {
+                $cronSummary = $cronJobs | ForEach-Object {
+                    $sched = if ($_.schedule.cron) { $_.schedule.cron } elseif ($_.schedule.every) { $_.schedule.every } else { "unknown" }
+                    $payload = if ($_.payload.agentTurn.parts[0].text) { $_.payload.agentTurn.parts[0].text.Substring(0, [Math]::Min(80, $_.payload.agentTurn.parts[0].text.Length)) } else { "N/A" }
+                    $name = if ($_.name) { $_.name } else { $_.id }
+                    "- ${name}: schedule=${sched}, payload=${payload}"
+                }
+                $Message += "`n`n此 Worker 从源环境迁移了 $($cronJobs.Count) 个定时任务，请为 ${Name} 创建对应的 scheduled tasks:`n$($cronSummary -join "`n")"
+            }
+        } catch {}
+    }
+
     $txnId = "migrate-$([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())-$$"
     $encodedDmRid = [System.Uri]::EscapeDataString($DmRoomId)
     $msgBody = @{ msgtype = "m.text"; body = $Message } | ConvertTo-Json -Compress
