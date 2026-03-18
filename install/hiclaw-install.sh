@@ -336,8 +336,8 @@ msg() {
         "llm.codingplan.model.glm5.en") text="  2) glm-5  - Zhipu GLM-5 (recommended for coding)" ;;
         "llm.codingplan.model.kimi.zh") text="  3) kimi-k2.5  - Moonshot Kimi K2.5" ;;
         "llm.codingplan.model.kimi.en") text="  3) kimi-k2.5  - Moonshot Kimi K2.5" ;;
-        "llm.codingplan.model.minimax.zh") text="  4) MiniMax-M2.7  - MiniMax M2.7" ;;
-        "llm.codingplan.model.minimax.en") text="  4) MiniMax-M2.7  - MiniMax M2.7" ;;
+        "llm.codingplan.model.minimax.zh") text="  4) MiniMax-M2.5  - MiniMax M2.5" ;;
+        "llm.codingplan.model.minimax.en") text="  4) MiniMax-M2.5  - MiniMax M2.5" ;;
         "llm.codingplan.model.select.zh") text="选择模型 [1/2/3/4]" ;;
         "llm.codingplan.model.select.en") text="Select model [1/2/3/4]" ;;
         "llm.provider.selected_codingplan.zh") text="  提供商: 阿里云百炼 CodingPlan" ;;
@@ -1560,8 +1560,8 @@ install_manager() {
                         3|kimi-k2.5)
                             HICLAW_DEFAULT_MODEL="kimi-k2.5"
                             ;;
-                        4|MiniMax-M2.7)
-                            HICLAW_DEFAULT_MODEL="MiniMax-M2.7"
+                        4|MiniMax-M2.5)
+                            HICLAW_DEFAULT_MODEL="MiniMax-M2.5"
                             ;;
                         *)
                             HICLAW_DEFAULT_MODEL="qwen3.5-plus"
@@ -1626,8 +1626,8 @@ install_manager() {
                                 3|kimi-k2.5)
                                     HICLAW_DEFAULT_MODEL="kimi-k2.5"
                                     ;;
-                                4|MiniMax-M2.7)
-                                    HICLAW_DEFAULT_MODEL="MiniMax-M2.7"
+                                4|MiniMax-M2.5)
+                                    HICLAW_DEFAULT_MODEL="MiniMax-M2.5"
                                     ;;
                                 *)
                                     HICLAW_DEFAULT_MODEL="qwen3.5-plus"

@@ -297,7 +297,7 @@ $script:Messages = @{
     "llm.codingplan.model.qwen35plus" = @{ zh = "  1) qwen3.5-plus  - 千问 3.5（速度最快）"; en = "  1) qwen3.5-plus  - Qwen 3.5 (fastest)" }
     "llm.codingplan.model.glm5" = @{ zh = "  2) glm-5  - 智谱 GLM-5（编程推荐）"; en = "  2) glm-5  - Zhipu GLM-5 (recommended for coding)" }
     "llm.codingplan.model.kimi" = @{ zh = "  3) kimi-k2.5  - Moonshot Kimi K2.5"; en = "  3) kimi-k2.5  - Moonshot Kimi K2.5" }
-    "llm.codingplan.model.minimax" = @{ zh = "  4) MiniMax-M2.7  - MiniMax M2.7"; en = "  4) MiniMax-M2.7  - MiniMax M2.7" }
+    "llm.codingplan.model.minimax" = @{ zh = "  4) MiniMax-M2.5  - MiniMax M2.5"; en = "  4) MiniMax-M2.5  - MiniMax M2.5" }
     "llm.codingplan.model.select" = @{ zh = "选择模型 [1/2/3/4]"; en = "Select model [1/2/3/4]" }
     "llm.provider.selected_codingplan" = @{ zh = "  提供商: 阿里云百炼 CodingPlan"; en = "  Provider: Alibaba Cloud CodingPlan" }
     "llm.provider.selected_qwen" = @{ zh = "  提供商: 阿里云百炼"; en = "  Provider: Alibaba Cloud Bailian" }
@@ -1586,8 +1586,8 @@ function Install-Manager {
                         "^(3|kimi-k2\.5)$" {
                             $config.DEFAULT_MODEL = "kimi-k2.5"
                         }
-                        "^(4|MiniMax-M2\.7)$" {
-                            $config.DEFAULT_MODEL = "MiniMax-M2.7"
+                        "^(4|MiniMax-M2\.5)$" {
+                            $config.DEFAULT_MODEL = "MiniMax-M2.5"
                         }
                         default {
                             $config.DEFAULT_MODEL = "qwen3.5-plus"
@@ -1648,8 +1648,8 @@ function Install-Manager {
                             "^(3|kimi-k2\.5)$" {
                                 $config.DEFAULT_MODEL = "kimi-k2.5"
                             }
-                            "^(4|MiniMax-M2\.7)$" {
-                                $config.DEFAULT_MODEL = "MiniMax-M2.7"
+                            "^(4|MiniMax-M2\.5)$" {
+                                $config.DEFAULT_MODEL = "MiniMax-M2.5"
                             }
                             default {
                                 $config.DEFAULT_MODEL = "qwen3.5-plus"
