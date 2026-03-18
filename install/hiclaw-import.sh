@@ -731,19 +731,39 @@ if [ -z "${DM_ROOM_ID}" ]; then
 fi
 
 if [ -n "${DM_ROOM_ID}" ]; then
-    # Build the message
+    # Build the message — detailed enough for Manager to act without extra context
     if [ -n "${IMAGE_TAG}" ]; then
-        MESSAGE="@manager:${MATRIX_DOMAIN} Worker ${WORKER_NAME} 的所有配置已通过导入脚本创建完毕（Matrix 账号、Room、MinIO、Higress、openclaw.json、workers-registry 均已就绪）。请使用镜像 ${IMAGE_TAG} 启动此 Worker 的容器。"
+        IMAGE_INSTRUCTION="Use custom image: ${IMAGE_TAG}"
     else
-        MESSAGE="@manager:${MATRIX_DOMAIN} Worker ${WORKER_NAME} 的所有配置已通过导入脚本创建完毕（Matrix 账号、Room、MinIO、Higress、openclaw.json、workers-registry 均已就绪）。请使用标准 Worker 镜像启动此 Worker 的容器。"
+        IMAGE_INSTRUCTION="Use the default Worker image (no custom image)"
     fi
+
+    MESSAGE="@manager:${MATRIX_DOMAIN} An imported Worker '${WORKER_NAME}' is ready to start. All configuration has been created by the hiclaw-import script:
+- Matrix account registered, Room created (room_id in workers-registry.json)
+- MinIO user created with scoped S3 policy
+- Higress consumer and routes authorized
+- openclaw.json generated and synced to MinIO
+- SOUL.md, AGENTS.md, skills, memory pushed to MinIO
+- workers-registry.json updated
+- Credentials persisted in /data/worker-creds/${WORKER_NAME}.env
+
+DO NOT run create-worker.sh — everything is already in place.
+
+To start the container:
+1. Read credentials: source /data/worker-creds/${WORKER_NAME}.env
+2. Read image from registry: IMAGE=\$(jq -r '.workers[\"${WORKER_NAME}\"].image // empty' ~/workers-registry.json)
+3. Start: bash -c 'source /opt/hiclaw/scripts/lib/container-api.sh && source /opt/hiclaw/scripts/lib/hiclaw-env.sh && container_create_worker \"${WORKER_NAME}\" \"${WORKER_NAME}\" \"\${WORKER_MINIO_PASSWORD}\" \"[]\" \"\${IMAGE}\"'
+${IMAGE_INSTRUCTION}"
 
     if [ -n "${PROXY}" ]; then
         NO_PROXY_LIST="*.hiclaw.io,127.0.0.1,localhost"
         if [ -n "${EXTRA_NO_PROXY}" ]; then
             NO_PROXY_LIST="${NO_PROXY_LIST},${EXTRA_NO_PROXY}"
         fi
-        MESSAGE="${MESSAGE} 容器环境变量需设置 HTTP_PROXY=${PROXY} HTTPS_PROXY=${PROXY} NO_PROXY=${NO_PROXY_LIST}"
+        MESSAGE="${MESSAGE}
+
+Proxy config — pass as extra_env (4th param) to container_create_worker:
+HTTP_PROXY=${PROXY} HTTPS_PROXY=${PROXY} NO_PROXY=${NO_PROXY_LIST}"
     fi
 
     # Append cron job info if present
@@ -755,7 +775,7 @@ if [ -n "${DM_ROOM_ID}" ]; then
             if [ -n "${CRON_SUMMARY}" ]; then
                 MESSAGE="${MESSAGE}
 
-此 Worker 从源环境迁移了 ${CRON_COUNT} 个定时任务，请为 ${WORKER_NAME} 创建对应的 scheduled tasks:
+This Worker has ${CRON_COUNT} scheduled task(s) migrated from the source environment. After starting the container, please create corresponding scheduled tasks for ${WORKER_NAME}:
 ${CRON_SUMMARY}"
             fi
         fi

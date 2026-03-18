@@ -498,47 +498,5 @@ After pushing skills, the script notifies the affected Worker(s) via Matrix @men
 
 ## Imported Worker Pull-Up
 
-When the admin (or the `hiclaw-import.sh` script) sends a message like:
-
-> Worker xxx 的所有配置已通过导入脚本创建完毕（Matrix 账号、Room、MinIO、Higress、openclaw.json、workers-registry 均已就绪）。请使用镜像 yyy 启动此 Worker 的容器。
-
-Or (when no custom image, using standard Worker image):
-
-> Worker xxx 的所有配置已通过导入脚本创建完毕（...均已就绪）。请使用标准 Worker 镜像启动此 Worker 的容器。
-
-This means the import script has already completed **all** Worker creation steps:
-- Matrix account registration and room creation
-- MinIO user, policy, and config push (SOUL.md, AGENTS.md, openclaw.json, skills, memory)
-- Higress consumer and route authorization
-- workers-registry.json update (with `image` field set to the custom image)
-- Worker credentials persisted in `/data/worker-creds/`
-
-**You do NOT need to run `create-worker.sh`.** All configuration is already in place.
-
-Your only job is to **start the container**. Check the `image` field in `workers-registry.json`:
-
-```bash
-# Read the worker's image from registry
-IMAGE=$(jq -r '.workers["<WORKER_NAME>"].image // empty' ~/workers-registry.json)
-
-# Start the container via container API
-# If IMAGE is empty/null, the 5th param is empty and container_create_worker uses the default HICLAW_WORKER_IMAGE
-bash -c 'source /opt/hiclaw/scripts/lib/container-api.sh && \
-    source /opt/hiclaw/scripts/lib/hiclaw-env.sh && \
-    container_create_worker "<WORKER_NAME>" "<WORKER_NAME>" "<MINIO_PASSWORD>" "[]" "'"${IMAGE}"'"'
-```
-
-To get the MinIO password:
-```bash
-source /data/worker-creds/<WORKER_NAME>.env
-echo "${WORKER_MINIO_PASSWORD}"
-```
-
-If the message includes proxy environment variables (e.g., `HTTP_PROXY=... NO_PROXY=...`), pass them as extra_env:
-```bash
-EXTRA_ENV='["HTTP_PROXY=http://proxy:port","HTTPS_PROXY=http://proxy:port","NO_PROXY=*.hiclaw.io,127.0.0.1,localhost","http_proxy=http://proxy:port","https_proxy=http://proxy:port","no_proxy=*.hiclaw.io,127.0.0.1,localhost"]'
-container_create_worker "<WORKER_NAME>" "<WORKER_NAME>" "${WORKER_MINIO_PASSWORD}" "${EXTRA_ENV}" "${IMAGE}"
-```
-
-After the container starts, follow the normal post-creation verification and greeting flow.
+When the `hiclaw-import.sh` script sends a message requesting to start an imported Worker, all configuration is already in place (Matrix account, Room, MinIO, Higress, openclaw.json, workers-registry). **Do NOT run `create-worker.sh`** — just start the container following the instructions in the message.
 

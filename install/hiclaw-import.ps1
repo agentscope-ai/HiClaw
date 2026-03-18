@@ -507,15 +507,32 @@ if (-not $DmRoomId) {
 
 if ($DmRoomId) {
     if ($ImageTag) {
-        $Message = "@manager:${MatrixDomain} Worker ${Name} 的所有配置已通过导入脚本创建完毕（Matrix 账号、Room、MinIO、Higress、openclaw.json、workers-registry 均已就绪）。请使用镜像 ${ImageTag} 启动此 Worker 的容器。"
+        $ImageInstruction = "Use custom image: $ImageTag"
     } else {
-        $Message = "@manager:${MatrixDomain} Worker ${Name} 的所有配置已通过导入脚本创建完毕（Matrix 账号、Room、MinIO、Higress、openclaw.json、workers-registry 均已就绪）。请使用标准 Worker 镜像启动此 Worker 的容器。"
+        $ImageInstruction = "Use the default Worker image (no custom image)"
     }
+
+    $Message = "@manager:${MatrixDomain} An imported Worker '${Name}' is ready to start. All configuration has been created by the hiclaw-import script:
+- Matrix account registered, Room created (room_id in workers-registry.json)
+- MinIO user created with scoped S3 policy
+- Higress consumer and routes authorized
+- openclaw.json generated and synced to MinIO
+- SOUL.md, AGENTS.md, skills, memory pushed to MinIO
+- workers-registry.json updated
+- Credentials persisted in /data/worker-creds/${Name}.env
+
+DO NOT run create-worker.sh — everything is already in place.
+
+To start the container:
+1. Read credentials: source /data/worker-creds/${Name}.env
+2. Read image from registry: IMAGE=`$(jq -r '.workers[`"${Name}`"].image // empty' ~/workers-registry.json)
+3. Start: bash -c 'source /opt/hiclaw/scripts/lib/container-api.sh && source /opt/hiclaw/scripts/lib/hiclaw-env.sh && container_create_worker `"${Name}`" `"${Name}`" `"`${WORKER_MINIO_PASSWORD}`" `"[]`" `"`${IMAGE}`"'
+$ImageInstruction"
 
     if ($Proxy) {
         $NoProxyList = "*.hiclaw.io,127.0.0.1,localhost"
         if ($NoProxy) { $NoProxyList += ",$NoProxy" }
-        $Message += " 容器环境变量需设置 HTTP_PROXY=$Proxy HTTPS_PROXY=$Proxy NO_PROXY=$NoProxyList"
+        $Message += "`n`nProxy config — pass as extra_env (4th param) to container_create_worker:`nHTTP_PROXY=$Proxy HTTPS_PROXY=$Proxy NO_PROXY=$NoProxyList"
     }
 
     # Append cron job info if present
@@ -527,10 +544,10 @@ if ($DmRoomId) {
                 $cronSummary = $cronJobs | ForEach-Object {
                     $sched = if ($_.schedule.cron) { $_.schedule.cron } elseif ($_.schedule.every) { $_.schedule.every } else { "unknown" }
                     $payload = if ($_.payload.agentTurn.parts[0].text) { $_.payload.agentTurn.parts[0].text.Substring(0, [Math]::Min(80, $_.payload.agentTurn.parts[0].text.Length)) } else { "N/A" }
-                    $name = if ($_.name) { $_.name } else { $_.id }
-                    "- ${name}: schedule=${sched}, payload=${payload}"
+                    $jname = if ($_.name) { $_.name } else { $_.id }
+                    "- ${jname}: schedule=${sched}, payload=${payload}"
                 }
-                $Message += "`n`n此 Worker 从源环境迁移了 $($cronJobs.Count) 个定时任务，请为 ${Name} 创建对应的 scheduled tasks:`n$($cronSummary -join "`n")"
+                $Message += "`n`nThis Worker has $($cronJobs.Count) scheduled task(s) migrated from the source environment. After starting the container, please create corresponding scheduled tasks for ${Name}:`n$($cronSummary -join "`n")"
             }
         } catch {}
     }
