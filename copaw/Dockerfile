@@ -39,7 +39,8 @@ RUN if [ -n "${APT_MIRROR}" ]; then \
         libolm-dev \
         libjemalloc2 \
         curl \
-        gettext-base \
+        git \
+        jq \
         tzdata \
     && rm -rf /var/lib/apt/lists/*
 
@@ -57,9 +58,12 @@ RUN curl -fsSL "${LITE_COPAW_REPO}/archive/${LITE_COPAW_COMMIT}.tar.gz" \
         | tar xz -C /tmp \
     && mv /tmp/CoPaw-${LITE_COPAW_COMMIT} /tmp/lite-copaw
 
-# Stage copaw-worker source (shared by both venvs)
+# Stage copaw-worker dependency metadata only (src/ copied later for layer caching).
+# A minimal __init__.py placeholder lets pip resolve the package without the real source,
+# so that dependency-heavy venv layers (~2 GB) are rebuilt only when pyproject.toml changes.
 COPY pyproject.toml README.md /tmp/copaw-worker/
-COPY src/ /tmp/copaw-worker/src/
+RUN mkdir -p /tmp/copaw-worker/src/copaw_worker \
+    && echo '__version__ = "0.0.0"' > /tmp/copaw-worker/src/copaw_worker/__init__.py
 
 # --- Standard venv: copaw from PyPI ---
 RUN python -m venv /opt/venv/standard \
@@ -98,15 +102,25 @@ RUN SITE=/opt/venv/lite/lib/python3.11/site-packages \
     && /opt/venv/lite/bin/python /tmp/patch_agentscope_runtime_lazy.py "$SITE/agentscope_runtime" \
     && rm /tmp/patch_*_lazy.py
 
-RUN rm -rf /tmp/copaw-worker/ /tmp/lite-copaw/
+# --- Overlay real copaw-worker source (high-frequency changes, ~128KB) ---
+# This layer is rebuilt on every src/ change but does NOT invalidate the
+# heavy venv layers above, saving ~2 GB of re-download on typical upgrades.
+COPY src/ /tmp/copaw-worker/src/
+RUN STANDARD_SITE=/opt/venv/standard/lib/python3.11/site-packages/copaw_worker \
+    && LITE_SITE=/opt/venv/lite/lib/python3.11/site-packages/copaw_worker \
+    && cp -a /tmp/copaw-worker/src/copaw_worker/* "$STANDARD_SITE/" \
+    && cp -a /tmp/copaw-worker/src/copaw_worker/* "$LITE_SITE/" \
+    && rm -rf /tmp/copaw-worker/ /tmp/lite-copaw/
 
 # copaw-sync wrapper
 RUN printf '#!/bin/bash\nexec python3 "/root/.copaw-worker/${HICLAW_WORKER_NAME}/skills/file-sync/scripts/copaw-sync.py" "$@"\n' \
     > /usr/local/bin/copaw-sync && chmod +x /usr/local/bin/copaw-sync
 
 # Entrypoint script
-COPY scripts/copaw-worker-entrypoint.sh /opt/hiclaw/scripts/copaw-worker-entrypoint.sh
-RUN chmod +x /opt/hiclaw/scripts/copaw-worker-entrypoint.sh
+COPY --chmod=755 scripts/copaw-worker-entrypoint.sh /opt/hiclaw/scripts/copaw-worker-entrypoint.sh
+
+# Shared environment bootstrap and credential management (hiclaw-env.sh, oss-credentials.sh)
+COPY --from=shared . /opt/hiclaw/scripts/lib/
 
 # Create workspace directories for both modes
 RUN mkdir -p /root/.copaw-worker

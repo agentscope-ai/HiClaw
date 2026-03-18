@@ -20,12 +20,17 @@ cloud_sae_available() {
 sae_create_worker() {
     local worker_name="$1"
     local extra_envs_json="$2"
+    local image_override="${3:-}"
     extra_envs_json="${extra_envs_json:-"{}"}"
     _log "Creating SAE application for worker: ${worker_name}"
     local envs_file
     envs_file=$(mktemp /tmp/sae-envs-XXXXXX.json)
     printf '%s' "${extra_envs_json}" > "${envs_file}"
-    python3 "${CLOUD_WORKER_API}" sae-create --name "${worker_name}" --envs "@${envs_file}"
+    local image_arg=""
+    if [ -n "${image_override}" ]; then
+        image_arg="--image ${image_override}"
+    fi
+    python3 "${CLOUD_WORKER_API}" sae-create --name "${worker_name}" --envs "@${envs_file}" ${image_arg}
     local rc=$?
     rm -f "${envs_file}"
     return ${rc}

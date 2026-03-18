@@ -430,6 +430,7 @@ Format:
       "runtime": "openclaw",
       "deployment": "local",
       "skills": ["file-sync", "github-operations"],
+      "image": null,
       "created_at": "2026-01-01T00:00:00Z",
       "skills_updated_at": "2026-01-01T00:00:00Z"
     }
@@ -440,6 +441,8 @@ Format:
 `runtime` is `"openclaw"` (default, container-based) or `"copaw"` (pip-installed Python process). Omitted field defaults to `"openclaw"` for backward compatibility.
 
 `deployment` is `"local"` (Manager-managed container) or `"remote"` (admin-managed, runs on a separate machine). Omitted field defaults to `"local"` for backward compatibility. Remote workers are excluded from automatic container lifecycle management (auto-stop/start/recreate on Manager restart). After a Manager upgrade, remote workers must be restarted by the admin manually.
+
+`image` is the custom Docker image for this Worker. When `null` or omitted, the default `HICLAW_WORKER_IMAGE` (or `HICLAW_COPAW_WORKER_IMAGE` for copaw) is used. Migrated workers typically have a custom image built from their migration package.
 
 `file-sync` is the bootstrap skill (image-managed) and is always included.
 
@@ -492,4 +495,8 @@ After pushing skills, the script notifies the affected Worker(s) via Matrix @men
 - OpenClaw config hot-reload: file-watch (~300ms) or `config.patch` API
 - **File sync**: after writing any file that a Worker (or another Worker) needs to read, always notify the target Worker via Matrix to use their `file-sync` skill. This applies to config updates, task briefs, shared data, and cross-Worker collaboration artifacts. The exact sync command varies by runtime — the Worker's `file-sync` SKILL.md defines how to execute it. Background periodic sync (every 5 minutes) serves as fallback only
 - **Skills are Manager-controlled**: Workers cannot modify their own skills (local→remote sync excludes `skills/**`). Only Manager can push skill changes via `push-worker-skills.sh`
+
+## Imported Worker Pull-Up
+
+When the `hiclaw-import.sh` script sends a message requesting to start an imported Worker, all configuration is already in place (Matrix account, Room, MinIO, Higress, openclaw.json, workers-registry). **Do NOT run `create-worker.sh`** — just start the container following the instructions in the message.
 

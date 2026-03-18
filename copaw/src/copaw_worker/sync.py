@@ -23,6 +23,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import shutil
 import subprocess
 import time
@@ -78,8 +79,17 @@ class FileSync:
     # ------------------------------------------------------------------
 
     def _ensure_alias(self) -> None:
-        """Set up mc alias (idempotent)."""
+        """Set up mc alias (idempotent).
+
+        If MC_HOST_hiclaw is already set (e.g. by ensure_mc_credentials in
+        cloud mode with RRSA/STS), skip ``mc alias set`` to avoid overriding
+        the STS-based credentials.
+        """
         if self._alias_set:
+            return
+        if os.environ.get(f"MC_HOST_{_MC_ALIAS}"):
+            logger.info("MC_HOST_%s already set, skipping mc alias set", _MC_ALIAS)
+            self._alias_set = True
             return
         # endpoint may already include scheme
         if self.endpoint.startswith("http"):

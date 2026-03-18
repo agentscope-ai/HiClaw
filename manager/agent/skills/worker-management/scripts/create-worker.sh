@@ -6,7 +6,7 @@
 # MinIO sync, skills push, and container startup.
 #
 # Usage:
-#   create-worker.sh --name <NAME> [--model <MODEL_ID>] [--mcp-servers s1,s2] [--skills s1,s2] [--find-skills] [--skills-api-url <URL>] [--remote]
+#   create-worker.sh --name <NAME> [--model <MODEL_ID>] [--image <IMAGE>] [--mcp-servers s1,s2] [--skills s1,s2] [--find-skills] [--skills-api-url <URL>] [--remote]
 #
 # Prerequisites:
 #   - SOUL.md must already exist at /root/hiclaw-fs/agents/<NAME>/SOUL.md
@@ -43,11 +43,13 @@ ENABLE_FIND_SKILLS=false
 SKILLS_API_URL=""
 WORKER_RUNTIME="${HICLAW_DEFAULT_WORKER_RUNTIME:-openclaw}"   # openclaw | copaw
 CONSOLE_PORT=""             # copaw only: web console port (e.g. 8088)
+CUSTOM_IMAGE=""             # optional: custom Docker image for this worker
 
 while [ $# -gt 0 ]; do
     case "$1" in
         --name)       WORKER_NAME="$2"; shift 2 ;;
         --model)      MODEL_ID="$2"; shift 2 ;;
+        --image)      CUSTOM_IMAGE="$2"; shift 2 ;;
         --mcp-servers) MCP_SERVERS="$2"; shift 2 ;;
         --skills)     WORKER_SKILLS="$2"; shift 2 ;;
         --find-skills) ENABLE_FIND_SKILLS=true; shift ;;
@@ -60,7 +62,7 @@ while [ $# -gt 0 ]; do
 done
 
 if [ -z "${WORKER_NAME}" ]; then
-    echo "Usage: create-worker.sh --name <NAME> [--model <MODEL_ID>] [--mcp-servers s1,s2] [--skills s1,s2] [--find-skills] [--skills-api-url <URL>] [--remote] [--runtime openclaw|copaw] [--console-port <PORT>]"
+    echo "Usage: create-worker.sh --name <NAME> [--model <MODEL_ID>] [--image <IMAGE>] [--mcp-servers s1,s2] [--skills s1,s2] [--find-skills] [--skills-api-url <URL>] [--remote] [--runtime openclaw|copaw] [--console-port <PORT>]"
     exit 1
 fi
 
@@ -481,6 +483,7 @@ jq --arg w "${WORKER_NAME}" \
    --arg ts "${NOW_TS}" \
    --arg runtime "${WORKER_RUNTIME}" \
    --arg deployment "${DEPLOY_MODE_HINT}" \
+   --arg image "${CUSTOM_IMAGE:-}" \
    --argjson skills "${SKILLS_JSON}" \
    '.workers[$w] = {
      "matrix_user_id": $uid,
@@ -488,6 +491,7 @@ jq --arg w "${WORKER_NAME}" \
      "runtime": $runtime,
      "deployment": $deployment,
      "skills": $skills,
+     "image": (if $image == "" then null else $image end),
      "created_at": (if .workers[$w].created_at? then .workers[$w].created_at else $ts end),
      "skills_updated_at": $ts
    } | .updated_at = $ts' \
@@ -565,10 +569,20 @@ if [ "${REMOTE_MODE}" = true ]; then
     log "Step 9: Remote mode requested"
     INSTALL_CMD=$(_build_install_cmd)
 elif [ "${HICLAW_RUNTIME}" = "aliyun" ]; then
-    log "Step 9: Creating Worker via cloud backend (SAE)..."
+    log "Step 9: Creating Worker via cloud backend (SAE, runtime=${WORKER_RUNTIME})..."
+
+    # Select SAE image based on worker runtime
+    SAE_IMAGE=""
+    if [ "${WORKER_RUNTIME}" = "copaw" ]; then
+        SAE_IMAGE="${HICLAW_SAE_COPAW_WORKER_IMAGE:-}"
+        if [ -z "${SAE_IMAGE}" ]; then
+            _fail "HICLAW_SAE_COPAW_WORKER_IMAGE not set (required for copaw runtime on cloud)"
+        fi
+    fi
 
     # Build complete SAE environment variables (Worker needs these to connect)
     SAE_ENVS=$(jq -cn \
+        --arg worker_name "${WORKER_NAME}" \
         --arg worker_key "${WORKER_KEY}" \
         --arg matrix_url "${HICLAW_MATRIX_URL:-}" \
         --arg matrix_domain "${MATRIX_DOMAIN}" \
@@ -576,6 +590,8 @@ elif [ "${HICLAW_RUNTIME}" = "aliyun" ]; then
         --arg ai_gw_url "${HICLAW_AI_GATEWAY_URL:-}" \
         --arg oss_bucket "${HICLAW_OSS_BUCKET:-hiclaw-cloud-storage}" \
         --arg region "${HICLAW_REGION:-cn-hangzhou}" \
+        --arg runtime "${WORKER_RUNTIME}" \
+        --arg console_port "${CONSOLE_PORT:-}" \
         '{
             "HICLAW_WORKER_GATEWAY_KEY": $worker_key,
             "HICLAW_MATRIX_URL": $matrix_url,
@@ -584,10 +600,19 @@ elif [ "${HICLAW_RUNTIME}" = "aliyun" ]; then
             "HICLAW_AI_GATEWAY_URL": $ai_gw_url,
             "HICLAW_OSS_BUCKET": $oss_bucket,
             "HICLAW_REGION": $region
-        }')
+        }
+        | if $runtime == "copaw" then
+            . + { "HICLAW_RUNTIME": "aliyun" }
+            | if $console_port != "" then . + { "HICLAW_CONSOLE_PORT": $console_port } else . end
+          else
+            . + {
+                "OPENCLAW_DISABLE_BONJOUR": "1",
+                "OPENCLAW_MDNS_HOSTNAME": ("hiclaw-w-" + $worker_name)
+            }
+          end')
     log "  SAE_ENVS: ${SAE_ENVS:0:200}..."
 
-    CREATE_OUTPUT=$(sae_create_worker "${WORKER_NAME}" "${SAE_ENVS}" 2>/dev/null) || true
+    CREATE_OUTPUT=$(sae_create_worker "${WORKER_NAME}" "${SAE_ENVS}" "${SAE_IMAGE}" 2>/dev/null) || true
     log "  SAE create response: ${CREATE_OUTPUT:0:300}"
     SAE_STATUS=$(echo "${CREATE_OUTPUT}" | jq -r '.status // "error"' 2>/dev/null)
 
@@ -604,9 +629,9 @@ elif container_api_available; then
     EXTRA_ENV_JSON=$(_build_extra_env)
 
     if [ "${WORKER_RUNTIME}" = "copaw" ]; then
-        CREATE_OUTPUT=$(container_create_copaw_worker "${WORKER_NAME}" "${WORKER_NAME}" "${WORKER_MINIO_PASSWORD}" "${EXTRA_ENV_JSON}" 2>&1) || true
+        CREATE_OUTPUT=$(container_create_copaw_worker "${WORKER_NAME}" "${WORKER_NAME}" "${WORKER_MINIO_PASSWORD}" "${EXTRA_ENV_JSON}" "${CUSTOM_IMAGE}" 2>&1) || true
     else
-        CREATE_OUTPUT=$(container_create_worker "${WORKER_NAME}" "${WORKER_NAME}" "${WORKER_MINIO_PASSWORD}" "${EXTRA_ENV_JSON}" 2>&1) || true
+        CREATE_OUTPUT=$(container_create_worker "${WORKER_NAME}" "${WORKER_NAME}" "${WORKER_MINIO_PASSWORD}" "${EXTRA_ENV_JSON}" "${CUSTOM_IMAGE}" 2>&1) || true
     fi
 
     CONTAINER_ID=$(echo "${CREATE_OUTPUT}" | tail -1)

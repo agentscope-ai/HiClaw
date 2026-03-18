@@ -26,12 +26,15 @@ FROM ${HIGRESS_REGISTRY}/higress/element-web:20260216 AS element-web
 
 # ============ Final Image: Based on openclaw-base ============
 # openclaw-base already includes: all-in-one + Node.js 22 + OpenClaw + mcporter + common tools
+#
+# Layer ordering: stable binaries → stable config → shared lib → scripts → agent
+# This ensures that high-frequency changes (agent/, scripts/) only invalidate
+# the smallest, topmost layers, so users pull minimal data on upgrades.
 FROM ${OPENCLAW_BASE_IMAGE}
 
-# Create log directory
-RUN mkdir -p /var/log/hiclaw
+# ---- Stable binaries from build stages (~355MB, rarely change) ----
 
-# ---- Copy binaries from build stages (HiClaw-specific components) ----
+RUN mkdir -p /var/log/hiclaw
 
 # Tuwunel (single static binary)
 COPY --from=tuwunel /usr/bin/tuwunel /usr/local/bin/tuwunel
@@ -45,30 +48,32 @@ COPY --from=mc /usr/bin/mc /usr/local/bin/mc
 # Element Web static files
 COPY --from=element-web /app /opt/element-web
 
-# Ensure openclaw binary is on PATH and config is found
+# ---- Stable configuration (seldom change) ----
+
 ENV PATH="/opt/openclaw/packages/clawdbot/node_modules/.bin:${PATH}"
 ENV OPENCLAW_CONFIG_PATH="/root/manager-workspace/openclaw.json"
 
-# ---- Copy HiClaw configuration and scripts ----
-# Our supervisord.conf replaces the Higress one; our scripts handle all components
 COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
-COPY --from=shared . /opt/hiclaw/scripts/lib/
-COPY scripts/ /opt/hiclaw/scripts/
-
-# Install systemctl shim so 'openclaw gateway restart' works without systemd
-RUN cp /opt/hiclaw/scripts/systemctl-shim.sh /usr/local/bin/systemctl && \
-    chmod +x /usr/local/bin/systemctl
-COPY agent/ /opt/hiclaw/agent/
 COPY configs/ /opt/hiclaw/configs/
 
-ARG BUILTIN_VERSION=latest
-RUN echo "${BUILTIN_VERSION}" > /opt/hiclaw/agent/.builtin-version
+# ---- Shared lib (low-frequency changes, ~8KB) ----
 
-# Make scripts executable
-RUN find /opt/hiclaw/scripts -name '*.sh' -exec chmod +x {} + && \
-    find /opt/hiclaw/agent/skills/*/scripts -name '*.sh' -exec chmod +x {} + 2>/dev/null || true && \
-    find /opt/hiclaw/agent/worker-skills/*/scripts -name '*.sh' -exec chmod +x {} + 2>/dev/null || true && \
-    find /opt/hiclaw/agent/worker-agent/skills/*/scripts -name '*.sh' -exec chmod +x {} + 2>/dev/null || true
+COPY --from=shared . /opt/hiclaw/scripts/lib/
+
+# ---- Scripts (high-frequency changes, ~168KB) ----
+
+COPY --chmod=755 scripts/ /opt/hiclaw/scripts/
+RUN cp /opt/hiclaw/scripts/systemctl-shim.sh /usr/local/bin/systemctl
+
+# ---- Agent definitions (highest-frequency changes, ~740KB) ----
+
+COPY agent/ /opt/hiclaw/agent/
+
+ARG BUILTIN_VERSION=latest
+RUN echo "${BUILTIN_VERSION}" > /opt/hiclaw/agent/.builtin-version \
+    && find /opt/hiclaw/agent/skills/*/scripts -name '*.sh' -exec chmod +x {} + 2>/dev/null || true \
+    && find /opt/hiclaw/agent/worker-skills/*/scripts -name '*.sh' -exec chmod +x {} + 2>/dev/null || true \
+    && find /opt/hiclaw/agent/worker-agent/skills/*/scripts -name '*.sh' -exec chmod +x {} + 2>/dev/null || true
 
 # ---- Ports ----
 # 8080: Higress Gateway (unified entry point)
