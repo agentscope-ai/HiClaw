@@ -14,6 +14,8 @@
 #   make push                     # Build + push multi-arch images (amd64 + arm64)
 #   make push-native              # Push native-arch images only (dev use, NOT recommended for registry)
 #   make clean                    # Remove local images and test containers
+#   make status                   # Show status of Manager and all Worker containers
+#   make logs                     # Show recent logs for Manager and all Workers (LINES=N)
 # ============================================================
 
 # ---------- Configuration ----------
@@ -82,6 +84,9 @@ PUSH_LATEST := $(if $(filter latest,$(VERSION)),,$(if $(filter 1,$(IS_PRERELEASE
 SKIP_BUILD     ?=
 TEST_FILTER    ?=
 
+# Logs flags
+LINES          ?= 50
+
 # ---------- Phony targets ----------
 
 .PHONY: all build build-openclaw-base build-manager build-manager-aliyun build-worker build-copaw-worker \
@@ -90,6 +95,7 @@ TEST_FILTER    ?=
         buildx-setup \
         test test-quick test-installed \
         install uninstall replay replay-log \
+        status logs \
         mirror-images clean help
 
 # ---------- Default ----------
@@ -458,6 +464,23 @@ replay-log: ## View the latest replay conversation log
 		cat "$$LATEST"; \
 	fi
 
+# ---------- Dev utils ----------
+
+status: ## Show status of Manager and all Worker containers
+	@echo "==> HiClaw container status:"
+	@docker ps -a --filter "name=hiclaw-" --format "table {{.Names}}\t{{.Status}}\t{{.Image}}" 2>/dev/null \
+		|| echo "  (no containers found or Docker not available)"
+
+logs: ## Show recent logs for Manager and all Workers (override with LINES=N, default 50)
+	@echo "==> Manager logs (last $(LINES) lines):"
+	@docker logs hiclaw-manager --tail $(LINES) 2>/dev/null || echo "  (Manager container not found)"
+	@echo ""
+	@for c in $$(docker ps -a --filter "name=hiclaw-worker-" --format '{{.Names}}' 2>/dev/null); do \
+		echo "==> Worker: $$c (last $(LINES) lines):"; \
+		docker logs "$$c" --tail $(LINES) 2>/dev/null || echo "  (container not running)"; \
+		echo ""; \
+	done
+
 # ---------- Mirror upstream images ----------
 
 mirror-images: ## Mirror upstream images to Higress registry (multi-arch, via skopeo)
@@ -508,6 +531,11 @@ help: ## Show this help
 	@echo "  make push VERSION=0.1.0             # Build amd64+arm64 and push"
 	@echo "  make push MULTIARCH_PLATFORMS=linux/amd64,linux/arm64,linux/arm/v7"
 	@echo "  make push-native VERSION=dev        # Push native-arch only (dev, overwrites multi-arch!)"
+	@echo ""
+	@echo "Dev utils:"
+	@echo "  make status                                     # Show all hiclaw container statuses"
+	@echo "  make logs                                       # Show last 50 lines of Manager + Worker logs"
+	@echo "  make logs LINES=100                             # Show last 100 lines"
 	@echo ""
 	@echo "Install / Uninstall / Replay:"
 	@echo "  HICLAW_LLM_API_KEY=sk-xxx make install          # Build + install Manager (non-interactive)"
