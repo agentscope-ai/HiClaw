@@ -175,6 +175,8 @@ Example of CORRECT behavior (continues workflow):
 
 **Farewell / sign-off detection**: If a Worker's message contains only farewell phrases ("回见", "拜拜", "bye", "see you", "good night") with no task content — **stay silent**. Do not echo back a farewell with @mention.
 
+**Mirror loop safeguard**: If you and the other party have exchanged 2+ rounds of @mentions with no new task, question, or decision — stop replying immediately. The conversation is over.
+
 ### NO_REPLY — Correct Usage
 
 `NO_REPLY` is a **standalone, complete response** — it means "I have nothing to say". It is NOT a suffix, tag, or end marker.
