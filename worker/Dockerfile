@@ -34,9 +34,8 @@ ENV PATH="/opt/openclaw/packages/clawdbot/node_modules/.bin:${PATH}"
 COPY --from=shared . /opt/hiclaw/scripts/lib/
 
 # Worker entrypoint and sync scripts
-COPY scripts/ /opt/hiclaw/scripts/
-RUN find /opt/hiclaw/scripts -name '*.sh' -exec chmod +x {} + && \
-    printf '#!/bin/bash\nexec "/root/hiclaw-fs/agents/${HICLAW_WORKER_NAME}/skills/file-sync/scripts/hiclaw-sync.sh" "$@"\n' \
+COPY --chmod=755 scripts/ /opt/hiclaw/scripts/
+RUN printf '#!/bin/bash\nexec "/root/hiclaw-fs/agents/${HICLAW_WORKER_NAME}/skills/file-sync/scripts/hiclaw-sync.sh" "$@"\n' \
     > /usr/local/bin/hiclaw-sync && chmod +x /usr/local/bin/hiclaw-sync
 
 # hiclaw-fs root (mirrors Manager's ~/hiclaw-fs/ layout)
