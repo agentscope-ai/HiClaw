@@ -1,5 +1,5 @@
 <h1 align="center">
-    <img src="https://img.alicdn.com/imgextra/i1/O1CN014DQemZ257thQOBg8L_!!6000000007480-55-tps-1489-391.svg" alt="HiClaw"  width="290" height="72.5">
+    <img src="https://img.alicdn.com/imgextra/i2/O1CN01hTYQMO28B3H9qP7RV_!!6000000007893-2-tps-1490-392.png" alt="HiClaw"  width="290" height="72.5">
   <br>
 </h1>
 
@@ -18,15 +18,15 @@ Think of it as your AI team in a chat room: tell the Manager what you need, it s
 
 ## Key Features
 
-- 🦞 **Customizable "Claws"**: Each Claw can be OpenClaw, CoPaw, NanoClaw, ZeroClaw, or your own enterprise agent. Pre-installed with OpenClaw.
+- 🧬 **Manager-Workers Architecture**: Eliminates the need for human oversight of individual Worker Claws by enabling Agents to manage other Agents.
 
-- 🧬 **Manager Claw Role**: A dedicated Manager handles Worker lifecycle — create, assign tasks, monitor progress — all through natural language.
+- 🦞 **Customizable Agents**: Each Agent supports flexible configurations including OpenClaw, Copaw, NanoClaw, ZeroClaw, and enterprise-built Agents—scaling from individual "shrimp farming" to full-scale "shrimp farm" operations..
 
-- ☎️ **Private & Secure Matrix Communication**: Self-hosted Matrix server (Tuwunel) + Element Web client. **No third-party IM platforms, no external APIs, no data leaving your infrastructure.** Your agent conversations stay on your servers.
+- 📦 **MinIO Shared File System**: Introduces a shared file system for inter-Agent information exchange, significantly reducing token consumption in multi-Agent collaboration scenarios.
 
-- 📦 **Shared File System (MinIO)**: Centralized file storage for agent collaboration. Workers are stateless — destroy and recreate anytime.
+- 🔐 **Higress AI Gateway**: Centralizes traffic management and mitigates credential-related risks, alleviating user concerns about security vulnerabilities in the native Lobster framework.
 
-- 🔐 **Secure Entry via Higress AI Gateway**: Workers never hold real API keys. They only get consumer tokens. Even if compromised, attackers get nothing useful.
+- ☎️ **Element IM Client + Tuwunel IM Server (both Matrix protocol-based)**: Eliminating DingTalk/Lark integration overhead and enterprise approval workflows. Enables rapid user onboarding to experience the "delight" of model services within an IM environment, while maintaining compatibility with native OpenClaw IM integration.
 
 ## News
 
