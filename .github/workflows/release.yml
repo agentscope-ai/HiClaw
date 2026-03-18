@@ -67,7 +67,7 @@ jobs:
           fi
 
           cat > /tmp/release-body.md << EOF
-          ## What's Changed
+          ## Highlights
 
           ${changelog}
 
@@ -107,6 +107,7 @@ jobs:
         with:
           tag_name: ${{ steps.version.outputs.version }}
           body_path: /tmp/release-body.md
+          generate_release_notes: true
 
       - name: Archive changelog and reset
         run: |
