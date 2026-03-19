@@ -399,6 +399,14 @@ log "Generating Manager openclaw.json..."
 export MANAGER_MATRIX_TOKEN="${MANAGER_TOKEN}"
 export MANAGER_GATEWAY_KEY="${HICLAW_MANAGER_GATEWAY_KEY}"
 
+# Use HICLAW_LLM_API_KEY for LLM provider if set, otherwise fall back to gateway key
+LLM_API_KEY="${HICLAW_LLM_API_KEY:-${HICLAW_MANAGER_GATEWAY_KEY}}"
+if [ -n "${HICLAW_LLM_API_KEY}" ]; then
+    log "Using HICLAW_LLM_API_KEY for LLM provider authentication"
+else
+    log "HICLAW_LLM_API_KEY not set, using HICLAW_MANAGER_GATEWAY_KEY as fallback"
+fi
+
 # Resolve model parameters based on model name
 MODEL_NAME="${HICLAW_DEFAULT_MODEL:-qwen3.5-plus}"
 case "${MODEL_NAME}" in
@@ -477,7 +485,7 @@ if [ -f /root/manager-workspace/openclaw.json ]; then
         # Rebuild model aliases from the full models list
         | (.models.providers["hiclaw-gateway"].models | map({ ("hiclaw-gateway/" + .id): { "alias": .id } }) | add // {}) as $aliases
         | .agents.defaults.models = ((.agents.defaults.models // {}) + $aliases)
-        | .channels.matrix.accessToken = $token | .hooks.token = $key | .models.providers["hiclaw-gateway"].apiKey = $key
+        | .channels.matrix.accessToken = $token | .hooks.token = $key | .models.providers["hiclaw-gateway"].apiKey = $llm_key
         | .agents.defaults.model.primary = ("hiclaw-gateway/" + $model)
         | .commands.restart = true
         | .gateway.controlUi.dangerouslyDisableDeviceAuth = true
@@ -519,9 +527,10 @@ if [ "${HICLAW_RUNTIME}" = "aliyun" ]; then
     jq --arg homeserver "${HICLAW_MATRIX_SERVER}" \
        --arg gateway "${HICLAW_AI_GATEWAY_URL}/v1" \
        --arg key "${HICLAW_MANAGER_GATEWAY_KEY}" \
+       --arg llm_key "${LLM_API_KEY}" \
        '.channels.matrix.homeserver = $homeserver
         | .models.providers["hiclaw-gateway"].baseUrl = $gateway
-        | .models.providers["hiclaw-gateway"].apiKey = $key
+        | .models.providers["hiclaw-gateway"].apiKey = $llm_key
         | .hooks.token = $key
         | .commands.restart = false' \
        /root/manager-workspace/openclaw.json > /tmp/openclaw-cloud.json && \
