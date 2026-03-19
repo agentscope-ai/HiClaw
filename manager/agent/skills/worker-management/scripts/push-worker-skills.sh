@@ -226,8 +226,15 @@ if [ -n "${REMOVE_SKILL}" ] && [ -n "${WORKER_NAME}" ]; then
         '.workers[$w].skills = [.workers[$w].skills // [] | .[] | select(. != $s)]')
     _save_registry "${REGISTRY}"
     log "Removed skill '${REMOVE_SKILL}' from worker '${WORKER_NAME}'"
-    log "Note: Skill files remain in worker's MinIO workspace until manually removed"
-    log "  mc rm --recursive --force ${HICLAW_STORAGE_PREFIX}/agents/${WORKER_NAME}/skills/${REMOVE_SKILL}/"
+    # Actually delete skill files from MinIO
+    mc rm --recursive --force \
+        "${HICLAW_STORAGE_PREFIX}/agents/${WORKER_NAME}/skills/${REMOVE_SKILL}/" \
+        2>&1 || log "WARNING: mc rm failed (files may not exist in MinIO)"
+    # Notify worker so it picks up the deletion promptly
+    if [ "${NOTIFY}" = true ]; then
+        room_id=$(_get_worker_room_id "${REGISTRY}" "${WORKER_NAME}")
+        _notify_worker "${WORKER_NAME}" "${room_id}" "${REMOVE_SKILL} (removed)"
+    fi
     exit 0
 fi
 

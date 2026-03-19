@@ -233,7 +233,8 @@ class FileSync:
         # Manager-managed: skills/
         # Use mc mirror to pull entire skill directories (including scripts/ and references/)
         # instead of only pulling SKILL.md, to match OpenClaw worker's mc mirror behavior.
-        for skill_name in self.list_skills():
+        minio_skills = self.list_skills()
+        for skill_name in minio_skills:
             remote_prefix = f"{self._prefix}/skills/{skill_name}/"
             local_skill_dir = self.local_dir / "skills" / skill_name
             local_skill_dir.mkdir(parents=True, exist_ok=True)
@@ -254,6 +255,16 @@ class FileSync:
                     logger.warning("mc mirror failed for skill %s: %s", skill_name, result.stderr)
             except Exception as exc:
                 logger.warning("Failed to mirror skill %s: %s", skill_name, exc)
+
+        # Clean up local skill dirs removed from MinIO
+        local_skills_dir = self.local_dir / "skills"
+        if local_skills_dir.is_dir():
+            minio_skill_set = set(minio_skills)
+            for child in list(local_skills_dir.iterdir()):
+                if child.is_dir() and child.name not in minio_skill_set:
+                    shutil.rmtree(child)
+                    changed.append(f"skills/{child.name}/ (removed)")
+                    logger.info("Removed local skill no longer in MinIO: %s", child.name)
 
         return changed
 
