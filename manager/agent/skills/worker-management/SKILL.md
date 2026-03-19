@@ -167,7 +167,7 @@ Pass the matched skills as a comma-separated string to `--skills`, e.g. `file-sy
 
 ### Step 2: Run create-worker script
 
-The script handles everything: Matrix registration, room creation, Higress consumer, AI/MCP authorization, config generation, MinIO sync, skills push, and container startup.
+The script handles everything: Matrix registration, room creation (3-party: Human + Manager + Worker), Higress consumer, AI/MCP authorization, config generation, MinIO sync, skills push, and container startup. After the script completes, the `room_id` in the JSON result is the Worker's room — do NOT manually create another room via matrix-server-management.
 
 ```bash
 bash /opt/hiclaw/agent/skills/worker-management/scripts/create-worker.sh --name <WORKER_NAME> [--model <MODEL_ID>] [--mcp-servers s1,s2] [--skills s1,s2] [--find-skills] [--skills-api-url <URL>] [--remote] [--runtime openclaw|copaw]

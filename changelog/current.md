@@ -11,3 +11,4 @@ Record image-affecting changes to `manager/`, `worker/`, `openclaw-base/` here b
 - feat(agent): render env var placeholders in SKILL.md/AGENTS.md at startup via envsubst, so AI agents read plain text instead of raw ${VAR} references
 - fix(manager): use gateway health check instead of Matrix room member polling for welcome message readiness in Aliyun deployment, increase timeout to 300s
 - fix(sync): clean up removed skills from MinIO, worker local, and active_skills — Manager's --remove-skill now deletes MinIO files and notifies worker; worker prunes stale skill dirs while preserving builtins
+- fix(manager): set `ENV HOME=/root/manager-workspace` in Dockerfile.aliyun so Manager agent writes workspace files to the correct directory

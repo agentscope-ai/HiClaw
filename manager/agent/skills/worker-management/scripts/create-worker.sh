@@ -297,7 +297,7 @@ ROOM_ID=$(echo "${ROOM_RESP}" | jq -r '.room_id // empty')
 if [ -z "${ROOM_ID}" ]; then
     _fail "Failed to create Matrix room: ${ROOM_RESP}"
 fi
-log "  Room created: ${ROOM_ID}"
+log "  Room created with all members (Human + Manager + Worker): ${ROOM_ID} — no manual room creation needed"
 
 # ============================================================
 # Steps 3-5: Gateway consumer and authorization
