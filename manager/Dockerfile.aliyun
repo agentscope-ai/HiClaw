@@ -58,6 +58,7 @@ RUN find /opt/hiclaw/scripts -name '*.sh' -exec chmod +x {} + && \
     find /opt/hiclaw/agent/worker-agent/skills/*/scripts -name '*.sh' -exec chmod +x {} + 2>/dev/null || true
 
 # Workspace directory
+ENV HOME=/root/manager-workspace
 RUN mkdir -p /root/manager-workspace /root/hiclaw-fs /root/.openclaw
 
 WORKDIR /root/manager-workspace
