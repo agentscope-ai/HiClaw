@@ -395,6 +395,7 @@ fi
 log "Generating Manager openclaw.json..."
 export MANAGER_MATRIX_TOKEN="${MANAGER_TOKEN}"
 export MANAGER_GATEWAY_KEY="${HICLAW_MANAGER_GATEWAY_KEY}"
+export MANAGER_HOOKS_TOKEN=$(echo -n "${HICLAW_MANAGER_GATEWAY_KEY}-hooks" | base64)
 
 # Resolve model parameters based on model name
 MODEL_NAME="${HICLAW_DEFAULT_MODEL:-qwen3.5-plus}"
