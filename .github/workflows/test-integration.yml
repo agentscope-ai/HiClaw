@@ -190,6 +190,13 @@ jobs:
           COMPARISON=$(compare_metrics_with_baseline "$CURRENT" "$BASELINE")
           REPORT=$(generate_comparison_markdown "$COMPARISON")
 
+          # Append debug log artifact link
+          ARTIFACT_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          REPORT="${REPORT}
+
+          ---
+          📦 [Download debug logs & test artifacts](${ARTIFACT_URL}#artifacts)"
+
           mkdir -p tests/output
           echo "$COMPARISON" > tests/output/metrics-comparison.json
           echo "$REPORT" > tests/output/metrics-report.md
@@ -208,11 +215,24 @@ jobs:
       # Artifacts
       # ============================================================
 
+      - name: Export debug logs
+        if: always()
+        continue-on-error: true
+        run: |
+          python3 scripts/export-debug-log.py --range 2h --no-redact
+          DEBUG_DIR=$(ls -td debug-log/*/ 2>/dev/null | head -1)
+          if [ -n "$DEBUG_DIR" ]; then
+            echo "Debug log exported: $DEBUG_DIR"
+          else
+            echo "No debug logs generated"
+          fi
+
       - name: Collect test artifacts
         if: always()
         run: |
           mkdir -p test-artifacts
           [ -d "tests/output" ] && cp -r tests/output/* test-artifacts/ 2>/dev/null || true
+          [ -d "debug-log" ] && cp -r debug-log test-artifacts/debug-log 2>/dev/null || true
           docker logs hiclaw-manager > test-artifacts/manager.log 2>&1 || true
           docker exec hiclaw-manager cat /var/log/hiclaw/manager-agent.log \
             > test-artifacts/manager-agent.log 2>&1 || true
