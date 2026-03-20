@@ -106,6 +106,7 @@ jobs:
           HICLAW_VERSION=ci-test \
           HICLAW_MOUNT_SOCKET=1 \
           HICLAW_MATRIX_E2EE=0 \
+          HICLAW_LLM_PROVIDER=qwen \
           HICLAW_DEFAULT_WORKER_RUNTIME="$RUNTIME" \
           HICLAW_DEFAULT_MODEL="$MODEL" \
           HICLAW_INSTALL_MANAGER_IMAGE=${{ env.MANAGER_IMAGE }} \
@@ -321,6 +322,7 @@ jobs:
           HICLAW_VERSION=$VERSION \
           HICLAW_MOUNT_SOCKET=1 \
           HICLAW_MATRIX_E2EE=0 \
+          HICLAW_LLM_PROVIDER=qwen \
           HICLAW_INSTALL_MANAGER_IMAGE=hiclaw/manager-agent:${VERSION} \
           HICLAW_INSTALL_WORKER_IMAGE=hiclaw/worker-agent:${VERSION} \
           bash ./install/hiclaw-install.sh manager
