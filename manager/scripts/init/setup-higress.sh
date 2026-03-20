@@ -292,9 +292,9 @@ else
 fi
 
 # ============================================================
-# Wait for AI plugin activation (~40 seconds for first config)
+# Wait for AI plugin activation (~45 seconds for first config)
 # ============================================================
-log "Waiting for AI Gateway plugin activation (40s)..."
+log "Waiting for AI Gateway plugin activation (45s)..."
 sleep 45
 
 log "Higress setup complete"

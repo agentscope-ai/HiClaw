@@ -31,7 +31,7 @@ waitForService "MinIO" "127.0.0.1" 9000
 mc alias set hiclaw http://127.0.0.1:9000 "${HICLAW_MINIO_USER:-${HICLAW_ADMIN_USER:-admin}}" "${HICLAW_MINIO_PASSWORD:-${HICLAW_ADMIN_PASSWORD:-admin}}"
 
 # Create default bucket
-mc mb ${HICLAW_STORAGE_PREFIX} --ignore-existing
+mc mb "${HICLAW_STORAGE_PREFIX}" --ignore-existing
 
 # Initialize placeholder directories for shared data and worker artifacts
 for dir in shared/knowledge shared/tasks workers; do
@@ -44,7 +44,7 @@ HICLAW_FS_ROOT="/root/hiclaw-fs"
 mkdir -p "${HICLAW_FS_ROOT}"
 
 # Initial full sync to local (workers + shared)
-mc mirror ${HICLAW_STORAGE_PREFIX}/ "${HICLAW_FS_ROOT}/" --overwrite
+mc mirror "${HICLAW_STORAGE_PREFIX}/" "${HICLAW_FS_ROOT}/" --overwrite
 
 # Signal that initialization is complete
 touch "${HICLAW_FS_ROOT}/.initialized"
@@ -56,5 +56,5 @@ log "MinIO storage initialized and synced to ${HICLAW_FS_ROOT}/"
 # This loop is a safety net only — see design principle above.
 while true; do
     sleep 300
-    mc mirror ${HICLAW_STORAGE_PREFIX}/ "${HICLAW_FS_ROOT}/" --overwrite --newer-than "5m" 2>/dev/null || true
+    mc mirror "${HICLAW_STORAGE_PREFIX}/" "${HICLAW_FS_ROOT}/" --overwrite --newer-than "5m" 2>/dev/null || true
 done

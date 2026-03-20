@@ -150,7 +150,15 @@ fi
 # Local mode: wait for mc mirror initialization (shared + worker data in /root/hiclaw-fs/)
 if [ "${HICLAW_RUNTIME}" != "aliyun" ]; then
     log "Waiting for MinIO storage initialization..."
-    while [ ! -f /root/hiclaw-fs/.initialized ]; do sleep 2; done
+    _minio_wait=0
+    while [ ! -f /root/hiclaw-fs/.initialized ]; do
+        sleep 2
+        _minio_wait=$(( _minio_wait + 1 ))
+        if [ "${_minio_wait}" -ge 60 ]; then
+            log "ERROR: MinIO storage initialization timed out after 120s"
+            exit 1
+        fi
+    done
     log "MinIO storage initialized"
 fi
 
