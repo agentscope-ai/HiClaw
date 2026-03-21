@@ -70,10 +70,10 @@ When tests fail or hang, use `hiclaw-debug.sh` to export logs:
 
 ```bash
 # In hiclaw repository directory
-./tests/skill/scripts/hiclaw-debug.sh all
+./tests/skills/hiclaw-test/scripts/hiclaw-debug.sh all
 
 # Analyze hang issues only
-./tests/skill/scripts/hiclaw-debug.sh analyze
+./tests/skills/hiclaw-test/scripts/hiclaw-debug.sh analyze
 ```
 
 ### Manual Log Export
@@ -105,7 +105,7 @@ Use `hiclaw-debug.sh` to analyze PHASE_DONE messages for mention issues:
 
 ```bash
 # Run in HiClaw repository directory
-./tests/skill/scripts/hiclaw-debug.sh analyze 1h
+./tests/skills/hiclaw-test/scripts/hiclaw-debug.sh analyze 1h
 
 # Or use export-debug-log.py directly
 python3 scripts/export-debug-log.py --range 1h
