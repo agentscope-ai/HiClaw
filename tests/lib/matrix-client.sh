@@ -108,24 +108,33 @@ matrix_read_messages() {
 }
 
 # Wait for a reply from a specific user in a room
-# Usage: matrix_wait_for_reply <access_token> <room_id> <from_user_prefix> [timeout_seconds]
+# Usage: matrix_wait_for_reply <access_token> <room_id> <from_user_prefix> [timeout_seconds] [after_event_id]
 # Returns: the reply message body, or empty string on timeout
 #
-# This function snapshots the latest known event_id before polling, then only
-# returns messages that appear AFTER that snapshot. This prevents returning
-# stale messages from previous conversations (important in --use-existing mode).
+# This function only returns messages that appear AFTER a baseline event.
+# If after_event_id is provided (e.g. the event_id of the message you just sent),
+# it is used as the baseline — this is more reliable than snapshotting, because it
+# avoids a race where a delayed response to a *previous* request lands between
+# your send and the snapshot and is then mistaken for the reply you're waiting for.
+# When after_event_id is omitted, the function falls back to snapshotting the
+# latest event_id from the target user (legacy behaviour).
 matrix_wait_for_reply() {
     local token="$1"
     local room_id="$2"
     local from_user="$3"
     local timeout="${4:-180}"
+    local after_event="${5:-}"
     local elapsed=0
 
-    # Snapshot the latest event_id from the target user before we start waiting
+    # Determine baseline: prefer the caller-supplied event_id, fall back to snapshot
     local baseline_event
-    baseline_event=$(matrix_read_messages "${token}" "${room_id}" 5 2>/dev/null | \
-        jq -r --arg user "${from_user}" \
-        '[.chunk[] | select(.sender | startswith($user)) | .event_id] | first // ""' 2>/dev/null)
+    if [ -n "${after_event}" ]; then
+        baseline_event="${after_event}"
+    else
+        baseline_event=$(matrix_read_messages "${token}" "${room_id}" 5 2>/dev/null | \
+            jq -r --arg user "${from_user}" \
+            '[.chunk[] | select(.sender | startswith($user)) | .event_id] | first // ""' 2>/dev/null)
+    fi
 
     while [ "${elapsed}" -lt "${timeout}" ]; do
         sleep 10
@@ -134,21 +143,52 @@ matrix_wait_for_reply() {
         local messages
         messages=$(matrix_read_messages "${token}" "${room_id}" 10 2>/dev/null) || continue
 
-        # Get the latest message from the target user
-        local latest_event latest_body
-        latest_event=$(echo "${messages}" | jq -r --arg user "${from_user}" \
-            '[.chunk[] | select(.sender | startswith($user)) | .event_id] | first // ""' 2>/dev/null)
-        latest_body=$(echo "${messages}" | jq -r --arg user "${from_user}" \
-            '[.chunk[] | select(.sender | startswith($user)) | .content.body] | first // empty' 2>/dev/null)
+        if [ -n "${after_event}" ]; then
+            # Strict mode: only consider messages whose origin_server_ts is strictly
+            # greater than the after_event's timestamp. This filters out delayed
+            # responses to earlier requests that happen to arrive during our poll window.
+            local after_ts latest_body
+            after_ts=$(echo "${messages}" | jq -r --arg eid "${after_event}" \
+                '[.chunk[] | select(.event_id == $eid) | .origin_server_ts] | first // 0' 2>/dev/null)
+            # If the after_event isn't in this batch, fetch its timestamp directly
+            if [ "${after_ts}" = "0" ] || [ -z "${after_ts}" ]; then
+                local room_enc
+                room_enc="$(_encode_room_id "${room_id}")"
+                after_ts=$(exec_in_manager curl -sf \
+                    "${TEST_MATRIX_DIRECT_URL}/_matrix/client/v3/rooms/${room_enc}/event/$(_encode_event_id "${after_event}")" \
+                    -H "Authorization: Bearer ${token}" 2>/dev/null | jq -r '.origin_server_ts // 0' 2>/dev/null)
+            fi
+            latest_body=$(echo "${messages}" | jq -r --arg user "${from_user}" --argjson ts "${after_ts:-0}" \
+                '[.chunk[] | select(.sender | startswith($user)) | select(.origin_server_ts > $ts) | .content.body] | first // empty' 2>/dev/null)
+            if [ -n "${latest_body}" ]; then
+                echo "${latest_body}"
+                return 0
+            fi
+        else
+            # Legacy mode: compare event_id against baseline snapshot
+            local latest_event latest_body
+            latest_event=$(echo "${messages}" | jq -r --arg user "${from_user}" \
+                '[.chunk[] | select(.sender | startswith($user)) | .event_id] | first // ""' 2>/dev/null)
+            latest_body=$(echo "${messages}" | jq -r --arg user "${from_user}" \
+                '[.chunk[] | select(.sender | startswith($user)) | .content.body] | first // empty' 2>/dev/null)
 
-        # Only return if the event_id differs from baseline (i.e., it's a NEW message)
-        if [ -n "${latest_body}" ] && [ "${latest_event}" != "${baseline_event}" ]; then
-            echo "${latest_body}"
-            return 0
+            if [ -n "${latest_body}" ] && [ "${latest_event}" != "${baseline_event}" ]; then
+                echo "${latest_body}"
+                return 0
+            fi
         fi
     done
 
     return 1
+}
+
+# URL-encode a Matrix event ID for use in URL paths ($ -> %24, etc.)
+_encode_event_id() {
+    local eid="$1"
+    eid="${eid//\$/%24}"
+    eid="${eid//\//%2F}"
+    eid="${eid//+/%2B}"
+    echo "${eid}"
 }
 
 # Wait for a message containing a specific keyword from a user
