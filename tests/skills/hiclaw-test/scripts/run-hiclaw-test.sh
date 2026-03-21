@@ -1,28 +1,28 @@
 #!/bin/bash
-# run-hiclaw-test.sh - 快速运行 HiClaw 测试
-# 用法: run-hiclaw-test.sh [options] [test-filter]
+# run-hiclaw-test.sh - Quick HiClaw test runner
+# Usage: run-hiclaw-test.sh [options] [test-filter]
 #
 # Options:
-#   --repo-dir <path>     指定 HiClaw 仓库目录 (默认: 当前目录或 /tmp/hiclaw)
-#   --env-file <path>     指定环境配置文件 (默认: ~/hiclaw-manager.env)
-#   --skip-pull           跳过 git pull
-#   existing              # 使用现有安装运行测试
+#   --repo-dir <path>     HiClaw repository directory (default: current dir or /tmp/hiclaw)
+#   --env-file <path>     Environment config file (default: ~/hiclaw-manager.env)
+#   --skip-pull           Skip git pull
+#   existing              Run tests using existing installation
 #
 # Examples:
-#   run-hiclaw-test.sh                        # 运行所有测试
-#   run-hiclaw-test.sh "01 02 03"             # 仅运行测试 01, 02, 03
-#   run-hiclaw-test.sh existing               # 使用现有安装运行测试
-#   run-hiclaw-test.sh --repo-dir ~/hiclaw   # 指定仓库目录
+#   run-hiclaw-test.sh                        # Run all tests
+#   run-hiclaw-test.sh "01 02 03"             # Run tests 01, 02, 03 only
+#   run-hiclaw-test.sh existing               # Run with existing installation
+#   run-hiclaw-test.sh --repo-dir ~/hiclaw   # Specify repository directory
 
 set -e
 
-# 默认值（可通过环境变量覆盖）
+# Default values (can be overridden by environment variables)
 REPO_DIR="${HICLAW_REPO_DIR:-}"
 ENV_FILE="${HICLAW_ENV_FILE:-$HOME/hiclaw-manager.env}"
 SKIP_PULL=false
 TEST_FILTER=""
 
-# 颜色定义
+# Color definitions
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -32,7 +32,7 @@ log_info() { echo -e "${GREEN}[INFO]${NC} $1"; }
 log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
-# 解析参数
+# Parse arguments
 while [[ $# -gt 0 ]]; do
     case $1 in
         --repo-dir)
@@ -58,19 +58,19 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# 自动检测仓库目录
+# Auto-detect repository directory
 detect_repo_dir() {
     if [ -n "$REPO_DIR" ]; then
         return
     fi
     
-    # 检查当前目录
+    # Check current directory
     if [ -f "./Makefile" ] && grep -q "hiclaw" ./Makefile 2>/dev/null; then
         REPO_DIR="$(pwd)"
         return
     fi
     
-    # 检查标准位置
+    # Check standard locations
     for dir in "./hiclaw" "../hiclaw" "/tmp/hiclaw" "$HOME/hiclaw"; do
         if [ -d "$dir" ] && [ -f "$dir/Makefile" ]; then
             REPO_DIR="$dir"
@@ -78,11 +78,11 @@ detect_repo_dir() {
         fi
     done
     
-    # 默认使用 /tmp/hiclaw
+    # Default to /tmp/hiclaw
     REPO_DIR="/tmp/hiclaw"
 }
 
-# 检查环境
+# Check prerequisites
 check_prerequisites() {
     if [ ! -f "$ENV_FILE" ]; then
         log_error "Config file not found: $ENV_FILE"
@@ -96,7 +96,7 @@ check_prerequisites() {
     fi
 }
 
-# 克隆/更新代码
+# Clone/update repository
 update_repo() {
     if [ ! -d "$REPO_DIR" ]; then
         log_info "Cloning HiClaw repository to $REPO_DIR..."
@@ -115,11 +115,11 @@ update_repo() {
     log_info "Repository ready at $REPO_DIR"
 }
 
-# 运行测试
+# Run tests
 run_tests() {
     cd "$REPO_DIR"
     
-    # 加载环境变量
+    # Load environment variables
     set -a
     source "$ENV_FILE"
     set +a
@@ -127,21 +127,21 @@ run_tests() {
     export HICLAW_YOLO=1
     
     if [ "$TEST_FILTER" = "existing" ]; then
-        # 使用现有安装
+        # Use existing installation
         log_info "Running tests with existing installation..."
         ./tests/run-all-tests.sh --skip-build --use-existing
     elif [ -n "$TEST_FILTER" ]; then
-        # 运行指定测试
+        # Run specific tests
         log_info "Running tests: $TEST_FILTER"
         ./tests/run-all-tests.sh --test-filter "$TEST_FILTER"
     else
-        # 运行完整测试流程
+        # Run full test cycle
         log_info "Running full test cycle (make test)..."
         make test
     fi
 }
 
-# 显示结果
+# Show results
 show_results() {
     echo ""
     log_info "=== Test Results ==="
@@ -156,7 +156,7 @@ show_results() {
     echo "  hiclaw-debug.sh analyze"
 }
 
-# 主流程
+# Main flow
 main() {
     log_info "=== HiClaw Test Runner ==="
     
