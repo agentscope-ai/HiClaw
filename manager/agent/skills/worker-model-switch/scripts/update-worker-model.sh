@@ -43,7 +43,7 @@ _resolve_model_params() {
             CTX=200000; MAX=64000 ;;
         deepseek-chat|deepseek-reasoner|kimi-k2.5)
             CTX=256000; MAX=128000 ;;
-        glm-5|MiniMax-M2.5)
+        glm-5|MiniMax-M2.7|MiniMax-M2.7-highspeed|MiniMax-M2.5)
             CTX=200000; MAX=128000 ;;
         *)
             CTX=150000; MAX=128000 ;;

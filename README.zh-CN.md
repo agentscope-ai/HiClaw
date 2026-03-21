@@ -10,7 +10,7 @@
 
 </h1>
 
-[English](./README.md) | [中文](./README.zh-CN.md)
+[English](./README.md) | [中文](./README.zh-CN.md) | [日本語](./README.ja-JP.md)
 
 **HiClaw 是一个开源的协作式多智能体操作系统。让多个 Agent 在 Matrix 房间中协作，人类全程可见、随时可介入。 设计了 Manager - Workers 协作架构，人类可通过 Manager Agent 可协调多个 Worker Agents，完成复杂任务，从而加速实现 OPOC（一人一公司）和企业数字员工。**
 

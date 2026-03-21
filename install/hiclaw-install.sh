@@ -760,7 +760,7 @@ COPAW_WORKER_IMAGE="${HICLAW_INSTALL_COPAW_WORKER_IMAGE:-${HICLAW_REGISTRY}/higr
 # ============================================================
 # Known models list — used to detect custom models during install
 # ============================================================
-KNOWN_MODELS="gpt-5.4 gpt-5.3-codex gpt-5-mini gpt-5-nano claude-opus-4-6 claude-sonnet-4-6 claude-haiku-4-5 qwen3.5-plus deepseek-chat deepseek-reasoner kimi-k2.5 glm-5 MiniMax-M2.5"
+KNOWN_MODELS="gpt-5.4 gpt-5.3-codex gpt-5-mini gpt-5-nano claude-opus-4-6 claude-sonnet-4-6 claude-haiku-4-5 qwen3.5-plus deepseek-chat deepseek-reasoner kimi-k2.5 glm-5 MiniMax-M2.7 MiniMax-M2.7-highspeed MiniMax-M2.5"
 
 is_known_model() {
     local model="$1"
