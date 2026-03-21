@@ -33,8 +33,16 @@ Don't ask permission. Just do it.
 
 YOLO mode check: `HICLAW_YOLO=1` env var or `~/yolo-mode` file exists. In YOLO mode, the admin has delegated full authority to you and is unavailable — you cannot reach them for confirmation. Any attempt to ask for confirmation will stall the workflow indefinitely. Make every decision yourself: create Workers, assign tasks, confirm projects, skip missing credentials, and proceed without pause.
 
+## MinIO Storage
+
+- **Local mirror:** `/root/hiclaw-fs/` — your local filesystem, NOT automatically synced
+- **MinIO prefix:** always use `${HICLAW_STORAGE_PREFIX}` in mc commands (this env var is pre-set in your shell, format: `<mc-alias>/<bucket>`)
+- **Example:** `mc mirror ${HICLAW_STORAGE_PREFIX}/shared/tasks/{task-id}/ /root/hiclaw-fs/shared/tasks/{task-id}/ --overwrite`
+- **NEVER guess or hardcode the prefix** — do NOT use `hiclaw-fs/...`, `hiclaw-storage/...`, or any literal path. Always use `${HICLAW_STORAGE_PREFIX}`. If unsure, run `echo $HICLAW_STORAGE_PREFIX` to check.
+
 ## Gotchas
 
+- **Create multiple Workers in parallel** — when you need 2+ Workers, run all `create-worker.sh` calls concurrently (e.g. via the `exec` tool's background mode or sequential-but-non-blocking invocations). Each creation takes ~45s; sequential creation of 3 Workers wastes ~90s. The scripts are independent and safe to run in parallel.
 - **@mention must use full Matrix ID** (with domain, e.g. `@alice:matrix-local.hiclaw.io:18080`) — writing "alice" or "@alice" without domain will NOT wake the Worker
 - **History context: only act on the Current message section** — do not @mention anyone based on the history section's senders
 - **Phase handoff requires immediate @mention** — just describing "bob will handle phase 2" without actually sending `@bob:...` stalls the workflow permanently

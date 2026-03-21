@@ -99,7 +99,7 @@ DO NOT assign any phase to a different worker. DO NOT give alice phase 2 or phas
 IMPORTANT: You MUST use the EXACT branch names and file paths specified below. Do not rename, substitute, or simplify them. The verification system checks these exact names.
 
 Before starting any phase:
-1. Ensure workers with usernames exactly 'alice', 'bob', and 'charlie' exist with the git-delegation skill. The username (container name) must match exactly — do not use variations like 'alice-dev' or 'bob-backend'.
+1. Ensure workers with usernames exactly 'alice', 'bob', and 'charlie' exist with the git-delegation skill. The username (container name) must match exactly — do not use variations like 'alice-dev' or 'bob-backend'. IMPORTANT: Create any missing workers IN PARALLEL (run all create-worker.sh calls concurrently) to save time — do NOT create them one by one sequentially.
 2. Create a shared project room that includes alice, bob, charlie, and the human admin (use the create-project.sh script). All phase assignments and reports MUST happen in this project room — never in individual worker rooms.
 
 Run the phases strictly in order, waiting for each phase's report before starting the next.
@@ -172,9 +172,9 @@ while [ "$(date +%s)" -lt "${DEADLINE}" ]; do
 done
 assert_not_empty "${MANAGER_TOKEN}" "Manager Matrix token available"
 
-log_info "Waiting for project room to be created (timeout: 600s)..."
+log_info "Waiting for project room to be created (timeout: 900s)..."
 PROJECT_ROOM=""
-DEADLINE=$(( $(date +%s) + 600 ))
+DEADLINE=$(( $(date +%s) + 900 ))
 while [ "$(date +%s)" -lt "${DEADLINE}" ]; do
     PROJECT_ROOM=$(matrix_find_room_by_name "${MANAGER_TOKEN}" "Project:" 2>/dev/null || true)
     [ -n "${PROJECT_ROOM}" ] && break
