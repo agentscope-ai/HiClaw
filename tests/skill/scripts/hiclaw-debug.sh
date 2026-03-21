@@ -1,176 +1,175 @@
 #!/bin/bash
-# hiclaw-debug.sh - 导出 HiClaw debug 日志的辅助脚本
-# 用法: hiclaw-debug.sh [command] [output_dir] [test_output_dir]
+# hiclaw-debug.sh - Export HiClaw debug logs for analysis
+# Usage: hiclaw-debug.sh [command] [time_range]
 #
 # Commands:
-#   manager     - 导出 Manager 日志
-#   worker      - 导出所有 Worker 日志
-#   test        - 导出测试输出
-#   all         - 导出所有日志 (默认)
-#   analyze     - 分析 hang 住问题
+#   export   - Export debug logs (default)
+#   analyze  - Analyze hang issues
+#   all      - Export and analyze (default)
 #
 # Arguments:
-#   output_dir      - 日志输出目录 (默认: ./hiclaw-debug-YYYYMMDD-HHMMSS)
-#   test_output_dir - 测试输出目录 (默认: 自动检测或从环境变量读取)
+#   time_range - Time range (default: 1h), supports 10m, 1h, 1d, etc.
 
 set -e
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 COMMAND="${1:-all}"
-OUTPUT_DIR="${2:-./hiclaw-debug-$(date +%Y%m%d-%H%M%S)}"
-TEST_OUTPUT_DIR="${3:-${HICLAW_TEST_OUTPUT_DIR:-}}"
+TIME_RANGE="${2:-1h}"
 
-MANAGER_CONTAINER="${HICLAW_MANAGER_CONTAINER:-hiclaw-manager}"
-
-echo "=== HiClaw Debug Log Exporter ==="
-echo "Output directory: $OUTPUT_DIR"
-mkdir -p "$OUTPUT_DIR"
-
-export_manager_logs() {
-    echo "[1/4] Exporting Manager logs..."
-    
-    # Manager 容器日志
-    docker logs "$MANAGER_CONTAINER" > "$OUTPUT_DIR/manager-container.log" 2>&1 || true
-    
-    # Manager Agent 日志
-    docker exec "$MANAGER_CONTAINER" cat /var/log/hiclaw/manager-agent.log \
-        > "$OUTPUT_DIR/manager-agent.log" 2>/dev/null || true
-    
-    # Manager Agent 错误日志
-    docker exec "$MANAGER_CONTAINER" cat /var/log/hiclaw/manager-agent-error.log \
-        > "$OUTPUT_DIR/manager-agent-error.log" 2>/dev/null || true
-    
-    # 其他组件日志
-    for component in higress-gateway higress-controller tuwunel minio; do
-        docker exec "$MANAGER_CONTAINER" cat "/var/log/hiclaw/${component}.log" \
-            > "$OUTPUT_DIR/${component}.log" 2>/dev/null || true
-    done
-    
-    echo "  Manager logs exported"
-}
-
-export_worker_logs() {
-    echo "[2/4] Exporting Worker logs..."
-    
-    WORKERS=$(docker ps --filter "name=hiclaw-worker" --format "{{.Names}}")
-    
-    if [ -z "$WORKERS" ]; then
-        echo "  No worker containers found"
+# Auto-detect HiClaw repository directory
+detect_repo_dir() {
+    if [ -f "$PROJECT_ROOT/scripts/export-debug-log.py" ]; then
+        echo "$PROJECT_ROOT"
         return
     fi
     
-    for worker in $WORKERS; do
-        echo "  Exporting $worker..."
-        
-        # 容器日志
-        docker logs "$worker" > "$OUTPUT_DIR/${worker}.log" 2>&1 || true
-        
-        # Agent 日志（如果存在）
-        docker exec "$worker" cat /var/log/hiclaw/openclaw-gateway.log \
-            > "$OUTPUT_DIR/${worker}-gateway.log" 2>/dev/null || true
+    # Check common locations
+    for dir in "/tmp/hiclaw" "$HOME/hiclaw" "$HOME/workspace/hiclaw"; do
+        if [ -f "$dir/scripts/export-debug-log.py" ]; then
+            echo "$dir"
+            return
+        fi
     done
     
-    echo "  Worker logs exported"
+    echo "ERROR: Cannot find HiClaw repository (export-debug-log.py not found)" >&2
+    exit 1
 }
 
-export_test_output() {
-    echo "[3/4] Exporting test output..."
+HICLAW_REPO="$(detect_repo_dir)"
+
+echo "=== HiClaw Debug Log Exporter ==="
+echo "Repository: $HICLAW_REPO"
+echo "Time range: $TIME_RANGE"
+
+# Export debug logs
+export_logs() {
+    echo ""
+    echo "[1/2] Exporting debug logs..."
     
-    # 自动检测测试输出目录
-    if [ -z "$TEST_OUTPUT_DIR" ]; then
-        for dir in "./tests/output" "../tests/output" "/tmp/hiclaw/tests/output"; do
-            if [ -d "$dir" ]; then
-                TEST_OUTPUT_DIR="$dir"
-                break
-            fi
-        done
+    cd "$HICLAW_REPO"
+    python3 scripts/export-debug-log.py --range "$TIME_RANGE" 2>&1
+    
+    # Get the latest output directory
+    OUTPUT_DIR=$(ls -td "$HICLAW_REPO/debug-log"/* 2>/dev/null | head -1)
+    
+    if [ -z "$OUTPUT_DIR" ] || [ ! -d "$OUTPUT_DIR" ]; then
+        echo "ERROR: Failed to find output directory" >&2
+        exit 1
     fi
     
-    if [ -n "$TEST_OUTPUT_DIR" ] && [ -d "$TEST_OUTPUT_DIR" ]; then
-        cp -r "$TEST_OUTPUT_DIR" "$OUTPUT_DIR/tests-output"
-        echo "  Test output exported from: $TEST_OUTPUT_DIR"
-    else
-        echo "  No test output found (set HICLAW_TEST_OUTPUT_DIR or pass as argument)"
-    fi
+    echo ""
+    echo "Output: $OUTPUT_DIR"
 }
 
+# Analyze hang issues
 analyze_hang() {
-    echo "[4/4] Analyzing potential hang issues..."
+    echo ""
+    echo "[2/2] Analyzing potential hang issues..."
     
+    OUTPUT_DIR="${OUTPUT_DIR:-$(ls -td "$HICLAW_REPO/debug-log"/* 2>/dev/null | head -1)}"
+    
+    if [ -z "$OUTPUT_DIR" ] || [ ! -d "$OUTPUT_DIR" ]; then
+        echo "ERROR: No debug log found. Run 'export' first." >&2
+        exit 1
+    fi
+    
+    MATRIX_DIR="$OUTPUT_DIR/matrix-messages"
     ANALYSIS_FILE="$OUTPUT_DIR/hang-analysis.txt"
+    
+    if [ ! -d "$MATRIX_DIR" ]; then
+        echo "ERROR: No matrix-messages directory found" >&2
+        exit 1
+    fi
     
     {
         echo "=== HiClaw Hang Analysis ==="
         echo "Generated: $(date)"
+        echo "Time range: last $TIME_RANGE"
+        echo "Source: export-debug-log.py"
         echo ""
+        echo "=== Analyzing Matrix messages for PHASE_DONE mentions ==="
         
-        echo "=== Recent PHASE signals ==="
-        docker exec "$MANAGER_CONTAINER" grep -E "PHASE[0-9]_DONE|REVISION_NEEDED" \
-            /var/log/hiclaw/manager-agent.log 2>/dev/null | tail -20 || echo "No phase signals found"
-        echo ""
-        
-        echo "=== Mentions Analysis (last 30) ==="
-        docker exec "$MANAGER_CONTAINER" grep "resolveMentions (inbound)" \
-            /var/log/hiclaw/manager-agent.log 2>/dev/null | tail -30 || echo "No mention analysis found"
-        echo ""
-        
-        echo "=== Waiting Messages ==="
-        docker exec "$MANAGER_CONTAINER" grep -E "Waiting for.*report.*DONE" \
-            /var/log/hiclaw/manager-agent.log 2>/dev/null | tail -10 || echo "No waiting messages found"
-        echo ""
-        
-        echo "=== Worker Status ==="
-        docker ps --filter "name=hiclaw-worker" --format "table {{.Names}}\t{{.Status}}"
+        # Use Python to analyze Matrix messages
+        python3 - "$MATRIX_DIR" <<'PYEOF'
+import json
+import glob
+import sys
+import os
+import re
+
+matrix_dir = sys.argv[1]
+found_issues = []
+phase_done_pattern = re.compile(r'\*?\*?PHASE\s*\d*\s*DONE\*?\*?|REVISION_NEEDED', re.IGNORECASE)
+
+for f in glob.glob(f"{matrix_dir}/*.jsonl"):
+    with open(f) as file:
+        for line_num, line in enumerate(file, 1):
+            try:
+                msg = json.loads(line)
+                if msg.get('type') != 'm.room.message':
+                    continue
+                    
+                body = msg.get('body', '')
+                sender = msg.get('sender', '')
+                
+                # Only check messages from workers
+                if not any(w in sender for w in ['alice', 'bob', 'charlie']):
+                    continue
+                
+                # Check for PHASE_DONE / REVISION_NEEDED messages
+                if phase_done_pattern.search(body):
+                    has_at_manager = '@manager' in body.lower()
+                    
+                    if not has_at_manager:
+                        # Extract PHASE type
+                        phase_match = re.search(r'(PHASE\s*\d*\s*DONE|REVISION_NEEDED)', body, re.IGNORECASE)
+                        phase_type = phase_match.group(1) if phase_match else 'UNKNOWN'
+                        
+                        found_issues.append({
+                            'file': os.path.basename(f)[:50],
+                            'line': line_num,
+                            'sender': sender.split(':')[0].replace('@', ''),
+                            'phase': phase_type,
+                            'body_preview': body[:150].replace('\n', ' ')
+                        })
+            except:
+                pass
+
+if found_issues:
+    print(f"\n⚠️  Found {len(found_issues)} PHASE_DONE messages WITHOUT @manager mention:\n")
+    for i, issue in enumerate(found_issues, 1):
+        print(f"{i}. {issue['sender']}: {issue['phase']}")
+        print(f"   File: {issue['file']}")
+        print(f"   Preview: {issue['body_preview']}...")
+        print()
+    print("💡 These messages may cause Manager to miss phase completion and hang.")
+    print("   Workers should @mention Manager when reporting PHASE_DONE.")
+else:
+    print("\n✅ All PHASE_DONE messages include @manager mention")
+    print("   (or no PHASE_DONE messages found in the time range)\n")
+PYEOF
         
     } > "$ANALYSIS_FILE" 2>&1
     
-    echo "  Analysis saved to $ANALYSIS_FILE"
-    
-    # 打印关键发现
     echo ""
-    echo "=== Key Findings ==="
-    
-    # 检查是否有未 @mention 的消息
-    UNMENTIONED=$(docker exec "$MANAGER_CONTAINER" grep "wasMentioned=false" \
-        /var/log/hiclaw/manager-agent.log 2>/dev/null | grep "PHASE\|DONE\|REVISION" | tail -5 || true)
-    
-    if [ -n "$UNMENTIONED" ]; then
-        echo "⚠️  Found messages NOT @mentioned (may cause hang):"
-        echo "$UNMENTIONED"
-    else
-        echo "✓ No obvious mention issues found"
-    fi
+    cat "$ANALYSIS_FILE"
+    echo ""
+    echo "Analysis saved to: $ANALYSIS_FILE"
 }
 
 case "$COMMAND" in
-    manager)
-        export_manager_logs
-        ;;
-    worker)
-        export_worker_logs
-        ;;
-    test)
-        export_test_output
+    export)
+        export_logs
         ;;
     analyze)
         analyze_hang
         ;;
-    all)
-        export_manager_logs
-        export_worker_logs
-        export_test_output
+    all|*)
+        export_logs
         analyze_hang
-        ;;
-    *)
-        echo "Unknown command: $COMMAND"
-        echo "Usage: $0 [manager|worker|test|analyze|all]"
-        exit 1
         ;;
 esac
 
 echo ""
-echo "=== Export Complete ==="
-echo "Logs saved to: $OUTPUT_DIR"
-echo ""
-echo "To analyze:"
-echo "  cat $OUTPUT_DIR/hang-analysis.txt"
-echo "  grep 'wasMentioned' $OUTPUT_DIR/manager-agent.log"
+echo "=== Complete ==="

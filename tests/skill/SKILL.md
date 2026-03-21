@@ -101,16 +101,19 @@ cat tests/output/metrics-*.json
 
 ### 1. 测试 Hang 住
 
-检查 Manager Agent 日志中的 `resolveMentions`：
+使用 `hiclaw-debug.sh` 分析 PHASE_DONE 消息的 mention 情况：
 
 ```bash
-docker exec hiclaw-manager grep -E "(PHASE.*_DONE|resolveMentions.*inbound)" \
-  /var/log/hiclaw/manager-agent.log | tail -30
+# 在 HiClaw 仓库目录下运行
+./tests/skill/scripts/hiclaw-debug.sh analyze 1h
+
+# 或者直接使用 export-debug-log.py
+python3 scripts/export-debug-log.py --range 1h
 ```
 
-关键看 `wasMentioned` 值：
-- `wasMentioned=true` → 消息被正确处理
-- `wasMentioned=false` → 消息被忽略（Worker 没有 @mention Manager）
+`hiclaw-debug.sh` 会检查 Worker 发送的 PHASE_DONE 消息是否包含 `@manager`：
+- ✅ 包含 `@manager` → 消息会被 Manager 处理
+- ⚠️ 不包含 `@manager` → 消息被忽略，可能导致 hang
 
 **常见原因**：多 phase 协作项目中，Worker 完成某个 phase 后没有 @mention Manager
 
