@@ -11,8 +11,6 @@
 
 ARG HIGRESS_REGISTRY=higress-registry.cn-hangzhou.cr.aliyuncs.com
 ARG OPENCLAW_BASE_IMAGE=hiclaw/openclaw-base:20260314-be855ee
-ARG OPENCLAW_CMS_PLUGIN_ENABLED=1
-ARG OPENCLAW_CMS_PLUGIN_URL=https://arms-apm-cn-hangzhou-pre.oss-cn-hangzhou.aliyuncs.com/openclaw-cms-plugin/openclaw-cms-plugin.tar.gz
 
 # ============ Stage 1: Tuwunel Matrix Server ============
 FROM ${HIGRESS_REGISTRY}/higress/tuwunel:20260216 AS tuwunel
