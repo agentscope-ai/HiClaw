@@ -33,7 +33,8 @@
 
 set -e
 
-HICLAW_VERSION="${HICLAW_VERSION:-latest}"
+HICLAW_VERSION="${HICLAW_VERSION:-}"
+HICLAW_KNOWN_STABLE_VERSION="v1.0.8"   # fallback if GitHub API is unreachable
 HICLAW_NON_INTERACTIVE="${HICLAW_NON_INTERACTIVE:-0}"
 HICLAW_MOUNT_SOCKET="${HICLAW_MOUNT_SOCKET:-1}"
 HICLAW_DOCKER_PROXY="${HICLAW_DOCKER_PROXY:-1}"
@@ -203,6 +204,33 @@ msg() {
         "install.mode.manual_selected.en") text="Manual mode selected - you will choose LLM provider and customize options" ;;
         "install.mode.invalid.zh") text="无效选择，默认使用快速开始模式" ;;
         "install.mode.invalid.en") text="Invalid choice, defaulting to Quick Start mode" ;;
+        # --- Version selection ---
+        "install.version.title.zh") text="--- 版本选择 ---" ;;
+        "install.version.title.en") text="--- Version Selection ---" ;;
+        "install.version.choose.zh") text="选择要安装的版本:" ;;
+        "install.version.choose.en") text="Choose the version to install:" ;;
+        "install.version.option_latest.zh") text="  1) latest  - 最新版（默认）" ;;
+        "install.version.option_latest.en") text="  1) latest  - Latest build (default)" ;;
+        "install.version.option_stable.zh") text="  2) %s - 最新稳定版" ;;
+        "install.version.option_stable.en") text="  2) %s - Latest stable release" ;;
+        "install.version.fetching.zh") text="正在查询最新稳定版本..." ;;
+        "install.version.fetching.en") text="Fetching latest stable release..." ;;
+        "install.version.fetch_failed.zh") text="无法查询 GitHub，使用内置版本 %s" ;;
+        "install.version.fetch_failed.en") text="Could not reach GitHub, using built-in version %s" ;;
+        "install.version.option_custom.zh") text="  3) 自定义 - 手动输入版本号（如 v1.0.5）" ;;
+        "install.version.option_custom.en") text="  3) Custom  - Enter a specific version (e.g. v1.0.5)" ;;
+        "install.version.prompt.zh") text="请选择 [1/2/3]" ;;
+        "install.version.prompt.en") text="Enter choice [1/2/3]" ;;
+        "install.version.custom_prompt.zh") text="请输入版本号" ;;
+        "install.version.custom_prompt.en") text="Enter version tag" ;;
+        "install.version.selected_latest.zh") text="已选择最新版 (latest)" ;;
+        "install.version.selected_latest.en") text="Selected latest version" ;;
+        "install.version.selected_stable.zh") text="已选择最新稳定版 (%s)" ;;
+        "install.version.selected_stable.en") text="Selected latest stable version (%s)" ;;
+        "install.version.selected_custom.zh") text="已选择自定义版本 (%s)" ;;
+        "install.version.selected_custom.en") text="Selected custom version (%s)" ;;
+        "install.version.invalid.zh") text="无效选择，使用最新稳定版 (%s)" ;;
+        "install.version.invalid.en") text="Invalid choice, defaulting to latest stable version (%s)" ;;
         # --- Existing installation detected ---
         "install.existing.detected.zh") text="检测到已有 Manager 安装（env 文件: %s）" ;;
         "install.existing.detected.en") text="Existing Manager installation detected (env file: %s)" ;;
@@ -791,10 +819,46 @@ detect_registry() {
 }
 
 HICLAW_REGISTRY="${HICLAW_REGISTRY:-$(detect_registry)}"
-MANAGER_IMAGE="${HICLAW_INSTALL_MANAGER_IMAGE:-${HICLAW_REGISTRY}/higress/hiclaw-manager:${HICLAW_VERSION}}"
-WORKER_IMAGE="${HICLAW_INSTALL_WORKER_IMAGE:-${HICLAW_REGISTRY}/higress/hiclaw-worker:${HICLAW_VERSION}}"
-COPAW_WORKER_IMAGE="${HICLAW_INSTALL_COPAW_WORKER_IMAGE:-${HICLAW_REGISTRY}/higress/hiclaw-copaw-worker:${HICLAW_VERSION}}"
-DOCKER_PROXY_IMAGE="${HICLAW_INSTALL_DOCKER_PROXY_IMAGE:-${HICLAW_REGISTRY}/higress/hiclaw-docker-proxy:${HICLAW_VERSION}}"
+# Image variables are resolved after version selection in step_version().
+# These placeholders allow early code paths to reference them without errors.
+MANAGER_IMAGE="${HICLAW_INSTALL_MANAGER_IMAGE:-}"
+WORKER_IMAGE="${HICLAW_INSTALL_WORKER_IMAGE:-}"
+COPAW_WORKER_IMAGE="${HICLAW_INSTALL_COPAW_WORKER_IMAGE:-}"
+DOCKER_PROXY_IMAGE="${HICLAW_INSTALL_DOCKER_PROXY_IMAGE:-}"
+
+resolve_image_tags() {
+    MANAGER_IMAGE="${HICLAW_INSTALL_MANAGER_IMAGE:-${HICLAW_REGISTRY}/higress/hiclaw-manager:${HICLAW_VERSION}}"
+    WORKER_IMAGE="${HICLAW_INSTALL_WORKER_IMAGE:-${HICLAW_REGISTRY}/higress/hiclaw-worker:${HICLAW_VERSION}}"
+    COPAW_WORKER_IMAGE="${HICLAW_INSTALL_COPAW_WORKER_IMAGE:-${HICLAW_REGISTRY}/higress/hiclaw-copaw-worker:${HICLAW_VERSION}}"
+    # docker-proxy: prefer versioned tag, fall back to :latest at pull time
+    # via resolve_docker_proxy_image().
+    DOCKER_PROXY_IMAGE="${HICLAW_INSTALL_DOCKER_PROXY_IMAGE:-${HICLAW_REGISTRY}/higress/hiclaw-docker-proxy:${HICLAW_VERSION}}"
+}
+
+# Resolve the docker-proxy image: try the versioned tag first; if the registry
+# doesn't have it (component didn't exist yet in that release), fall back to :latest.
+# Sets DOCKER_PROXY_IMAGE to the tag that will actually be pulled.
+resolve_docker_proxy_image() {
+    # If the user explicitly overrode the image, respect it as-is.
+    [ -n "${HICLAW_INSTALL_DOCKER_PROXY_IMAGE:-}" ] && return 0
+
+    local _versioned="${HICLAW_REGISTRY}/higress/hiclaw-docker-proxy:${HICLAW_VERSION}"
+    local _latest="${HICLAW_REGISTRY}/higress/hiclaw-docker-proxy:latest"
+
+    # Skip probe when HICLAW_VERSION is "latest" — no point trying the same tag twice.
+    if [ "${HICLAW_VERSION}" = "latest" ]; then
+        DOCKER_PROXY_IMAGE="${_latest}"
+        return 0
+    fi
+
+    if ${DOCKER_CMD} pull "${_versioned}" >/dev/null 2>&1; then
+        DOCKER_PROXY_IMAGE="${_versioned}"
+    else
+        log "docker-proxy ${HICLAW_VERSION} not found, using latest"
+        ${DOCKER_CMD} pull "${_latest}" >/dev/null 2>&1 || true
+        DOCKER_PROXY_IMAGE="${_latest}"
+    fi
+}
 
 # ============================================================
 # Known models list — used to detect custom models during install
@@ -1365,6 +1429,9 @@ should_skip_step() {
         step_lang|step_mode)
             [ "${HICLAW_NON_INTERACTIVE}" = "1" ] && return 0
             ;;
+        step_version)
+            [ "${HICLAW_NON_INTERACTIVE}" = "1" ] && return 0
+            ;;
         step_existing)
             local _env="${HICLAW_ENV_FILE:-${HOME}/hiclaw-manager.env}"
             [ ! -f "${_env}" ] && return 0
@@ -1390,6 +1457,7 @@ clear_step_vars() {
     local step_fn="$1"
     case "${step_fn}" in
         step_mode)   unset HICLAW_QUICKSTART ;;
+        step_version) unset HICLAW_VERSION ;;
         step_existing) unset HICLAW_UPGRADE UPGRADE_EXISTING_WORKERS ;;
         step_llm)
             unset HICLAW_LLM_PROVIDER HICLAW_DEFAULT_MODEL HICLAW_OPENAI_BASE_URL
@@ -1467,6 +1535,59 @@ step_mode() {
             ;;
     esac
     log ""
+}
+
+step_version() {
+    # Skip if version already provided via env var
+    if [ -n "${HICLAW_VERSION}" ]; then
+        resolve_image_tags
+        return 0
+    fi
+    # Try to fetch the latest stable release from GitHub
+    log "$(msg install.version.fetching)"
+    local _fetched
+    _fetched=$(curl -sf --max-time 5 \
+        -H "Accept: application/vnd.github+json" \
+        "https://api.github.com/repos/alibaba/hiclaw/releases/latest" \
+        2>/dev/null | grep '"tag_name"' | head -1 | sed 's/.*"tag_name": *"\([^"]*\)".*/\1/')
+    if [ -n "${_fetched}" ]; then
+        HICLAW_KNOWN_STABLE_VERSION="${_fetched}"
+    else
+        log "$(msg install.version.fetch_failed "${HICLAW_KNOWN_STABLE_VERSION}")"
+    fi
+    log "$(msg install.version.title)"
+    echo ""
+    echo "$(msg install.version.choose)"
+    echo "$(msg install.version.option_latest)"
+    printf "%s\n" "$(msg install.version.option_stable "${HICLAW_KNOWN_STABLE_VERSION}")"
+    echo "$(msg install.version.option_custom)"
+    echo ""
+    local VERSION_CHOICE
+    read -e -p "$(msg install.version.prompt) [1]: " VERSION_CHOICE
+    VERSION_CHOICE="${VERSION_CHOICE:-1}"
+    if [ "${VERSION_CHOICE}" = "b" ]; then STEP_RESULT="back"; return 0; fi
+    case "${VERSION_CHOICE}" in
+        1|latest)
+            HICLAW_VERSION="latest"
+            log "$(msg install.version.selected_latest)"
+            ;;
+        2|stable)
+            HICLAW_VERSION="${HICLAW_KNOWN_STABLE_VERSION}"
+            log "$(msg install.version.selected_stable "${HICLAW_VERSION}")"
+            ;;
+        3|custom)
+            local CUSTOM_VERSION
+            read -e -p "$(msg install.version.custom_prompt): " CUSTOM_VERSION
+            HICLAW_VERSION="${CUSTOM_VERSION:-${HICLAW_KNOWN_STABLE_VERSION}}"
+            log "$(msg install.version.selected_custom "${HICLAW_VERSION}")"
+            ;;
+        *)
+            HICLAW_VERSION="${HICLAW_KNOWN_STABLE_VERSION}"
+            log "$(msg install.version.invalid "${HICLAW_VERSION}")"
+            ;;
+    esac
+    log ""
+    resolve_image_tags
 }
 
 step_existing() {
@@ -2018,6 +2139,13 @@ install_manager() {
     log "$(msg install.dir_hint2)"
     log ""
 
+    # Non-interactive fallback: resolve version immediately so image tags are available
+    # before the step state machine runs. Interactive mode lets step_version handle it.
+    if [ "${HICLAW_NON_INTERACTIVE}" = "1" ]; then
+        HICLAW_VERSION="${HICLAW_VERSION:-${HICLAW_KNOWN_STABLE_VERSION}}"
+        resolve_image_tags
+    fi
+
     # Migrate legacy env file location before checks
     local existing_env="${HICLAW_ENV_FILE:-${HOME}/hiclaw-manager.env}"
     if [ ! -f "${existing_env}" ] && [ -f "./hiclaw-manager.env" ]; then
@@ -2073,7 +2201,7 @@ install_manager() {
     fi
 
     # ── State machine ─────────────────────────────────────────────────────────
-    local _STEPS=( step_lang step_mode step_existing step_llm step_admin step_network \
+    local _STEPS=( step_lang step_mode step_version step_existing step_llm step_admin step_network \
                    step_ports step_domains step_github step_skills step_volume \
                    step_workspace step_runtime step_e2ee step_docker_proxy step_idle step_hostshare )
     local _STEP_HISTORY=()
@@ -2316,6 +2444,11 @@ EOF
                 _pull_image "${COPAW_WORKER_IMAGE}" "install.image.worker_exists" "install.image.pulling_worker"
             fi
         fi
+    fi
+
+    # Resolve and pull docker-proxy image (probes versioned tag, falls back to latest)
+    if [ "${HICLAW_DOCKER_PROXY:-0}" = "1" ]; then
+        resolve_docker_proxy_image
     fi
 
     # Stop and remove existing containers (deferred from upgrade detection
