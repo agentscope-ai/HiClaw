@@ -189,7 +189,21 @@ Manager handles this for you, and supports any model name (not limited to the pr
 
 **After creation**: Tell Manager at any time to switch a Worker's model, e.g. "Switch alice to use `claude-3-5-sonnet`." Manager will update the Worker's configuration accordingly.
 
-Make sure the Higress `default-ai-route` is already configured to route the target model name to the right provider before switching.
+Make sure Higress is configured to route the target model name to the correct provider before switching. See below for details.
+
+---
+
+**Higress Console Configuration**
+
+**Single provider**
+
+In the Higress console, set up `default-ai-route` to route requests to your LLM provider. Then tell Manager the model name you want the Worker to use (e.g. `qwen3.5-plus`). Manager will run a connectivity test with that model name and complete the switch automatically.
+
+**Multiple providers**
+
+In the Higress console, create multiple AI routes with different model name matching rules (prefix or regex), each pointing to the corresponding provider. The rest of the flow is the same as single provider — tell Manager the Worker's target model name, and it will handle the test and switch.
+
+Reference: [Higress AI Quick Start — Console Configuration](https://higress.ai/en/docs/ai/quick-start#console-configuration)
 
 ---
 
