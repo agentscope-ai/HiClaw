@@ -358,6 +358,25 @@ else
                     echo "[cloud-manager] WARNING: OpenClaw gateway not ready within 300s, skipping welcome message"
                     exit 0
                 fi
+                # Ensure Manager has joined the DM room before sending the welcome message.
+                # Without this, there is a race between OpenClaw's Matrix auto-join and the
+                # message send — the message may land before Manager joins, so OpenClaw's
+                # /sync never picks it up.  Retry a few times for transient failures.
+                _join_ok=false
+                for _join_attempt in 1 2 3; do
+                    if curl -sf -X POST "${HICLAW_MATRIX_SERVER}/_matrix/client/v3/rooms/${DM_ROOM_ID}/join" \
+                        -H "Authorization: Bearer ${MANAGER_TOKEN}" \
+                        -H 'Content-Type: application/json' \
+                        -d '{}' > /dev/null 2>&1; then
+                        echo "[cloud-manager] Manager joined DM room before welcome message"
+                        _join_ok=true
+                        break
+                    fi
+                    sleep 2
+                done
+                if [ "${_join_ok}" != "true" ]; then
+                    echo "[cloud-manager] WARNING: Manager join request failed after 3 attempts (may already be joined)"
+                fi
                 _welcome_msg="This is an automated message from the HiClaw cloud deployment. This is a fresh installation.
 
 --- Installation Context ---

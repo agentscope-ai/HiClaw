@@ -20,13 +20,16 @@
 source /opt/hiclaw/scripts/lib/base.sh 2>/dev/null || true
 
 # ── Runtime detection ─────────────────────────────────────────────────────────
-if [ -n "${ALIBABA_CLOUD_OIDC_TOKEN_FILE:-}" ] && \
-   [ -f "${ALIBABA_CLOUD_OIDC_TOKEN_FILE:-/nonexistent}" ]; then
-    HICLAW_RUNTIME="aliyun"
-elif [ -S "${HICLAW_CONTAINER_SOCKET:-/var/run/docker.sock}" ]; then
-    HICLAW_RUNTIME="docker"
-else
-    HICLAW_RUNTIME="none"
+# Respect pre-set HICLAW_RUNTIME (e.g. from Dockerfile.aliyun ENV), only detect if unset
+if [ -z "${HICLAW_RUNTIME:-}" ]; then
+    if [ -n "${ALIBABA_CLOUD_OIDC_TOKEN_FILE:-}" ] && \
+       [ -f "${ALIBABA_CLOUD_OIDC_TOKEN_FILE:-/nonexistent}" ]; then
+        HICLAW_RUNTIME="aliyun"
+    elif [ -S "${HICLAW_CONTAINER_SOCKET:-/var/run/docker.sock}" ]; then
+        HICLAW_RUNTIME="docker"
+    else
+        HICLAW_RUNTIME="none"
+    fi
 fi
 
 # ── Normalized variables ──────────────────────────────────────────────────────

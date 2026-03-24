@@ -57,6 +57,9 @@ RUN find /opt/hiclaw/scripts -name '*.sh' -exec chmod +x {} + && \
     find /opt/hiclaw/agent/worker-skills/*/scripts -name '*.sh' -exec chmod +x {} + 2>/dev/null || true && \
     find /opt/hiclaw/agent/worker-agent/skills/*/scripts -name '*.sh' -exec chmod +x {} + 2>/dev/null || true
 
+# Explicitly mark as cloud deployment (don't rely on OIDC file detection)
+ENV HICLAW_RUNTIME=aliyun
+
 # Workspace directory
 ENV HOME=/root/manager-workspace
 RUN mkdir -p /root/manager-workspace /root/hiclaw-fs /root/.openclaw
@@ -66,6 +69,6 @@ WORKDIR /root/manager-workspace
 # FC custom container listens on this port (OpenClaw gateway)
 EXPOSE 9000
 
-# Reuse the unified start-manager-agent.sh — it detects HICLAW_RUNTIME=aliyun
-# and branches accordingly (no supervisord needed for cloud)
+# Cloud mode set via ENV HICLAW_RUNTIME=aliyun above;
+# start-manager-agent.sh branches accordingly (no supervisord needed for cloud)
 ENTRYPOINT ["/opt/hiclaw/scripts/init/start-manager-agent.sh"]
