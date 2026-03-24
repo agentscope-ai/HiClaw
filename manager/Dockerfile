@@ -31,7 +31,7 @@ FROM ${HIGRESS_REGISTRY}/higress/element-web:20260216 AS element-web
 # This ensures that high-frequency changes (agent/, scripts/) only invalidate
 # the smallest, topmost layers, so users pull minimal data on upgrades.
 FROM ${OPENCLAW_BASE_IMAGE}
-ARG OPENCLAW_CMS_PLUGIN_ENABLED=1
+ARG OPENCLAW_CMS_PLUGIN_ENABLED=0
 ARG OPENCLAW_CMS_PLUGIN_URL=https://arms-apm-cn-hangzhou-pre.oss-cn-hangzhou.aliyuncs.com/openclaw-cms-plugin/openclaw-cms-plugin.tar.gz
 
 # ---- Stable binaries from build stages (~355MB, rarely change) ----

@@ -557,9 +557,11 @@ if [ "${HICLAW_CMS_PLUGIN_ENABLED:-0}" = "1" ]; then
         if [ "${_missing}" = "0" ]; then
             CMS_SERVICE_NAME="${HICLAW_CMS_SERVICE_NAME:-hiclaw-manager}"
             CMS_ENABLE_METRICS="${HICLAW_CMS_ENABLE_METRICS:-1}"
+            DIAG_AVAILABLE="0"
             _metrics_lc="$(echo "${CMS_ENABLE_METRICS}" | tr '[:upper:]' '[:lower:]')"
             if [ "${_metrics_lc}" = "1" ] || [ "${_metrics_lc}" = "true" ] || [ "${_metrics_lc}" = "yes" ]; then
                 if [ -f "${DIAG_PLUGIN_DIR}/package.json" ]; then
+                    DIAG_AVAILABLE="1"
                     if [ ! -d "${DIAG_PLUGIN_DIR}/node_modules" ]; then
                         log "diagnostics-otel dependencies missing, installing..."
                         if (cd "${DIAG_PLUGIN_DIR}" && npm install --omit=dev --ignore-scripts >/tmp/hiclaw-diag-install.log 2>&1); then
@@ -586,6 +588,7 @@ if [ "${HICLAW_CMS_PLUGIN_ENABLED:-0}" = "1" ]; then
                --arg diagPluginName "${DIAG_PLUGIN_NAME}" \
                --arg diagPluginDir "${DIAG_PLUGIN_DIR}" \
                --arg metricsRaw "${CMS_ENABLE_METRICS}" \
+               --arg diagAvailableRaw "${DIAG_AVAILABLE}" \
                '
                 .plugins = (.plugins // {})
                 | .plugins.load = (.plugins.load // {})
@@ -609,7 +612,8 @@ if [ "${HICLAW_CMS_PLUGIN_ENABLED:-0}" = "1" ]; then
 
                 # diagnostics-otel metrics (optional)
                 | ($metricsRaw | ascii_downcase) as $m
-                | (($m == "1") or ($m == "true") or ($m == "yes")) as $metricsEnabled
+                | ($diagAvailableRaw == "1") as $diagAvailable
+                | ((($m == "1") or ($m == "true") or ($m == "yes")) and $diagAvailable) as $metricsEnabled
                 | if $metricsEnabled then
                     (if (.plugins.allow | index($diagPluginName)) == null then .plugins.allow += [$diagPluginName] else . end)
                     | (if (.plugins.load.paths | index($diagPluginDir)) == null then .plugins.load.paths += [$diagPluginDir] else . end)
