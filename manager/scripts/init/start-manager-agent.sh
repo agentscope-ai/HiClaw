@@ -286,79 +286,93 @@ if [ "${HICLAW_RUNTIME}" != "aliyun" ]; then
 
     # Configure Higress routes, consumers, MCP servers
     /opt/hiclaw/scripts/init/setup-higress.sh
+fi
+
+# ============================================================
+# Create admin DM room, persist to state.json, send welcome message
+# Runs in both local and cloud modes (idempotent)
+# ============================================================
+MANAGER_FULL_ID="@manager:${MATRIX_DOMAIN}"
+ADMIN_FULL_ID="@${HICLAW_ADMIN_USER}:${MATRIX_DOMAIN}"
+
+log "Logging in as admin to create DM room..."
+_ADMIN_LOGIN=$(curl -sf -X POST "${HICLAW_MATRIX_SERVER}/_matrix/client/v3/login" \
+    -H 'Content-Type: application/json' \
+    -d '{
+        "type": "m.login.password",
+        "identifier": {"type": "m.id.user", "user": "'"${HICLAW_ADMIN_USER}"'"},
+        "password": "'"${HICLAW_ADMIN_PASSWORD}"'"
+    }' 2>&1) || true
+
+ADMIN_MATRIX_TOKEN=$(echo "${_ADMIN_LOGIN}" | jq -r '.access_token // empty' 2>/dev/null)
+if [ -z "${ADMIN_MATRIX_TOKEN}" ]; then
+    log "WARNING: Failed to login as admin, skipping DM room creation"
 else
-    # Cloud mode: create admin DM room and schedule welcome message
-    MANAGER_FULL_ID="@manager:${MATRIX_DOMAIN}"
-    ADMIN_FULL_ID="@${HICLAW_ADMIN_USER}:${MATRIX_DOMAIN}"
-
-    log "Logging in as admin to create DM room..."
-    _ADMIN_LOGIN=$(curl -sf -X POST "${HICLAW_MATRIX_SERVER}/_matrix/client/v3/login" \
-        -H 'Content-Type: application/json' \
-        -d '{
-            "type": "m.login.password",
-            "identifier": {"type": "m.id.user", "user": "'"${HICLAW_ADMIN_USER}"'"},
-            "password": "'"${HICLAW_ADMIN_PASSWORD}"'"
-        }' 2>&1) || true
-
-    ADMIN_MATRIX_TOKEN=$(echo "${_ADMIN_LOGIN}" | jq -r '.access_token // empty' 2>/dev/null)
-    if [ -z "${ADMIN_MATRIX_TOKEN}" ]; then
-        log "WARNING: Failed to login as admin, skipping DM room creation"
-    else
-        # Search for existing DM room with Manager (idempotent)
-        DM_ROOM_ID=""
-        _JOINED_ROOMS=$(curl -sf "${HICLAW_MATRIX_SERVER}/_matrix/client/v3/joined_rooms" \
+    # Search for existing DM room with Manager (idempotent)
+    DM_ROOM_ID=""
+    _JOINED_ROOMS=$(curl -sf "${HICLAW_MATRIX_SERVER}/_matrix/client/v3/joined_rooms" \
+        -H "Authorization: Bearer ${ADMIN_MATRIX_TOKEN}" 2>/dev/null \
+        | jq -r '.joined_rooms[]' 2>/dev/null) || true
+    for _rid in ${_JOINED_ROOMS}; do
+        _members=$(curl -sf "${HICLAW_MATRIX_SERVER}/_matrix/client/v3/rooms/${_rid}/members" \
             -H "Authorization: Bearer ${ADMIN_MATRIX_TOKEN}" 2>/dev/null \
-            | jq -r '.joined_rooms[]' 2>/dev/null) || true
-        for _rid in ${_JOINED_ROOMS}; do
-            _members=$(curl -sf "${HICLAW_MATRIX_SERVER}/_matrix/client/v3/rooms/${_rid}/members" \
-                -H "Authorization: Bearer ${ADMIN_MATRIX_TOKEN}" 2>/dev/null \
-                | jq -r '.chunk[].state_key' 2>/dev/null) || continue
-            _count=$(echo "${_members}" | wc -l | xargs)
-            if [ "${_count}" = "2" ] && echo "${_members}" | grep -q "@manager:"; then
-                DM_ROOM_ID="${_rid}"
-                break
-            fi
-        done
-
-        if [ -n "${DM_ROOM_ID}" ]; then
-            log "Existing DM room found: ${DM_ROOM_ID}"
-        else
-            log "Creating DM room with Manager..."
-            _RAW=$(curl -s -w '\nHTTP_CODE:%{http_code}' -X POST "${HICLAW_MATRIX_SERVER}/_matrix/client/v3/createRoom" \
-                -H "Authorization: Bearer ${ADMIN_MATRIX_TOKEN}" \
-                -H 'Content-Type: application/json' \
-                -d "{\"is_direct\":true,\"invite\":[\"${MANAGER_FULL_ID}\"],\"preset\":\"trusted_private_chat\"}" 2>&1) || true
-            _HTTP_CODE=$(echo "${_RAW}" | tail -1 | sed 's/HTTP_CODE://')
-            _CREATE_RESP=$(echo "${_RAW}" | sed '$d')
-            DM_ROOM_ID=$(echo "${_CREATE_RESP}" | jq -r '.room_id // empty' 2>/dev/null)
-            if [ -n "${DM_ROOM_ID}" ]; then
-                log "DM room created: ${DM_ROOM_ID}"
-            else
-                log "WARNING: Failed to create DM room (HTTP ${_HTTP_CODE}): ${_CREATE_RESP}"
-            fi
+            | jq -r '.chunk[].state_key' 2>/dev/null) || continue
+        _count=$(echo "${_members}" | wc -l | xargs)
+        if [ "${_count}" = "2" ] && echo "${_members}" | grep -q "@manager:"; then
+            DM_ROOM_ID="${_rid}"
+            break
         fi
+    done
 
-        # Schedule welcome message in background (only on first boot)
-        if [ -n "${DM_ROOM_ID}" ] && [ ! -f "/root/manager-workspace/soul-configured" ]; then
-            log "Scheduling welcome message (background, waiting for OpenClaw to start)..."
-            (
-                _HICLAW_LANGUAGE="${HICLAW_LANGUAGE:-zh}"
-                _HICLAW_TIMEZONE="${TZ:-Asia/Shanghai}"
-                _wait=0
-                _ready=false
-                while [ "${_wait}" -lt 300 ]; do
-                    if curl -sf http://127.0.0.1:18799/ > /dev/null 2>&1; then
-                        _ready=true
-                        break
-                    fi
-                    sleep 3
-                    _wait=$((_wait + 3))
-                done
-                if [ "${_ready}" != "true" ]; then
-                    echo "[cloud-manager] WARNING: OpenClaw gateway not ready within 300s, skipping welcome message"
-                    exit 0
+    if [ -n "${DM_ROOM_ID}" ]; then
+        log "Existing DM room found: ${DM_ROOM_ID}"
+    else
+        log "Creating DM room with Manager..."
+        _RAW=$(curl -s -w '\nHTTP_CODE:%{http_code}' -X POST "${HICLAW_MATRIX_SERVER}/_matrix/client/v3/createRoom" \
+            -H "Authorization: Bearer ${ADMIN_MATRIX_TOKEN}" \
+            -H 'Content-Type: application/json' \
+            -d "{\"is_direct\":true,\"invite\":[\"${MANAGER_FULL_ID}\"],\"preset\":\"trusted_private_chat\"}" 2>&1) || true
+        _HTTP_CODE=$(echo "${_RAW}" | tail -1 | sed 's/HTTP_CODE://')
+        _CREATE_RESP=$(echo "${_RAW}" | sed '$d')
+        DM_ROOM_ID=$(echo "${_CREATE_RESP}" | jq -r '.room_id // empty' 2>/dev/null)
+        if [ -n "${DM_ROOM_ID}" ]; then
+            log "DM room created: ${DM_ROOM_ID}"
+        else
+            log "WARNING: Failed to create DM room (HTTP ${_HTTP_CODE}): ${_CREATE_RESP}"
+        fi
+    fi
+
+    # Persist admin DM room ID to state.json
+    if [ -n "${DM_ROOM_ID}" ]; then
+        STATE_SCRIPT="/opt/hiclaw/agent/skills/task-management/scripts/manage-state.sh"
+        if [ -f "${STATE_SCRIPT}" ]; then
+            bash "${STATE_SCRIPT}" --action init 2>/dev/null || true
+            bash "${STATE_SCRIPT}" --action set-admin-dm --room-id "${DM_ROOM_ID}" 2>/dev/null || true
+            log "Admin DM room persisted to state.json: ${DM_ROOM_ID}"
+        fi
+    fi
+
+    # Schedule welcome message in background (only on first boot)
+    if [ -n "${DM_ROOM_ID}" ] && [ ! -f "/root/manager-workspace/soul-configured" ]; then
+        log "Scheduling welcome message (background, waiting for OpenClaw to start)..."
+        (
+            _HICLAW_LANGUAGE="${HICLAW_LANGUAGE:-zh}"
+            _HICLAW_TIMEZONE="${TZ:-Asia/Shanghai}"
+            _wait=0
+            _ready=false
+            while [ "${_wait}" -lt 300 ]; do
+                if curl -sf http://127.0.0.1:18799/ > /dev/null 2>&1; then
+                    _ready=true
+                    break
                 fi
-                _welcome_msg="This is an automated message from the HiClaw cloud deployment. This is a fresh installation.
+                sleep 3
+                _wait=$((_wait + 3))
+            done
+            if [ "${_ready}" != "true" ]; then
+                echo "[manager] WARNING: OpenClaw gateway not ready within 300s, skipping welcome message"
+                exit 0
+            fi
+            _welcome_msg="This is an automated message from the HiClaw setup. This is a fresh installation.
 
 --- Installation Context ---
 User Language: ${_HICLAW_LANGUAGE}  (zh = Chinese, en = English)
@@ -378,22 +392,21 @@ Please begin the onboarding conversation:
 7. Once confirmed, run: touch ~/soul-configured
 
 The human admin will start chatting shortly."
-                _txn_id="welcome-cloud-$(date +%s)"
-                _payload=$(jq -nc --arg body "${_welcome_msg}" '{"msgtype":"m.text","body":$body}')
-                _raw=$(curl -s -w '\nHTTP_CODE:%{http_code}' -X PUT "${HICLAW_MATRIX_SERVER}/_matrix/client/v3/rooms/${DM_ROOM_ID}/send/m.room.message/${_txn_id}" \
-                    -H "Authorization: Bearer ${ADMIN_MATRIX_TOKEN}" \
-                    -H 'Content-Type: application/json' \
-                    -d "${_payload}" 2>&1) || true
-                _http_code=$(echo "${_raw}" | tail -1 | sed 's/HTTP_CODE://')
-                _send_resp=$(echo "${_raw}" | sed '$d')
-                if echo "${_send_resp}" | jq -e '.event_id' > /dev/null 2>&1; then
-                    echo "[cloud-manager] Welcome message sent to DM room"
-                else
-                    echo "[cloud-manager] WARNING: Failed to send welcome message (HTTP ${_http_code}): ${_send_resp}"
-                fi
-            ) &
-            log "Welcome message background process started (PID: $!)"
-        fi
+            _txn_id="welcome-$(date +%s)"
+            _payload=$(jq -nc --arg body "${_welcome_msg}" '{"msgtype":"m.text","body":$body}')
+            _raw=$(curl -s -w '\nHTTP_CODE:%{http_code}' -X PUT "${HICLAW_MATRIX_SERVER}/_matrix/client/v3/rooms/${DM_ROOM_ID}/send/m.room.message/${_txn_id}" \
+                -H "Authorization: Bearer ${ADMIN_MATRIX_TOKEN}" \
+                -H 'Content-Type: application/json' \
+                -d "${_payload}" 2>&1) || true
+            _http_code=$(echo "${_raw}" | tail -1 | sed 's/HTTP_CODE://')
+            _send_resp=$(echo "${_raw}" | sed '$d')
+            if echo "${_send_resp}" | jq -e '.event_id' > /dev/null 2>&1; then
+                echo "[manager] Welcome message sent to DM room"
+            else
+                echo "[manager] WARNING: Failed to send welcome message (HTTP ${_http_code}): ${_send_resp}"
+            fi
+        ) &
+        log "Welcome message background process started (PID: $!)"
     fi
 fi
 
