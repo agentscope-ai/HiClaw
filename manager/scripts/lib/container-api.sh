@@ -221,10 +221,13 @@ container_create_worker() {
     fi
 
     # Create the container
-    local host_config="{}"
+    # Always use hiclaw-net network so Worker can access Manager services
+    local host_config
     if [ -n "${extra_hosts}" ]; then
-        host_config="{\"ExtraHosts\":[${extra_hosts}]}"
+        host_config="{\"NetworkMode\":\"hiclaw-net\",\"ExtraHosts\":[${extra_hosts}]}"
         _log "  ExtraHosts: ${extra_hosts}"
+    else
+        host_config="{\"NetworkMode\":\"hiclaw-net\"}"
     fi
 
     local worker_home="/root/hiclaw-fs/agents/${worker_name}"
@@ -495,16 +498,16 @@ container_create_copaw_worker() {
     local port_attempt=0
 
     while true; do
-        # Build HostConfig with ExtraHosts and optional PortBindings
+        # Build HostConfig with NetworkMode (hiclaw-net), ExtraHosts and optional PortBindings
         local host_config
         if [ -n "${console_port}" ] && [ -n "${extra_hosts}" ]; then
-            host_config="{\"ExtraHosts\":[${extra_hosts}],\"PortBindings\":{\"${console_port}/tcp\":[{\"HostPort\":\"${host_port}\"}]}}"
+            host_config="{\"NetworkMode\":\"hiclaw-net\",\"ExtraHosts\":[${extra_hosts}],\"PortBindings\":{\"${console_port}/tcp\":[{\"HostPort\":\"${host_port}\"}]}}"
         elif [ -n "${console_port}" ]; then
-            host_config="{\"PortBindings\":{\"${console_port}/tcp\":[{\"HostPort\":\"${host_port}\"}]}}"
+            host_config="{\"NetworkMode\":\"hiclaw-net\",\"PortBindings\":{\"${console_port}/tcp\":[{\"HostPort\":\"${host_port}\"}]}}"
         elif [ -n "${extra_hosts}" ]; then
-            host_config="{\"ExtraHosts\":[${extra_hosts}]}"
+            host_config="{\"NetworkMode\":\"hiclaw-net\",\"ExtraHosts\":[${extra_hosts}]}"
         else
-            host_config="{}"
+            host_config="{\"NetworkMode\":\"hiclaw-net\"}"
         fi
 
         local create_payload
