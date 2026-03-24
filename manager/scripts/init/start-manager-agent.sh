@@ -538,25 +538,29 @@ fi
 # Optional: enable openclaw-cms-plugin observability
 # Config is applied at runtime so secrets stay out of image layers.
 # ============================================================
-if [ "${HICLAW_CMS_PLUGIN_ENABLED:-0}" = "1" ]; then
+CMS_TRACES_ENABLED="${HICLAW_CMS_TRACES_ENABLED:-${HICLAW_CMS_PLUGIN_ENABLED:-0}}"
+if [ "${CMS_TRACES_ENABLED}" = "1" ]; then
     CMS_PLUGIN_NAME="openclaw-cms-plugin"
     CMS_PLUGIN_DIR="${OPENCLAW_CMS_PLUGIN_DIR:-/opt/openclaw/extensions/openclaw-cms-plugin}"
     CMS_PLUGIN_MANIFEST="${CMS_PLUGIN_DIR}/openclaw.plugin.json"
     DIAG_PLUGIN_NAME="diagnostics-otel"
     DIAG_PLUGIN_DIR="/opt/openclaw/extensions/diagnostics-otel"
+    CMS_LICENSE_KEY="${HICLAW_CMS_LICENSE_KEY:-${HICLAW_CMS_ARMS_LICENSE_KEY:-}}"
+    CMS_PROJECT="${HICLAW_CMS_PROJECT:-${HICLAW_CMS_ARMS_PROJECT:-}}"
+    CMS_METRICS_ENABLED="${HICLAW_CMS_METRICS_ENABLED:-${HICLAW_CMS_ENABLE_METRICS:-1}}"
 
     if [ ! -f "${CMS_PLUGIN_MANIFEST}" ]; then
         log "WARNING: ${CMS_PLUGIN_NAME} manifest not found at ${CMS_PLUGIN_MANIFEST}, skipping plugin config"
     else
         _missing=0
-        [ -z "${HICLAW_CMS_ENDPOINT:-}" ] && log "WARNING: HICLAW_CMS_ENDPOINT is required when HICLAW_CMS_PLUGIN_ENABLED=1" && _missing=1
-        [ -z "${HICLAW_CMS_ARMS_LICENSE_KEY:-}" ] && log "WARNING: HICLAW_CMS_ARMS_LICENSE_KEY is required when HICLAW_CMS_PLUGIN_ENABLED=1" && _missing=1
-        [ -z "${HICLAW_CMS_ARMS_PROJECT:-}" ] && log "WARNING: HICLAW_CMS_ARMS_PROJECT is required when HICLAW_CMS_PLUGIN_ENABLED=1" && _missing=1
-        [ -z "${HICLAW_CMS_WORKSPACE:-}" ] && log "WARNING: HICLAW_CMS_WORKSPACE is required when HICLAW_CMS_PLUGIN_ENABLED=1" && _missing=1
+        [ -z "${HICLAW_CMS_ENDPOINT:-}" ] && log "WARNING: HICLAW_CMS_ENDPOINT is required when HICLAW_CMS_TRACES_ENABLED=1" && _missing=1
+        [ -z "${CMS_LICENSE_KEY:-}" ] && log "WARNING: HICLAW_CMS_LICENSE_KEY is required when HICLAW_CMS_TRACES_ENABLED=1" && _missing=1
+        [ -z "${CMS_PROJECT:-}" ] && log "WARNING: HICLAW_CMS_PROJECT is required when HICLAW_CMS_TRACES_ENABLED=1" && _missing=1
+        [ -z "${HICLAW_CMS_WORKSPACE:-}" ] && log "WARNING: HICLAW_CMS_WORKSPACE is required when HICLAW_CMS_TRACES_ENABLED=1" && _missing=1
 
         if [ "${_missing}" = "0" ]; then
             CMS_SERVICE_NAME="${HICLAW_CMS_SERVICE_NAME:-hiclaw-manager}"
-            CMS_ENABLE_METRICS="${HICLAW_CMS_ENABLE_METRICS:-1}"
+            CMS_ENABLE_METRICS="${CMS_METRICS_ENABLED}"
             DIAG_AVAILABLE="0"
             _metrics_lc="$(echo "${CMS_ENABLE_METRICS}" | tr '[:upper:]' '[:lower:]')"
             if [ "${_metrics_lc}" = "1" ] || [ "${_metrics_lc}" = "true" ] || [ "${_metrics_lc}" = "yes" ]; then
@@ -581,8 +585,8 @@ if [ "${HICLAW_CMS_PLUGIN_ENABLED:-0}" = "1" ]; then
             jq --arg pluginName "${CMS_PLUGIN_NAME}" \
                --arg pluginDir "${CMS_PLUGIN_DIR}" \
                --arg endpoint "${HICLAW_CMS_ENDPOINT}" \
-               --arg licenseKey "${HICLAW_CMS_ARMS_LICENSE_KEY}" \
-               --arg armsProject "${HICLAW_CMS_ARMS_PROJECT}" \
+               --arg licenseKey "${CMS_LICENSE_KEY}" \
+               --arg armsProject "${CMS_PROJECT}" \
                --arg cmsWorkspace "${HICLAW_CMS_WORKSPACE}" \
                --arg serviceName "${CMS_SERVICE_NAME}" \
                --arg diagPluginName "${DIAG_PLUGIN_NAME}" \
