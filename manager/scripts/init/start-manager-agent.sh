@@ -555,7 +555,6 @@ if [ "${CMS_TRACES_ENABLED}" = "true" ]; then
         _missing=0
         [ -z "${HICLAW_CMS_ENDPOINT:-}" ] && log "WARNING: HICLAW_CMS_ENDPOINT is required when HICLAW_CMS_TRACES_ENABLED=true" && _missing=1
         [ -z "${CMS_LICENSE_KEY:-}" ] && log "WARNING: HICLAW_CMS_LICENSE_KEY is required when HICLAW_CMS_TRACES_ENABLED=true" && _missing=1
-        [ -z "${CMS_PROJECT:-}" ] && log "WARNING: HICLAW_CMS_PROJECT is required when HICLAW_CMS_TRACES_ENABLED=true" && _missing=1
         [ -z "${HICLAW_CMS_WORKSPACE:-}" ] && log "WARNING: HICLAW_CMS_WORKSPACE is required when HICLAW_CMS_TRACES_ENABLED=true" && _missing=1
 
         if [ "${_missing}" = "0" ]; then

@@ -89,6 +89,30 @@ ln -sfn "${HOME}/skills" "${HOME}/.agents/skills"
 
 log "Worker config pulled successfully"
 
+# ============================================================
+# Optional: ensure diagnostics-otel npm dependencies are present
+# When CMS metrics are enabled, generate-worker-config.sh injects
+# diagnostics-otel into openclaw.json.  The plugin ships with
+# openclaw-base but node_modules may be absent on first run.
+# ============================================================
+_diag_plugin_dir="/opt/openclaw/extensions/diagnostics-otel"
+if [ -f "${_diag_plugin_dir}/package.json" ] && \
+   jq -e --arg dir "${_diag_plugin_dir}" \
+        '(.plugins.load.paths // []) | index($dir) != null' \
+        "${WORKSPACE}/openclaw.json" > /dev/null 2>&1; then
+    if [ ! -d "${_diag_plugin_dir}/node_modules" ]; then
+        log "diagnostics-otel: installing npm dependencies (required for metrics)..."
+        if (cd "${_diag_plugin_dir}" && npm install --omit=dev --ignore-scripts >/tmp/hiclaw-diag-install.log 2>&1); then
+            log "diagnostics-otel dependencies installed"
+        else
+            log "WARNING: diagnostics-otel npm install failed; metrics may not be reported (see /tmp/hiclaw-diag-install.log)"
+        fi
+    else
+        log "diagnostics-otel dependencies already present"
+    fi
+fi
+unset _diag_plugin_dir
+
 # Restore skills from MinIO if skills directory is empty but skills-lock.json exists
 if [ -f "${WORKSPACE}/skills-lock.json" ] && [ -z "$(ls -A ${WORKSPACE}/skills 2>/dev/null | grep -v file-sync)" ]; then
     log "Found skills-lock.json but skills directory is empty, restoring skills..."
