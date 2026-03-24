@@ -72,7 +72,7 @@ log_section "Test 2: send-file.sh Script"
 exec_in_manager sh -c "echo 'Test file from send-file.sh' > /tmp/test-send-file.txt"
 
 # Run send-file.sh inside the Manager container
-SEND_FILE_OUTPUT=$(exec_in_manager bash /opt/hiclaw/agent/worker-skills/send-file/scripts/send-file.sh \
+SEND_FILE_OUTPUT=$(exec_in_manager bash /opt/hiclaw/agent/shared-skills/send-file/scripts/send-file.sh \
     /tmp/test-send-file.txt "${DM_ROOM}" 2>&1) || true
 
 # Check if the output contains an mxc:// URI (success)
@@ -100,7 +100,7 @@ fi
 # ============================================================
 log_section "Test 3: Error Handling"
 
-MISSING_OUTPUT=$(exec_in_manager bash /opt/hiclaw/agent/worker-skills/send-file/scripts/send-file.sh \
+MISSING_OUTPUT=$(exec_in_manager bash /opt/hiclaw/agent/shared-skills/send-file/scripts/send-file.sh \
     /tmp/nonexistent-file.txt "${DM_ROOM}" 2>&1) && {
     log_fail "send-file.sh should exit non-zero for missing file"
 } || {

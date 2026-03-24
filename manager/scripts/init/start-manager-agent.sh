@@ -785,6 +785,7 @@ bash "$RENDER" /root/manager-workspace/copaw-worker-agent
 bash "$RENDER" /opt/hiclaw/agent/worker-skills
 bash "$RENDER" /opt/hiclaw/agent/worker-agent
 bash "$RENDER" /opt/hiclaw/agent/copaw-worker-agent
+bash "$RENDER" /opt/hiclaw/agent/shared-skills
 log "Agent doc templates rendered"
 
 # Cloud mode: start background file sync (workspace ↔ OSS) and initial push
