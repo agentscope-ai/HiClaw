@@ -1001,11 +1001,14 @@ class MatrixChannel(BaseChannel):
                     "MatrixChannel: uploaded %s → %s", path.name, resp.content_uri
                 )
                 return resp.content_uri
-            logger.warning("MatrixChannel: upload failed: %s", resp)
+            logger.warning(
+                "MatrixChannel: upload returned %s (expected UploadResponse) for %s",
+                type(resp).__name__, file_ref,
+            )
             return None
         except Exception as exc:
-            logger.warning(
-                "MatrixChannel: upload error for %s: %s", file_ref, exc
+            logger.exception(
+                "MatrixChannel: upload exception for %s: %s", file_ref, exc
             )
             return None
 
@@ -1458,6 +1461,18 @@ class MatrixChannel(BaseChannel):
             logger.warning(
                 "MatrixChannel: send_media upload failed for %s", file_ref
             )
+            # Send fallback notice so the user knows the file didn't arrive
+            try:
+                path_str = file_ref.removeprefix("file://")
+                _fname = os.path.basename(path_str) or "file"
+                await self._client.room_send(
+                    room_id, "m.room.message",
+                    {"msgtype": "m.notice",
+                     "body": f"\u26a0\ufe0f File upload failed: {_fname}"},
+                    ignore_unverified_devices=True,
+                )
+            except Exception:
+                pass
             return
 
         # Build and send the Matrix room event
@@ -1495,3 +1510,12 @@ class MatrixChannel(BaseChannel):
             logger.exception(
                 "MatrixChannel: send_media failed for %s: %s", room_id, exc
             )
+            try:
+                await self._client.room_send(
+                    room_id, "m.room.message",
+                    {"msgtype": "m.notice",
+                     "body": f"\u26a0\ufe0f File delivery failed: {filename}"},
+                    ignore_unverified_devices=True,
+                )
+            except Exception:
+                pass

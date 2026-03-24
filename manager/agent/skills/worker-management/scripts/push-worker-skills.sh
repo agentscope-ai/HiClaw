@@ -222,7 +222,7 @@ if [ -n "${REMOVE_SKILL}" ] && [ -n "${WORKER_NAME}" ]; then
 
     # Builtin skills are always present (pushed from worker-agent/skills/ or
     # copaw-worker-agent/skills/) and must not be removed from the registry.
-    BUILTIN_SKILLS=("file-sync" "task-progress" "project-participation" "mcporter" "find-skills")
+    BUILTIN_SKILLS=("file-sync" "task-progress" "project-participation" "mcporter" "find-skills" "send-file")
     for _bs in "${BUILTIN_SKILLS[@]}"; do
         if [ "${REMOVE_SKILL}" = "${_bs}" ]; then
             log "ERROR: Cannot remove builtin skill '${_bs}'"

@@ -289,3 +289,97 @@ matrix_find_dm_room() {
 
     return 1
 }
+
+# ============================================================
+# File Transfer
+# ============================================================
+
+# Upload a file to Matrix media repo and send as m.file to a room
+# Usage: matrix_send_file <access_token> <room_id> <filename> <content> [content_type]
+# Returns: JSON with event_id
+matrix_send_file() {
+    local token="$1"
+    local room_id="$2"
+    local filename="$3"
+    local content="$4"
+    local content_type="${5:-text/plain}"
+    local room_enc
+    room_enc="$(_encode_room_id "${room_id}")"
+
+    # Step 1: Upload to media repo — write content to a temp file to avoid quoting issues
+    local upload_resp mxc_uri
+    local tmp_file="/tmp/matrix-send-file-$$"
+    exec_in_manager sh -c "cat > ${tmp_file}" <<< "${content}"
+    upload_resp=$(exec_in_manager curl -sf -X POST \
+        "${TEST_MATRIX_DIRECT_URL}/_matrix/media/v3/upload?filename=${filename}" \
+        -H "Authorization: Bearer ${token}" \
+        -H "Content-Type: ${content_type}" \
+        --data-binary "@${tmp_file}" 2>/dev/null)
+    exec_in_manager rm -f "${tmp_file}" 2>/dev/null || true
+
+    mxc_uri=$(echo "${upload_resp}" | jq -r '.content_uri // empty')
+    if [ -z "${mxc_uri}" ]; then
+        echo ""
+        return 1
+    fi
+
+    # Step 2: Send m.file event to room
+    local txn_id content_length
+    txn_id="$(date +%s%N)"
+    content_length=${#content}
+
+    exec_in_manager curl -sf -X PUT \
+        "${TEST_MATRIX_DIRECT_URL}/_matrix/client/v3/rooms/${room_enc}/send/m.room.message/${txn_id}" \
+        -H "Authorization: Bearer ${token}" \
+        -H 'Content-Type: application/json' \
+        -d '{
+            "msgtype": "m.file",
+            "body": "'"${filename}"'",
+            "url": "'"${mxc_uri}"'",
+            "info": {
+                "mimetype": "'"${content_type}"'",
+                "size": '"${content_length}"'
+            }
+        }'
+}
+
+# Wait for a message with a specific msgtype from a user
+# Usage: matrix_wait_for_media_message <token> <room_id> <from_user_prefix> <msgtype> [timeout]
+# Returns: JSON of the matching event's content, or empty on timeout
+matrix_wait_for_media_message() {
+    local token="$1"
+    local room_id="$2"
+    local from_user="$3"
+    local msgtype="$4"
+    local timeout="${5:-180}"
+    local elapsed=0
+
+    # Snapshot baseline
+    local baseline_event
+    baseline_event=$(matrix_read_messages "${token}" "${room_id}" 5 2>/dev/null | \
+        jq -r --arg user "${from_user}" \
+        '[.chunk[] | select(.sender | startswith($user)) | .event_id] | first // ""' 2>/dev/null)
+
+    while [ "${elapsed}" -lt "${timeout}" ]; do
+        sleep 10
+        elapsed=$((elapsed + 10))
+
+        local messages match
+        messages=$(matrix_read_messages "${token}" "${room_id}" 20 2>/dev/null) || continue
+
+        # Find a new event from the target user with the desired msgtype
+        match=$(echo "${messages}" | jq -r --arg user "${from_user}" --arg mt "${msgtype}" --arg base "${baseline_event}" \
+            '[.chunk[] | select(
+                (.sender | startswith($user)) and
+                (.content.msgtype == $mt) and
+                (.event_id != $base)
+            )] | first // empty' 2>/dev/null)
+
+        if [ -n "${match}" ] && [ "${match}" != "null" ]; then
+            echo "${match}"
+            return 0
+        fi
+    done
+
+    return 1
+}
