@@ -277,6 +277,10 @@ msg() {
         "install.reinstall.warn_workspace.en") text="   - Manager workspace: %s" ;;
         "install.reinstall.warn_workers.zh") text="   - 所有 worker 容器" ;;
         "install.reinstall.warn_workers.en") text="   - All worker containers" ;;
+        "install.reinstall.warn_proxy.zh") text="   - Docker API 代理容器: hiclaw-docker-proxy" ;;
+        "install.reinstall.warn_proxy.en") text="   - Docker API proxy container: hiclaw-docker-proxy" ;;
+        "install.reinstall.warn_network.zh") text="   - Docker 网络: hiclaw-net" ;;
+        "install.reinstall.warn_network.en") text="   - Docker network: hiclaw-net" ;;
         "install.reinstall.confirm_type.zh") text="请输入工作空间路径以确认删除（或按 Ctrl+C 取消）:" ;;
         "install.reinstall.confirm_type.en") text="To confirm deletion, please type the workspace path:" ;;
         "install.reinstall.confirm_path.zh") text="输入路径以确认（或按 Ctrl+C 取消）" ;;
@@ -291,6 +295,10 @@ msg() {
         "install.reinstall.removing_volume.en") text="Removing Docker volume: hiclaw-data" ;;
         "install.reinstall.warn_volume_fail.zh") text="  警告: 无法移除卷（可能有引用）" ;;
         "install.reinstall.warn_volume_fail.en") text="  Warning: Could not remove volume (may have references)" ;;
+        "install.reinstall.removing_proxy.zh") text="正在移除 Docker API 代理容器: hiclaw-docker-proxy" ;;
+        "install.reinstall.removing_proxy.en") text="Removing Docker API proxy container: hiclaw-docker-proxy" ;;
+        "install.reinstall.removing_network.zh") text="正在移除 Docker 网络: hiclaw-net" ;;
+        "install.reinstall.removing_network.en") text="Removing Docker network: hiclaw-net" ;;
         "install.reinstall.removing_workspace.zh") text="正在移除工作空间目录: %s" ;;
         "install.reinstall.removing_workspace.en") text="Removing workspace directory: %s" ;;
         "install.reinstall.removing_env.zh") text="正在移除 env 文件: %s" ;;
@@ -1656,6 +1664,8 @@ step_existing() {
             echo -e "\033[31m$(msg install.reinstall.warn_env "${existing_env}")\033[0m"
             echo -e "\033[31m$(msg install.reinstall.warn_workspace "${existing_workspace}")\033[0m"
             echo -e "\033[31m$(msg install.reinstall.warn_workers)\033[0m"
+            echo -e "\033[31m$(msg install.reinstall.warn_proxy)\033[0m"
+            echo -e "\033[31m$(msg install.reinstall.warn_network)\033[0m"
             echo ""
             echo -e "\033[31m$(msg install.reinstall.confirm_type)\033[0m"
             echo -e "\033[31m  ${existing_workspace}\033[0m"
@@ -1673,6 +1683,15 @@ step_existing() {
                 ${DOCKER_CMD} rm "${w}" 2>/dev/null || true
                 log "$(msg install.reinstall.removed_worker "${w}")"
             done
+            if ${DOCKER_CMD} ps -a --format '{{.Names}}' | grep -q "^hiclaw-docker-proxy$"; then
+                log "$(msg install.reinstall.removing_proxy)"
+                ${DOCKER_CMD} stop hiclaw-docker-proxy 2>/dev/null || true
+                ${DOCKER_CMD} rm hiclaw-docker-proxy 2>/dev/null || true
+            fi
+            if ${DOCKER_CMD} network ls --format '{{.Name}}' | grep -q "^hiclaw-net$"; then
+                log "$(msg install.reinstall.removing_network)"
+                ${DOCKER_CMD} network rm hiclaw-net 2>/dev/null || true
+            fi
             if ${DOCKER_CMD} volume ls -q | grep -q "^hiclaw-data$"; then
                 log "$(msg install.reinstall.removing_volume)"
                 ${DOCKER_CMD} volume rm hiclaw-data 2>/dev/null || log "$(msg install.reinstall.warn_volume_fail)"
