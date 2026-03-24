@@ -538,16 +538,16 @@ fi
 # Optional: enable openclaw-cms-plugin observability
 # Config is applied at runtime so secrets stay out of image layers.
 # ============================================================
-CMS_TRACES_ENABLED="${HICLAW_CMS_TRACES_ENABLED:-${HICLAW_CMS_PLUGIN_ENABLED:-0}}"
+CMS_TRACES_ENABLED="${HICLAW_CMS_TRACES_ENABLED:-0}"
 if [ "${CMS_TRACES_ENABLED}" = "1" ]; then
     CMS_PLUGIN_NAME="openclaw-cms-plugin"
     CMS_PLUGIN_DIR="${OPENCLAW_CMS_PLUGIN_DIR:-/opt/openclaw/extensions/openclaw-cms-plugin}"
     CMS_PLUGIN_MANIFEST="${CMS_PLUGIN_DIR}/openclaw.plugin.json"
     DIAG_PLUGIN_NAME="diagnostics-otel"
     DIAG_PLUGIN_DIR="/opt/openclaw/extensions/diagnostics-otel"
-    CMS_LICENSE_KEY="${HICLAW_CMS_LICENSE_KEY:-${HICLAW_CMS_ARMS_LICENSE_KEY:-}}"
-    CMS_PROJECT="${HICLAW_CMS_PROJECT:-${HICLAW_CMS_ARMS_PROJECT:-}}"
-    CMS_METRICS_ENABLED="${HICLAW_CMS_METRICS_ENABLED:-${HICLAW_CMS_ENABLE_METRICS:-1}}"
+    CMS_LICENSE_KEY="${HICLAW_CMS_LICENSE_KEY:-}"
+    CMS_PROJECT="${HICLAW_CMS_PROJECT:-}"
+    CMS_METRICS_ENABLED="${HICLAW_CMS_METRICS_ENABLED:-1}"
 
     if [ ! -f "${CMS_PLUGIN_MANIFEST}" ]; then
         log "WARNING: ${CMS_PLUGIN_NAME} manifest not found at ${CMS_PLUGIN_MANIFEST}, skipping plugin config"
