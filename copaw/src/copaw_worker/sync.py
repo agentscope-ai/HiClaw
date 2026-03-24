@@ -73,25 +73,49 @@ class FileSync:
         self.local_dir.mkdir(parents=True, exist_ok=True)
         self._prefix = f"agents/{worker_name}"
         self._alias_set = False
+        self._cloud_mode = bool(
+            os.environ.get("ALIBABA_CLOUD_OIDC_TOKEN_FILE")
+            and Path(os.environ.get("ALIBABA_CLOUD_OIDC_TOKEN_FILE", "")).is_file()
+        )
 
     # ------------------------------------------------------------------
     # mc alias management
     # ------------------------------------------------------------------
 
-    def _ensure_alias(self) -> None:
-        """Set up mc alias (idempotent).
+    def _refresh_cloud_credentials(self) -> None:
+        """Refresh STS credentials by calling the shared shell function.
 
-        If MC_HOST_hiclaw is already set (e.g. by ensure_mc_credentials in
-        cloud mode with RRSA/STS), skip ``mc alias set`` to avoid overriding
-        the STS-based credentials.
+        The shell function is lazy: it checks /tmp/mc-oss-credentials.env
+        and only hits the STS endpoint when the token is within 10 minutes
+        of expiring.  Cheap no-op when credentials are still valid.
         """
-        if self._alias_set:
-            return
-        if os.environ.get(f"MC_HOST_{_MC_ALIAS}"):
-            logger.info("MC_HOST_%s already set, skipping mc alias set", _MC_ALIAS)
+        result = subprocess.run(
+            ["bash", "-c",
+             "source /opt/hiclaw/scripts/lib/oss-credentials.sh && "
+             "ensure_mc_credentials && "
+             "echo $MC_HOST_hiclaw"],
+            capture_output=True, text=True, check=True,
+        )
+        mc_host = result.stdout.strip()
+        if mc_host:
+            os.environ[f"MC_HOST_{_MC_ALIAS}"] = mc_host
+        else:
+            logger.warning("ensure_mc_credentials returned empty MC_HOST_%s", _MC_ALIAS)
+
+    def _ensure_alias(self) -> None:
+        """Set up mc alias, refreshing STS credentials in cloud mode.
+
+        Cloud mode (RRSA/STS): refresh credentials before every mc batch
+        via the shared shell function (lazy, no-op when token is valid).
+        Local mode: set mc alias once with static credentials.
+        """
+        if self._cloud_mode:
+            self._refresh_cloud_credentials()
             self._alias_set = True
             return
-        # endpoint may already include scheme
+        if self._alias_set:
+            return
+        # Local mode: static credentials, set alias once
         if self.endpoint.startswith("http"):
             url = self.endpoint
         else:
