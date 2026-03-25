@@ -141,7 +141,7 @@ if [ "${_cms_traces_lc}" = "true" ]; then
     _cms_manifest="${_cms_plugin_dir}/openclaw.plugin.json"
 
     if [ ! -f "${_cms_manifest}" ]; then
-        log "WARNING: openclaw-cms-plugin manifest not found at ${_cms_manifest}; skipping CMS config for worker ${WORKER_NAME}. Rebuild Worker image with OPENCLAW_CMS_PLUGIN_ENABLED=1."
+        log "WARNING: openclaw-cms-plugin manifest not found at ${_cms_manifest}; skipping CMS config for worker ${WORKER_NAME}. Plugin should be bundled in Worker image by default — verify image build completed successfully."
     elif [ -z "${HICLAW_CMS_ENDPOINT:-}" ] || [ -z "${HICLAW_CMS_LICENSE_KEY:-}" ] || [ -z "${HICLAW_CMS_WORKSPACE:-}" ]; then
         log "WARNING: HICLAW_CMS_TRACES_ENABLED=true but HICLAW_CMS_ENDPOINT / HICLAW_CMS_LICENSE_KEY / HICLAW_CMS_WORKSPACE are not all set; skipping CMS config for worker ${WORKER_NAME}"
     else

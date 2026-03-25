@@ -19,6 +19,7 @@ FROM ${HIGRESS_REGISTRY}/higress/mc:20260216 AS mc
 
 # ============ Final Image ============
 FROM ${OPENCLAW_BASE_IMAGE}
+ARG OPENCLAW_CMS_PLUGIN_URL=https://arms-apm-cn-hangzhou-pre.oss-cn-hangzhou.aliyuncs.com/openclaw-cms-plugin/0.1.1/openclaw-cms-plugin.tar.gz
 
 # mc (MinIO Client) — used for OSS file sync via S3 protocol
 COPY --from=mc /usr/bin/mc /usr/local/bin/mc
@@ -35,6 +36,22 @@ RUN apt-get update && apt-get install -y --no-install-recommends python3-pip && 
         alibabacloud-apig20240327 \
         alibabacloud-credentials \
         alibabacloud-tea-openapi
+
+# ---- Built-in observability plugin (bundled unconditionally, enabled at runtime) ----
+# Placed before agent/configs COPY so that code changes do not invalidate this layer.
+ENV OPENCLAW_CMS_PLUGIN_DIR="/opt/openclaw/extensions/openclaw-cms-plugin"
+RUN tmp_dir="$(mktemp -d)" && \
+    curl -fsSL "${OPENCLAW_CMS_PLUGIN_URL}" -o "${tmp_dir}/plugin.tar.gz" && \
+    mkdir -p "${OPENCLAW_CMS_PLUGIN_DIR}" && \
+    tar -xzf "${tmp_dir}/plugin.tar.gz" -C "${tmp_dir}" && \
+    if [ -d "${tmp_dir}/openclaw-cms-plugin" ]; then \
+      cp -rf "${tmp_dir}/openclaw-cms-plugin/." "${OPENCLAW_CMS_PLUGIN_DIR}/"; \
+    else \
+      cp -rf "${tmp_dir}/." "${OPENCLAW_CMS_PLUGIN_DIR}/"; \
+    fi && \
+    cd "${OPENCLAW_CMS_PLUGIN_DIR}" && \
+    npm install --omit=dev --ignore-scripts && \
+    rm -rf "${tmp_dir}"
 
 # Ensure openclaw binary is on PATH
 ENV PATH="/opt/openclaw/packages/clawdbot/node_modules/.bin:${PATH}"
