@@ -116,7 +116,8 @@ function Exit-Script {
     param([int]$ExitCode = 0)
     if ($ExitCode -ne 0 -and -not $script:HICLAW_NON_INTERACTIVE) {
         Write-Host ""
-        Read-Host "Press Enter to exit"
+        Write-Host "Press Enter to exit." -NoNewline
+        $Host.UI.ReadLine()
     }
     exit $ExitCode
 }
@@ -1305,7 +1306,7 @@ function Step-Existing {
             }
             Write-Log (Get-Msg "install.reinstall.cleanup_done")
         }
-        "^(3|cancel|.*)$" {
+        default {
             Write-Log (Get-Msg "install.existing.cancelled")
             exit 0
         }
@@ -2358,11 +2359,7 @@ try {
         }
     }
 } catch {
-    if (-not $script:HICLAW_NON_INTERACTIVE) {
-        Write-Host ""
-        Read-Host "Press Enter to exit"
-    }
-    exit 1
+    Exit-Script 1
 }
 
 # Stop transcript logging

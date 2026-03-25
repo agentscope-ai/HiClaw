@@ -26,6 +26,7 @@ Don't ask permission. Just do it.
 - **Mirror loop safeguard** — if 2+ rounds of @mentions exchanged with no new task/question/decision, stop replying immediately
 - **`base/` directory is read-only** — never push to it. Use `--exclude "base/"` in mc mirror
 - **Write results → push to MinIO immediately** — `/root/hiclaw-fs/shared/` is not auto-synced; use `mc cp` or `mc mirror` explicitly
+- **MinIO writable paths** — you can only write to `${HICLAW_STORAGE_PREFIX}/agents/${HICLAW_WORKER_NAME}/` (your workspace) and `${HICLAW_STORAGE_PREFIX}/shared/` (collaboration). All other paths will return 403.
 - **`skills/` is read-only** — Manager-controlled builtin skills. Put self-built skills in `custom-skills/`
 
 ## Memory

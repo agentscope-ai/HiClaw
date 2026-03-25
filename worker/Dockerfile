@@ -5,8 +5,9 @@
 # Workers are stateless -- all config/state stored in centralized MinIO.
 #
 # Build args:
-#   HIGRESS_REGISTRY  - base image registry (default: cn-hangzhou)
-#   OPENCLAW_BASE_IMAGE - openclaw-base image (default: hiclaw/openclaw-base:latest)
+#   HIGRESS_REGISTRY           - base image registry (default: cn-hangzhou)
+#   OPENCLAW_BASE_IMAGE        - openclaw-base image (default: hiclaw/openclaw-base:latest)
+#   OPENCLAW_CMS_PLUGIN_URL    - observability plugin tarball URL (bundled unconditionally)
 # ============================================================
 
 ARG HIGRESS_REGISTRY=higress-registry.cn-hangzhou.cr.aliyuncs.com
@@ -21,6 +22,23 @@ FROM ${OPENCLAW_BASE_IMAGE}
 
 # mc (MinIO Client) — real binary; wrapper installed after shared libs are copied
 COPY --from=mc /usr/bin/mc /usr/local/bin/mc.bin
+
+# ---- Built-in observability plugin (bundled unconditionally, enabled at runtime) ----
+# Placed before scripts/lib COPY so that code changes do not invalidate this layer.
+ARG OPENCLAW_CMS_PLUGIN_URL=https://arms-apm-cn-hangzhou-pre.oss-cn-hangzhou.aliyuncs.com/openclaw-cms-plugin/0.1.1/openclaw-cms-plugin.tar.gz
+ENV OPENCLAW_CMS_PLUGIN_DIR="/opt/openclaw/extensions/openclaw-cms-plugin"
+RUN tmp_dir="$(mktemp -d)" && \
+    curl -fsSL "${OPENCLAW_CMS_PLUGIN_URL}" -o "${tmp_dir}/plugin.tar.gz" && \
+    mkdir -p "${OPENCLAW_CMS_PLUGIN_DIR}" && \
+    tar -xzf "${tmp_dir}/plugin.tar.gz" -C "${tmp_dir}" && \
+    if [ -d "${tmp_dir}/openclaw-cms-plugin" ]; then \
+      cp -rf "${tmp_dir}/openclaw-cms-plugin/." "${OPENCLAW_CMS_PLUGIN_DIR}/"; \
+    else \
+      cp -rf "${tmp_dir}/." "${OPENCLAW_CMS_PLUGIN_DIR}/"; \
+    fi && \
+    cd "${OPENCLAW_CMS_PLUGIN_DIR}" && \
+    npm install --omit=dev --ignore-scripts && \
+    rm -rf "${tmp_dir}"
 
 # Ensure openclaw binary is on PATH
 # OPENCLAW_CONFIG_PATH is intentionally NOT set here:

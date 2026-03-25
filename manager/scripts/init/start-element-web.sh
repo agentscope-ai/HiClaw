@@ -25,18 +25,22 @@ sed -i 's/^worker_processes [0-9]*;/worker_processes 2;/' /etc/nginx/nginx.conf 
 grep -q '^worker_processes' /etc/nginx/nginx.conf || \
 sed -i '1i worker_processes 2;' /etc/nginx/nginx.conf
 
+# Create browser bypass script as external JS file (allowed by CSP script-src 'self')
+# This avoids adding 'unsafe-inline' to CSP, preserving XSS protection
+echo 'window.localStorage.setItem("mx_accepts_unsupported_browser","true");' > /opt/element-web/browser-bypass.js
+
 # Generate Nginx config for Element Web
-# Note: We inject a script to automatically accept unsupported browsers
-# This bypasses the browser compatibility check in Element Web's SupportedBrowser.ts
+# Note: We inject an external script tag to automatically accept unsupported browsers
+# This bypasses the browser version check in Element Web's SupportedBrowser.ts
 cat > /etc/nginx/conf.d/element-web.conf << 'NGINX'
 server {
     listen 8088;
     root /opt/element-web;
     index index.html;
 
-    # Inject script to bypass browser compatibility check
-    # Sets localStorage.mx_accepts_unsupported_browser = true before app loads
-    sub_filter '</head>' '<script>window.localStorage.setItem("mx_accepts_unsupported_browser","true");</script></head>';
+    # Inject external script to bypass browser compatibility check
+    # Uses external JS file instead of inline script to comply with CSP (script-src 'self')
+    sub_filter '</head>' '<script src="browser-bypass.js"></script></head>';
     sub_filter_once on;
     sub_filter_types text/html;
 
