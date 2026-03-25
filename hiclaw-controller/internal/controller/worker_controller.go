@@ -7,6 +7,7 @@ import (
 
 	v1 "github.com/hiclaw/hiclaw-controller/api/v1"
 	"github.com/hiclaw/hiclaw-controller/internal/executor"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -172,4 +173,11 @@ func joinStrings(ss []string) string {
 		result += s
 	}
 	return result
+}
+
+// SetupWithManager registers the WorkerReconciler with the controller manager.
+func (r *WorkerReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	return ctrl.NewControllerManagedBy(mgr).
+		For(&v1.Worker{}).
+		Complete(r)
 }

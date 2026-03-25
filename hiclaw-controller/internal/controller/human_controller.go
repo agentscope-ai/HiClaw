@@ -8,6 +8,7 @@ import (
 
 	v1 "github.com/hiclaw/hiclaw-controller/api/v1"
 	"github.com/hiclaw/hiclaw-controller/internal/executor"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -151,4 +152,11 @@ func (r *HumanReconciler) handleDelete(ctx context.Context, h *v1.Human) error {
 	// TODO: remove from all groupAllowFrom and kick from rooms
 
 	return nil
+}
+
+// SetupWithManager registers the HumanReconciler with the controller manager.
+func (r *HumanReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	return ctrl.NewControllerManagedBy(mgr).
+		For(&v1.Human{}).
+		Complete(r)
 }

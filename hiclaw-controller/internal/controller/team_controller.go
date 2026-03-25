@@ -8,6 +8,7 @@ import (
 
 	v1 "github.com/hiclaw/hiclaw-controller/api/v1"
 	"github.com/hiclaw/hiclaw-controller/internal/executor"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -159,4 +160,11 @@ func (r *TeamReconciler) handleDelete(ctx context.Context, t *v1.Team) error {
 	)
 
 	return nil
+}
+
+// SetupWithManager registers the TeamReconciler with the controller manager.
+func (r *TeamReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	return ctrl.NewControllerManagedBy(mgr).
+		For(&v1.Team{}).
+		Complete(r)
 }

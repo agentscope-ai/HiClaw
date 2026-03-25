@@ -8,12 +8,14 @@ import (
 	"syscall"
 
 	v1 "github.com/hiclaw/hiclaw-controller/api/v1"
+	"github.com/hiclaw/hiclaw-controller/internal/apiserver"
 	"github.com/hiclaw/hiclaw-controller/internal/controller"
 	"github.com/hiclaw/hiclaw-controller/internal/executor"
 	"github.com/hiclaw/hiclaw-controller/internal/server"
 	"github.com/hiclaw/hiclaw-controller/internal/store"
 	"github.com/hiclaw/hiclaw-controller/internal/watcher"
 	"k8s.io/apimachinery/pkg/runtime"
+	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 )
@@ -45,8 +47,14 @@ func main() {
 		configDir = "/root/hiclaw-fs/hiclaw-config"
 	}
 
+	crdDir := os.Getenv("HICLAW_CRD_DIR")
+	if crdDir == "" {
+		crdDir = "/opt/hiclaw/config/crd"
+	}
+
 	// Build scheme
 	scheme := runtime.NewScheme()
+	_ = clientgoscheme.AddToScheme(scheme)
 	if err := v1.AddToScheme(scheme); err != nil {
 		logger.Error(err, "failed to add hiclaw types to scheme")
 		os.Exit(1)
@@ -56,8 +64,10 @@ func main() {
 	shell := executor.NewShell("/opt/hiclaw/agent/skills")
 	packages := executor.NewPackageResolver("/tmp/import")
 
+	var mgr ctrl.Manager
+
 	if kubeMode == "embedded" {
-		// ── Embedded mode: kine + file watcher ──
+		// ── Embedded mode: kine + kube-apiserver + file watcher ──
 		logger.Info("starting embedded mode", "dataDir", dataDir, "configDir", configDir)
 
 		// 1. Start kine (SQLite backend)
@@ -71,18 +81,34 @@ func main() {
 		}
 		logger.Info("kine started", "endpoints", kineServer.ETCDConfig.Endpoints)
 
-		// TODO: start embedded API server using kine as backend, get client.Client
-		// For now, placeholders for controller wiring
-		var k8sClient ctrl.Manager
-		_ = k8sClient
+		// 2. Start embedded kube-apiserver
+		restCfg, err := apiserver.Start(ctx, apiserver.Config{
+			DataDir:    dataDir,
+			EtcdURL:    "http://127.0.0.1:2379",
+			BindAddr:   "127.0.0.1",
+			SecurePort: "6443",
+			CRDDir:     crdDir,
+		})
+		if err != nil {
+			logger.Error(err, "failed to start embedded kube-apiserver")
+			os.Exit(1)
+		}
+		logger.Info("embedded kube-apiserver ready")
 
-		// 2. Initial sync: scan all YAML files in configDir → write to kine
-		fw := watcher.New(configDir, nil) // TODO: pass real client once API server is wired
-		if err := fw.InitialSync(ctx); err != nil {
-			logger.Error(err, "initial sync failed")
+		// 3. Create controller-runtime manager
+		mgr, err = ctrl.NewManager(restCfg, ctrl.Options{
+			Scheme: scheme,
+		})
+		if err != nil {
+			logger.Error(err, "failed to create controller manager")
+			os.Exit(1)
 		}
 
-		// 3. Start fsnotify watcher in background
+		// 4. Start file watcher (MinIO mirror → local dir → kine via apiserver)
+		fw := watcher.New(configDir, mgr.GetClient())
+		if err := fw.InitialSync(ctx); err != nil {
+			logger.Error(err, "initial sync failed (non-fatal)")
+		}
 		go func() {
 			if err := fw.Watch(ctx); err != nil && ctx.Err() == nil {
 				logger.Error(err, "file watcher stopped unexpectedly")
@@ -90,23 +116,49 @@ func main() {
 		}()
 		logger.Info("file watcher started", "dir", configDir)
 
-		// 4. Register controllers (placeholder until API server wired)
-		_ = &controller.WorkerReconciler{Executor: shell, Packages: packages}
-		_ = &controller.TeamReconciler{Executor: shell, Packages: packages}
-		_ = &controller.HumanReconciler{Executor: shell}
-
 	} else {
 		// ── In-cluster mode: connect to K8s API Server directly ──
 		logger.Info("starting in-cluster mode")
 
-		// No kine, no file watcher, no MinIO config dependency
-		// TODO: use ctrl.GetConfigOrDie() + ctrl.NewManager() + register reconcilers
-		_ = &controller.WorkerReconciler{Executor: shell, Packages: packages}
-		_ = &controller.TeamReconciler{Executor: shell, Packages: packages}
-		_ = &controller.HumanReconciler{Executor: shell}
+		restCfg := ctrl.GetConfigOrDie()
+		var err error
+		mgr, err = ctrl.NewManager(restCfg, ctrl.Options{
+			Scheme: scheme,
+		})
+		if err != nil {
+			logger.Error(err, "failed to create controller manager")
+			os.Exit(1)
+		}
 	}
 
-	// Start HTTP API server in background
+	// 5. Register reconcilers
+	if err := (&controller.WorkerReconciler{
+		Client:   mgr.GetClient(),
+		Executor: shell,
+		Packages: packages,
+	}).SetupWithManager(mgr); err != nil {
+		logger.Error(err, "failed to setup WorkerReconciler")
+		os.Exit(1)
+	}
+
+	if err := (&controller.TeamReconciler{
+		Client:   mgr.GetClient(),
+		Executor: shell,
+		Packages: packages,
+	}).SetupWithManager(mgr); err != nil {
+		logger.Error(err, "failed to setup TeamReconciler")
+		os.Exit(1)
+	}
+
+	if err := (&controller.HumanReconciler{
+		Client:   mgr.GetClient(),
+		Executor: shell,
+	}).SetupWithManager(mgr); err != nil {
+		logger.Error(err, "failed to setup HumanReconciler")
+		os.Exit(1)
+	}
+
+	// 6. Start HTTP API server in background
 	go func() {
 		httpServer := server.NewHTTPServer(httpAddr, kubeMode)
 		if err := httpServer.Start(); err != nil {
@@ -114,9 +166,12 @@ func main() {
 		}
 	}()
 
+	// 7. Start controller manager (blocking)
 	logger.Info("hiclaw-controller ready", "kubeMode", kubeMode, "httpAddr", httpAddr)
 	fmt.Println("hiclaw-controller is running. Press Ctrl+C to stop.")
 
-	<-ctx.Done()
-	logger.Info("shutting down")
+	if err := mgr.Start(ctx); err != nil {
+		logger.Error(err, "controller manager exited with error")
+		os.Exit(1)
+	}
 }
