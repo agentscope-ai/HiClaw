@@ -229,7 +229,7 @@ Then open the HiClaw repo in Cursor, Claude Code, or similar AI tool and ask:
 
 > "Read the JSONL files in debug-log/. Analyze the Matrix message logs and agent session logs together. Cross-reference with the HiClaw codebase to identify the root cause of [describe your bug]."
 
-Include the AI's analysis in your [bug report](https://github.com/higress-group/hiclaw/issues/new?template=bug_report.yml).
+Include the AI's analysis in your [bug report](https://github.com/alibaba/hiclaw/issues/new?template=bug_report.yml).
 
 You can also let the AI tool submit the issue or PR directly. Install [GitHub CLI](https://cli.github.com/), run `gh auth login` to authenticate in your browser, then add the [OpenClaw GitHub skill](https://github.com/openclaw/openclaw/blob/main/skills/github/SKILL.md) to your AI coding tool (Cursor, Claude Code, etc.). After that, just ask it to file the issue or open a PR based on its analysis.
 
@@ -252,7 +252,7 @@ make help
 ## Community
 
 - [Discord](https://discord.gg/NVjNA4BAVw)
-- [GitHub Issues](https://github.com/higress-group/hiclaw/issues)
+- [GitHub Issues](https://github.com/alibaba/hiclaw/issues)
 
 ## License
 

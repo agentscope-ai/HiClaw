@@ -229,7 +229,7 @@ python scripts/export-debug-log.py --range 1h
 
 > "debug-log/ 内の JSONL ファイルを読み込み、Matrix メッセージログと Agent セッションログを合わせて分析してください。HiClaw のコードベースと照合し、[バグの内容を記述] の根本原因を特定してください。"
 
-AI の分析結果を [バグレポート](https://github.com/higress-group/hiclaw/issues/new?template=bug_report.yml) に含めてください。
+AI の分析結果を [バグレポート](https://github.com/alibaba/hiclaw/issues/new?template=bug_report.yml) に含めてください。
 
 ## ビルド & テスト
 
@@ -250,7 +250,7 @@ make help
 ## コミュニティ
 
 - [Discord](https://discord.gg/NVjNA4BAVw)
-- [GitHub Issues](https://github.com/higress-group/hiclaw/issues)
+- [GitHub Issues](https://github.com/alibaba/hiclaw/issues)
 
 ## ライセンス
 
