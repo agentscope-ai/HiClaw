@@ -29,13 +29,14 @@
    ```
    If Worker has `find-skills` (`test -d /root/hiclaw-fs/agents/{worker}/skills/find-skills`), add: `Run \`skills find <keyword>\` if you need additional capabilities.`
 
-5. Add to state.json:
+5. **MANDATORY — Add to state.json** (this step is NOT optional, even for coordination, research, or management tasks):
    ```bash
    bash /opt/hiclaw/agent/skills/task-management/scripts/manage-state.sh \
      --action add-finite --task-id {task-id} --title "{title}" \
      --assigned-to {worker} --room-id {room-id}
    ```
    If task belongs to a project, append `--project-room-id {project-room-id}`.
+   **WARNING**: Skipping this step causes the Worker to be auto-stopped by idle timeout. Every task assigned to a Worker MUST be registered here.
 
 ## On completion
 

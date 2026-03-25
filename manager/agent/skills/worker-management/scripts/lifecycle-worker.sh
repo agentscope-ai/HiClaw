@@ -71,18 +71,9 @@ EOF
 }
 EOF
     else
-        # Sync idle_timeout_minutes from env var — env file is the authority
-        local env_timeout="${HICLAW_WORKER_IDLE_TIMEOUT:-}"
-        if [ -n "$env_timeout" ]; then
-            local file_timeout
-            file_timeout=$(jq -r '.idle_timeout_minutes' "$LIFECYCLE_FILE" 2>/dev/null)
-            if [ "$file_timeout" != "$env_timeout" ]; then
-                _log "Updating idle_timeout_minutes: $file_timeout -> $env_timeout (from HICLAW_WORKER_IDLE_TIMEOUT)"
-                local tmp
-                tmp=$(mktemp)
-                jq --argjson t "$env_timeout" '.idle_timeout_minutes = $t' "$LIFECYCLE_FILE" > "$tmp" && mv "$tmp" "$LIFECYCLE_FILE"
-            fi
-        fi
+        # File already exists — respect any manual edits.
+        # HICLAW_WORKER_IDLE_TIMEOUT is only used for initial creation (above).
+        true
     fi
 
     if [ ! -f "$STATE_FILE" ]; then
@@ -237,6 +228,22 @@ action_check_idle() {
             # Worker has no active tasks (neither finite nor infinite)
             if [ "$container_status" != "running" ]; then
                 continue
+            fi
+
+            # Safety net: if worker was recently started, don't mark idle yet.
+            # This protects against races where the Manager hasn't registered
+            # the task in state.json yet.
+            local last_started
+            last_started=$(_get_worker_field "$worker" "last_started_at")
+            if [ -n "$last_started" ] && [ "$last_started" != "null" ]; then
+                local started_epoch
+                started_epoch=$(date -u -d "$last_started" +%s 2>/dev/null || date -u -j -f '%Y-%m-%dT%H:%M:%SZ' "$last_started" +%s 2>/dev/null)
+                local since_start=$(( now_epoch - started_epoch ))
+                local grace_seconds=$(( idle_timeout * 60 ))
+                if [ "$since_start" -lt "$grace_seconds" ]; then
+                    _log "Worker $worker has no tasks but was started ${since_start}s ago (grace: ${grace_seconds}s) — skipping idle check"
+                    continue
+                fi
             fi
 
             local idle_since
