@@ -59,6 +59,9 @@ COPY --from=hiclaw-controller /usr/local/bin/hiclaw /usr/local/bin/hiclaw
 COPY --from=hiclaw-controller /usr/local/bin/kube-apiserver /usr/local/bin/kube-apiserver
 COPY --from=hiclaw-controller /opt/hiclaw/config/crd/ /opt/hiclaw/config/crd/
 
+# zip/unzip needed by hiclaw CLI for --zip package handling
+RUN apt-get update -qq && apt-get install -y -qq zip unzip > /dev/null 2>&1 && rm -rf /var/lib/apt/lists/*
+
 # ---- Built-in observability plugin (bundled unconditionally, enabled at runtime) ----
 # Plugin is small; runtime toggles HICLAW_CMS_TRACES_ENABLED / HICLAW_CMS_METRICS_ENABLED
 # control whether it is active. Placed before configs COPY so that configs/scripts/agent
