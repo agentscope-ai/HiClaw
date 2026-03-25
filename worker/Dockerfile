@@ -19,8 +19,8 @@ FROM ${HIGRESS_REGISTRY}/higress/mc:20260216 AS mc
 # openclaw-base already includes: all-in-one + Node.js 22 + OpenClaw + mcporter + common tools
 FROM ${OPENCLAW_BASE_IMAGE}
 
-# mc (MinIO Client) - not included in openclaw-base
-COPY --from=mc /usr/bin/mc /usr/local/bin/mc
+# mc (MinIO Client) — real binary; wrapper installed after shared libs are copied
+COPY --from=mc /usr/bin/mc /usr/local/bin/mc.bin
 
 # Ensure openclaw binary is on PATH
 # OPENCLAW_CONFIG_PATH is intentionally NOT set here:
@@ -32,6 +32,10 @@ ENV PATH="/opt/openclaw/packages/clawdbot/node_modules/.bin:${PATH}"
 
 # Shared environment bootstrap and credential management
 COPY --from=shared . /opt/hiclaw/scripts/lib/
+
+# mc wrapper: auto-refreshes STS credentials before every mc invocation (no-op in local mode)
+RUN chmod +x /opt/hiclaw/scripts/lib/mc-wrapper.sh && \
+    ln -sf /opt/hiclaw/scripts/lib/mc-wrapper.sh /usr/local/bin/mc
 
 # Worker entrypoint and sync scripts
 COPY --chmod=755 scripts/ /opt/hiclaw/scripts/

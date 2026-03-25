@@ -15,6 +15,19 @@
 _OSS_CRED_FILE="/tmp/mc-oss-credentials.env"
 _OSS_CRED_REFRESH_MARGIN=600  # refresh if less than 10 minutes remaining
 
+# Internal: build an inline STS policy that restricts OSS access to the
+# worker's own prefix (agents/<name>/*) and the shared prefix (shared/*).
+# Called only when HICLAW_WORKER_NAME is set (i.e. worker context).
+# Manager does not set HICLAW_WORKER_NAME, so it gets unrestricted access.
+_oss_build_worker_policy() {
+    local worker="$1"
+    local bucket="${HICLAW_OSS_BUCKET:-hiclaw-cloud-storage}"
+
+    cat <<POLICY
+{"Version":"1","Statement":[{"Effect":"Allow","Action":["oss:ListObjects"],"Resource":["acs:oss:*:*:${bucket}"],"Condition":{"StringLike":{"oss:Prefix":["agents/${worker}/*","shared/*"]}}},{"Effect":"Allow","Action":["oss:GetObject","oss:PutObject","oss:DeleteObject"],"Resource":["acs:oss:*:*:${bucket}/agents/${worker}/*","acs:oss:*:*:${bucket}/shared/*"]}]}
+POLICY
+}
+
 # Internal: call STS AssumeRoleWithOIDC and write credentials to file
 _oss_refresh_sts() {
     local oidc_token region sts_resp http_code
@@ -27,6 +40,15 @@ _oss_refresh_sts() {
     timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
     nonce=$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')
 
+    # Build inline policy arg for workers (restricts STS token to own prefix)
+    local policy_args=()
+    if [ -n "${HICLAW_WORKER_NAME:-}" ]; then
+        local policy
+        policy=$(_oss_build_worker_policy "${HICLAW_WORKER_NAME}")
+        policy_args=(--data-urlencode "Policy=${policy}")
+        echo "[oss-credentials] Applying worker inline policy for '${HICLAW_WORKER_NAME}'" >&2
+    fi
+
     sts_resp=$(curl -s -w "\n%{http_code}" -X POST "https://sts-vpc.${region}.aliyuncs.com" \
         -d "Action=AssumeRoleWithOIDC" \
         -d "Format=JSON" \
@@ -38,6 +60,7 @@ _oss_refresh_sts() {
         --data-urlencode "OIDCToken=${oidc_token}" \
         -d "RoleSessionName=hiclaw-oss-session" \
         -d "DurationSeconds=3600" \
+        "${policy_args[@]}" \
         --connect-timeout 10 --max-time 30 2>&1)
 
     http_code=$(echo "${sts_resp}" | tail -1)

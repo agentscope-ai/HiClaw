@@ -20,8 +20,8 @@ FROM ${HIGRESS_REGISTRY}/higress/mc:20260216 AS mc
 # ============ Final Image ============
 FROM ${OPENCLAW_BASE_IMAGE}
 
-# mc (MinIO Client) — used for OSS file sync via S3 protocol
-COPY --from=mc /usr/bin/mc /usr/local/bin/mc
+# mc (MinIO Client) — real binary; wrapper installed after shared libs are copied
+COPY --from=mc /usr/bin/mc /usr/local/bin/mc.bin
 
 # Install Python packages for cloud Worker management (SAE API via OIDC/AK)
 # python3 is already in openclaw-base; install pip and SDK
@@ -51,8 +51,9 @@ COPY manager/scripts/ /opt/hiclaw/scripts/
 ARG BUILTIN_VERSION=latest
 RUN echo "${BUILTIN_VERSION}" > /opt/hiclaw/agent/.builtin-version
 
-# Make all scripts executable
+# Make all scripts executable (includes mc-wrapper.sh from shared/lib/)
 RUN find /opt/hiclaw/scripts -name '*.sh' -exec chmod +x {} + && \
+    ln -sf /opt/hiclaw/scripts/lib/mc-wrapper.sh /usr/local/bin/mc && \
     find /opt/hiclaw/agent/skills/*/scripts -name '*.sh' -exec chmod +x {} + 2>/dev/null || true && \
     find /opt/hiclaw/agent/worker-skills/*/scripts -name '*.sh' -exec chmod +x {} + 2>/dev/null || true && \
     find /opt/hiclaw/agent/worker-agent/skills/*/scripts -name '*.sh' -exec chmod +x {} + 2>/dev/null || true
