@@ -35,3 +35,6 @@ manager/copaw-agent/
 node_modules/
 package.json
 pnpm-lock.yaml
+
+# Claude Code
+CLAUDE.md
