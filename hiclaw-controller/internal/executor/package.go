@@ -44,14 +44,24 @@ func (p *PackageResolver) Resolve(ctx context.Context, uri string) (string, erro
 	case "nacos":
 		return p.resolveNacos(ctx, parsed)
 	default:
-		// Treat as relative MinIO path (e.g. "packages/alice.zip") or local path
-		// For relative paths without scheme, check local import dir first
+		// Treat as relative MinIO path (e.g. "packages/alice.zip")
+		// First check local import dir
 		localPath := filepath.Join(p.ImportDir, filepath.Base(uri))
 		if _, err := os.Stat(localPath); err == nil {
 			return localPath, nil
 		}
-		// If not found locally, it may be a MinIO-relative path — return empty (no package to resolve)
-		return "", nil
+		// Download from MinIO hiclaw-config/ prefix
+		storagePrefix := os.Getenv("HICLAW_STORAGE_PREFIX")
+		if storagePrefix == "" {
+			storagePrefix = "hiclaw/hiclaw-storage"
+		}
+		minioPath := fmt.Sprintf("%s/hiclaw-config/%s", storagePrefix, uri)
+		destPath := filepath.Join(p.ImportDir, filepath.Base(uri))
+		cmd := exec.CommandContext(ctx, "mc", "cp", minioPath, destPath)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			return "", fmt.Errorf("failed to download %s from MinIO: %s: %w", minioPath, string(out), err)
+		}
+		return destPath, nil
 	}
 }
 
