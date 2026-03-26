@@ -87,6 +87,9 @@ func (p *PackageResolver) ResolveAndExtract(ctx context.Context, uri, name strin
 
 	// If Resolve already returned a directory (e.g. nacos://), use it directly.
 	if info, err := os.Stat(resolved); err == nil && info.IsDir() {
+		if err := validatePackageDir(resolved); err != nil {
+			return "", err
+		}
 		return resolved, nil
 	}
 
@@ -102,20 +105,8 @@ func (p *PackageResolver) ResolveAndExtract(ctx context.Context, uri, name strin
 		return "", fmt.Errorf("extract ZIP %s: %s: %w", resolved, string(out), err)
 	}
 
-	// Validate: SOUL.md must exist (check both root and config/ subdirectory)
-	soulPaths := []string{
-		filepath.Join(destDir, "SOUL.md"),
-		filepath.Join(destDir, "config", "SOUL.md"),
-	}
-	found := false
-	for _, sp := range soulPaths {
-		if _, err := os.Stat(sp); err == nil {
-			found = true
-			break
-		}
-	}
-	if !found {
-		return "", fmt.Errorf("invalid package: SOUL.md not found in %s (checked root and config/)", destDir)
+	if err := validatePackageDir(destDir); err != nil {
+		return "", err
 	}
 
 	return destDir, nil
@@ -167,6 +158,16 @@ func (p *PackageResolver) DeployToMinIO(ctx context.Context, extractedDir, worke
 	}
 
 	return nil
+}
+
+// validatePackageDir checks that a SOUL.md exists in the package directory.
+func validatePackageDir(dir string) error {
+	for _, rel := range []string{"SOUL.md", "config/SOUL.md"} {
+		if _, err := os.Stat(filepath.Join(dir, rel)); err == nil {
+			return nil
+		}
+	}
+	return fmt.Errorf("invalid package: SOUL.md not found in %s (checked root and config/)", dir)
 }
 
 // --- Private resolve methods ---
@@ -255,7 +256,6 @@ func (p *PackageResolver) resolveNacos(ctx context.Context, u *url.URL) (string,
 	if err := os.RemoveAll(destPath); err != nil {
 		return "", fmt.Errorf("failed to clean previous nacos package %s: %w", destPath, err)
 	}
-	}
 
 	client, err := newNacosAgentSpecClient(ctx, nacosAddr, namespace)
 	if err != nil {
@@ -278,7 +278,6 @@ func (p *PackageResolver) resolveNacos(ctx context.Context, u *url.URL) (string,
 	}
 	if !info.IsDir() {
 		return "", fmt.Errorf("agentspec output %s is not a directory", destPath)
-	}
 	}
 
 	return destPath, nil

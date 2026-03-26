@@ -112,7 +112,7 @@ func (c *nacosAgentSpecClient) GetAgentSpec(ctx context.Context, name, outputDir
 	if err != nil {
 		return fmt.Errorf("failed to build request: %w", err)
 	}
-	c.setAuthHeaders(req, "")
+	c.setAuthHeaders(req)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -276,7 +276,7 @@ func (c *nacosAgentSpecClient) applyLoginMap(data map[string]interface{}) bool {
 	return true
 }
 
-func (c *nacosAgentSpecClient) setAuthHeaders(req *http.Request, group string) {
+func (c *nacosAgentSpecClient) setAuthHeaders(req *http.Request) {
 	if c.accessToken != "" {
 		req.Header.Set("Authorization", "Bearer "+c.accessToken)
 	}

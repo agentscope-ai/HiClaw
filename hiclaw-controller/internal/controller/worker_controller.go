@@ -77,16 +77,23 @@ func (r *WorkerReconciler) handleCreate(ctx context.Context, w *v1.Worker) (reco
 		return reconcile.Result{}, err
 	}
 
-	// Resolve and extract package if specified
-	resolvedPackage := ""
+	// Resolve and deploy package if specified
 	if w.Spec.Package != "" {
-		var err error
-		resolvedPackage, err = r.Packages.ResolveAndExtract(ctx, w.Spec.Package, w.Name)
+		extractedDir, err := r.Packages.ResolveAndExtract(ctx, w.Spec.Package, w.Name)
 		if err != nil {
 			w.Status.Phase = "Failed"
 			w.Status.Message = fmt.Sprintf("package resolve/extract failed: %v", err)
 			r.Status().Update(ctx, w)
 			return reconcile.Result{RequeueAfter: time.Minute}, err
+		}
+		if extractedDir != "" {
+			if err := r.Packages.DeployToMinIO(ctx, extractedDir, w.Name); err != nil {
+				w.Status.Phase = "Failed"
+				w.Status.Message = fmt.Sprintf("package deploy failed: %v", err)
+				r.Status().Update(ctx, w)
+				return reconcile.Result{RequeueAfter: time.Minute}, err
+			}
+			logger.Info("package deployed", "name", w.Name, "dir", extractedDir)
 		}
 	}
 
@@ -119,29 +126,6 @@ func (r *WorkerReconciler) handleCreate(ctx context.Context, w *v1.Worker) (reco
 	}
 	if leader := w.Annotations["hiclaw.io/team-leader"]; leader != "" {
 		args = append(args, "--team-leader", leader)
-	}
-
-	if resolvedPackage != "" {
-		importArgs := []string{
-			"--worker", w.Name,
-			"--package", resolvedPackage,
-		}
-		if w.Spec.Runtime != "" {
-			importArgs = append(importArgs, "--runtime", w.Spec.Runtime)
-		}
-		if role := w.Annotations["hiclaw.io/role"]; role != "" {
-			importArgs = append(importArgs, "--role", role)
-		}
-
-		if _, err := r.Executor.RunSimple(ctx,
-			"/opt/hiclaw/agent/skills/worker-management/scripts/import-worker-package.sh",
-			importArgs...,
-		); err != nil {
-			w.Status.Phase = "Failed"
-			w.Status.Message = fmt.Sprintf("import-worker-package.sh failed: %v", err)
-			r.Status().Update(ctx, w)
-			return reconcile.Result{RequeueAfter: time.Minute}, err
-		}
 	}
 
 	result, err := r.Executor.Run(ctx,

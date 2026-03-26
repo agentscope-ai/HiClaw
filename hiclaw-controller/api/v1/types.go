@@ -22,15 +22,15 @@ type Worker struct {
 
 type WorkerSpec struct {
 	Model      string   `json:"model"`
-	Runtime    string   `json:"runtime,omitempty"`    // openclaw | copaw (default: openclaw)
-	Image      string   `json:"image,omitempty"`      // custom Docker image
+	Runtime    string   `json:"runtime,omitempty"` // openclaw | copaw (default: openclaw)
+	Image      string   `json:"image,omitempty"`   // custom Docker image
 	Skills     []string `json:"skills,omitempty"`
 	McpServers []string `json:"mcpServers,omitempty"`
-	Package    string   `json:"package,omitempty"`    // file:// or http(s):// URI
+	Package    string   `json:"package,omitempty"` // file://, http(s)://, or nacos:// URI
 }
 
 type WorkerStatus struct {
-	Phase          string `json:"phase,omitempty"`          // Pending/Running/Stopped/Failed
+	Phase          string `json:"phase,omitempty"` // Pending/Running/Stopped/Failed
 	MatrixUserID   string `json:"matrixUserID,omitempty"`
 	RoomID         string `json:"roomID,omitempty"`
 	ContainerState string `json:"containerState,omitempty"`
@@ -58,9 +58,9 @@ type Team struct {
 }
 
 type TeamSpec struct {
-	Description string            `json:"description,omitempty"`
-	Leader      LeaderSpec        `json:"leader"`
-	Workers     []TeamWorkerSpec  `json:"workers"`
+	Description string           `json:"description,omitempty"`
+	Leader      LeaderSpec       `json:"leader"`
+	Workers     []TeamWorkerSpec `json:"workers"`
 }
 
 type LeaderSpec struct {
@@ -110,7 +110,7 @@ type Human struct {
 type HumanSpec struct {
 	DisplayName       string   `json:"displayName"`
 	Email             string   `json:"email,omitempty"`
-	PermissionLevel   int      `json:"permissionLevel"`          // 1=Admin, 2=Team, 3=Worker
+	PermissionLevel   int      `json:"permissionLevel"` // 1=Admin, 2=Team, 3=Worker
 	AccessibleTeams   []string `json:"accessibleTeams,omitempty"`
 	AccessibleWorkers []string `json:"accessibleWorkers,omitempty"`
 	Note              string   `json:"note,omitempty"`
