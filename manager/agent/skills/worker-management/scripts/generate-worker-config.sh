@@ -79,6 +79,9 @@ export WORKER_GATEWAY_KEY
 #   Local mode: Worker connects via Higress internal network (domain:8080)
 if [ "${HICLAW_RUNTIME}" = "aliyun" ] && [ -n "${HICLAW_MATRIX_URL:-}" ]; then
     export HICLAW_MATRIX_SERVER="${HICLAW_MATRIX_URL}"
+elif [ "${HICLAW_RUNTIME}" = "aliyun" ] && [ "${HICLAW_ALIYUN_WORKER_BACKEND:-sae}" = "k8s" ]; then
+    _K8S_SVC="${HICLAW_K8S_SERVICE_HOST:-hiclaw}.${HICLAW_K8S_NAMESPACE:-default}.svc.cluster.local"
+    export HICLAW_MATRIX_SERVER="http://${_K8S_SVC}:${MATRIX_SERVER_PORT}"
 else
     export HICLAW_MATRIX_SERVER="http://${MATRIX_DOMAIN%%:*}:${MATRIX_SERVER_PORT}"
 fi
@@ -123,96 +126,3 @@ if ! jq -e --arg model "${MODEL_NAME}" '.models.providers["hiclaw-gateway"].mode
 fi
 
 log "Generated ${OUTPUT_DIR}/openclaw.json (model=${MODEL_NAME}, ctx=${CTX}, max=${MAX})"
-
-# ============================================================
-# Optional: inject openclaw-cms-plugin observability config
-#
-# The HICLAW_CMS_TRACES_ENABLED / HICLAW_CMS_METRICS_ENABLED switches live on
-# the Manager container.  When enabled, ALL Workers created by this Manager
-# will receive matching plugin config in their openclaw.json (stored in MinIO)
-# so that both Manager and Workers report traces/metrics to the same ARMS endpoint.
-#
-# Worker service name is automatically set to "hiclaw-worker-<WORKER_NAME>"
-# for per-worker observability granularity in ARMS.
-# ============================================================
-_cms_traces_lc="$(echo "${HICLAW_CMS_TRACES_ENABLED:-false}" | tr '[:upper:]' '[:lower:]')"
-if [ "${_cms_traces_lc}" = "true" ]; then
-    _cms_plugin_dir="${OPENCLAW_CMS_PLUGIN_DIR:-/opt/openclaw/extensions/openclaw-cms-plugin}"
-    _cms_manifest="${_cms_plugin_dir}/openclaw.plugin.json"
-
-    if [ ! -f "${_cms_manifest}" ]; then
-        log "WARNING: openclaw-cms-plugin manifest not found at ${_cms_manifest}; skipping CMS config for worker ${WORKER_NAME}. Plugin should be bundled in Worker image by default — verify image build completed successfully."
-    elif [ -z "${HICLAW_CMS_ENDPOINT:-}" ] || [ -z "${HICLAW_CMS_LICENSE_KEY:-}" ] || [ -z "${HICLAW_CMS_WORKSPACE:-}" ]; then
-        log "WARNING: HICLAW_CMS_TRACES_ENABLED=true but HICLAW_CMS_ENDPOINT / HICLAW_CMS_LICENSE_KEY / HICLAW_CMS_WORKSPACE are not all set; skipping CMS config for worker ${WORKER_NAME}"
-    else
-        _cms_worker_service="hiclaw-worker-${WORKER_NAME}"
-        _cms_metrics_lc="$(echo "${HICLAW_CMS_METRICS_ENABLED:-false}" | tr '[:upper:]' '[:lower:]')"
-        _diag_plugin_dir="/opt/openclaw/extensions/diagnostics-otel"
-        _diag_available="0"
-        if [ "${_cms_metrics_lc}" = "true" ] && [ -f "${_diag_plugin_dir}/package.json" ]; then
-            _diag_available="1"
-        fi
-
-        jq --arg pluginName "openclaw-cms-plugin" \
-           --arg pluginDir "${_cms_plugin_dir}" \
-           --arg endpoint "${HICLAW_CMS_ENDPOINT}" \
-           --arg licenseKey "${HICLAW_CMS_LICENSE_KEY}" \
-           --arg armsProject "${HICLAW_CMS_PROJECT:-}" \
-           --arg cmsWorkspace "${HICLAW_CMS_WORKSPACE}" \
-           --arg serviceName "${_cms_worker_service}" \
-           --arg diagPluginName "diagnostics-otel" \
-           --arg diagPluginDir "${_diag_plugin_dir}" \
-           --arg metricsRaw "${_cms_metrics_lc}" \
-           --arg diagAvailableRaw "${_diag_available}" \
-           '
-            .plugins = (.plugins // {})
-            | .plugins.load = (.plugins.load // {})
-            | .plugins.entries = (.plugins.entries // {})
-            | if (.plugins.allow | type) != "array" then .plugins.allow = [] else . end
-            | if (.plugins.allow | index($pluginName)) == null then .plugins.allow += [$pluginName] else . end
-            | if (.plugins.load.paths | type) != "array" then .plugins.load.paths = [] else . end
-            | if (.plugins.load.paths | index($pluginDir)) == null then .plugins.load.paths += [$pluginDir] else . end
-            | .plugins.entries[$pluginName] = {
-                "enabled": true,
-                "config": {
-                    "endpoint": $endpoint,
-                    "headers": {
-                        "x-arms-license-key": $licenseKey,
-                        "x-arms-project": $armsProject,
-                        "x-cms-workspace": $cmsWorkspace
-                    },
-                    "serviceName": $serviceName
-                }
-            }
-
-            # diagnostics-otel metrics (optional, only when plugin is available in image)
-            | ($metricsRaw | ascii_downcase) as $m
-            | ($diagAvailableRaw == "1") as $diagAvailable
-            | (($m == "true") and $diagAvailable) as $metricsEnabled
-            | if $metricsEnabled then
-                (if (.plugins.allow | index($diagPluginName)) == null then .plugins.allow += [$diagPluginName] else . end)
-                | (if (.plugins.load.paths | index($diagPluginDir)) == null then .plugins.load.paths += [$diagPluginDir] else . end)
-                | .plugins.entries[$diagPluginName].enabled = true
-                | .diagnostics = (.diagnostics // {})
-                | .diagnostics.otel = (.diagnostics.otel // {})
-                | .diagnostics.enabled = true
-                | .diagnostics.otel.enabled = true
-                | .diagnostics.otel.endpoint = $endpoint
-                | .diagnostics.otel.protocol = (.diagnostics.otel.protocol // "http/protobuf")
-                | .diagnostics.otel.headers = {
-                    "x-arms-license-key": $licenseKey,
-                    "x-arms-project": $armsProject,
-                    "x-cms-workspace": $cmsWorkspace
-                }
-                | .diagnostics.otel.serviceName = $serviceName
-                | .diagnostics.otel.metrics = true
-                | .diagnostics.otel.traces = (.diagnostics.otel.traces // false)
-                | .diagnostics.otel.logs = (.diagnostics.otel.logs // false)
-              else
-                .
-              end
-           ' "${OUTPUT_DIR}/openclaw.json" > "${OUTPUT_DIR}/openclaw.json.cms-tmp" && \
-            mv "${OUTPUT_DIR}/openclaw.json.cms-tmp" "${OUTPUT_DIR}/openclaw.json"
-        log "CMS plugin config injected into Worker ${WORKER_NAME} openclaw.json (service=${_cms_worker_service}, metrics=${_cms_metrics_lc})"
-    fi
-fi

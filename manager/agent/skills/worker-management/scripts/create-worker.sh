@@ -18,6 +18,7 @@ set -e
 source /opt/hiclaw/scripts/lib/hiclaw-env.sh
 source /opt/hiclaw/scripts/lib/container-api.sh
 source /opt/hiclaw/scripts/lib/gateway-api.sh
+source /opt/hiclaw/agent/skills/worker-management/scripts/k8s-worker-env.sh
 
 # Override log() to also write to container's main stdout (/proc/1/fd/1)
 # so that logs are visible in `docker logs` / SAE log viewer even when
@@ -219,6 +220,7 @@ chmod 600 "${WORKER_CREDS_FILE}"
 # ============================================================
 # Step 1b: Create storage user with restricted permissions
 # ============================================================
+# Local Docker / MinIO only. Cloud (SAE + ACK) uses OSS + RRSA — skip.
 if [ "${HICLAW_RUNTIME}" != "aliyun" ]; then
     log "Step 1b: Creating MinIO user for ${WORKER_NAME}..."
     POLICY_NAME="worker-${WORKER_NAME}"
@@ -258,7 +260,7 @@ POLICY
     rm -f "${POLICY_FILE}"
     log "  MinIO user ${WORKER_NAME} created with policy ${POLICY_NAME}"
 else
-    log "Step 1b: Skipped (cloud mode uses RRSA for storage auth)"
+    log "Step 1b: Skipped (cloud mode: SAE/ACK use OSS + RRSA for storage auth)"
 fi
 
 # ============================================================
@@ -510,6 +512,17 @@ bash /opt/hiclaw/agent/skills/worker-management/scripts/push-worker-skills.sh \
 # ============================================================
 # Step 9: Start Worker
 # ============================================================
+# Cloud parity (HICLAW_RUNTIME=aliyun) — same steps as SAE doc before spawn:
+#   1) Matrix register + login (above)
+#   2) Matrix room 3-party (Step 2)
+#   3) gateway_create_consumer → aliyun-api gw-create-consumer (RRSA OIDC → APIG)
+#   4) gateway_authorize_routes → gw-bind-consumer (model API env)
+#   5) gateway_authorize_mcp
+#   6) generate openclaw.json / mcporter (Step 6)
+#   7) sync to OSS — mc + STS (Step 8; Manager RRSA)
+#   8) Spawn worker (HICLAW_ALIYUN_WORKER_BACKEND):
+#        sae → sae_create_worker → aliyun-api.py sae-create (oidc_role_name on app)
+#        k8s → k8s_create_worker → kubernetes-api.py k8s-create (Worker SA + RRSA/webhook)
 DEPLOY_MODE="remote"
 CONTAINER_ID=""
 INSTALL_CMD=""
@@ -566,8 +579,8 @@ _build_extra_env() {
 if [ "${REMOTE_MODE}" = true ]; then
     log "Step 9: Remote mode requested"
     INSTALL_CMD=$(_build_install_cmd)
-elif [ "${HICLAW_RUNTIME}" = "aliyun" ]; then
-    log "Step 9: Creating Worker via cloud backend (SAE, runtime=${WORKER_RUNTIME})..."
+elif [ "${HICLAW_RUNTIME}" = "aliyun" ] && [ "${HICLAW_ALIYUN_WORKER_BACKEND:-sae}" = "sae" ]; then
+    log "Step 9: Creating Worker via SAE (runtime=${WORKER_RUNTIME})..."
 
     # Select SAE image based on worker runtime
     SAE_IMAGE=""
@@ -621,6 +634,61 @@ elif [ "${HICLAW_RUNTIME}" = "aliyun" ]; then
     else
         log "  WARNING: SAE application creation returned: ${CREATE_OUTPUT}"
         WORKER_STATUS="error"
+    fi
+elif [ "${HICLAW_RUNTIME}" = "aliyun" ] && [ "${HICLAW_ALIYUN_WORKER_BACKEND:-sae}" = "k8s" ]; then
+    log "Step 9: Creating Worker via Kubernetes (ACK — same env contract as SAE Step 9, runtime=${WORKER_RUNTIME})..."
+
+    # Same JSON env as SAE (Matrix / Gateway / OSS bucket). Worker image uses HICLAW_RUNTIME=aliyun for mc+OSS STS;
+    # ACK injects Worker RAM via ServiceAccount + ack-pod-identity-webhook (cf. SAE oidc_role_name).
+    export HICLAW_MATRIX_DOMAIN="${MATRIX_DOMAIN}"
+    K8S_ENVS=$(hiclaw_k8s_worker_env_json "${WORKER_NAME}" "${WORKER_KEY}" "${WORKER_MATRIX_TOKEN}" "${WORKER_RUNTIME}" "${CONSOLE_PORT:-}")
+    log "  K8S_ENVS: ${K8S_ENVS:0:200}..."
+ 
+    # Select image based on runtime
+    K8S_IMAGE="${CUSTOM_IMAGE:-}"
+    if [ -z "${K8S_IMAGE}" ]; then
+        if [ "${WORKER_RUNTIME}" = "copaw" ]; then
+            K8S_IMAGE="${HICLAW_K8S_COPAW_WORKER_IMAGE:-${HICLAW_COPAW_WORKER_IMAGE:-hiclaw/copaw-worker:latest}}"
+        else
+            K8S_IMAGE="${HICLAW_K8S_WORKER_IMAGE:-${HICLAW_WORKER_IMAGE:-hiclaw/worker-agent:latest}}"
+        fi
+    fi
+ 
+    if [ "${WORKER_RUNTIME}" = "copaw" ]; then
+        CREATE_OUTPUT=$(k8s_create_copaw_worker "${WORKER_NAME}" "${K8S_ENVS}" "${K8S_IMAGE}" 2>&1) || true
+    else
+        CREATE_OUTPUT=$(k8s_create_worker "${WORKER_NAME}" "${K8S_ENVS}" "${K8S_IMAGE}" 2>&1) || true
+    fi
+    log "  K8s create response: ${CREATE_OUTPUT:0:300}"
+ 
+    K8S_STATUS=$(echo "${CREATE_OUTPUT}" | jq -r '.status // "error"' 2>/dev/null)
+    POD_NAME=$(echo "${CREATE_OUTPUT}" | jq -r '.pod_name // empty' 2>/dev/null)
+ 
+    if [ "${K8S_STATUS}" = "created" ] || [ "${K8S_STATUS}" = "exists" ]; then
+        DEPLOY_MODE="k8s"
+        log "  K8s Pod created: ${POD_NAME}"
+        log "  Waiting for Worker agent to be ready..."
+        if [ "${WORKER_RUNTIME}" = "copaw" ]; then
+            if k8s_wait_copaw_worker_ready "${WORKER_NAME}" 120; then
+                WORKER_STATUS="ready"
+                log "  CoPaw Worker agent is ready!"
+            else
+                WORKER_STATUS="starting"
+                log "  WARNING: CoPaw Worker agent not ready within timeout (pod may still be initializing)"
+            fi
+        else
+            if k8s_wait_worker_ready "${WORKER_NAME}" 120; then
+                WORKER_STATUS="ready"
+                log "  Worker agent is ready!"
+            else
+                WORKER_STATUS="starting"
+                log "  WARNING: Worker agent not ready within timeout (pod may still be initializing)"
+            fi
+        fi
+    else
+        log "  WARNING: K8s Pod creation failed: ${CREATE_OUTPUT}"
+        WORKER_STATUS="error"
+        INSTALL_CMD=$(_build_install_cmd)
     fi
 elif container_api_available; then
     log "Step 9: Starting Worker container locally (runtime=${WORKER_RUNTIME})..."

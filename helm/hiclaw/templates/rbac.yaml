@@ -1,0 +1,68 @@
+{{- if .Values.serviceAccount.create }}
+{{- $rrsaWebhook := and .Values.manager.rrsa.enabled (eq (.Values.manager.rrsa.mode | default "manual") "webhook") .Values.manager.rrsa.roleName }}
+{{- $saExtraAnn := .Values.serviceAccount.annotations | default dict }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "hiclaw.serviceAccountName" . }}
+  namespace: {{ include "hiclaw.namespace" . }}
+  labels:
+    {{- include "hiclaw.labels" . | nindent 4 }}
+  {{- if or $rrsaWebhook (gt (len $saExtraAnn) 0) }}
+  annotations:
+    {{- if $rrsaWebhook }}
+    pod-identity.alibabacloud.com/role-name: {{ .Values.manager.rrsa.roleName | quote }}
+    {{- end }}
+    {{- range $k, $v := $saExtraAnn }}
+    {{ $k }}: {{ $v | quote }}
+    {{- end }}
+  {{- end }}
+{{- end }}
+---
+{{- if .Values.rbac.create }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "hiclaw.fullname" . }}-role
+  namespace: {{ include "hiclaw.namespace" . }}
+  labels:
+    {{- include "hiclaw.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch", "create", "delete", "patch"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    verbs: ["create"]
+  - apiGroups: [""]
+    resources: ["configmaps", "secrets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims"]
+    verbs: ["get", "list", "watch"]
+  {{- with .Values.rbac.additionalRules }}
+  {{- toYaml . | nindent 2 }}
+  {{- end }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "hiclaw.fullname" . }}-rolebinding
+  namespace: {{ include "hiclaw.namespace" . }}
+  labels:
+    {{- include "hiclaw.labels" . | nindent 4 }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "hiclaw.serviceAccountName" . }}
+    namespace: {{ include "hiclaw.namespace" . }}
+roleRef:
+  kind: Role
+  name: {{ include "hiclaw.fullname" . }}-role
+  apiGroup: rbac.authorization.k8s.io
+{{- end }}

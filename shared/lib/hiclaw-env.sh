@@ -5,8 +5,10 @@
 # Source this file instead of manually setting up Matrix/storage variables.
 #
 # Provides:
-#   HICLAW_RUNTIME         — "aliyun" | "docker" | "none"
-#   HICLAW_MATRIX_SERVER   — Matrix server URL (works in both local and cloud)
+#   HICLAW_RUNTIME                  — after normalization: "aliyun" | "docker" | "none" (legacy "k8s" → "aliyun")
+#   HICLAW_ALIYUN_WORKER_BACKEND    — when RUNTIME=aliyun only: "sae" (default) | "k8s" (ACK Workers as Pods).
+#                                     Not inferred — set `k8s` on ACK; omit or `sae` for SAE (see Dockerfile.aliyun).
+#   HICLAW_MATRIX_SERVER            — Matrix server URL (works in both local and cloud)
 #   HICLAW_STORAGE_BUCKET  — bucket name for mc commands
 #   HICLAW_STORAGE_PREFIX  — "hiclaw/<bucket>" ready for mc paths
 #   ensure_mc_credentials  — callable function (no-op in local mode)
@@ -21,14 +23,35 @@ source /opt/hiclaw/scripts/lib/base.sh 2>/dev/null || true
 
 # ── Runtime detection ─────────────────────────────────────────────────────────
 # Respect pre-set HICLAW_RUNTIME (e.g. from Dockerfile.aliyun ENV), only detect if unset
+K8S_SA_TOKEN_FILE="/var/run/secrets/kubernetes.io/serviceaccount/token"
 if [ -z "${HICLAW_RUNTIME:-}" ]; then
     if [ -n "${ALIBABA_CLOUD_OIDC_TOKEN_FILE:-}" ] && \
        [ -f "${ALIBABA_CLOUD_OIDC_TOKEN_FILE:-/nonexistent}" ]; then
         HICLAW_RUNTIME="aliyun"
+    elif [ -f "${K8S_SA_TOKEN_FILE}" ]; then
+        HICLAW_RUNTIME="k8s"
     elif [ -S "${HICLAW_CONTAINER_SOCKET:-/var/run/docker.sock}" ]; then
         HICLAW_RUNTIME="docker"
     else
         HICLAW_RUNTIME="none"
+    fi
+fi
+
+# ── Alibaba cloud: unify runtime + worker orchestration ───────────────────────
+# Canonical: HICLAW_RUNTIME=aliyun + HICLAW_ALIYUN_WORKER_BACKEND=sae|k8s
+#   sae — Workers via SAE API (historical single-process Manager image)
+#   k8s — Workers via Kubernetes API (ACK)
+# Legacy Helm/ACK used HICLAW_RUNTIME=k8s; map that to aliyun + k8s.
+if [ "${HICLAW_RUNTIME:-}" = "k8s" ]; then
+    HICLAW_RUNTIME="aliyun"
+    if [ -z "${HICLAW_ALIYUN_WORKER_BACKEND:-}" ]; then
+        HICLAW_ALIYUN_WORKER_BACKEND="k8s"
+    fi
+fi
+
+if [ "${HICLAW_RUNTIME:-}" = "aliyun" ]; then
+    if [ -z "${HICLAW_ALIYUN_WORKER_BACKEND:-}" ]; then
+        HICLAW_ALIYUN_WORKER_BACKEND="sae"
     fi
 fi
 
@@ -48,4 +71,4 @@ HICLAW_STORAGE_PREFIX="hiclaw/${HICLAW_STORAGE_BUCKET}"
 # In local mode, ensure_mc_credentials() is a no-op.
 source /opt/hiclaw/scripts/lib/oss-credentials.sh 2>/dev/null || true
 
-export HICLAW_RUNTIME HICLAW_MATRIX_SERVER HICLAW_AI_GATEWAY_SERVER HICLAW_STORAGE_BUCKET HICLAW_STORAGE_PREFIX
+export HICLAW_RUNTIME HICLAW_ALIYUN_WORKER_BACKEND HICLAW_MATRIX_SERVER HICLAW_AI_GATEWAY_SERVER HICLAW_STORAGE_BUCKET HICLAW_STORAGE_PREFIX

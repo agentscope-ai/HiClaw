@@ -6,6 +6,7 @@
 #
 # Prerequisites:
 #   - HICLAW_SAE_WORKER_IMAGE env var set (signals cloud SAE mode)
+#   - HICLAW_SAE_WORKER_IMAGE env var set (signals cloud SAE mode)
 #   - /opt/hiclaw/scripts/lib/cloud/aliyun-api.py available
 #   - RRSA OIDC configured on the SAE application
 

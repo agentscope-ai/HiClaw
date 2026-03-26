@@ -1,0 +1,36 @@
+{{- /* ACK：NAS 静态卷 — PV + PVC(selector)，与官方文档一致，无 StorageClass。
+       https://help.aliyun.com/zh/nas/user-guide/mount-a-statically-provisioned-nas-volume-by-using-nfs */ -}}
+{{- if and .Values.tuwunel.persistence.enabled (eq (include "hiclaw.persistence.platform" . | trim) "ack") .Values.tuwunel.persistence.pv.enabled }}
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: {{ include "hiclaw.tuwunel.pvName" . }}
+  labels:
+    alicloud-pvname: {{ include "hiclaw.tuwunel.pvAlicloudLabel" . | quote }}
+    {{- with .Values.tuwunel.persistence.pv.extraLabels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- with .Values.tuwunel.persistence.pv.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  accessModes:
+{{- if .Values.tuwunel.persistence.pv.accessModes }}
+{{- toYaml .Values.tuwunel.persistence.pv.accessModes | nindent 4 }}
+{{- else }}
+{{- toYaml .Values.tuwunel.persistence.accessModes | nindent 4 }}
+{{- end }}
+  capacity:
+    storage: {{ (.Values.tuwunel.persistence.pv.storage | default .Values.tuwunel.persistence.size) | quote }}
+  csi:
+    driver: {{ .Values.tuwunel.persistence.pv.csiDriver | quote }}
+    volumeAttributes:
+      path: {{ .Values.tuwunel.persistence.pv.path | quote }}
+      server: {{ required "tuwunel.persistence.nas.server (or legacy pv.server) is required when tuwunel.persistence.pv.enabled is true" (include "hiclaw.tuwunel.nas.server" .) | quote }}
+    volumeHandle: {{ (.Values.tuwunel.persistence.pv.volumeHandle | default (include "hiclaw.tuwunel.pvName" .)) | quote }}
+  mountOptions:
+{{- toYaml .Values.tuwunel.persistence.pv.mountOptions | nindent 4 }}
+  persistentVolumeReclaimPolicy: {{ .Values.tuwunel.persistence.pv.reclaimPolicy | quote }}
+  volumeMode: {{ .Values.tuwunel.persistence.pv.volumeMode | default .Values.tuwunel.persistence.volumeMode }}
+{{- end }}

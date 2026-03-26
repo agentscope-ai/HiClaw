@@ -2,6 +2,8 @@
 # gateway-api.sh - Unified gateway consumer/route/MCP authorization abstraction
 #
 # Dispatches to Higress Console REST API (local) or AI Gateway API (cloud).
+# Cloud path (HICLAW_RUNTIME=aliyun): backend "aliyun" → aliyun-sae.sh
+# cloud_create_consumer → aliyun-api.py gw-create-consumer (NOT kubernetes-api.py).
 # Follows the same pattern as worker_backend_* in container-api.sh.
 #
 # Provides:
@@ -27,7 +29,8 @@ unset _gw_provider_file
 # ── Backend detection ─────────────────────────────────────────────────────────
 
 _detect_gateway_backend() {
-    if [ "${HICLAW_RUNTIME:-}" = "aliyun" ]; then
+    # SAE and ACK both use Alibaba AI Gateway (APIG) on the Manager.
+    if [ "${HICLAW_RUNTIME:-}" = "aliyun" ] || [ "${HICLAW_RUNTIME:-}" = "k8s" ]; then
         echo "aliyun"
     else
         echo "higress"

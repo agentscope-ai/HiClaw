@@ -23,14 +23,16 @@ FROM ${OPENCLAW_BASE_IMAGE}
 # mc (MinIO Client) — real binary; wrapper installed after shared libs are copied
 COPY --from=mc /usr/bin/mc /usr/local/bin/mc.bin
 
-# Install Python packages for cloud Worker management (SAE API via OIDC/AK)
-# python3 is already in openclaw-base; install pip and SDK
+# Install Python packages for cloud Worker management
+# - alibabacloud-*: SAE + AI Gateway (APIG)
+# - kubernetes: ACK Worker Pods (kubernetes-api.py); same as manager/Dockerfile
 ARG PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
 RUN apt-get update && apt-get install -y --no-install-recommends python3-pip && \
     rm -rf /var/lib/apt/lists/* && \
     pip3 install --no-cache-dir \
         --index-url "${PIP_INDEX_URL}" \
         --trusted-host "$(echo ${PIP_INDEX_URL} | sed 's|https\?://||;s|/.*||')" \
+        kubernetes \
         alibabacloud-sae20190506 \
         alibabacloud-apig20240327 \
         alibabacloud-credentials \
@@ -77,6 +79,8 @@ RUN find /opt/hiclaw/scripts -name '*.sh' -exec chmod +x {} + && \
 
 # Explicitly mark as cloud deployment (don't rely on OIDC file detection)
 ENV HICLAW_RUNTIME=aliyun
+# ACK: set HICLAW_ALIYUN_WORKER_BACKEND=k8s in env (Helm); SAE keeps default sae
+ENV HICLAW_ALIYUN_WORKER_BACKEND=sae
 
 # Workspace directory
 ENV HOME=/root/manager-workspace

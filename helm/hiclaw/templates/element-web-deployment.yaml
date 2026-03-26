@@ -1,0 +1,73 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "hiclaw.elementWeb.fullname" . }}
+  namespace: {{ include "hiclaw.namespace" . }}
+  labels:
+    {{- include "hiclaw.elementWeb.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.elementWeb.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "hiclaw.elementWeb.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      {{- with .Values.elementWeb.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "hiclaw.elementWeb.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.elementWeb.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: element-web
+          image: {{ include "hiclaw.elementWeb.image" . }}
+          imagePullPolicy: {{ .Values.elementWeb.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            {{- $matrixURL := include "hiclaw.elementWeb.matrixServerURL" . | trim }}
+            - name: MATRIX_SERVER_URL
+              value: {{ if $matrixURL }}{{ $matrixURL | quote }}{{ else }}{{ include "hiclaw.tuwunel.internalMatrixURL" . | quote }}{{ end }}
+            {{- with .Values.elementWeb.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- with .Values.elementWeb.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.elementWeb.resources | nindent 12 }}
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 20
+      {{- with .Values.elementWeb.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.elementWeb.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.elementWeb.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

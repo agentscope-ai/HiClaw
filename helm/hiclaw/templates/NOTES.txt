@@ -1,0 +1,38 @@
+========================================================================
+HiClaw (cloud) — {{ .Chart.Name }} / {{ .Release.Name }}
+========================================================================
+
+Namespace: {{ include "hiclaw.namespace" . }}
+
+1. Wait for Manager:
+   kubectl wait --for=condition=available deployment/{{ include "hiclaw.fullname" . }} \
+     -n {{ include "hiclaw.namespace" . }} --timeout=300s
+
+2. Coordinator Pod (outbound-only): OpenClaw gateway :{{ .Values.manager.service.targetPort }} for health checks.
+   Service: {{ include "hiclaw.fullname" . }}:{{ .Values.manager.service.port }}
+
+   Optional port-forward:
+   kubectl port-forward svc/{{ include "hiclaw.fullname" . }} {{ .Values.manager.service.port }}:{{ .Values.manager.service.targetPort }} -n {{ include "hiclaw.namespace" . }}
+
+3. ACK RRSA — Default: manual injection (projected token + ALIBABA_CLOUD_* on Manager; see values manager.rrsa.manual.*). Worker Pods get the same from kubernetes-api.py when workerServiceAccount.rrsa.manual.roleArn is set.
+{{- if eq (.Values.manager.rrsa.mode | default "manual") "webhook" }}
+   Webhook mode: install ack-pod-identity-webhook; SA role-name Manager={{ .Values.manager.rrsa.roleName }}
+{{- if .Values.workerServiceAccount.create }}
+, Worker={{ .Values.workerServiceAccount.rrsa.roleName }}
+{{- end }}
+ ; enable global.podIdentity.namespaceInjection if needed.
+{{- end }}
+
+4. Secrets: set manager.secret.stringData (chart Secret) or manager.envFromSecret (external Secret). Without envFromSecret, HICLAW_MATRIX_URL / HICLAW_MATRIX_DOMAIN are injected on the Manager Deployment (manager.env can override).
+
+5. Tuwunel + Element Web (always deployed with this chart):
+   - Tuwunel: svc/{{ include "hiclaw.tuwunel.fullname" . }}:{{ .Values.tuwunel.service.port }}
+     In-cluster Matrix base URL (Manager / scripts): {{ include "hiclaw.tuwunel.internalMatrixURL" . }}
+     Suggested CONDUWUIT_SERVER_NAME & HICLAW_MATRIX_DOMAIN (pod MXID server part): {{ include "hiclaw.tuwunel.clusterFQDN" . }}:{{ .Values.tuwunel.service.port }}
+   - Element Web: svc/{{ include "hiclaw.elementWeb.fullname" . }}:{{ .Values.elementWeb.service.port }}
+     MATRIX_SERVER_URL defaults to HICLAW_AI_GATEWAY_URL (then in-cluster Tuwunel if unset); override with elementWeb.env.MATRIX_SERVER_URL if needed.
+
+# Logs
+kubectl logs -f deployment/{{ include "hiclaw.fullname" . }} -n {{ include "hiclaw.namespace" . }}
+
+========================================================================

@@ -76,6 +76,15 @@ ENV OPENCLAW_CONFIG_PATH="/root/manager-workspace/openclaw.json"
 COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 COPY configs/ /opt/hiclaw/configs/
 
+# ---- Python dependencies for cloud/K8s providers ----
+# kubernetes: K8s API client for managing Worker Pods
+# alibabacloud-*: Alibaba Cloud SDK for SAE/APIG (existing dependency)
+RUN apt-get update && apt-get install -y python3-pip && \
+    pip3 install --no-cache-dir kubernetes \
+        alibabacloud-credentials alibabacloud-tea-openapi \
+        alibabacloud-sae20190506 alibabacloud-apig20240327 && \
+    rm -rf /var/lib/apt/lists/*
+
 # ---- Shared lib (low-frequency changes, ~8KB) ----
 
 COPY --from=shared . /opt/hiclaw/scripts/lib/

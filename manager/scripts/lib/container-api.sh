@@ -24,6 +24,9 @@ WORKER_IMAGE="${HICLAW_WORKER_IMAGE:-hiclaw/worker-agent:latest}"
 COPAW_WORKER_IMAGE="${HICLAW_COPAW_WORKER_IMAGE:-hiclaw/copaw-worker:latest}"
 WORKER_CONTAINER_PREFIX="hiclaw-worker-"
 
+# Normalize HICLAW_RUNTIME / HICLAW_ALIYUN_WORKER_BACKEND when this file is sourced alone.
+source /opt/hiclaw/scripts/lib/hiclaw-env.sh 2>/dev/null || true
+
 _log() {
     echo "[hiclaw-container $(date '+%Y-%m-%d %H:%M:%S')] $1"
 }
@@ -642,10 +645,14 @@ unset _provider_file
 _detect_worker_backend() {
     if container_api_available 2>/dev/null; then
         echo "docker"
+    elif [ "${HICLAW_RUNTIME:-}" = "aliyun" ] && [ "${HICLAW_ALIYUN_WORKER_BACKEND:-sae}" = "k8s" ]; then
+        echo "k8s"
     elif [ "${HICLAW_RUNTIME:-}" = "aliyun" ]; then
         echo "aliyun"
     elif type cloud_sae_available &>/dev/null && cloud_sae_available; then
         echo "aliyun"
+    elif type cloud_k8s_available &>/dev/null && cloud_k8s_available; then
+        echo "k8s"
     else
         echo "none"
     fi
@@ -670,8 +677,18 @@ worker_backend_create() {
             fi
             sae_create_worker "${worker_name}" "${envs_obj}"
             ;;
+        k8s)
+            # Same pattern as aliyun branch; k8s_create_worker → kubernetes-api.py k8s-create (ACK Step 9).
+            local envs_obj="{}"
+            if [ "${extra_env_json}" != "[]" ] && [ -n "${extra_env_json}" ]; then
+                envs_obj=$(echo "${extra_env_json}" | jq '[.[] | split("=") | {(.[0]): (.[1:] | join("="))}] | add // {}')
+            fi
+            envs_obj=$(echo "${envs_obj}" | jq --arg ak "${fs_access_key}" --arg sk "${fs_secret_key}" \
+                '. + {"HICLAW_FS_ACCESS_KEY": $ak, "HICLAW_FS_SECRET_KEY": $sk}')
+            k8s_create_worker "${worker_name}" "${envs_obj}"
+            ;;
         none)
-            _log "No worker backend available (no Docker socket, no cloud config)"
+            _log "No worker backend available (no Docker socket, no cloud config, no K8s)"
             echo '{"error": "no_backend"}'
             return 1
             ;;
@@ -686,6 +703,7 @@ worker_backend_status() {
     case "${backend}" in
         docker)       container_status_worker "${worker_name}" ;;
         aliyun) sae_status_worker "${worker_name}" ;;
+        k8s)          k8s_status_worker "${worker_name}" ;;
         none)         echo "unknown" ;;
     esac
 }
@@ -698,6 +716,7 @@ worker_backend_stop() {
     case "${backend}" in
         docker)       container_stop_worker "${worker_name}" ;;
         aliyun) sae_stop_worker "${worker_name}" ;;
+        k8s)          k8s_status_worker "${worker_name}" ;;
         none)         return 1 ;;
     esac
 }
@@ -710,6 +729,7 @@ worker_backend_start() {
     case "${backend}" in
         docker)       container_start_worker "${worker_name}" ;;
         aliyun) sae_start_worker "${worker_name}" ;;
+        k8s)          k8s_status_worker "${worker_name}" ;;
         none)         return 1 ;;
     esac
 }
@@ -722,6 +742,7 @@ worker_backend_delete() {
     case "${backend}" in
         docker)       container_remove_worker "${worker_name}" ;;
         aliyun) sae_delete_worker "${worker_name}" ;;
+        k8s)          k8s_status_worker "${worker_name}" ;;
         none)         return 1 ;;
     esac
 }

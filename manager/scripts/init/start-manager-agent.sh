@@ -2,9 +2,16 @@
 # start-manager-agent.sh - Initialize and start the Manager Agent
 # Supports both local (supervisord) and cloud (SAE single-process) deployments.
 # In local mode this is the last supervisord component to start (priority 800).
-# In cloud mode (HICLAW_RUNTIME=aliyun) this is the container entrypoint.
+# Split-coordinator: HICLAW_RUNTIME=aliyun (Alibaba cloud). Workers: HICLAW_ALIYUN_WORKER_BACKEND=sae|k8s. Legacy RUNTIME=k8s → normalized in hiclaw-env.sh.
 
 source /opt/hiclaw/scripts/lib/hiclaw-env.sh
+
+# External Matrix + OSS (no in-pod Higress/Tuwunel/MinIO all-in-one)
+if [ "${HICLAW_RUNTIME}" = "aliyun" ]; then
+    HICLAW_CLOUD_COORDINATOR=1
+else
+    HICLAW_CLOUD_COORDINATOR=0
+fi
 
 # ============================================================
 # Set timezone from TZ env var
@@ -19,9 +26,9 @@ MATRIX_DOMAIN="${HICLAW_MATRIX_DOMAIN:-matrix-local.hiclaw.io:8080}"
 AI_GATEWAY_DOMAIN="${HICLAW_AI_GATEWAY_DOMAIN:-aigw-local.hiclaw.io}"
 
 # ============================================================
-# Cloud mode: validate required environment variables + initial credentials
+# Cloud coordinator: validate required environment variables + initial credentials
 # ============================================================
-if [ "${HICLAW_RUNTIME}" = "aliyun" ]; then
+if [ "${HICLAW_CLOUD_COORDINATOR}" = "1" ]; then
     : "${HICLAW_MATRIX_URL:?HICLAW_MATRIX_URL is required}"
     : "${HICLAW_MATRIX_DOMAIN:?HICLAW_MATRIX_DOMAIN is required}"
     : "${HICLAW_AI_GATEWAY_URL:?HICLAW_AI_GATEWAY_URL is required}"
@@ -30,7 +37,7 @@ if [ "${HICLAW_RUNTIME}" = "aliyun" ]; then
     : "${HICLAW_REGISTRATION_TOKEN:?HICLAW_REGISTRATION_TOKEN is required}"
     : "${HICLAW_ADMIN_USER:?HICLAW_ADMIN_USER is required}"
     : "${HICLAW_ADMIN_PASSWORD:?HICLAW_ADMIN_PASSWORD is required}"
-    log "Cloud mode: validating environment... OK"
+    log "Cloud coordinator: validating environment... OK"
     log "  Matrix: ${HICLAW_MATRIX_SERVER}, AI Gateway: ${HICLAW_AI_GATEWAY_URL}, OSS: ${HICLAW_STORAGE_BUCKET}"
     ensure_mc_credentials || { log "FATAL: Initial STS credential fetch failed"; exit 1; }
 fi
@@ -38,7 +45,7 @@ fi
 # ============================================================
 # Local mode: host symlinks, /etc/hosts, wait for local services
 # ============================================================
-if [ "${HICLAW_RUNTIME}" != "aliyun" ]; then
+if [ "${HICLAW_CLOUD_COORDINATOR}" != "1" ]; then
     # Create symlink for host directory access
     if [ -d "/host-share" ]; then
         ORIGINAL_HOST_HOME="${HOST_ORIGINAL_HOME:-$HOME}"
@@ -111,11 +118,11 @@ export HICLAW_MANAGER_PASSWORD="${HICLAW_MANAGER_PASSWORD}"
 EOF
 chmod 600 "${SECRETS_FILE}"
 
-# Cloud mode: pull workspace from OSS before initialization
-if [ "${HICLAW_RUNTIME}" = "aliyun" ]; then
+# Cloud coordinator: pull workspace from OSS before initialization
+if [ "${HICLAW_CLOUD_COORDINATOR}" = "1" ]; then
     HICLAW_FS="/root/hiclaw-fs"
     mkdir -p "${HICLAW_FS}/shared" "${HICLAW_FS}/agents"
-    log "Pulling workspace from OSS..."
+    log "Pulling workspace from object storage..."
     ensure_mc_credentials
     mc mirror "${HICLAW_STORAGE_PREFIX}/manager/" /root/manager-workspace/ --overwrite 2>/dev/null || true
     mc mirror "${HICLAW_STORAGE_PREFIX}/shared/" "${HICLAW_FS}/shared/" --overwrite 2>/dev/null || true
@@ -148,7 +155,7 @@ else
 fi
 
 # Local mode: wait for mc mirror initialization (shared + worker data in /root/hiclaw-fs/)
-if [ "${HICLAW_RUNTIME}" != "aliyun" ]; then
+if [ "${HICLAW_CLOUD_COORDINATOR}" != "1" ]; then
     log "Waiting for MinIO storage initialization..."
     _minio_wait=0
     while [ ! -f /root/hiclaw-fs/.initialized ]; do
@@ -215,7 +222,7 @@ log "Manager Matrix token obtained (token prefix: ${MANAGER_TOKEN:0:10}...)"
 # Local mode: Initialize Higress Console + configure routes
 # Cloud mode: Create admin DM room + schedule welcome message
 # ============================================================
-if [ "${HICLAW_RUNTIME}" != "aliyun" ]; then
+if [ "${HICLAW_CLOUD_COORDINATOR}" != "1" ]; then
     COOKIE_FILE="/tmp/higress-session-cookie"
 
     log "Waiting for Higress Console to be fully ready and initializing admin..."
@@ -550,8 +557,8 @@ else
     log "Matrix token written from template (prefix: ${_written_token:0:10}...)"
 fi
 
-# Cloud mode: overlay cloud-specific settings onto generated config
-if [ "${HICLAW_RUNTIME}" = "aliyun" ]; then
+# Cloud coordinator: overlay external homeserver / gateway onto generated config
+if [ "${HICLAW_CLOUD_COORDINATOR}" = "1" ]; then
     log "Applying cloud overlay to openclaw.json..."
     jq --arg homeserver "${HICLAW_MATRIX_SERVER}" \
        --arg gateway "${HICLAW_AI_GATEWAY_URL}/v1" \
@@ -683,12 +690,21 @@ fi
 # ============================================================
 # Detect container runtime (for Worker creation)
 # ============================================================
+# Ensure K8s Service host is set for Worker->Manager DNS resolution
+if [ -z "${HICLAW_K8S_SERVICE_HOST:-}" ] && [ -n "${HICLAW_MANAGER_SERVICE:-}" ]; then
+    export HICLAW_K8S_SERVICE_HOST="${HICLAW_MANAGER_SERVICE}"
+    log "HICLAW_K8S_SERVICE_HOST derived from HICLAW_MANAGER_SERVICE: ${HICLAW_K8S_SERVICE_HOST}"
+fi
+
 source /opt/hiclaw/scripts/lib/container-api.sh
 if container_api_available; then
     log "Container runtime socket detected at ${CONTAINER_SOCKET} — direct Worker creation enabled"
     export HICLAW_CONTAINER_RUNTIME="socket"
+elif [ "${HICLAW_RUNTIME}" = "aliyun" ] && [ "${HICLAW_ALIYUN_WORKER_BACKEND:-sae}" = "k8s" ]; then
+    log "Alibaba cloud (ACK) — Workers created via Kubernetes API"
+    export HICLAW_CONTAINER_RUNTIME="k8s"
 elif [ "${HICLAW_RUNTIME}" = "aliyun" ]; then
-    log "Cloud mode — Workers created via SAE API"
+    log "Alibaba cloud (SAE) — Workers created via SAE API"
     export HICLAW_CONTAINER_RUNTIME="cloud"
 else
     log "No container runtime found — Worker creation will output install commands"
@@ -933,8 +949,8 @@ bash "$RENDER" /opt/hiclaw/agent/worker-agent
 bash "$RENDER" /opt/hiclaw/agent/copaw-worker-agent
 log "Agent doc templates rendered"
 
-# Cloud mode: start background file sync (workspace ↔ OSS) and initial push
-if [ "${HICLAW_RUNTIME}" = "aliyun" ]; then
+# Cloud coordinator: start background file sync (workspace ↔ OSS) and initial push
+if [ "${HICLAW_CLOUD_COORDINATOR}" = "1" ]; then
     log "Syncing initial workspace to OSS..."
     ensure_mc_credentials
     mc mirror /root/manager-workspace/ "${HICLAW_STORAGE_PREFIX}/manager/" --overwrite \

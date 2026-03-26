@@ -336,6 +336,20 @@ action_start() {
             else
                 container_create_worker "$worker" "$worker" "${WORKER_MINIO_PASSWORD:-}" 2>&1 && ok=true
             fi
+        elif [ "$backend" = "k8s" ]; then
+            export HICLAW_MATRIX_DOMAIN="${HICLAW_MATRIX_DOMAIN:-}"
+            _wk="${WORKER_GATEWAY_KEY:-}"
+            _tok="${WORKER_MATRIX_TOKEN:-}"
+            if [ -z "${_wk}" ] || [ -z "${_tok}" ]; then
+                _log "ERROR: K8s recreate requires WORKER_GATEWAY_KEY and WORKER_MATRIX_TOKEN in ${creds_file}"
+            else
+                _k8s_json=$(hiclaw_k8s_worker_env_json "$worker" "$_wk" "$_tok" "$runtime" "")
+                if [ "$runtime" = "copaw" ]; then
+                    k8s_create_copaw_worker "$worker" "${_k8s_json}" "" 2>&1 && ok=true
+                else
+                    k8s_create_worker "$worker" "${_k8s_json}" "" 2>&1 && ok=true
+                fi
+            fi
         else
             worker_backend_create "$worker" "" "" "[]" 2>&1 && ok=true
         fi
@@ -377,14 +391,16 @@ action_ensure_ready() {
         return 0
     fi
 
-    if ! container_api_available; then
-        _log "Container API not available — cannot check worker $worker"
-        echo "{\"worker\":\"$worker\",\"status\":\"failed\",\"container_status\":\"unknown\",\"error\":\"container_api_unavailable\"}"
+    local backend
+    backend=$(_detect_worker_backend)
+    if [ "$backend" = "none" ]; then
+        _log "No worker backend (Docker/K8s/SAE) — cannot check worker $worker"
+        echo "{\"worker\":\"$worker\",\"status\":\"failed\",\"container_status\":\"unknown\",\"error\":\"no_backend\"}"
         return 1
     fi
 
     local status
-    status=$(container_status_worker "$worker")
+    status=$(worker_backend_status "$worker")
     _log "Worker $worker container_status=$status"
 
     if [ "$status" = "running" ]; then

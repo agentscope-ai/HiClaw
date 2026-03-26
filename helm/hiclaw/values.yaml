@@ -1,0 +1,198 @@
+# =============================================================================
+# HiClaw — ACK / cloud (Coordinator Manager + Tuwunel + Element Web, same namespace)
+# =============================================================================
+# Configure manager.env and/or manager.secret.stringData (chart Secret) or manager.envFromSecret (external Secret):
+#   HICLAW_MATRIX_URL, HICLAW_MATRIX_DOMAIN, HICLAW_AI_GATEWAY_URL, HICLAW_OSS_BUCKET, ...
+# Same-namespace K8s: Manager <-> Tuwunel use Cluster DNS (e.g. http://<tuwunel-svc>.<ns>.svc.cluster.local:6167).
+# HICLAW_AI_GATEWAY_URL：LLM/APIG 出站；未单独设置 elementWeb.env.MATRIX_SERVER_URL 时，Element Web 的 MATRIX_SERVER_URL 与之相同（浏览器访问）。
+# RRSA — two modes (see README.md):
+#   manual  — projected ServiceAccount token + ALIBABA_CLOUD_* env (ACK doc「手动修改应用模板使用RRSA功能」)，无需 webhook/namespace 注解
+#   webhook — ack-pod-identity-webhook：SA 注解 pod-identity.alibabacloud.com/role-name；建议 global.podIdentity.namespaceInjection
+# =============================================================================
+
+global:
+  namespace: hiclaw
+  platform: ack
+
+image:
+  repository: registry.cn-hangzhou.aliyuncs.com/hiclaw-cloud/hiclaw-manager
+  pullPolicy: IfNotPresent
+  tag: v1.0.0
+
+imagePullSecrets: []
+
+workerImage:
+  repository: higress-registry.cn-hangzhou.cr.aliyuncs.com/higress/hiclaw-worker
+  tag: "latest"
+
+copawWorkerImage:
+  repository: higress-registry.cn-hangzhou.cr.aliyuncs.com/higress/hiclaw-copaw-worker
+  tag: "latest"
+
+workerRuntime: "openclaw"
+
+workerServiceAccount:
+  create: true
+  name: "hiclaw-worker-sa"
+  annotations: {}
+  rrsa:
+    enabled: true
+    mode: manual
+    roleName: ""
+    manual:
+      roleArn: ""
+
+manager:
+  healthCheck:
+    enabled: true
+    type: "tcp"                 # "tcp" or "http"
+    interval: "5"               # Health check interval (seconds)
+    healthyThreshold: "2"       # Consecutive successes to mark healthy
+    unhealthyThreshold: "2"     # Consecutive failures to mark unhealthy
+  rrsa:
+    enabled: true
+    mode: manual
+    roleName: ""
+    manual:
+      roleArn: ""
+      oidcProviderArn: ""
+      tokenMountPath: /var/run/secrets/ack.alibabacloud.com/rrsa-tokens
+      tokenFile: /var/run/secrets/ack.alibabacloud.com/rrsa-tokens/token
+      expirationSeconds: 3600
+  resources:
+    requests:
+      cpu: "100m"
+      memory: 256Mi
+    limits:
+      cpu: "500m"
+      memory: 512Mi
+  service:
+    type: ClusterIP
+    port: 18799
+    targetPort: 18799
+  env:
+    HICLAW_RUNTIME: "aliyun"
+    HICLAW_ALIYUN_WORKER_BACKEND: "k8s"
+    HICLAW_REGION: "cn-hangzhou"
+    HICLAW_DEFAULT_MODEL: "qwen3.5-plus"
+  secret:
+    enabled: true
+    stringData:
+      HICLAW_AI_GATEWAY_URL: ""
+      HICLAW_OSS_BUCKET: ""
+      HICLAW_MANAGER_PASSWORD: ""
+      HICLAW_MANAGER_GATEWAY_KEY: ""
+      HICLAW_REGISTRATION_TOKEN: ""
+      HICLAW_ADMIN_USER: ""
+      HICLAW_ADMIN_PASSWORD: ""
+  envFromSecret: ""
+  podSecurityContext: {}
+  securityContext: {}
+
+replicaCount: 1
+
+podAnnotations: {}
+podLabels: {}
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+serviceAccount:
+  create: true
+  name: "hiclaw-manager-sa"
+  annotations: {}
+
+rbac:
+  create: true
+  additionalRules: []
+
+tuwunel:
+  image:
+    registry: registry.cn-hangzhou.aliyuncs.com
+    repository: hiclaw-cloud/tuwunel
+    tag: "20260216"
+    pullPolicy: IfNotPresent
+  replicaCount: 1
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  service:
+    type: ClusterIP
+    port: 6167
+    annotations: {}
+  persistence:
+    enabled: true
+    volumeMode: Filesystem
+    annotations: {}
+    selector: {}
+    volumeName: ""
+    accessModes:
+      - ReadWriteMany
+    size: 20Gi
+    existingClaim: ""
+    mountPath: /data/conduwuit
+    nas:
+      server: "0.0.0.0"
+    acs:
+      mountOptions: "nolock,tcp,noresvport"
+      storageClassName: "alibaba-cloud-nas"
+
+    pv:
+      enabled: true
+      name: "hiclaw-data-pv"
+      alicloudPvnameLabel: ""
+      path: "/data/conduwuit"
+      volumeHandle: ""
+      storage: "20Gi"
+      csiDriver: nasplugin.csi.alibabacloud.com
+      mountOptions:
+        - nolock,tcp,noresvport
+        - vers=3
+      reclaimPolicy: Retain
+      volumeMode: ""
+      extraLabels: {}
+      annotations: {}
+  env:
+    CONDUWUIT_SERVER_NAME: ""
+  extraEnv: []
+  podAnnotations: {}
+  podSecurityContext: {}
+  securityContext: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+elementWeb:
+  image:
+    registry: registry.cn-hangzhou.aliyuncs.com
+    repository: hiclaw-cloud/element-web
+    tag: "20260323"
+    pullPolicy: IfNotPresent
+  replicaCount: 1
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: 500m
+      memory: 1Gi
+  service:
+    type: ClusterIP
+    port: 8080
+    annotations: {}
+  env: {}
+  extraEnv: []
+  podAnnotations: {}
+  podSecurityContext: {}
+  securityContext: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+nameOverride: ""
+fullnameOverride: ""

@@ -1,0 +1,55 @@
+{{- if and .Values.tuwunel.persistence.enabled (not .Values.tuwunel.persistence.existingClaim) }}
+{{- $p := required "global.platform (or tuwunel.persistence.platform) must be ack or acs" (include "hiclaw.persistence.platform" . | trim) }}
+{{- if and (ne $p "ack") (ne $p "acs") }}
+{{- fail "global.platform must be ack or acs" }}
+{{- end }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "hiclaw.tuwunel.fullname" . }}-data
+  namespace: {{ include "hiclaw.namespace" . }}
+  labels:
+    {{- include "hiclaw.tuwunel.labels" . | nindent 4 }}
+  {{- $extraAnn := .Values.tuwunel.persistence.annotations | default dict }}
+  {{- if or (eq $p "acs") (gt (len $extraAnn) 0) }}
+  annotations:
+    {{- if eq $p "acs" }}
+    csi.alibabacloud.com/mountpoint: {{ required "tuwunel.persistence.nas.server (or legacy acs.mountpoint) is required when platform is acs" (include "hiclaw.tuwunel.nas.server" .) | quote }}
+    {{- with .Values.tuwunel.persistence.acs.mountOptions }}
+    csi.alibabacloud.com/mount-options: {{ . | quote }}
+    {{- end }}
+    {{- end }}
+    {{- if gt (len $extraAnn) 0 }}
+    {{- toYaml $extraAnn | nindent 4 }}
+    {{- end }}
+  {{- end }}
+spec:
+  accessModes:
+{{- toYaml .Values.tuwunel.persistence.accessModes | nindent 4 }}
+  resources:
+    requests:
+      storage: {{ .Values.tuwunel.persistence.size | quote }}
+  {{- if eq $p "acs" }}
+  storageClassName: {{ required "tuwunel.persistence.acs.storageClassName is required when platform is acs" .Values.tuwunel.persistence.acs.storageClassName | quote }}
+  {{- else if eq $p "ack" }}
+  {{- /* ACK 静态卷：文档示例无 storageClassName，用 selector 或 volumeName 绑定 PV */ -}}
+  {{- if .Values.tuwunel.persistence.volumeName }}
+  volumeName: {{ .Values.tuwunel.persistence.volumeName | quote }}
+  {{- else }}
+  {{- $sel := .Values.tuwunel.persistence.selector | default dict }}
+  {{- if gt (len (keys $sel)) 0 }}
+  selector:
+    {{- toYaml $sel | nindent 4 }}
+  {{- else if .Values.tuwunel.persistence.pv.enabled }}
+  selector:
+    matchLabels:
+      alicloud-pvname: {{ include "hiclaw.tuwunel.pvAlicloudLabel" . | quote }}
+  {{- else }}
+  {{- fail "tuwunel.persistence (ack): set pv.enabled=true for chart PV, or persistence.selector, or persistence.volumeName" }}
+  {{- end }}
+  {{- end }}
+  {{- end }}
+  {{- if .Values.tuwunel.persistence.volumeMode }}
+  volumeMode: {{ .Values.tuwunel.persistence.volumeMode }}
+  {{- end }}
+{{- end }}

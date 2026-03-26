@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "hiclaw.tuwunel.fullname" . }}
+  namespace: {{ include "hiclaw.namespace" . }}
+  labels:
+    {{- include "hiclaw.tuwunel.labels" . | nindent 4 }}
+  {{- with .Values.tuwunel.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.tuwunel.service.type }}
+  selector:
+    {{- include "hiclaw.tuwunel.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: matrix
+      port: {{ .Values.tuwunel.service.port }}
+      targetPort: matrix
+      protocol: TCP

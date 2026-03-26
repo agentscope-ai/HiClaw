@@ -1,0 +1,15 @@
+{{- /* Optional Namespace for ack-pod-identity-webhook; omit global.podIdentity in values to skip. */ -}}
+{{- with .Values.global.podIdentity }}
+{{- if .namespaceInjection }}
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ include "hiclaw.namespace" $ }}
+  labels:
+    {{- include "hiclaw.labels" $ | nindent 4 }}
+  annotations:
+    {{- range $k, $v := (.namespaceAnnotations | default dict) }}
+    {{ $k }}: {{ $v | quote }}
+    {{- end }}
+{{- end }}
+{{- end }}

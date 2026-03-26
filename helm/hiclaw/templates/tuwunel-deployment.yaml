@@ -1,0 +1,114 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "hiclaw.tuwunel.fullname" . }}
+  namespace: {{ include "hiclaw.namespace" . }}
+  labels:
+    {{- include "hiclaw.tuwunel.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.tuwunel.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "hiclaw.tuwunel.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      {{- with .Values.tuwunel.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "hiclaw.tuwunel.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tuwunel.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: tuwunel
+          image: {{ include "hiclaw.tuwunel.image" . }}
+          imagePullPolicy: {{ .Values.tuwunel.image.pullPolicy }}
+          ports:
+            - name: matrix
+              containerPort: 6167
+          env:
+            - name: CONDUWUIT_DATABASE_PATH
+              value: {{ .Values.tuwunel.persistence.mountPath | quote }}
+            - name: CONDUWUIT_ADDRESS
+              value: "0.0.0.0"
+            - name: CONDUWUIT_PORT
+              value: "6167"
+            - name: CONDUWUIT_ALLOW_REGISTRATION
+              value: "true"
+            - name: CONDUWUIT_ALLOW_LEGACY_MEDIA
+              value: "true"
+            - name: CONDUWUIT_ALLOW_UNSTABLE_ROOM_VERSIONS
+              value: "true"
+            - name: CONDUWUIT_DB_POOL_WORKERS_LIMIT
+              value: "32"
+            {{- range $k, $v := .Values.tuwunel.env }}
+            {{- if and $v (ne $k "CONDUWUIT_DATABASE_PATH") (ne $k "CONDUWUIT_REGISTRATION_TOKEN") }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+            {{- end }}
+            {{- end }}
+            {{- $tuEnv := .Values.tuwunel.env | default dict }}
+            {{- if eq ((index $tuEnv "CONDUWUIT_SERVER_NAME" | default "" | toString | trim)) "" }}
+            - name: CONDUWUIT_SERVER_NAME
+              value: {{ include "hiclaw.tuwunel.matrixServerName" . | quote }}
+            {{- end }}
+            {{- $regSec := include "hiclaw.manager.envFromSecretName" . | trim }}
+            {{- $regLit := include "hiclaw.registrationToken.literal" . | trim }}
+            {{- $regEnv := include "hiclaw.registrationToken.fromManagerEnv" . | trim }}
+            {{- if $regSec }}
+            - name: CONDUWUIT_REGISTRATION_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $regSec | quote }}
+                  key: HICLAW_REGISTRATION_TOKEN
+            {{- else if or $regLit $regEnv }}
+            - name: CONDUWUIT_REGISTRATION_TOKEN
+              value: {{ coalesce $regLit $regEnv | quote }}
+            {{- else }}
+            {{- fail "Set manager.secret.stringData.HICLAW_REGISTRATION_TOKEN or manager.env.HICLAW_REGISTRATION_TOKEN (or manager.envFromSecret containing that key) for Tuwunel" }}
+            {{- end }}
+            {{- with .Values.tuwunel.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- with .Values.tuwunel.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.tuwunel.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: {{ .Values.tuwunel.persistence.mountPath | quote }}
+      {{- with .Values.tuwunel.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tuwunel.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tuwunel.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      volumes:
+        {{- if not .Values.tuwunel.persistence.enabled }}
+        - name: data
+          emptyDir: {}
+        {{- else if .Values.tuwunel.persistence.existingClaim }}
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ .Values.tuwunel.persistence.existingClaim | quote }}
+        {{- else }}
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ include "hiclaw.tuwunel.fullname" . }}-data
+        {{- end }}
