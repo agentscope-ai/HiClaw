@@ -1986,12 +1986,28 @@ function Install-Manager {
     if ($script:HICLAW_MOUNT_SOCKET) {
         $socketAvailable = Test-DockerRunning
         if ($socketAvailable) {
+            # Ensure hiclaw-net Docker network exists; Manager joins it with network aliases
+            # so workers can resolve *-local.hiclaw.io via Docker DNS without ExtraHosts.
+            docker network inspect hiclaw-net *>$null
+            if ($LASTEXITCODE -ne 0) { docker network create hiclaw-net *>$null }
+            $dockerArgs += @("--network", "hiclaw-net")
+            # Add network aliases for *-local.hiclaw.io domains
+            $localDomains = @(
+                ($config.MATRIX_DOMAIN -replace ':.*', ''),
+                $config.MATRIX_CLIENT_DOMAIN,
+                $config.AI_GATEWAY_DOMAIN,
+                ($config.FS_DOMAIN -replace ':.*', ''),
+                $config.CONSOLE_DOMAIN
+            )
+            foreach ($domain in $localDomains) {
+                if ($domain -match '-local\.hiclaw\.io$') {
+                    $dockerArgs += @("--network-alias", $domain)
+                }
+            }
+
             # Start Docker API proxy if enabled
             if ($config.DOCKER_PROXY -eq "1") {
                 $proxyImage = $script:DOCKER_PROXY_IMAGE
-                # Ensure Docker network exists (reuse if already present)
-                docker network inspect hiclaw-net *>$null
-                if ($LASTEXITCODE -ne 0) { docker network create hiclaw-net *>$null }
                 Write-Log "Starting Docker API proxy..."
                 docker rm -f hiclaw-docker-proxy *>$null
                 docker run -d --name hiclaw-docker-proxy `
@@ -2002,7 +2018,6 @@ function Install-Manager {
                     --restart unless-stopped `
                     $proxyImage
                 $dockerArgs += @("-e", "HICLAW_CONTAINER_API=http://hiclaw-docker-proxy:2375")
-                $dockerArgs += @("--network", "hiclaw-net")
                 Write-Log (Get-Msg "docker_proxy.selected_enabled")
             } else {
                 $dockerArgs += @("-v", "//var/run/docker.sock:/var/run/docker.sock")

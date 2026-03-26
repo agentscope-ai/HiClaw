@@ -167,13 +167,6 @@ _ensure_image() {
 container_create_worker() {
     local worker_name="$1"
     local container_name="${WORKER_CONTAINER_PREFIX}${worker_name}"
-    local manager_ip
-    manager_ip=$(container_get_manager_ip)
-
-    if [ -z "${manager_ip}" ]; then
-        _log "ERROR: Cannot determine Manager container IP"
-        return 1
-    fi
 
     # Build environment variables for the Worker
     # Use internal port 8080 for Docker network communication
@@ -185,26 +178,9 @@ container_create_worker() {
     local custom_image="${5:-}"
     local image="${custom_image:-${WORKER_IMAGE}}"
 
-    # Build ExtraHosts for local domains (*-local.hiclaw.io) that need
-    # in-container resolution back to the Manager. Skip if user provides
-    # real DNS-resolvable domains.
-    local extra_hosts=""
-    local matrix_host="${HICLAW_MATRIX_DOMAIN%%:*}"
-    local matrix_client_host="${HICLAW_MATRIX_CLIENT_DOMAIN:-matrix-client-local.hiclaw.io}"
-    local ai_gw_host="${HICLAW_AI_GATEWAY_DOMAIN:-aigw-local.hiclaw.io}"
-    local fs_host="${HICLAW_FS_DOMAIN:-fs-local.hiclaw.io}"
-
-    for h in "${matrix_host}" "${matrix_client_host}" "${ai_gw_host}" "${fs_host}"; do
-        if [[ "${h}" == *-local.hiclaw.io ]]; then
-            extra_hosts="${extra_hosts}\"${h}:${manager_ip}\","
-        fi
-    done
-    extra_hosts="${extra_hosts%,}"
-
     _log "Creating Worker container: ${container_name}"
     _log "  Image: ${image}"
     _log "  FS endpoint: ${fs_endpoint}"
-    _log "  Manager IP: ${manager_ip}"
 
     # Pull image if not available locally
     if ! _ensure_image "${image}"; then
@@ -221,14 +197,8 @@ container_create_worker() {
     fi
 
     # Create the container
-    # Always use hiclaw-net network so Worker can access Manager services
-    local host_config
-    if [ -n "${extra_hosts}" ]; then
-        host_config="{\"NetworkMode\":\"hiclaw-net\",\"ExtraHosts\":[${extra_hosts}]}"
-        _log "  ExtraHosts: ${extra_hosts}"
-    else
-        host_config="{\"NetworkMode\":\"hiclaw-net\"}"
-    fi
+    # Always use hiclaw-net; Docker DNS resolves *-local.hiclaw.io via manager's network aliases
+    local host_config="{\"NetworkMode\":\"hiclaw-net\"}"
 
     local worker_home="/root/hiclaw-fs/agents/${worker_name}"
 
@@ -412,13 +382,6 @@ container_wait_worker_ready() {
 container_create_copaw_worker() {
     local worker_name="$1"
     local container_name="${WORKER_CONTAINER_PREFIX}${worker_name}"
-    local manager_ip
-    manager_ip=$(container_get_manager_ip)
-
-    if [ -z "${manager_ip}" ]; then
-        _log "ERROR: Cannot determine Manager container IP"
-        return 1
-    fi
 
     local fs_domain="${HICLAW_FS_DOMAIN%%:*}"
     local fs_endpoint="http://${fs_domain}:8080"
@@ -428,24 +391,9 @@ container_create_copaw_worker() {
     local custom_image="${5:-}"
     local image="${custom_image:-${COPAW_WORKER_IMAGE}}"
 
-    # Build ExtraHosts (same as openclaw workers)
-    local extra_hosts=""
-    local matrix_host="${HICLAW_MATRIX_DOMAIN%%:*}"
-    local matrix_client_host="${HICLAW_MATRIX_CLIENT_DOMAIN:-matrix-client-local.hiclaw.io}"
-    local ai_gw_host="${HICLAW_AI_GATEWAY_DOMAIN:-aigw-local.hiclaw.io}"
-    local fs_host="${HICLAW_FS_DOMAIN:-fs-local.hiclaw.io}"
-
-    for h in "${matrix_host}" "${matrix_client_host}" "${ai_gw_host}" "${fs_host}"; do
-        if [[ "${h}" == *-local.hiclaw.io ]]; then
-            extra_hosts="${extra_hosts}\"${h}:${manager_ip}\","
-        fi
-    done
-    extra_hosts="${extra_hosts%,}"
-
     _log "Creating CoPaw Worker container: ${container_name}"
     _log "  Image: ${image}"
     _log "  FS endpoint: ${fs_endpoint}"
-    _log "  Manager IP: ${manager_ip}"
 
     # Pull image if not available locally
     if ! _ensure_image "${image}"; then
@@ -475,9 +423,6 @@ container_create_copaw_worker() {
     local console_port=""
     console_port=$(echo "${all_env}" | jq -r '.[] | select(startswith("HICLAW_CONSOLE_PORT=")) | split("=")[1]' 2>/dev/null || true)
 
-    if [ -n "${extra_hosts}" ]; then
-        _log "  ExtraHosts: ${extra_hosts}"
-    fi
     if [ -n "${console_port}" ]; then
         _log "  Console port: ${console_port}"
     fi
@@ -498,14 +443,11 @@ container_create_copaw_worker() {
     local port_attempt=0
 
     while true; do
-        # Build HostConfig with NetworkMode (hiclaw-net), ExtraHosts and optional PortBindings
+        # Build HostConfig with NetworkMode (hiclaw-net) and optional PortBindings
+        # Docker DNS resolves *-local.hiclaw.io via manager's network aliases; no ExtraHosts needed
         local host_config
-        if [ -n "${console_port}" ] && [ -n "${extra_hosts}" ]; then
-            host_config="{\"NetworkMode\":\"hiclaw-net\",\"ExtraHosts\":[${extra_hosts}],\"PortBindings\":{\"${console_port}/tcp\":[{\"HostPort\":\"${host_port}\"}]}}"
-        elif [ -n "${console_port}" ]; then
+        if [ -n "${console_port}" ]; then
             host_config="{\"NetworkMode\":\"hiclaw-net\",\"PortBindings\":{\"${console_port}/tcp\":[{\"HostPort\":\"${host_port}\"}]}}"
-        elif [ -n "${extra_hosts}" ]; then
-            host_config="{\"NetworkMode\":\"hiclaw-net\",\"ExtraHosts\":[${extra_hosts}]}"
         else
             host_config="{\"NetworkMode\":\"hiclaw-net\"}"
         fi

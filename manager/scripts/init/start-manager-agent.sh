@@ -764,12 +764,12 @@ fi
 
 # ============================================================
 # Recreate Worker containers as needed after Manager restart.
-# Manager IP may change on restart; Workers use ExtraHosts pointing to Manager IP,
-# so any worker whose ExtraHosts IP no longer matches must be recreated.
+# Workers are on hiclaw-net; Docker DNS resolves *-local.hiclaw.io via
+# the Manager's network aliases, so IP changes don't require worker recreation.
+# Only recreate stopped/missing workers.
 # ============================================================
 if container_api_available; then
     REGISTRY_FILE="/root/manager-workspace/workers-registry.json"
-    _manager_ip=$(container_get_manager_ip)
     if [ -f "${REGISTRY_FILE}" ]; then
         for _worker_name in $(jq -r '.workers | keys[]' "${REGISTRY_FILE}" 2>/dev/null); do
             [ -z "${_worker_name}" ] && continue
@@ -783,24 +783,11 @@ if container_api_available; then
 
             _status=$(container_status_worker "${_worker_name}")
             if [ "${_status}" = "running" ]; then
-                # Check if ExtraHosts IP still matches current Manager IP.
-                # If ExtraHosts is empty the worker uses real DNS — no recreate needed.
-                _inspect=$(_api GET "/containers/${WORKER_CONTAINER_PREFIX}${_worker_name}/json" 2>/dev/null)
-                _extra_hosts_len=$(echo "${_inspect}" | jq -r '.HostConfig.ExtraHosts | length' 2>/dev/null)
-                if [ -z "${_extra_hosts_len}" ] || [ "${_extra_hosts_len}" = "0" ]; then
-                    log "Worker running (no ExtraHosts, real DNS): ${_worker_name}, skipping"
-                    continue
-                fi
-                _worker_ip=$(echo "${_inspect}" | jq -r '.HostConfig.ExtraHosts[0]' 2>/dev/null | cut -d: -f2)
-                if [ "${_worker_ip}" = "${_manager_ip}" ]; then
-                    log "Worker running with current Manager IP (${_manager_ip}): ${_worker_name}, skipping"
-                    continue
-                fi
-                log "Worker running but Manager IP changed (${_worker_ip} -> ${_manager_ip}): ${_worker_name}, recreating..."
-            else
-                # Container missing or stopped — always recreate.
-                log "Worker container ${_status}: ${_worker_name}, recreating..."
+                log "Worker running: ${_worker_name}, skipping"
+                continue
             fi
+            # Container missing or stopped — recreate.
+            log "Worker container ${_status}: ${_worker_name}, recreating..."
             _creds_file="/data/worker-creds/${_worker_name}.env"
             if [ -f "${_creds_file}" ]; then
                 source "${_creds_file}"
