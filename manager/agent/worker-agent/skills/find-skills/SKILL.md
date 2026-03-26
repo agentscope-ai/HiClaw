@@ -1,6 +1,6 @@
 ---
 name: find-skills
-description: Discover and install agent skills from the open ecosystem. Use when you encounter an unfamiliar domain, framework, or workflow that you lack specialized knowledge about, or when Manager suggests searching for skills before starting a task.
+description: Discover and install agent skills from the open ecosystem. Use when you encounter an unfamiliar domain, framework, or workflow that you lack specialized knowledge about, or when your coordinator suggests searching for skills before starting a task.
 ---
 
 # Find Skills
