@@ -63,6 +63,31 @@ mkdir -p "${WORKER_SKILLS_DIR}"
 mkdir -p "${HOME}/.agents"
 ln -sfn "${WORKER_SKILLS_DIR}" "${HOME}/.agents/skills"
 
+# Background readiness reporter — report ready to orchestrator when CoPaw bridge completes
+_start_readiness_reporter() {
+    [ -z "${HICLAW_ORCHESTRATOR_URL:-}" ] || [ -z "${HICLAW_WORKER_API_KEY:-}" ] && return 0
+    (
+        TIMEOUT=120; ELAPSED=0
+        CONFIG_FILE="${INSTALL_DIR}/${WORKER_NAME}/.copaw/config.json"
+        while [ "${ELAPSED}" -lt "${TIMEOUT}" ]; do
+            if [ -f "${CONFIG_FILE}" ] && grep -q '"channels"' "${CONFIG_FILE}" 2>/dev/null; then
+                for _attempt in 1 2 3; do
+                    if curl -sf -X POST "${HICLAW_ORCHESTRATOR_URL}/workers/${WORKER_NAME}/ready" \
+                        -H "Authorization: Bearer ${HICLAW_WORKER_API_KEY}" 2>/dev/null; then
+                        log "Reported ready to orchestrator"
+                        exit 0
+                    fi
+                    sleep 2
+                done
+                log "WARNING: POST to orchestrator failed, will retry health check loop"
+            fi
+            sleep 5; ELAPSED=$((ELAPSED + 5))
+        done
+        log "WARNING: readiness reporter timed out after ${TIMEOUT}s"
+    ) &
+    log "Background readiness reporter started (PID: $!)"
+}
+
 if [ -n "${CONSOLE_PORT}" ]; then
     # ---------- Standard mode: copaw-worker (PyPI CoPaw venv, with console) ----------
     VENV="/opt/venv/standard"
@@ -71,6 +96,8 @@ if [ -n "${CONSOLE_PORT}" ]; then
     log "  Install dir: ${INSTALL_DIR}"
     log "  Console port: ${CONSOLE_PORT}"
     log "  CoPaw: standard (${VENV})"
+
+    _start_readiness_reporter
 
     exec "${VENV}/bin/copaw-worker" \
         --name "${WORKER_NAME}" \
@@ -87,6 +114,8 @@ else
     log "  FS endpoint: ${FS_ENDPOINT}"
     log "  Install dir: ${INSTALL_DIR}"
     log "  CoPaw: lite (${VENV})"
+
+    _start_readiness_reporter
 
     exec "${VENV}/bin/copaw-worker" \
         --name "${WORKER_NAME}" \

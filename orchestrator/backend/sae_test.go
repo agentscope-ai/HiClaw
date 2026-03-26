@@ -32,7 +32,7 @@ func (m *mockSAEClient) CreateApplication(req *sae.CreateApplicationRequest) (*s
 	appID := "app-" + name
 	m.apps[name] = &mockSAEApp{
 		appID:  appID,
-		status: "DEPLOYING",
+		status: "RUNNING",
 		envs:   tea.StringValue(req.Envs),
 	}
 	return &sae.CreateApplicationResponse{

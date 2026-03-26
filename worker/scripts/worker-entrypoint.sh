@@ -271,4 +271,30 @@ else
     log "No Matrix password found in MinIO, skipping re-login (E2EE may not work after restart)"
 fi
 
+# ============================================================
+# Step 5c: Background readiness reporter
+# ============================================================
+# Poll local gateway health and report ready to orchestrator when healthy.
+if [ -n "${HICLAW_ORCHESTRATOR_URL:-}" ] && [ -n "${HICLAW_WORKER_API_KEY:-}" ]; then
+    (
+        TIMEOUT=120; ELAPSED=0
+        while [ "${ELAPSED}" -lt "${TIMEOUT}" ]; do
+            if openclaw gateway health --json 2>/dev/null | grep -q '"ok"' 2>/dev/null; then
+                for _attempt in 1 2 3; do
+                    if curl -sf -X POST "${HICLAW_ORCHESTRATOR_URL}/workers/${WORKER_NAME}/ready" \
+                        -H "Authorization: Bearer ${HICLAW_WORKER_API_KEY}" 2>/dev/null; then
+                        log "Reported ready to orchestrator"
+                        exit 0
+                    fi
+                    sleep 2
+                done
+                log "WARNING: POST to orchestrator failed, will retry health check loop"
+            fi
+            sleep 5; ELAPSED=$((ELAPSED + 5))
+        done
+        log "WARNING: readiness reporter timed out after ${TIMEOUT}s"
+    ) &
+    log "Background readiness reporter started (PID: $!)"
+fi
+
 exec openclaw gateway run --verbose --force

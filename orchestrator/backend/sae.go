@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"time"
 
 	openapi "github.com/alibabacloud-go/darabonba-openapi/v2/client"
 	sae "github.com/alibabacloud-go/sae-20190506/v4/client"
@@ -100,7 +101,7 @@ func (s *SAEBackend) Available(_ context.Context) bool {
 	return IsAliyunRuntime() && s.config.WorkerImage != ""
 }
 
-func (s *SAEBackend) Create(_ context.Context, req CreateRequest) (*WorkerResult, error) {
+func (s *SAEBackend) Create(ctx context.Context, req CreateRequest) (*WorkerResult, error) {
 	appName := s.containerPrefix + req.Name
 
 	// Check if already exists
@@ -155,8 +156,46 @@ func (s *SAEBackend) Create(_ context.Context, req CreateRequest) (*WorkerResult
 		appID = *resp.Body.Data.AppId
 	}
 
-	log.Printf("[SAE] Created application %s (%s)", appName, appID)
+	log.Printf("[SAE] Created application %s (%s), waiting for RUNNING...", appName, appID)
 
+	// Poll DescribeApplicationStatus until RUNNING (max 120s)
+	for elapsed := 0; elapsed < 120; elapsed += 5 {
+		statusReq := &sae.DescribeApplicationStatusRequest{}
+		statusReq.SetAppId(appID)
+		statusResp, err := s.client.DescribeApplicationStatus(statusReq)
+		if err == nil && statusResp.Body != nil && statusResp.Body.Data != nil &&
+			statusResp.Body.Data.CurrentStatus != nil {
+			current := *statusResp.Body.Data.CurrentStatus
+			if current == "RUNNING" {
+				log.Printf("[SAE] Application %s is RUNNING", appName)
+				return &WorkerResult{
+					Name:      req.Name,
+					Backend:   "sae",
+					Status:    StatusRunning,
+					AppID:     appID,
+					RawStatus: "RUNNING",
+				}, nil
+			}
+			if strings.Contains(current, "FAILED") {
+				return nil, fmt.Errorf("SAE application %s entered failed state: %s", appName, current)
+			}
+			log.Printf("[SAE] Application %s status: %s (%ds)", appName, current, elapsed)
+		} else if err != nil {
+			log.Printf("[SAE] DescribeApplicationStatus error for %s: %v", appName, err)
+		}
+		select {
+		case <-ctx.Done():
+			return &WorkerResult{
+				Name:    req.Name,
+				Backend: "sae",
+				Status:  StatusStarting,
+				AppID:   appID,
+			}, nil
+		case <-time.After(5 * time.Second):
+		}
+	}
+
+	log.Printf("[SAE] Application %s did not reach RUNNING within 120s", appName)
 	return &WorkerResult{
 		Name:    req.Name,
 		Backend: "sae",

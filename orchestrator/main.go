@@ -98,6 +98,9 @@ func main() {
 	mux.Handle("POST /workers/{name}/stop", authMw.RequireManager(http.HandlerFunc(workerHandler.Stop)))
 	mux.Handle("DELETE /workers/{name}", authMw.RequireManager(http.HandlerFunc(workerHandler.Delete)))
 
+	// Worker readiness — workers report themselves as ready
+	mux.Handle("POST /workers/{name}/ready", authMw.RequireWorker(http.HandlerFunc(workerHandler.Ready)))
+
 	// Gateway API — manager only
 	mux.Handle("POST /gateway/consumers", authMw.RequireManager(http.HandlerFunc(gatewayHandler.CreateConsumer)))
 	mux.Handle("POST /gateway/consumers/{id}/bind", authMw.RequireManager(http.HandlerFunc(gatewayHandler.BindConsumer)))

@@ -131,7 +131,7 @@ fi
 
 # --- Wait for ready ---
 log "Waiting for CoPaw worker to be ready..."
-if container_wait_copaw_worker_ready "${WORKER_NAME}" 120; then
+if worker_backend_wait_ready "${WORKER_NAME}" 120; then
     WORKER_STATUS="ready"
     log "CoPaw Worker is ready!"
 else

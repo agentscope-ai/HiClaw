@@ -818,29 +818,14 @@ elif container_api_available; then
             DEPLOY_MODE="cloud"
         fi
 
-        # Wait for readiness (only for local Docker containers with exec access)
-        if [ "${DEPLOY_MODE}" = "local" ] && [ -n "${CONTAINER_ID}" ]; then
-            log "  Waiting for Worker agent to be ready..."
-            if [ "${WORKER_RUNTIME}" = "copaw" ]; then
-                if container_wait_copaw_worker_ready "${WORKER_NAME}" 120; then
-                    WORKER_STATUS="ready"
-                    log "  CoPaw Worker agent is ready!"
-                else
-                    WORKER_STATUS="starting"
-                    log "  WARNING: CoPaw Worker agent not ready within timeout"
-                fi
-            else
-                if container_wait_worker_ready "${WORKER_NAME}" 120; then
-                    WORKER_STATUS="ready"
-                    log "  Worker agent is ready!"
-                else
-                    WORKER_STATUS="starting"
-                    log "  WARNING: Worker agent not ready within timeout"
-                fi
-            fi
+        # Wait for worker to report ready (unified — works for both Docker and SAE)
+        log "  Waiting for Worker agent to be ready..."
+        if worker_backend_wait_ready "${WORKER_NAME}" 120; then
+            WORKER_STATUS="ready"
+            log "  Worker agent is ready!"
         else
             WORKER_STATUS="starting"
-            log "  Worker created on ${DEPLOY_MODE} backend"
+            log "  WARNING: Worker agent not ready within timeout"
         fi
     else
         log "  WARNING: Worker creation failed, falling back to remote mode"

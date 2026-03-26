@@ -160,8 +160,14 @@ container_exec_worker() {
     return 0
 }
 
-# Wait for OpenClaw Worker to become ready
-container_wait_worker_ready() {
+# Get the Manager container's own IP (for Worker to connect back)
+container_get_manager_ip() {
+    hostname -I 2>/dev/null | awk '{print $1}'
+}
+
+# Wait for a worker to report ready via orchestrator.
+# Usage: worker_backend_wait_ready <worker_name> [timeout_seconds]
+worker_backend_wait_ready() {
     local worker_name="$1"
     local timeout="${2:-120}"
     local elapsed=0
@@ -169,61 +175,23 @@ container_wait_worker_ready() {
     _log "Waiting for Worker ${worker_name} to be ready (timeout: ${timeout}s)..."
 
     while [ "${elapsed}" -lt "${timeout}" ]; do
-        local cstatus
-        cstatus=$(container_status_worker "${worker_name}")
-        if [ "${cstatus}" != "running" ]; then
-            _log "Worker container ${worker_name} stopped unexpectedly (status: ${cstatus})"
-            return 1
-        fi
-
-        if container_exec_worker "${worker_name}" openclaw gateway health --json 2>/dev/null \
-                | grep -q '"ok"' 2>/dev/null; then
-            _log "Worker ${worker_name} is ready!"
-            return 0
-        fi
-
+        local status
+        status=$(worker_backend_status "${worker_name}")
+        case "${status}" in
+            ready)
+                _log "Worker ${worker_name} is ready!"
+                return 0
+                ;;
+            not_found|stopped|unknown)
+                _log "Worker ${worker_name} status: ${status} — aborting wait"
+                return 1
+                ;;
+        esac
         sleep 5
         elapsed=$((elapsed + 5))
-        _log "Waiting for Worker ${worker_name}... (${elapsed}s/${timeout}s)"
+        _log "Waiting for Worker ${worker_name}... (${elapsed}s/${timeout}s, status=${status})"
     done
 
     _log "Worker ${worker_name} did not become ready within ${timeout}s"
     return 1
-}
-
-# Wait for CoPaw Worker to become ready
-container_wait_copaw_worker_ready() {
-    local worker_name="$1"
-    local timeout="${2:-120}"
-    local elapsed=0
-    local config_file="/root/.copaw-worker/${worker_name}/.copaw/config.json"
-
-    _log "Waiting for CoPaw Worker ${worker_name} to be ready (timeout: ${timeout}s)..."
-
-    while [ "${elapsed}" -lt "${timeout}" ]; do
-        local cstatus
-        cstatus=$(container_status_worker "${worker_name}")
-        if [ "${cstatus}" != "running" ]; then
-            _log "CoPaw Worker container ${worker_name} stopped unexpectedly (status: ${cstatus})"
-            return 1
-        fi
-
-        if container_exec_worker "${worker_name}" cat "${config_file}" 2>/dev/null \
-                | grep -q '"channels"' 2>/dev/null; then
-            _log "CoPaw Worker ${worker_name} is ready!"
-            return 0
-        fi
-
-        sleep 5
-        elapsed=$((elapsed + 5))
-        _log "Waiting for CoPaw Worker ${worker_name}... (${elapsed}s/${timeout}s)"
-    done
-
-    _log "CoPaw Worker ${worker_name} did not become ready within ${timeout}s"
-    return 1
-}
-
-# Get the Manager container's own IP (for Worker to connect back)
-container_get_manager_ip() {
-    hostname -I 2>/dev/null | awk '{print $1}'
 }

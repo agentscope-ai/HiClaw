@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"sync"
 
 	"github.com/alibaba/hiclaw/orchestrator/auth"
 	"github.com/alibaba/hiclaw/orchestrator/backend"
@@ -16,11 +17,20 @@ type WorkerHandler struct {
 	registry        *backend.Registry
 	keyStore        *auth.KeyStore
 	orchestratorURL string
+
+	// Readiness tracking — workers report ready via POST /workers/{name}/ready
+	readyMu sync.RWMutex
+	ready   map[string]bool
 }
 
 // NewWorkerHandler creates a WorkerHandler.
 func NewWorkerHandler(registry *backend.Registry, keyStore *auth.KeyStore, orchestratorURL string) *WorkerHandler {
-	return &WorkerHandler{registry: registry, keyStore: keyStore, orchestratorURL: orchestratorURL}
+	return &WorkerHandler{
+		registry:        registry,
+		keyStore:        keyStore,
+		orchestratorURL: orchestratorURL,
+		ready:           make(map[string]bool),
+	}
 }
 
 // Create handles POST /workers.
@@ -53,6 +63,9 @@ func (h *WorkerHandler) Create(w http.ResponseWriter, r *http.Request) {
 			req.Env["HICLAW_ORCHESTRATOR_URL"] = h.orchestratorURL
 		}
 	}
+
+	// Clear any stale readiness state
+	h.setReady(req.Name, false)
 
 	result, err := b.Create(r.Context(), backend.CreateRequest{
 		Name:       req.Name,
@@ -94,7 +107,9 @@ func (h *WorkerHandler) List(w http.ResponseWriter, r *http.Request) {
 
 	workers := make([]WorkerResponse, 0, len(results))
 	for _, r := range results {
-		workers = append(workers, toWorkerResponse(&r))
+		resp := toWorkerResponse(&r)
+		resp.Status = h.mergeReadiness(r.Name, resp.Status)
+		workers = append(workers, resp)
 	}
 	httputil.WriteJSON(w, http.StatusOK, WorkerListResponse{Workers: workers})
 }
@@ -120,7 +135,31 @@ func (h *WorkerHandler) Status(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	httputil.WriteJSON(w, http.StatusOK, toWorkerResponse(result))
+	resp := toWorkerResponse(result)
+	resp.Status = h.mergeReadiness(name, resp.Status)
+	httputil.WriteJSON(w, http.StatusOK, resp)
+}
+
+// Ready handles POST /workers/{name}/ready — worker reports itself as ready.
+func (h *WorkerHandler) Ready(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if name == "" {
+		httputil.WriteError(w, http.StatusBadRequest, "worker name is required")
+		return
+	}
+
+	// Verify the caller is the worker itself.
+	// When auth is disabled (local mode), caller is nil — allow any caller
+	// since the network is trusted (Docker bridge).
+	caller := auth.CallerFromContext(r.Context())
+	if caller != nil && caller.WorkerName != name {
+		httputil.WriteError(w, http.StatusForbidden, "workers can only report their own readiness")
+		return
+	}
+
+	h.setReady(name, true)
+	log.Printf("[READY] Worker %s reported ready", name)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // Start handles POST /workers/{name}/start.
@@ -136,6 +175,9 @@ func (h *WorkerHandler) Start(w http.ResponseWriter, r *http.Request) {
 		httputil.WriteError(w, http.StatusServiceUnavailable, err.Error())
 		return
 	}
+
+	// Clear readiness on restart
+	h.setReady(name, false)
 
 	if err := b.Start(r.Context(), name); err != nil {
 		log.Printf("[ERROR] start worker %s: %v", name, err)
@@ -159,6 +201,9 @@ func (h *WorkerHandler) Stop(w http.ResponseWriter, r *http.Request) {
 		httputil.WriteError(w, http.StatusServiceUnavailable, err.Error())
 		return
 	}
+
+	// Clear readiness on stop
+	h.setReady(name, false)
 
 	if err := b.Stop(r.Context(), name); err != nil {
 		log.Printf("[ERROR] stop worker %s: %v", name, err)
@@ -192,9 +237,38 @@ func (h *WorkerHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	if h.keyStore != nil {
 		h.keyStore.RemoveWorkerKey(name)
 	}
+	h.setReady(name, false)
 
 	w.WriteHeader(http.StatusNoContent)
 }
+
+// --- readiness helpers ---
+
+func (h *WorkerHandler) setReady(name string, ready bool) {
+	h.readyMu.Lock()
+	defer h.readyMu.Unlock()
+	if ready {
+		h.ready[name] = true
+	} else {
+		delete(h.ready, name)
+	}
+}
+
+func (h *WorkerHandler) isReady(name string) bool {
+	h.readyMu.RLock()
+	defer h.readyMu.RUnlock()
+	return h.ready[name]
+}
+
+// mergeReadiness upgrades "running" to "ready" if the worker has reported ready.
+func (h *WorkerHandler) mergeReadiness(name string, status backend.WorkerStatus) backend.WorkerStatus {
+	if status == backend.StatusRunning && h.isReady(name) {
+		return backend.StatusReady
+	}
+	return status
+}
+
+// --- response helpers ---
 
 func toWorkerResponse(r *backend.WorkerResult) WorkerResponse {
 	return WorkerResponse{

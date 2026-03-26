@@ -108,6 +108,7 @@ func setupHandler(mb *mockBackend) (*WorkerHandler, *http.ServeMux) {
 	mux.HandleFunc("POST /workers", h.Create)
 	mux.HandleFunc("GET /workers", h.List)
 	mux.HandleFunc("GET /workers/{name}", h.Status)
+	mux.HandleFunc("POST /workers/{name}/ready", h.Ready)
 	mux.HandleFunc("POST /workers/{name}/start", h.Start)
 	mux.HandleFunc("POST /workers/{name}/stop", h.Stop)
 	mux.HandleFunc("DELETE /workers/{name}", h.Delete)
@@ -377,5 +378,132 @@ func TestGatewayNoBackend(t *testing.T) {
 		if w.Code != http.StatusNotImplemented {
 			t.Errorf("%s %s: expected 501, got %d", ep.method, ep.path, w.Code)
 		}
+	}
+}
+
+// --- Readiness tests ---
+
+func TestReadyEndpoint(t *testing.T) {
+	mb := newMockBackend()
+	_, mux := setupHandler(mb)
+
+	body, _ := json.Marshal(CreateWorkerRequest{Name: "alice", Image: "img:latest"})
+	req := httptest.NewRequest(http.MethodPost, "/workers", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	// Status should be "running" before ready report
+	req = httptest.NewRequest(http.MethodGet, "/workers/alice", nil)
+	w = httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	var resp WorkerResponse
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp.Status != backend.StatusRunning {
+		t.Errorf("expected running before ready, got %s", resp.Status)
+	}
+
+	// Report ready
+	req = httptest.NewRequest(http.MethodPost, "/workers/alice/ready", nil)
+	w = httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusNoContent {
+		t.Errorf("ready: expected 204, got %d", w.Code)
+	}
+
+	// Status should now be "ready"
+	req = httptest.NewRequest(http.MethodGet, "/workers/alice", nil)
+	w = httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp.Status != backend.StatusReady {
+		t.Errorf("expected ready after report, got %s", resp.Status)
+	}
+}
+
+func TestReadyOnlyUpgradesRunning(t *testing.T) {
+	mb := newMockBackend()
+	mb.workers["bob"] = &backend.WorkerResult{
+		Name: "bob", Backend: "mock", Status: backend.StatusStopped,
+	}
+	h, mux := setupHandler(mb)
+	h.setReady("bob", true)
+
+	req := httptest.NewRequest(http.MethodGet, "/workers/bob", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	var resp WorkerResponse
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp.Status != backend.StatusStopped {
+		t.Errorf("expected stopped (ready should not upgrade non-running), got %s", resp.Status)
+	}
+}
+
+func TestReadyClearedOnStop(t *testing.T) {
+	mb := newMockBackend()
+	_, mux := setupHandler(mb)
+
+	body, _ := json.Marshal(CreateWorkerRequest{Name: "carol", Image: "img:latest"})
+	req := httptest.NewRequest(http.MethodPost, "/workers", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	req = httptest.NewRequest(http.MethodPost, "/workers/carol/ready", nil)
+	w = httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	req = httptest.NewRequest(http.MethodPost, "/workers/carol/stop", nil)
+	w = httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	req = httptest.NewRequest(http.MethodPost, "/workers/carol/start", nil)
+	w = httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	req = httptest.NewRequest(http.MethodGet, "/workers/carol", nil)
+	w = httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	var resp WorkerResponse
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp.Status != backend.StatusRunning {
+		t.Errorf("expected running after stop+start (readiness cleared), got %s", resp.Status)
+	}
+}
+
+func TestReadyClearedOnCreate(t *testing.T) {
+	mb := newMockBackend()
+	h, mux := setupHandler(mb)
+	h.setReady("dave", true)
+
+	body, _ := json.Marshal(CreateWorkerRequest{Name: "dave", Image: "img:latest"})
+	req := httptest.NewRequest(http.MethodPost, "/workers", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	req = httptest.NewRequest(http.MethodGet, "/workers/dave", nil)
+	w = httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	var resp WorkerResponse
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp.Status != backend.StatusRunning {
+		t.Errorf("expected running (stale readiness cleared on create), got %s", resp.Status)
+	}
+}
+
+func TestReadyForbiddenCrossWorker(t *testing.T) {
+	mb := newMockBackend()
+	h, _ := setupHandler(mb)
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /workers/{name}/ready", h.Ready)
+
+	req := httptest.NewRequest(http.MethodPost, "/workers/bob/ready", nil)
+	ctx := context.WithValue(req.Context(), auth.CallerKeyForTest(), &auth.CallerIdentity{
+		Role: auth.RoleWorker, WorkerName: "alice",
+	})
+	req = req.WithContext(ctx)
+
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Errorf("expected 403 for cross-worker ready report, got %d", w.Code)
 	}
 }

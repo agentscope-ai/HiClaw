@@ -16,6 +16,7 @@ type WorkerStatus string
 
 const (
 	StatusRunning  WorkerStatus = "running"
+	StatusReady    WorkerStatus = "ready"
 	StatusStopped  WorkerStatus = "stopped"
 	StatusStarting WorkerStatus = "starting"
 	StatusNotFound WorkerStatus = "not_found"
