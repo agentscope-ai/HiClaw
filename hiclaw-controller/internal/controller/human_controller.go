@@ -112,6 +112,9 @@ func (r *HumanReconciler) handleCreate(ctx context.Context, h *v1.Human) (reconc
 		if mid, ok := result.JSON["matrix_user_id"].(string); ok {
 			h.Status.MatrixUserID = mid
 		}
+		if pw, ok := result.JSON["password"].(string); ok {
+			h.Status.InitialPassword = pw
+		}
 		if sent, ok := result.JSON["email_sent"].(bool); ok {
 			h.Status.EmailSent = sent
 		}

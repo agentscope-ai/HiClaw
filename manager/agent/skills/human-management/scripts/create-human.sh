@@ -346,12 +346,14 @@ RESULT=$(jq -n \
     --argjson level "${LEVEL}" \
     --arg email "${EMAIL:-}" \
     --argjson email_sent "${EMAIL_SENT}" \
+    --arg password "${HUMAN_PASSWORD}" \
     --argjson rooms "${ROOMS_JSON}" \
     '{
         human_name: $name,
         matrix_user_id: $matrix_id,
         display_name: $display_name,
         permission_level: $level,
+        password: $password,
         email: (if $email == "" then null else $email end),
         email_sent: $email_sent,
         rooms_invited: $rooms

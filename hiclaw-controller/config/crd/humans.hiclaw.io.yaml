@@ -46,6 +46,9 @@ spec:
                   enum: [Pending, Active, Failed]
                 matrixUserID:
                   type: string
+                initialPassword:
+                  type: string
+                  description: "Generated password, shown once on creation"
                 rooms:
                   type: array
                   items:

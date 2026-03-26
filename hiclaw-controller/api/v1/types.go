@@ -123,10 +123,11 @@ type HumanSpec struct {
 }
 
 type HumanStatus struct {
-	Phase        string   `json:"phase,omitempty"` // Pending/Active/Failed
-	MatrixUserID string   `json:"matrixUserID,omitempty"`
-	Rooms        []string `json:"rooms,omitempty"`
-	EmailSent    bool     `json:"emailSent,omitempty"`
+	Phase           string   `json:"phase,omitempty"` // Pending/Active/Failed
+	MatrixUserID    string   `json:"matrixUserID,omitempty"`
+	InitialPassword string   `json:"initialPassword,omitempty"` // Set on creation, shown once
+	Rooms           []string `json:"rooms,omitempty"`
+	EmailSent       bool     `json:"emailSent,omitempty"`
 	Message      string   `json:"message,omitempty"`
 }
 
