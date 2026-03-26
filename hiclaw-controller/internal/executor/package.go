@@ -121,15 +121,23 @@ func (p *PackageResolver) DeployToMinIO(ctx context.Context, extractedDir, worke
 	}
 
 	// Copy config/ contents (SOUL.md, AGENTS.md, etc.) to agent root
+	// For AGENTS.md: wrap custom content with builtin markers so upgrade-builtins
+	// can merge without destroying user content.
 	configDir := filepath.Join(extractedDir, "config")
 	if info, err := os.Stat(configDir); err == nil && info.IsDir() {
 		entries, _ := os.ReadDir(configDir)
 		for _, e := range entries {
 			src := filepath.Join(configDir, e.Name())
 			dst := filepath.Join(agentDir, e.Name())
-			if data, err := os.ReadFile(src); err == nil {
-				os.WriteFile(dst, data, 0644)
+			data, err := os.ReadFile(src)
+			if err != nil {
+				continue
 			}
+			if e.Name() == "AGENTS.md" {
+				// Wrap user AGENTS.md content after builtin markers
+				data = wrapWithBuiltinMarkers(data)
+			}
+			os.WriteFile(dst, data, 0644)
 		}
 	} else {
 		// Fallback: SOUL.md at root level
@@ -168,6 +176,26 @@ func validatePackageDir(dir string) error {
 		}
 	}
 	return fmt.Errorf("invalid package: SOUL.md not found in %s (checked root and config/)", dir)
+}
+
+// wrapWithBuiltinMarkers wraps user AGENTS.md content with hiclaw-builtin markers.
+// Uses the same format as builtin-merge.sh (BUILTIN_HEADER + BUILTIN_END) so that
+// upgrade-builtins.sh can fill the builtin section without destroying user content.
+// If markers already exist, the content is returned as-is.
+func wrapWithBuiltinMarkers(data []byte) []byte {
+	content := string(data)
+	if strings.Contains(content, "<!-- hiclaw-builtin-start -->") {
+		return data // already has markers
+	}
+	// Match the exact format from builtin-merge.sh BUILTIN_HEADER + BUILTIN_END
+	wrapped := "<!-- hiclaw-builtin-start -->\n" +
+		"> ⚠️ **DO NOT EDIT** this section. It is managed by HiClaw and will be automatically\n" +
+		"> replaced on upgrade. To customize, add your content **after** the\n" +
+		"> `<!-- hiclaw-builtin-end -->` marker below.\n" +
+		"\n" +
+		"<!-- hiclaw-builtin-end -->\n\n" +
+		content
+	return []byte(wrapped)
 }
 
 // --- Private resolve methods ---

@@ -152,9 +152,12 @@ if [ -d "${WORKER_AGENT_SRC}" ] && mc alias ls hiclaw > /dev/null 2>&1; then
             [ -z "${_worker_name}" ] && continue
             log "  Syncing builtins to worker: ${_worker_name}"
 
-            # Determine runtime-specific agent source for builtin skills
+            # Determine agent source based on role and runtime
+            _worker_role=$(jq -r --arg w "${_worker_name}" '.workers[$w].role // "worker"' "${REGISTRY}" 2>/dev/null || echo "worker")
             _worker_runtime=$(jq -r --arg w "${_worker_name}" '.workers[$w].runtime // "openclaw"' "${REGISTRY}" 2>/dev/null || echo "openclaw")
-            if [ "${_worker_runtime}" = "copaw" ]; then
+            if [ "${_worker_role}" = "team_leader" ] && [ -d "${AGENT_SRC}/team-leader-agent" ]; then
+                _worker_agent_src="${AGENT_SRC}/team-leader-agent"
+            elif [ "${_worker_runtime}" = "copaw" ]; then
                 _worker_agent_src="${AGENT_SRC}/copaw-worker-agent"
             else
                 _worker_agent_src="${WORKER_AGENT_SRC}"
