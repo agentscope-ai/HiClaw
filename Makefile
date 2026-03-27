@@ -30,6 +30,7 @@ WORKER_IMAGE         ?= $(REGISTRY)/$(REPO)/hiclaw-worker
 COPAW_WORKER_IMAGE   ?= $(REGISTRY)/$(REPO)/hiclaw-copaw-worker
 DOCKER_PROXY_IMAGE   ?= $(REGISTRY)/$(REPO)/hiclaw-docker-proxy
 OPENCLAW_BASE_IMAGE  ?= $(REGISTRY)/$(REPO)/openclaw-base
+CONTROLLER_IMAGE     ?= $(REGISTRY)/$(REPO)/hiclaw-controller
 
 MANAGER_TAG        ?= $(MANAGER_IMAGE):$(VERSION)
 MANAGER_ALIYUN_TAG ?= $(MANAGER_ALIYUN_IMAGE):$(VERSION)
@@ -37,6 +38,7 @@ WORKER_TAG         ?= $(WORKER_IMAGE):$(VERSION)
 COPAW_WORKER_TAG   ?= $(COPAW_WORKER_IMAGE):$(VERSION)
 DOCKER_PROXY_TAG   ?= $(DOCKER_PROXY_IMAGE):$(VERSION)
 OPENCLAW_BASE_TAG  ?= $(OPENCLAW_BASE_IMAGE):$(VERSION)
+CONTROLLER_TAG     ?= $(CONTROLLER_IMAGE):$(VERSION)
 
 # Local image names (no registry prefix, used by tests and install script)
 LOCAL_MANAGER        = hiclaw/manager-agent:$(VERSION)
@@ -94,7 +96,7 @@ LINES          ?= 50
 # ---------- Phony targets ----------
 
 .PHONY: all build build-openclaw-base build-hiclaw-controller build-manager build-manager-aliyun build-worker build-copaw-worker build-docker-proxy \
-        tag push push-openclaw-base push-manager push-manager-aliyun push-worker push-copaw-worker push-docker-proxy \
+        tag push push-openclaw-base push-hiclaw-controller push-manager push-manager-aliyun push-worker push-copaw-worker push-docker-proxy \
         push-native push-native-manager push-native-worker push-native-copaw-worker \
         buildx-setup \
         test test-quick test-installed \
@@ -231,7 +233,28 @@ else
 		./openclaw-base/
 endif
 
-push-manager: buildx-setup ## Build + push multi-arch Manager image
+push-hiclaw-controller: buildx-setup ## Build + push multi-arch hiclaw-controller image
+	@echo "==> Building + pushing multi-arch hiclaw-controller: $(CONTROLLER_TAG) [$(MULTIARCH_PLATFORMS)]"
+ifeq ($(IS_PODMAN),1)
+	-podman manifest rm $(CONTROLLER_TAG) 2>/dev/null
+	$(foreach plat,$(subst $(comma), ,$(MULTIARCH_PLATFORMS)), \
+		echo "  -> Building hiclaw-controller for $(plat)..." && \
+		podman build --platform $(plat) \
+			$(REGISTRY_ARG) $(DOCKER_BUILD_ARGS) \
+			--manifest $(CONTROLLER_TAG) \
+			./hiclaw-controller/ && ) true
+	podman manifest push --all $(CONTROLLER_TAG) docker://$(CONTROLLER_TAG)
+else
+	docker buildx build \
+		--builder $(BUILDX_BUILDER) \
+		--platform $(MULTIARCH_PLATFORMS) \
+		$(REGISTRY_ARG) $(DOCKER_BUILD_ARGS) \
+		-t $(CONTROLLER_TAG) \
+		--push \
+		./hiclaw-controller/
+endif
+
+push-manager: push-hiclaw-controller buildx-setup ## Build + push multi-arch Manager image
 	@echo "==> Building + pushing multi-arch Manager: $(MANAGER_TAG) [$(MULTIARCH_PLATFORMS)]"
 ifeq ($(IS_PODMAN),1)
 	@# Podman: build each platform into a manifest list, then push
@@ -240,6 +263,7 @@ ifeq ($(IS_PODMAN),1)
 		echo "  -> Building Manager for $(plat)..." && \
 		podman build --platform $(plat) \
 			$(REGISTRY_ARG) $(BUILTIN_VERSION_ARG) $(OPENCLAW_BASE_PUSH_ARG) $(SHARED_LIB_CTX) $(DOCKER_BUILD_ARGS) \
+			--build-arg HICLAW_CONTROLLER_IMAGE=$(CONTROLLER_TAG) \
 			--manifest $(MANAGER_TAG) \
 			./manager/ && ) true
 	podman manifest push --all $(MANAGER_TAG) docker://$(MANAGER_TAG)
@@ -251,6 +275,7 @@ else
 		--builder $(BUILDX_BUILDER) \
 		--platform $(MULTIARCH_PLATFORMS) \
 		$(REGISTRY_ARG) $(BUILTIN_VERSION_ARG) $(OPENCLAW_BASE_PUSH_ARG) $(SHARED_LIB_CTX) $(DOCKER_BUILD_ARGS) \
+		--build-arg HICLAW_CONTROLLER_IMAGE=$(CONTROLLER_TAG) \
 		-t $(MANAGER_TAG) \
 		$(if $(PUSH_LATEST),-t $(MANAGER_IMAGE):latest) \
 		--push \
