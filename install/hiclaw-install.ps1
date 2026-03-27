@@ -1991,15 +1991,13 @@ function Install-Manager {
             docker network inspect hiclaw-net *>$null
             if ($LASTEXITCODE -ne 0) { docker network create hiclaw-net *>$null }
             $dockerArgs += @("--network", "hiclaw-net")
-            # Add network aliases for *-local.hiclaw.io domains
-            $localDomains = @(
-                ($config.MATRIX_DOMAIN -replace ':.*', ''),
-                $config.MATRIX_CLIENT_DOMAIN,
-                $config.AI_GATEWAY_DOMAIN,
-                ($config.FS_DOMAIN -replace ':.*', ''),
-                $config.CONSOLE_DOMAIN
-            )
-            foreach ($domain in $localDomains) {
+            # Workers hardcode these three internal domains to reach manager services,
+            # so they must always be network aliases regardless of user domain config.
+            $dockerArgs += @("--network-alias", "matrix-local.hiclaw.io")
+            $dockerArgs += @("--network-alias", "aigw-local.hiclaw.io")
+            $dockerArgs += @("--network-alias", "fs-local.hiclaw.io")
+            # Also alias any *-local.hiclaw.io user-configured domains that differ from the fixed ones above.
+            foreach ($domain in @($config.MATRIX_CLIENT_DOMAIN, $config.CONSOLE_DOMAIN)) {
                 if ($domain -match '-local\.hiclaw\.io$') {
                     $dockerArgs += @("--network-alias", $domain)
                 }

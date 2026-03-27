@@ -2275,13 +2275,11 @@ EOF
     if [ -n "${CONTAINER_SOCK:-}" ] || [ "${HICLAW_DOCKER_PROXY:-0}" = "1" ]; then
         ${DOCKER_CMD} network inspect hiclaw-net >/dev/null 2>&1 || ${DOCKER_CMD} network create hiclaw-net
         NETWORK_ARGS="--network hiclaw-net"
-        # Add network aliases for *-local.hiclaw.io domains so Docker DNS resolves them
-        # to the Manager container — workers no longer need ExtraHosts entries.
-        for _domain in "${HICLAW_MATRIX_DOMAIN%%:*}" \
-                       "${HICLAW_MATRIX_CLIENT_DOMAIN}" \
-                       "${HICLAW_AI_GATEWAY_DOMAIN}" \
-                       "${HICLAW_FS_DOMAIN%%:*}" \
-                       "${HICLAW_CONSOLE_DOMAIN}"; do
+        # Workers hardcode these three internal domains to reach manager services,
+        # so they must always be network aliases regardless of user domain config.
+        NETWORK_ALIAS_ARGS="--network-alias matrix-local.hiclaw.io --network-alias aigw-local.hiclaw.io --network-alias fs-local.hiclaw.io"
+        # Also alias any *-local.hiclaw.io user-configured domains that differ from the fixed ones above.
+        for _domain in "${HICLAW_MATRIX_CLIENT_DOMAIN}" "${HICLAW_CONSOLE_DOMAIN}"; do
             if [[ "${_domain}" == *-local.hiclaw.io ]]; then
                 NETWORK_ALIAS_ARGS="${NETWORK_ALIAS_ARGS} --network-alias ${_domain}"
             fi
