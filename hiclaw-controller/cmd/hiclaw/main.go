@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"crypto/sha256"
 	"fmt"
 	"io"
@@ -10,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/hiclaw/hiclaw-controller/internal/executor"
 	"github.com/spf13/cobra"
 )
 
@@ -168,6 +170,14 @@ func applyWorkerCmd() *cobra.Command {
 
 // applyWorkerFromParams generates a Worker YAML from CLI params and writes to MinIO
 func applyWorkerFromParams(name, model, packageURI, skills, mcpServers, runtime string, dryRun bool) error {
+	// Preflight: validate nacos:// URI before persisting
+	if strings.HasPrefix(packageURI, "nacos://") {
+		fmt.Printf("  Validating nacos URI: %s\n", packageURI)
+		if err := executor.ValidateNacosURI(context.Background(), packageURI); err != nil {
+			return err
+		}
+	}
+
 	// Build YAML
 	var specLines []string
 	specLines = append(specLines, fmt.Sprintf("  model: %s", model))
@@ -245,6 +255,20 @@ func applyEmbedded(resources []resource, prune, dryRun, yes bool) error {
 
 	// Apply order: Team → Worker → Human
 	ordered := orderForApply(resources)
+
+	// Preflight: validate all nacos:// package URIs before applying anything
+	for _, r := range ordered {
+		if strings.ToLower(r.Kind) != "worker" {
+			continue
+		}
+		pkg := extractPackageField(r.Raw)
+		if strings.HasPrefix(pkg, "nacos://") {
+			fmt.Printf("  Validating nacos URI for worker/%s: %s\n", r.Name, pkg)
+			if err := executor.ValidateNacosURI(context.Background(), pkg); err != nil {
+				return err
+			}
+		}
+	}
 
 	for _, r := range ordered {
 		kind := strings.ToLower(r.Kind)
@@ -704,4 +728,25 @@ func jsonField(jsonStr, field string) string {
 		return ""
 	}
 	return result
+}
+
+// extractPackageField extracts the spec.package value from raw Worker YAML.
+func extractPackageField(raw string) string {
+	inSpec := false
+	for _, line := range strings.Split(raw, "\n") {
+		trimmed := strings.TrimSpace(line)
+		// Detect top-level "spec:" section
+		if trimmed == "spec:" {
+			inSpec = true
+			continue
+		}
+		// Left-aligned line (no leading space) exits spec section
+		if inSpec && len(line) > 0 && line[0] != ' ' && line[0] != '\t' {
+			inSpec = false
+		}
+		if inSpec && strings.HasPrefix(trimmed, "package:") {
+			return strings.TrimSpace(strings.TrimPrefix(trimmed, "package:"))
+		}
+	}
+	return ""
 }

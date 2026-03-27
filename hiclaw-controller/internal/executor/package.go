@@ -473,3 +473,38 @@ func (p *PackageResolver) resolveNacos(ctx context.Context, u *url.URL) (string,
 
 	return destPath, nil
 }
+
+// ValidateNacosURI checks that a nacos:// URI is well-formed, the server is
+// reachable, and any embedded credentials are accepted.  It is intended as a
+// preflight check before persisting a Worker resource.
+func ValidateNacosURI(ctx context.Context, raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("invalid nacos URI %q: %w", raw, err)
+	}
+	if u.Scheme != "nacos" {
+		return fmt.Errorf("invalid nacos URI %q: scheme must be nacos://", raw)
+	}
+	if u.Host == "" {
+		return fmt.Errorf("invalid nacos URI %q: missing host", raw)
+	}
+
+	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+	if len(parts) < 2 {
+		return fmt.Errorf("invalid nacos URI %q: expected nacos://[user:pass@]host:port/{namespace}/{agentspec-name}[/{version}]", raw)
+	}
+
+	nacosAddr := u.Host
+	if u.User != nil {
+		nacosAddr = u.User.String() + "@" + u.Host
+	}
+	namespace := parts[0]
+
+	// newNacosAgentSpecClient validates the address format, connects, and
+	// performs login when credentials are present.
+	_, err = newNacosAgentSpecClient(ctx, nacosAddr, namespace)
+	if err != nil {
+		return fmt.Errorf("nacos preflight check failed for %q: %w", raw, err)
+	}
+	return nil
+}

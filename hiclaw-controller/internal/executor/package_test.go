@@ -1,6 +1,8 @@
 package executor
 
 import (
+	"context"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -28,12 +30,10 @@ func TestWriteInlineConfigs_AllFields_CoPaw(t *testing.T) {
 		t.Fatalf("WriteInlineConfigs failed: %v", err)
 	}
 
-	// CoPaw: no IDENTITY.md
 	if _, err := os.Stat(filepath.Join(dir, "IDENTITY.md")); err == nil {
 		t.Error("IDENTITY.md should not exist for copaw runtime")
 	}
 
-	// SOUL.md should contain identity prepended to soul
 	soulData, err := os.ReadFile(filepath.Join(dir, "SOUL.md"))
 	if err != nil {
 		t.Fatalf("failed to read SOUL.md: %v", err)
@@ -70,9 +70,8 @@ func TestWriteInlineConfigs_SoulOnly(t *testing.T) {
 func TestWriteInlineConfigs_OverridesExisting(t *testing.T) {
 	dir := t.TempDir()
 
-	// Pre-create files
-	os.WriteFile(filepath.Join(dir, "SOUL.md"), []byte("old soul"), 0644)
-	os.WriteFile(filepath.Join(dir, "AGENTS.md"), []byte("old agents"), 0644)
+	_ = os.WriteFile(filepath.Join(dir, "SOUL.md"), []byte("old soul"), 0o644)
+	_ = os.WriteFile(filepath.Join(dir, "AGENTS.md"), []byte("old agents"), 0o644)
 
 	err := WriteInlineConfigs(dir, "", "", "new soul", "new agents")
 	if err != nil {
@@ -82,7 +81,6 @@ func TestWriteInlineConfigs_OverridesExisting(t *testing.T) {
 	assertFileContent(t, filepath.Join(dir, "SOUL.md"), "new soul")
 	assertFileContains(t, filepath.Join(dir, "AGENTS.md"), "new agents")
 
-	// Verify old content is gone
 	data, _ := os.ReadFile(filepath.Join(dir, "SOUL.md"))
 	if strings.Contains(string(data), "old soul") {
 		t.Error("SOUL.md should not contain old content")
@@ -127,7 +125,6 @@ func TestWriteInlineConfigs_CoPawMergesIdentityIntoSoul(t *testing.T) {
 	}
 	content := string(data)
 
-	// Identity should come before soul
 	idxIdentity := strings.Index(content, "# Identity")
 	idxRole := strings.Index(content, "# Role")
 	if idxIdentity < 0 || idxRole < 0 {
@@ -174,7 +171,161 @@ func TestWriteInlineConfigs_EmptyFields(t *testing.T) {
 	}
 }
 
-// --- helpers ---
+func TestValidateNacosURI_FormatErrors(t *testing.T) {
+	tests := []struct {
+		name    string
+		uri     string
+		wantErr string
+	}{
+		{
+			name:    "wrong scheme",
+			uri:     "http://host:8848/ns/spec",
+			wantErr: "scheme must be nacos://",
+		},
+		{
+			name:    "missing host",
+			uri:     "nacos:///ns/spec",
+			wantErr: "missing host",
+		},
+		{
+			name:    "missing namespace and spec (no path)",
+			uri:     "nacos://host:8848",
+			wantErr: "expected nacos://",
+		},
+		{
+			name:    "missing spec name (only namespace)",
+			uri:     "nacos://host:8848/ns",
+			wantErr: "expected nacos://",
+		},
+		{
+			name:    "empty string",
+			uri:     "",
+			wantErr: "scheme must be nacos://",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateNacosURI(context.Background(), tt.uri)
+			if err == nil {
+				t.Fatal("expected error, got nil")
+			}
+			if !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("expected error containing %q, got %q", tt.wantErr, err.Error())
+			}
+		})
+	}
+}
+
+func TestValidateNacosURI_ValidFormat_UnreachableServer(t *testing.T) {
+	tests := []struct {
+		name string
+		uri  string
+	}{
+		{
+			name: "basic host:port",
+			uri:  "nacos://127.0.0.1:19999/ns/my-spec",
+		},
+		{
+			name: "with credentials",
+			uri:  "nacos://admin:secret@127.0.0.1:19999/ns/my-spec",
+		},
+		{
+			name: "with version",
+			uri:  "nacos://127.0.0.1:19999/ns/my-spec/v1.0.0",
+		},
+		{
+			name: "with label version",
+			uri:  "nacos://admin:pass@127.0.0.1:19999/ns/my-spec/label:latest",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateNacosURI(context.Background(), tt.uri)
+			if err == nil {
+				t.Fatal("expected connection error for unreachable server, got nil")
+			}
+			if strings.Contains(err.Error(), "scheme must be") ||
+				strings.Contains(err.Error(), "missing host") ||
+				strings.Contains(err.Error(), "expected nacos://[user:pass@]host:port") {
+				t.Errorf("got format error instead of connection error: %v", err)
+			}
+			if !strings.Contains(err.Error(), "preflight check failed") {
+				t.Errorf("expected preflight check error, got: %v", err)
+			}
+		})
+	}
+}
+
+func TestResolveNacos_URIParsing(t *testing.T) {
+	tests := []struct {
+		name    string
+		uri     string
+		wantErr string
+	}{
+		{
+			name:    "too few path segments",
+			uri:     "nacos://host:8848/only-namespace",
+			wantErr: "invalid nacos URI",
+		},
+		{
+			name:    "empty path",
+			uri:     "nacos://host:8848",
+			wantErr: "invalid nacos URI",
+		},
+	}
+
+	resolver := NewPackageResolver(t.TempDir())
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			u, err := url.Parse(tt.uri)
+			if err != nil {
+				t.Fatalf("url.Parse failed: %v", err)
+			}
+			_, err = resolver.resolveNacos(context.Background(), u)
+			if err == nil {
+				t.Fatal("expected error, got nil")
+			}
+			if !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("expected error containing %q, got %q", tt.wantErr, err.Error())
+			}
+		})
+	}
+}
+
+func TestResolveNacos_AddrExtraction(t *testing.T) {
+	tests := []struct {
+		name string
+		uri  string
+	}{
+		{
+			name: "plain host",
+			uri:  "nacos://10.0.0.1:8848/ns/spec",
+		},
+		{
+			name: "host with credentials",
+			uri:  "nacos://user:pass@10.0.0.1:8848/ns/spec",
+		},
+	}
+
+	resolver := NewPackageResolver(t.TempDir())
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			u, err := url.Parse(tt.uri)
+			if err != nil {
+				t.Fatalf("url.Parse failed: %v", err)
+			}
+			_, err = resolver.resolveNacos(context.Background(), u)
+			if err == nil {
+				t.Fatal("expected error for unreachable server, got nil")
+			}
+			if strings.Contains(err.Error(), "HICLAW_NACOS_ADDR") {
+				t.Errorf("error should not reference HICLAW_NACOS_ADDR, got: %v", err)
+			}
+		})
+	}
+}
 
 func assertFileContent(t *testing.T, path, expected string) {
 	t.Helper()
@@ -197,4 +348,11 @@ func assertFileContains(t *testing.T, path, substr string) {
 	if !strings.Contains(string(data), substr) {
 		t.Errorf("%s should contain %q", filepath.Base(path), substr)
 	}
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
