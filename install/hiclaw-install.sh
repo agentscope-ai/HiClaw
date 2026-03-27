@@ -2268,12 +2268,28 @@ EOF
     # Run Manager container
     log "$(msg install.starting_manager)"
 
+    # Ensure hiclaw-net Docker network exists; Manager joins it so workers can reach
+    # Manager services via Docker DNS (using the network aliases added below).
+    NETWORK_ARGS=""
+    NETWORK_ALIAS_ARGS=""
+    if [ -n "${CONTAINER_SOCK:-}" ] || [ "${HICLAW_DOCKER_PROXY:-0}" = "1" ]; then
+        ${DOCKER_CMD} network inspect hiclaw-net >/dev/null 2>&1 || ${DOCKER_CMD} network create hiclaw-net
+        NETWORK_ARGS="--network hiclaw-net"
+        # Workers hardcode these three internal domains to reach manager services,
+        # so they must always be network aliases regardless of user domain config.
+        NETWORK_ALIAS_ARGS="--network-alias matrix-local.hiclaw.io --network-alias aigw-local.hiclaw.io --network-alias fs-local.hiclaw.io"
+        # Also alias any *-local.hiclaw.io user-configured domains that differ from the fixed ones above.
+        for _domain in "${HICLAW_MATRIX_CLIENT_DOMAIN}" "${HICLAW_CONSOLE_DOMAIN}"; do
+            if [[ "${_domain}" == *-local.hiclaw.io ]]; then
+                NETWORK_ALIAS_ARGS="${NETWORK_ALIAS_ARGS} --network-alias ${_domain}"
+            fi
+        done
+    fi
+
     # Start Docker API proxy if enabled (security layer between Manager and Docker daemon)
     PROXY_ARGS=""
     if [ "${HICLAW_DOCKER_PROXY:-0}" = "1" ] && [ -n "${CONTAINER_SOCK:-}" ]; then
         local _proxy_image="${DOCKER_PROXY_IMAGE}"
-        # Ensure Docker network exists (reuse if already present)
-        ${DOCKER_CMD} network inspect hiclaw-net >/dev/null 2>&1 || ${DOCKER_CMD} network create hiclaw-net
         log "Starting Docker API proxy..."
         ${DOCKER_CMD} run -d \
             --name hiclaw-docker-proxy \
@@ -2283,7 +2299,7 @@ EOF
             ${HICLAW_PROXY_ALLOWED_REGISTRIES:+-e HICLAW_PROXY_ALLOWED_REGISTRIES="${HICLAW_PROXY_ALLOWED_REGISTRIES}"} \
             --restart unless-stopped \
             "${_proxy_image}"
-        PROXY_ARGS="-e HICLAW_CONTAINER_API=http://hiclaw-docker-proxy:2375 --network hiclaw-net"
+        PROXY_ARGS="-e HICLAW_CONTAINER_API=http://hiclaw-docker-proxy:2375"
         SOCKET_MOUNT_ARGS=""  # Manager no longer needs direct socket access
     fi
 
@@ -2303,6 +2319,8 @@ EOF
         ${YOLO_ARGS} \
         ${TZ_ARGS} \
         ${SOCKET_MOUNT_ARGS} \
+        ${NETWORK_ARGS} \
+        ${NETWORK_ALIAS_ARGS} \
         ${PROXY_ARGS} \
         -p "${_port_prefix}${HICLAW_PORT_GATEWAY}:8080" \
         -p "${_port_prefix}${HICLAW_PORT_CONSOLE}:8001" \
