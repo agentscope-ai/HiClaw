@@ -95,7 +95,7 @@ LINES          ?= 50
 
 # ---------- Phony targets ----------
 
-.PHONY: all build build-openclaw-base build-hiclaw-controller build-manager build-manager-aliyun build-worker build-copaw-worker build-orchestrator \
+.PHONY: all build build-openclaw-base build-hiclaw-controller build-manager build-manager-aliyun build-worker build-copaw-worker build-orchestrator build-docker-proxy \
         tag push push-openclaw-base push-hiclaw-controller push-manager push-manager-aliyun push-worker push-copaw-worker push-orchestrator \
         push-native push-native-manager push-native-worker push-native-copaw-worker \
         buildx-setup \
@@ -163,6 +163,8 @@ build-orchestrator: ## Build Orchestrator image
 	docker build $(PLATFORM_FLAG) $(REGISTRY_ARG) $(DOCKER_BUILD_ARGS) \
 		-t $(LOCAL_ORCHESTRATOR) \
 		./orchestrator/
+
+build-docker-proxy: build-orchestrator ## Backward-compatible alias
 
 # ---------- Tag ----------
 
@@ -492,6 +494,7 @@ endif
 uninstall: ## Stop and remove Manager + all Worker containers
 	@echo "==> Uninstalling HiClaw..."
 	-docker stop hiclaw-manager 2>/dev/null && docker rm hiclaw-manager 2>/dev/null || true
+	-docker stop hiclaw-orchestrator 2>/dev/null && docker rm hiclaw-orchestrator 2>/dev/null || true
 	@for c in $$(docker ps -a --filter "name=hiclaw-worker-" --format '{{.Names}}' 2>/dev/null); do \
 		echo "  Removing Worker: $$c"; \
 		docker rm -f "$$c" 2>/dev/null || true; \

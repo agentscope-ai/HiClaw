@@ -65,7 +65,12 @@ ln -sfn "${WORKER_SKILLS_DIR}" "${HOME}/.agents/skills"
 
 # Background readiness reporter — report ready to orchestrator when CoPaw bridge completes
 _start_readiness_reporter() {
-    [ -z "${HICLAW_ORCHESTRATOR_URL:-}" ] || [ -z "${HICLAW_WORKER_API_KEY:-}" ] && return 0
+    [ -z "${HICLAW_ORCHESTRATOR_URL:-}" ] && return 0
+
+    # Build auth header if API key is available (cloud mode)
+    local auth_header=""
+    [ -n "${HICLAW_WORKER_API_KEY:-}" ] && auth_header="Authorization: Bearer ${HICLAW_WORKER_API_KEY}"
+
     (
         TIMEOUT=120; ELAPSED=0
         CONFIG_FILE="${INSTALL_DIR}/${WORKER_NAME}/.copaw/config.json"
@@ -73,7 +78,7 @@ _start_readiness_reporter() {
             if [ -f "${CONFIG_FILE}" ] && grep -q '"channels"' "${CONFIG_FILE}" 2>/dev/null; then
                 for _attempt in 1 2 3; do
                     if curl -sf -X POST "${HICLAW_ORCHESTRATOR_URL}/workers/${WORKER_NAME}/ready" \
-                        -H "Authorization: Bearer ${HICLAW_WORKER_API_KEY}" 2>/dev/null; then
+                        ${auth_header:+-H "${auth_header}"} 2>/dev/null; then
                         log "Reported ready to orchestrator"
                         exit 0
                     fi

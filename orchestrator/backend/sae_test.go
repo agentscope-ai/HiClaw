@@ -3,6 +3,7 @@ package backend
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	sae "github.com/alibabacloud-go/sae-20190506/v4/client"
@@ -141,6 +142,37 @@ func TestSAECreate(t *testing.T) {
 	}
 	if result.AppID == "" {
 		t.Error("expected non-empty app ID")
+	}
+}
+
+func TestSAECreateInjectsCredentials(t *testing.T) {
+	mock := newMockSAEClient()
+	b := newTestSAEBackend(mock)
+
+	_, err := b.Create(context.Background(), CreateRequest{
+		Name:            "cred-test",
+		Image:           "custom:v1",
+		Env:             map[string]string{"KEY": "VAL"},
+		WorkerAPIKey:    "test-key-123",
+		OrchestratorURL: "http://orchestrator:2375",
+	})
+	if err != nil {
+		t.Fatalf("Create failed: %v", err)
+	}
+
+	app := mock.apps["hiclaw-worker-cred-test"]
+	if app == nil {
+		t.Fatal("expected app to exist")
+	}
+	envs := app.envs
+	if !strings.Contains(envs, "HICLAW_RUNTIME") {
+		t.Error("expected HICLAW_RUNTIME in env")
+	}
+	if !strings.Contains(envs, "test-key-123") {
+		t.Error("expected HICLAW_WORKER_API_KEY value in env")
+	}
+	if !strings.Contains(envs, "http://orchestrator:2375") {
+		t.Error("expected HICLAW_ORCHESTRATOR_URL value in env")
 	}
 }
 

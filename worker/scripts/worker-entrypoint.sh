@@ -275,14 +275,18 @@ fi
 # Step 5c: Background readiness reporter
 # ============================================================
 # Poll local gateway health and report ready to orchestrator when healthy.
-if [ -n "${HICLAW_ORCHESTRATOR_URL:-}" ] && [ -n "${HICLAW_WORKER_API_KEY:-}" ]; then
+if [ -n "${HICLAW_ORCHESTRATOR_URL:-}" ]; then
     (
+        # Build auth header if API key is available (cloud mode)
+        AUTH_HEADER=""
+        [ -n "${HICLAW_WORKER_API_KEY:-}" ] && AUTH_HEADER="Authorization: Bearer ${HICLAW_WORKER_API_KEY}"
+
         TIMEOUT=120; ELAPSED=0
         while [ "${ELAPSED}" -lt "${TIMEOUT}" ]; do
             if openclaw gateway health --json 2>/dev/null | grep -q '"ok"' 2>/dev/null; then
                 for _attempt in 1 2 3; do
                     if curl -sf -X POST "${HICLAW_ORCHESTRATOR_URL}/workers/${WORKER_NAME}/ready" \
-                        -H "Authorization: Bearer ${HICLAW_WORKER_API_KEY}" 2>/dev/null; then
+                        ${AUTH_HEADER:+-H "${AUTH_HEADER}"} 2>/dev/null; then
                         log "Reported ready to orchestrator"
                         exit 0
                     fi

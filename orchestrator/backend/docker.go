@@ -8,42 +8,53 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"sort"
 	"strings"
 	"time"
 )
 
+// DockerConfig holds Docker backend configuration.
+type DockerConfig struct {
+	SocketPath       string
+	WorkerImage      string // default worker image (HICLAW_WORKER_IMAGE)
+	CopawWorkerImage string // default copaw worker image (HICLAW_COPAW_WORKER_IMAGE)
+	DefaultNetwork   string // default Docker network (default "hiclaw-net")
+}
+
 // DockerBackend manages worker containers via the Docker Engine API over a Unix socket.
 type DockerBackend struct {
-	socketPath      string
+	config          DockerConfig
 	client          *http.Client
 	containerPrefix string
 }
 
 // NewDockerBackend creates a DockerBackend that talks to the given Docker socket.
-func NewDockerBackend(socketPath string, containerPrefix string) *DockerBackend {
+func NewDockerBackend(config DockerConfig, containerPrefix string) *DockerBackend {
 	if containerPrefix == "" {
-		containerPrefix = "hiclaw-worker-"
+		containerPrefix = DefaultContainerPrefix
 	}
 	transport := &http.Transport{
 		DialContext: func(_ context.Context, _, _ string) (net.Conn, error) {
-			return net.Dial("unix", socketPath)
+			return net.Dial("unix", config.SocketPath)
 		},
 	}
 	return &DockerBackend{
-		socketPath:      socketPath,
+		config:          config,
 		client:          &http.Client{Transport: transport},
 		containerPrefix: containerPrefix,
 	}
 }
 
-func (d *DockerBackend) Name() string { return "docker" }
+func (d *DockerBackend) Name() string                        { return "docker" }
+func (d *DockerBackend) NeedsCredentialInjection() bool       { return false }
 
 func (d *DockerBackend) Available(ctx context.Context) bool {
-	if !DockerSocketAvailable(d.socketPath) {
+	// Check socket file exists
+	if _, err := os.Stat(d.config.SocketPath); err != nil {
 		return false
 	}
-	// Ping the Docker daemon to verify it's actually responding.
+	// Ping the Docker daemon
 	pingCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(pingCtx, http.MethodGet, "http://localhost/_ping", nil)
@@ -60,6 +71,29 @@ func (d *DockerBackend) Available(ctx context.Context) bool {
 
 func (d *DockerBackend) Create(ctx context.Context, req CreateRequest) (*WorkerResult, error) {
 	containerName := d.containerPrefix + req.Name
+
+	// Default image fallback
+	image := req.Image
+	if image == "" {
+		if req.Runtime == RuntimeCopaw && d.config.CopawWorkerImage != "" {
+			image = d.config.CopawWorkerImage
+		} else {
+			image = d.config.WorkerImage
+		}
+	}
+	req.Image = image
+
+	// Default network fallback
+	if req.Network == "" && d.config.DefaultNetwork != "" {
+		req.Network = d.config.DefaultNetwork
+	}
+
+	// Infer WorkingDir from HOME env if not set
+	if req.WorkingDir == "" {
+		if home, ok := req.Env["HOME"]; ok {
+			req.WorkingDir = home
+		}
+	}
 
 	payload := d.buildCreatePayload(req)
 	body, err := json.Marshal(payload)

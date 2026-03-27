@@ -44,16 +44,6 @@ type SAEBackend struct {
 
 // NewSAEBackend creates a SAEBackend with auto-configured SDK client.
 func NewSAEBackend(creds CloudCredentialProvider, config SAEConfig, containerPrefix string) (*SAEBackend, error) {
-	if containerPrefix == "" {
-		containerPrefix = "hiclaw-worker-"
-	}
-	if config.CPU == 0 {
-		config.CPU = 1000
-	}
-	if config.Memory == 0 {
-		config.Memory = 2048
-	}
-
 	cred, err := creds.GetCredential()
 	if err != nil {
 		return nil, fmt.Errorf("build SAE credentials: %w", err)
@@ -70,17 +60,13 @@ func NewSAEBackend(creds CloudCredentialProvider, config SAEConfig, containerPre
 		return nil, fmt.Errorf("create SAE client: %w", err)
 	}
 
-	return &SAEBackend{
-		client:          client,
-		config:          config,
-		containerPrefix: containerPrefix,
-	}, nil
+	return NewSAEBackendWithClient(client, config, containerPrefix), nil
 }
 
 // NewSAEBackendWithClient creates a SAEBackend with a custom client (for testing).
 func NewSAEBackendWithClient(client SAEClient, config SAEConfig, containerPrefix string) *SAEBackend {
 	if containerPrefix == "" {
-		containerPrefix = "hiclaw-worker-"
+		containerPrefix = DefaultContainerPrefix
 	}
 	if config.CPU == 0 {
 		config.CPU = 1000
@@ -95,10 +81,11 @@ func NewSAEBackendWithClient(client SAEClient, config SAEConfig, containerPrefix
 	}
 }
 
-func (s *SAEBackend) Name() string { return "sae" }
+func (s *SAEBackend) Name() string                        { return "sae" }
+func (s *SAEBackend) NeedsCredentialInjection() bool       { return true }
 
 func (s *SAEBackend) Available(_ context.Context) bool {
-	return IsAliyunRuntime() && s.config.WorkerImage != ""
+	return s.config.WorkerImage != "" && s.config.NamespaceID != ""
 }
 
 func (s *SAEBackend) Create(ctx context.Context, req CreateRequest) (*WorkerResult, error) {
@@ -116,18 +103,24 @@ func (s *SAEBackend) Create(ctx context.Context, req CreateRequest) (*WorkerResu
 	// Build env vars
 	image := req.Image
 	if image == "" {
-		if req.Runtime == "copaw" && s.config.CopawWorkerImage != "" {
+		if req.Runtime == RuntimeCopaw && s.config.CopawWorkerImage != "" {
 			image = s.config.CopawWorkerImage
 		} else {
 			image = s.config.WorkerImage
 		}
 	}
 
-	// SAE backend auto-injects runtime identifier so workers know they're on cloud
+	// SAE backend auto-injects runtime and credentials into worker env
 	if req.Env == nil {
 		req.Env = make(map[string]string)
 	}
 	req.Env["HICLAW_RUNTIME"] = "aliyun"
+	if req.WorkerAPIKey != "" {
+		req.Env["HICLAW_WORKER_API_KEY"] = req.WorkerAPIKey
+	}
+	if req.OrchestratorURL != "" {
+		req.Env["HICLAW_ORCHESTRATOR_URL"] = req.OrchestratorURL
+	}
 
 	envList := s.buildEnvList(req.Env)
 

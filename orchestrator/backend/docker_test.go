@@ -119,14 +119,16 @@ func mockDockerAPI(t *testing.T) *httptest.Server {
 
 func newTestDockerBackend(t *testing.T, serverURL string) *DockerBackend {
 	t.Helper()
-	client := &http.Client{}
 	b := &DockerBackend{
-		client:          client,
+		config: DockerConfig{
+			WorkerImage:      "hiclaw/worker-agent:latest",
+			CopawWorkerImage: "hiclaw/copaw-worker:latest",
+			DefaultNetwork:   "hiclaw-net",
+		},
 		containerPrefix: "hiclaw-worker-",
-	}
-	// Patch all requests to go to the test server instead of Unix socket
-	b.client = &http.Client{
-		Transport: &testTransport{serverURL: serverURL},
+		client: &http.Client{
+			Transport: &testTransport{serverURL: serverURL},
+		},
 	}
 	return b
 }

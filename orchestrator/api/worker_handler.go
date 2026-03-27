@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"sync"
@@ -44,6 +45,11 @@ func (h *WorkerHandler) Create(w http.ResponseWriter, r *http.Request) {
 		httputil.WriteError(w, http.StatusBadRequest, "name is required")
 		return
 	}
+	if !backend.ValidRuntime(req.Runtime) {
+		httputil.WriteError(w, http.StatusBadRequest,
+			fmt.Sprintf("invalid runtime %q, supported: openclaw, copaw", req.Runtime))
+		return
+	}
 
 	b, err := h.registry.GetWorkerBackend(r.Context(), req.Backend)
 	if err != nil {
@@ -51,30 +57,25 @@ func (h *WorkerHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// For SAE backend: generate per-worker API key and inject into env
+	// Generate API key for backends that need orchestrator-mediated credentials
 	var apiKey string
-	if b.Name() == "sae" && h.keyStore != nil && h.keyStore.AuthEnabled() {
+	if b.NeedsCredentialInjection() && h.keyStore != nil && h.keyStore.AuthEnabled() {
 		apiKey = h.keyStore.GenerateWorkerKey(req.Name)
-		if req.Env == nil {
-			req.Env = make(map[string]string)
-		}
-		req.Env["HICLAW_WORKER_API_KEY"] = apiKey
-		if h.orchestratorURL != "" {
-			req.Env["HICLAW_ORCHESTRATOR_URL"] = h.orchestratorURL
-		}
 	}
 
 	// Clear any stale readiness state
 	h.setReady(req.Name, false)
 
 	result, err := b.Create(r.Context(), backend.CreateRequest{
-		Name:       req.Name,
-		Image:      req.Image,
-		Runtime:    req.Runtime,
-		Env:        req.Env,
-		Network:    req.Network,
-		ExtraHosts: req.ExtraHosts,
-		WorkingDir: req.WorkingDir,
+		Name:            req.Name,
+		Image:           req.Image,
+		Runtime:         req.Runtime,
+		Env:             req.Env,
+		Network:         req.Network,
+		ExtraHosts:      req.ExtraHosts,
+		WorkingDir:      req.WorkingDir,
+		OrchestratorURL: h.orchestratorURL,
+		WorkerAPIKey:    apiKey,
 	})
 	if err != nil {
 		log.Printf("[ERROR] create worker %s: %v", req.Name, err)

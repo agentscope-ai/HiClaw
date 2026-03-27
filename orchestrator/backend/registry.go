@@ -3,9 +3,10 @@ package backend
 import (
 	"context"
 	"fmt"
-	"log"
-	"os"
 )
+
+// DefaultContainerPrefix is the default prefix for worker container/app names.
+const DefaultContainerPrefix = "hiclaw-worker-"
 
 // Registry holds all available backends and provides auto-detection.
 type Registry struct {
@@ -22,14 +23,13 @@ func NewRegistry(workers []WorkerBackend, gateways []GatewayBackend) *Registry {
 }
 
 // DetectWorkerBackend returns the first available worker backend.
-// Priority matches _detect_worker_backend() in container-api.sh:
+// Priority is determined by registration order (set in main.go buildBackends):
 //  1. Docker backend (socket available)
-//  2. SAE backend (HICLAW_RUNTIME=aliyun)
+//  2. SAE backend (SAE worker image configured)
 //  3. nil
 func (r *Registry) DetectWorkerBackend(ctx context.Context) WorkerBackend {
 	for _, b := range r.workerBackends {
 		if b.Available(ctx) {
-			log.Printf("Auto-detected worker backend: %s", b.Name())
 			return b
 		}
 	}
@@ -57,7 +57,6 @@ func (r *Registry) GetWorkerBackend(ctx context.Context, name string) (WorkerBac
 func (r *Registry) DetectGatewayBackend(ctx context.Context) GatewayBackend {
 	for _, b := range r.gatewayBackends {
 		if b.Available(ctx) {
-			log.Printf("Auto-detected gateway backend: %s", b.Name())
 			return b
 		}
 	}
@@ -79,15 +78,4 @@ func (r *Registry) GetGatewayBackend(ctx context.Context, name string) (GatewayB
 		}
 	}
 	return nil, fmt.Errorf("unknown gateway backend: %q", name)
-}
-
-// DockerSocketAvailable checks if the Docker socket is accessible.
-func DockerSocketAvailable(socketPath string) bool {
-	_, err := os.Stat(socketPath)
-	return err == nil
-}
-
-// IsAliyunRuntime checks if HICLAW_RUNTIME is set to "aliyun".
-func IsAliyunRuntime() bool {
-	return os.Getenv("HICLAW_RUNTIME") == "aliyun"
 }

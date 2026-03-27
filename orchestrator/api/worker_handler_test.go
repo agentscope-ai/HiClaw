@@ -35,6 +35,7 @@ func newMockBackend() *mockBackend {
 
 func (m *mockBackend) Name() string                          { return m.name }
 func (m *mockBackend) Available(_ context.Context) bool      { return m.available }
+func (m *mockBackend) NeedsCredentialInjection() bool        { return false }
 
 func (m *mockBackend) Create(_ context.Context, req backend.CreateRequest) (*backend.WorkerResult, error) {
 	if m.createErr != nil {

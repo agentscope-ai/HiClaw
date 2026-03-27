@@ -23,6 +23,18 @@ const (
 	StatusUnknown  WorkerStatus = "unknown"
 )
 
+// Supported worker runtimes.
+const (
+	RuntimeOpenClaw = "openclaw"
+	RuntimeCopaw    = "copaw"
+)
+
+// ValidRuntime reports whether r is a recognized runtime value.
+// An empty string is valid — backends resolve it to the default image.
+func ValidRuntime(r string) bool {
+	return r == "" || r == RuntimeOpenClaw || r == RuntimeCopaw
+}
+
 // CreateRequest holds parameters for creating a worker container/instance.
 type CreateRequest struct {
 	Name       string            `json:"name"`
@@ -32,6 +44,10 @@ type CreateRequest struct {
 	Network    string            `json:"network,omitempty"`
 	ExtraHosts []string          `json:"extra_hosts,omitempty"`
 	WorkingDir string            `json:"working_dir,omitempty"`
+
+	// Credential injection — set by handler, backends that need it will inject into env.
+	OrchestratorURL string `json:"-"`
+	WorkerAPIKey    string `json:"-"`
 }
 
 // WorkerResult holds the result of a worker operation.
@@ -52,6 +68,10 @@ type WorkerBackend interface {
 
 	// Available reports whether this backend is usable in the current environment.
 	Available(ctx context.Context) bool
+
+	// NeedsCredentialInjection reports whether this backend requires
+	// orchestrator-mediated credentials (API key + URL) injected into worker env.
+	NeedsCredentialInjection() bool
 
 	// Create creates and starts a new worker.
 	Create(ctx context.Context, req CreateRequest) (*WorkerResult, error)

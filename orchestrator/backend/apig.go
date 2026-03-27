@@ -64,7 +64,7 @@ func NewAPIGBackendWithClient(client APIGClient, config APIGConfig) *APIGBackend
 func (a *APIGBackend) Name() string { return "apig" }
 
 func (a *APIGBackend) Available(_ context.Context) bool {
-	return IsAliyunRuntime() && a.config.GatewayID != ""
+	return a.config.GatewayID != ""
 }
 
 func (a *APIGBackend) CreateConsumer(_ context.Context, req ConsumerRequest) (*ConsumerResult, error) {

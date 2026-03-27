@@ -773,6 +773,7 @@ elif container_api_available; then
         --arg fs_domain "${HICLAW_FS_DOMAIN:-fs-local.hiclaw.io}" \
         --arg fs_access_key "${WORKER_NAME}" \
         --arg fs_secret_key "${WORKER_MINIO_PASSWORD}" \
+        --arg orchestrator_url "${HICLAW_ORCHESTRATOR_URL:-}" \
         '{
             "HICLAW_WORKER_NAME": $worker_name,
             "HICLAW_WORKER_GATEWAY_KEY": $worker_key,
@@ -784,6 +785,7 @@ elif container_api_available; then
             "HICLAW_FS_ACCESS_KEY": $fs_access_key,
             "HICLAW_FS_SECRET_KEY": $fs_secret_key
         }
+        | if $orchestrator_url != "" then . + { "HICLAW_ORCHESTRATOR_URL": $orchestrator_url } else . end
         | if $oss_bucket != "" then . + { "HICLAW_OSS_BUCKET": $oss_bucket, "HICLAW_REGION": $region } else . end
         | if $skills_api_url != "" then . + { "SKILLS_API_URL": $skills_api_url } else . end
         | if $console_port != "" then . + { "HICLAW_CONSOLE_PORT": $console_port } else . end
@@ -795,14 +797,31 @@ elif container_api_available; then
             }
           else . end')
 
+    # Build extra_hosts for local domains (map *-local.hiclaw.io to Manager IP)
+    MANAGER_IP=$(container_get_manager_ip)
+    EXTRA_HOSTS="[]"
+    if [ -z "${MANAGER_IP}" ]; then
+        log "  WARNING: Could not detect Manager IP — worker may fail to resolve *-local.hiclaw.io domains"
+    fi
+    if [ -n "${MANAGER_IP}" ]; then
+        EXTRA_HOSTS=$(jq -cn --arg ip "${MANAGER_IP}" \
+            --arg matrix "${HICLAW_MATRIX_DOMAIN%%:*}" \
+            --arg matrix_client "${HICLAW_MATRIX_CLIENT_DOMAIN:-matrix-client-local.hiclaw.io}" \
+            --arg aigw "${HICLAW_AI_GATEWAY_DOMAIN:-aigw-local.hiclaw.io}" \
+            --arg fs "${HICLAW_FS_DOMAIN:-fs-local.hiclaw.io}" \
+            '[$matrix, $matrix_client, $aigw, $fs] | map(select(endswith("-local.hiclaw.io"))) | map(. + ":" + $ip)')
+    fi
+
     # Build create request body
     CREATE_BODY=$(jq -cn \
         --arg name "${WORKER_NAME}" \
         --arg image "${CUSTOM_IMAGE:-}" \
         --arg runtime "${WORKER_RUNTIME}" \
         --argjson env "${WORKER_ENV}" \
+        --argjson extra_hosts "${EXTRA_HOSTS}" \
         '{name: $name, runtime: $runtime, env: $env}
-         | if $image != "" then . + {image: $image} else . end')
+         | if $image != "" then . + {image: $image} else . end
+         | if ($extra_hosts | length) > 0 then . + {extra_hosts: $extra_hosts} else . end')
 
     CREATE_OUTPUT=$(worker_backend_create "${CREATE_BODY}" 2>/dev/null) || true
     log "  Create response: ${CREATE_OUTPUT:0:300}"

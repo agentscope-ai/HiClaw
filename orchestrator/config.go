@@ -16,8 +16,6 @@ type Config struct {
 	SocketPath string
 	// ContainerPrefix is the required prefix for worker container names (default "hiclaw-worker-").
 	ContainerPrefix string
-	// Runtime is the deployment runtime ("aliyun" for cloud, empty for local).
-	Runtime string
 
 	// Auth
 	ManagerAPIKey string // HICLAW_ORCHESTRATOR_API_KEY
@@ -44,7 +42,7 @@ type Config struct {
 	OIDCProviderArn string
 	OIDCTokenFile   string
 
-	// Orchestrator URL (advertised to SAE workers for STS refresh)
+	// Orchestrator URL (advertised to workers for STS refresh)
 	OrchestratorURL string
 }
 
@@ -54,7 +52,6 @@ func LoadConfig() *Config {
 		ListenAddr:      envOrDefault("HICLAW_PROXY_LISTEN", ":2375"),
 		SocketPath:      envOrDefault("HICLAW_PROXY_SOCKET", "/var/run/docker.sock"),
 		ContainerPrefix: envOrDefault("HICLAW_PROXY_CONTAINER_PREFIX", "hiclaw-worker-"),
-		Runtime:         os.Getenv("HICLAW_RUNTIME"),
 
 		ManagerAPIKey: os.Getenv("HICLAW_ORCHESTRATOR_API_KEY"),
 
@@ -78,6 +75,15 @@ func LoadConfig() *Config {
 		OIDCTokenFile:   os.Getenv("ALIBABA_CLOUD_OIDC_TOKEN_FILE"),
 
 		OrchestratorURL: os.Getenv("HICLAW_ORCHESTRATOR_URL"),
+	}
+}
+
+func (c *Config) DockerConfig() backend.DockerConfig {
+	return backend.DockerConfig{
+		SocketPath:       c.SocketPath,
+		WorkerImage:      envOrDefault("HICLAW_WORKER_IMAGE", "hiclaw/worker-agent:latest"),
+		CopawWorkerImage: envOrDefault("HICLAW_COPAW_WORKER_IMAGE", "hiclaw/copaw-worker:latest"),
+		DefaultNetwork:   envOrDefault("HICLAW_DOCKER_NETWORK", "hiclaw-net"),
 	}
 }
 
