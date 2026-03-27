@@ -175,6 +175,25 @@ func (p *PackageResolver) DeployToMinIO(ctx context.Context, extractedDir, worke
 		cpCmd.CombinedOutput()
 	}
 
+	// Copy crons/ to .openclaw/cron/ if present (OpenClaw native cron jobs)
+	// If jobs.json is a bare array, wrap it in {"version":1,"jobs":[...]} format
+	cronsDir := filepath.Join(extractedDir, "crons")
+	if info, err := os.Stat(cronsDir); err == nil && info.IsDir() {
+		destCron := filepath.Join(agentDir, ".openclaw", "cron")
+		os.MkdirAll(destCron, 0755)
+		jobsFile := filepath.Join(cronsDir, "jobs.json")
+		if data, err := os.ReadFile(jobsFile); err == nil {
+			trimmed := strings.TrimSpace(string(data))
+			if strings.HasPrefix(trimmed, "[") {
+				// Bare array — wrap in OpenClaw expected format
+				wrapped := fmt.Sprintf(`{"version":1,"jobs":%s}`, trimmed)
+				os.WriteFile(filepath.Join(destCron, "jobs.json"), []byte(wrapped), 0644)
+			} else {
+				os.WriteFile(filepath.Join(destCron, "jobs.json"), data, 0644)
+			}
+		}
+	}
+
 	// Push to MinIO
 	storagePrefix := os.Getenv("HICLAW_STORAGE_PREFIX")
 	if storagePrefix == "" {
