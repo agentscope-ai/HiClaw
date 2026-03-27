@@ -334,6 +334,12 @@ if [ -f "${WORKSPACE_DIR}/MEMORY.md" ]; then
     log "  Copied MEMORY.md"
 fi
 
+# Copy TOOLS.md as a separate file
+if [ -f "${WORKSPACE_DIR}/TOOLS.md" ]; then
+    cp "${WORKSPACE_DIR}/TOOLS.md" "${STAGING}/config/TOOLS.md"
+    log "  Copied TOOLS.md"
+fi
+
 if [ -d "${WORKSPACE_DIR}/memory" ]; then
     mkdir -p "${STAGING}/config/memory"
     # Copy markdown memory files (skip sqlite databases which are session-specific)
