@@ -55,7 +55,7 @@ These tools are pre-installed — do NOT include them in the Dockerfile:
 | Self-managed API keys | HiClaw AI Gateway with per-worker credentials |
 | Self-managed cron jobs | Manager-coordinated scheduled tasks |
 | Full system access | Scoped MinIO permissions, sandboxed container |
-| Self-managed skills | Manager-controlled builtin skills + your custom-skills |
+| Self-managed skills | Manager-controlled builtin skills + your custom skills in `skills/` |
 
 ## Migration Workflow
 
@@ -85,7 +85,7 @@ Read your current AGENTS.md (at `~/.openclaw/workspace/AGENTS.md` or your config
 2. **REMOVE or DO NOT DUPLICATE**: The following topics are already covered in HiClaw's builtin section (injected automatically by the import script). If your AGENTS.md has similar content, **remove it** to avoid conflicts and redundancy:
    - **Every Session** — session startup routine (read SOUL.md, read memory)
    - **Memory** — daily notes (`memory/YYYY-MM-DD.md`), long-term memory (`MEMORY.md`), "write it down" rules
-   - **Skills** — builtin skills (`skills/`) vs custom skills (`custom-skills/`), MCP tools via mcporter
+   - **Skills** — builtin skills and custom skills coexist in `skills/`, MCP tools via mcporter
    - **Communication** — Matrix room structure, @mention protocol, when to speak, NO_REPLY usage, file sync via `hiclaw-sync`
    - **Task Execution** — task workflow (sync → read spec → create plan → execute → write results → push to MinIO → @mention Manager)
    - **Task Directory Rules** — `spec.md`, `plan.md`, `result.md`, intermediate artifacts, `base/` directory

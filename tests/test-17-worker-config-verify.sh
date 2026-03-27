@@ -154,8 +154,8 @@ for skill in file-sync task-progress mcporter find-skills project-participation;
     fi
 done
 
-# Custom skill from ZIP should be present
-CUSTOM_SKILL=$(exec_in_manager bash -c "mc ls '${STORAGE_PREFIX}/agents/${TEST_WORKER}/custom-skills/my-custom-skill/SKILL.md' >/dev/null 2>&1 && echo yes || echo no")
+# Custom skill from ZIP should be present in skills/ (alongside builtins)
+CUSTOM_SKILL=$(exec_in_manager bash -c "mc ls '${STORAGE_PREFIX}/agents/${TEST_WORKER}/skills/my-custom-skill/SKILL.md' >/dev/null 2>&1 && echo yes || echo no")
 if [ "${CUSTOM_SKILL}" = "yes" ]; then
     log_pass "Custom skill from ZIP present: my-custom-skill"
 else

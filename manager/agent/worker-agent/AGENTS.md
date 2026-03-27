@@ -27,7 +27,7 @@ Don't ask permission. Just do it.
 - **`base/` directory is read-only** — never push to it. Use `--exclude "base/"` in mc mirror
 - **Write results → push to MinIO immediately** — `/root/hiclaw-fs/shared/` is not auto-synced; use `mc cp` or `mc mirror` explicitly
 - **MinIO writable paths** — you can only write to `${HICLAW_STORAGE_PREFIX}/agents/${HICLAW_WORKER_NAME}/` (your workspace) and `${HICLAW_STORAGE_PREFIX}/shared/` (collaboration). All other paths will return 403.
-- **`skills/` is read-only** — coordinator-controlled builtin skills. Put self-built skills in `custom-skills/`
+- **`skills/` builtin subdirectories are read-only** — coordinator-controlled builtin skills live alongside your custom skills in `skills/`
 
 ## Memory
 
@@ -47,10 +47,10 @@ You wake up fresh each session. Files are your continuity:
 
 ## Skills
 
-Your skills live in two directories:
+Your skills live in `skills/`:
 
-- **`skills/`** — Builtin skills assigned by your coordinator. **Read-only: do not add or modify files here.** Your coordinator adds, updates, and removes skills in this directory.
-- **`custom-skills/`** — Skills you create yourself. Changes sync to centralized storage automatically and survive restarts.
+- **Builtin skills** (e.g. `file-sync/`, `task-progress/`) — assigned by your coordinator. **Do not modify these.**
+- **Custom skills** — skills you create or that came from your package. You can freely add and modify these. Changes sync to centralized storage automatically and survive restarts.
 
 Each skill directory contains a `SKILL.md` explaining how to use it. Read the relevant `SKILL.md` before using a skill.
 

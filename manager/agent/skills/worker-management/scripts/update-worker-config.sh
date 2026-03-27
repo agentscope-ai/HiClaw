@@ -123,10 +123,10 @@ if [ -n "${PACKAGE_DIR}" ] && [ -d "${PACKAGE_DIR}" ]; then
         log "    Updated: SOUL.md"
     fi
 
-    # Copy custom skills (merged — new added, existing updated, old kept)
+    # Copy custom skills (merged into skills/ alongside builtins)
     if [ -d "${PACKAGE_DIR}/skills" ]; then
-        mkdir -p "${AGENT_DIR}/custom-skills"
-        cp -r "${PACKAGE_DIR}/skills"/* "${AGENT_DIR}/custom-skills/" 2>/dev/null || true
+        mkdir -p "${AGENT_DIR}/skills"
+        cp -r "${PACKAGE_DIR}/skills"/* "${AGENT_DIR}/skills/" 2>/dev/null || true
         log "    Custom skills merged"
     fi
 

@@ -141,6 +141,12 @@ func (p *PackageResolver) DeployToMinIO(ctx context.Context, extractedDir, worke
 		for _, e := range entries {
 			src := filepath.Join(configDir, e.Name())
 			dst := filepath.Join(agentDir, e.Name())
+			if e.IsDir() {
+				// Recursively copy subdirectories (e.g. memory/)
+				cpCmd := exec.CommandContext(ctx, "cp", "-r", src, dst)
+				cpCmd.CombinedOutput()
+				continue
+			}
 			data, err := os.ReadFile(src)
 			if err != nil {
 				continue
@@ -159,10 +165,13 @@ func (p *PackageResolver) DeployToMinIO(ctx context.Context, extractedDir, worke
 		}
 	}
 
-	// Copy custom skills/ directory if present
+	// Copy custom skills/ directory if present — merge into skills/ alongside builtins
 	skillsDir := filepath.Join(extractedDir, "skills")
 	if info, err := os.Stat(skillsDir); err == nil && info.IsDir() {
-		cpCmd := exec.CommandContext(ctx, "cp", "-r", skillsDir, filepath.Join(agentDir, "custom-skills"))
+		destSkills := filepath.Join(agentDir, "skills")
+		os.MkdirAll(destSkills, 0755)
+		// Use cp -r with trailing /. to merge contents into existing skills/ dir
+		cpCmd := exec.CommandContext(ctx, "cp", "-r", skillsDir+"/.", destSkills+"/")
 		cpCmd.CombinedOutput()
 	}
 
