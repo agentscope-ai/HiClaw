@@ -15,7 +15,7 @@ ARG HIGRESS_REGISTRY=higress-registry.cn-hangzhou.cr.aliyuncs.com
 ARG OPENCLAW_BASE_IMAGE=hiclaw/openclaw-base:latest
 
 # ============ Stage 1: MinIO Client (mc) ============
-FROM ${HIGRESS_REGISTRY}/higress/mc:20260325-1b5a5d8 AS mc
+FROM ${HIGRESS_REGISTRY}/higress/mc:20260216 AS mc
 
 # ============ Final Image ============
 FROM ${OPENCLAW_BASE_IMAGE}

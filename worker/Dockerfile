@@ -11,10 +11,10 @@
 # ============================================================
 
 ARG HIGRESS_REGISTRY=higress-registry.cn-hangzhou.cr.aliyuncs.com
-ARG OPENCLAW_BASE_IMAGE=hiclaw/openclaw-base:20260314-be855ee
+ARG OPENCLAW_BASE_IMAGE=hiclaw/openclaw-base:20260325-1b5a5d8
 
 # ============ Stage 1: mc (MinIO Client) ============
-FROM ${HIGRESS_REGISTRY}/higress/mc:20260325-1b5a5d8 AS mc
+FROM ${HIGRESS_REGISTRY}/higress/mc:20260216 AS mc
 
 # ============ Final Image: Based on openclaw-base ============
 # openclaw-base already includes: all-in-one + Node.js 22 + OpenClaw + mcporter + common tools

@@ -11,20 +11,20 @@
 # ============================================================
 
 ARG HIGRESS_REGISTRY=higress-registry.cn-hangzhou.cr.aliyuncs.com
-ARG OPENCLAW_BASE_IMAGE=hiclaw/openclaw-base:20260314-be855ee
+ARG OPENCLAW_BASE_IMAGE=hiclaw/openclaw-base:20260325-1b5a5d8
 ARG HICLAW_CONTROLLER_IMAGE=hiclaw/hiclaw-controller:latest
 
 # ============ Stage 1: Tuwunel Matrix Server ============
-FROM ${HIGRESS_REGISTRY}/higress/tuwunel:20260325-1b5a5d8 AS tuwunel
+FROM ${HIGRESS_REGISTRY}/higress/tuwunel:20260216 AS tuwunel
 
 # ============ Stage 2: MinIO Object Storage ============
-FROM ${HIGRESS_REGISTRY}/higress/minio:20260325-1b5a5d8 AS minio
+FROM ${HIGRESS_REGISTRY}/higress/minio:20260216 AS minio
 
 # ============ Stage 3: MinIO Client (mc) ============
-FROM ${HIGRESS_REGISTRY}/higress/mc:20260325-1b5a5d8 AS mc
+FROM ${HIGRESS_REGISTRY}/higress/mc:20260216 AS mc
 
 # ============ Stage 4: Element Web ============
-FROM ${HIGRESS_REGISTRY}/higress/element-web:20260325-1b5a5d8 AS element-web
+FROM ${HIGRESS_REGISTRY}/higress/element-web:20260216 AS element-web
 
 # ============ Stage 5: hiclaw-controller (pre-built image) ============
 FROM ${HICLAW_CONTROLLER_IMAGE} AS hiclaw-controller
