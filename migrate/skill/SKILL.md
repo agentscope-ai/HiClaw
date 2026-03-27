@@ -179,10 +179,25 @@ Verify:
 - `config/AGENTS.md` contains only your custom content (no Discord/Slack references, no communication protocol rules)
 - `config/SOUL.md` has the AI Identity section
 
-Tell the user the ZIP path. They will transfer it to the HiClaw host and run:
+Tell the user the ZIP path. They will download the import script on the HiClaw host and run:
 
+**Linux/macOS:**
 ```bash
-bash hiclaw-import.sh --zip <path-to-zip>
+# Download the import script
+curl -sSL https://higress.ai/hiclaw/import.sh -o hiclaw-import.sh
+chmod +x hiclaw-import.sh
+
+# Import the worker
+./hiclaw-import.sh worker --name <worker-name> --zip <path-to-zip>
+```
+
+**Windows (PowerShell):**
+```powershell
+# Download the import script
+Invoke-WebRequest -Uri https://higress.ai/hiclaw/import.ps1 -OutFile hiclaw-import.ps1
+
+# Import the worker
+.\hiclaw-import.ps1 worker --name <worker-name> --zip <path-to-zip>
 ```
 
 ## Script Reference
