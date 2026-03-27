@@ -169,9 +169,9 @@ container_create_worker() {
     local container_name="${WORKER_CONTAINER_PREFIX}${worker_name}"
 
     # Build environment variables for the Worker
-    # Use internal port 8080 for Docker network communication
-    local fs_domain="${HICLAW_FS_DOMAIN%%:*}"
-    local fs_endpoint="http://${fs_domain}:8080"
+    # Always use the fixed internal domain so workers on hiclaw-net can reach MinIO
+    # via the manager's network alias, regardless of user-configured FS domain.
+    local fs_endpoint="http://fs-local.hiclaw.io:8080"
     local fs_access_key="${2:-${HICLAW_MINIO_USER:-${HICLAW_ADMIN_USER:-admin}}}"
     local fs_secret_key="${3:-${HICLAW_MINIO_PASSWORD:-${HICLAW_ADMIN_PASSWORD:-admin}}}"
     local extra_env="${4:-[]}"
@@ -383,8 +383,9 @@ container_create_copaw_worker() {
     local worker_name="$1"
     local container_name="${WORKER_CONTAINER_PREFIX}${worker_name}"
 
-    local fs_domain="${HICLAW_FS_DOMAIN%%:*}"
-    local fs_endpoint="http://${fs_domain}:8080"
+    # Always use the fixed internal domain so workers on hiclaw-net can reach MinIO
+    # via the manager's network alias, regardless of user-configured FS domain.
+    local fs_endpoint="http://fs-local.hiclaw.io:8080"
     local fs_access_key="${2:-${HICLAW_MINIO_USER:-${HICLAW_ADMIN_USER:-admin}}}"
     local fs_secret_key="${3:-${HICLAW_MINIO_PASSWORD:-${HICLAW_ADMIN_PASSWORD:-admin}}}"
     local extra_env="${4:-[]}"

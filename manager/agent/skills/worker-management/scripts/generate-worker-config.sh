@@ -84,8 +84,13 @@ else
 fi
 # Matrix Domain for user IDs keeps original port (e.g., :9080)
 export HICLAW_MATRIX_DOMAIN="${MATRIX_DOMAIN_FOR_ID}"
-# AI Gateway URL: unified by hiclaw-env.sh (cloud: HICLAW_AI_GATEWAY_URL, local: domain:8080)
-export HICLAW_AI_GATEWAY="${HICLAW_AI_GATEWAY_SERVER}"
+# AI Gateway URL: cloud uses HICLAW_AI_GATEWAY_URL; local always uses fixed internal domain
+# so workers on hiclaw-net can reach Higress regardless of user-configured AI gateway domain.
+if [ "${HICLAW_RUNTIME}" = "aliyun" ] && [ -n "${HICLAW_AI_GATEWAY_URL:-}" ]; then
+    export HICLAW_AI_GATEWAY="${HICLAW_AI_GATEWAY_URL}"
+else
+    export HICLAW_AI_GATEWAY="http://aigw-local.hiclaw.io:8080"
+fi
 export HICLAW_ADMIN_USER="${ADMIN_USER}"
 export HICLAW_DEFAULT_MODEL="${MODEL_NAME}"
 export MODEL_REASONING=true
