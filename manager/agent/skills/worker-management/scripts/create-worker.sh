@@ -797,31 +797,14 @@ elif container_api_available; then
             }
           else . end')
 
-    # Build extra_hosts for local domains (map *-local.hiclaw.io to Manager IP)
-    MANAGER_IP=$(container_get_manager_ip)
-    EXTRA_HOSTS="[]"
-    if [ -z "${MANAGER_IP}" ]; then
-        log "  WARNING: Could not detect Manager IP — worker may fail to resolve *-local.hiclaw.io domains"
-    fi
-    if [ -n "${MANAGER_IP}" ]; then
-        EXTRA_HOSTS=$(jq -cn --arg ip "${MANAGER_IP}" \
-            --arg matrix "${HICLAW_MATRIX_DOMAIN%%:*}" \
-            --arg matrix_client "${HICLAW_MATRIX_CLIENT_DOMAIN:-matrix-client-local.hiclaw.io}" \
-            --arg aigw "${HICLAW_AI_GATEWAY_DOMAIN:-aigw-local.hiclaw.io}" \
-            --arg fs "${HICLAW_FS_DOMAIN:-fs-local.hiclaw.io}" \
-            '[$matrix, $matrix_client, $aigw, $fs] | map(select(endswith("-local.hiclaw.io"))) | map(. + ":" + $ip)')
-    fi
-
     # Build create request body
     CREATE_BODY=$(jq -cn \
         --arg name "${WORKER_NAME}" \
         --arg image "${CUSTOM_IMAGE:-}" \
         --arg runtime "${WORKER_RUNTIME}" \
         --argjson env "${WORKER_ENV}" \
-        --argjson extra_hosts "${EXTRA_HOSTS}" \
         '{name: $name, runtime: $runtime, env: $env}
-         | if $image != "" then . + {image: $image} else . end
-         | if ($extra_hosts | length) > 0 then . + {extra_hosts: $extra_hosts} else . end')
+         | if $image != "" then . + {image: $image} else . end')
 
     CREATE_OUTPUT=$(worker_backend_create "${CREATE_BODY}" 2>/dev/null) || true
     log "  Create response: ${CREATE_OUTPUT:0:300}"

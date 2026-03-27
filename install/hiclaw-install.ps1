@@ -2006,9 +2006,6 @@ function Install-Manager {
             # Start Docker API proxy if enabled
             if ($config.DOCKER_PROXY -eq "1") {
                 $proxyImage = $script:ORCHESTRATOR_IMAGE
-                # Ensure Docker network exists (reuse if already present)
-                docker network inspect hiclaw-net *>$null
-                if ($LASTEXITCODE -ne 0) { docker network create hiclaw-net *>$null }
                 Write-Log "Starting Docker API proxy..."
                 docker rm -f hiclaw-orchestrator *>$null
                 docker run -d --name hiclaw-orchestrator `
@@ -2019,7 +2016,6 @@ function Install-Manager {
                     --restart unless-stopped `
                     $proxyImage
                 $dockerArgs += @("-e", "HICLAW_ORCHESTRATOR_URL=http://hiclaw-orchestrator:2375")
-                $dockerArgs += @("--network", "hiclaw-net")
                 Write-Log (Get-Msg "docker_proxy.selected_enabled")
             } else {
                 $dockerArgs += @("-v", "//var/run/docker.sock:/var/run/docker.sock")

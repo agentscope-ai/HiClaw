@@ -2296,8 +2296,6 @@ EOF
     PROXY_ARGS=""
     if [ "${HICLAW_DOCKER_PROXY:-0}" = "1" ] && [ -n "${CONTAINER_SOCK:-}" ]; then
         local _proxy_image="${ORCHESTRATOR_IMAGE}"
-        # Ensure Docker network exists (reuse if already present)
-        ${DOCKER_CMD} network inspect hiclaw-net >/dev/null 2>&1 || ${DOCKER_CMD} network create hiclaw-net
         log "Starting Docker API proxy..."
         ${DOCKER_CMD} run -d \
             --name hiclaw-orchestrator \
@@ -2307,7 +2305,7 @@ EOF
             ${HICLAW_PROXY_ALLOWED_REGISTRIES:+-e HICLAW_PROXY_ALLOWED_REGISTRIES="${HICLAW_PROXY_ALLOWED_REGISTRIES}"} \
             --restart unless-stopped \
             "${_proxy_image}"
-        PROXY_ARGS="-e HICLAW_ORCHESTRATOR_URL=http://hiclaw-orchestrator:2375 --network hiclaw-net"
+        PROXY_ARGS="-e HICLAW_ORCHESTRATOR_URL=http://hiclaw-orchestrator:2375"
         SOCKET_MOUNT_ARGS=""  # Manager no longer needs direct socket access
     fi
 
