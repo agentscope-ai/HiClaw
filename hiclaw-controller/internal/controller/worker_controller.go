@@ -61,11 +61,15 @@ func (r *WorkerReconciler) Reconcile(ctx context.Context, req reconcile.Request)
 
 	// Reconcile based on current phase
 	switch worker.Status.Phase {
-	case "":
+	case "", "Failed":
 		return r.handleCreate(ctx, &worker)
-	case "Failed":
-		// Retry after backoff
-		return r.handleCreate(ctx, &worker)
+	case "Pending":
+		// Pending with an error message means a previous create attempt failed and
+		// the "Failed" status update itself was lost (e.g. conflict). Retry creation.
+		if worker.Status.Message != "" {
+			return r.handleCreate(ctx, &worker)
+		}
+		return reconcile.Result{}, nil
 	default:
 		return r.handleUpdate(ctx, &worker)
 	}
@@ -84,6 +88,8 @@ func (r *WorkerReconciler) handleCreate(ctx context.Context, w *v1beta1.Worker) 
 	if w.Spec.Package != "" {
 		extractedDir, err := r.Packages.ResolveAndExtract(ctx, w.Spec.Package, w.Name)
 		if err != nil {
+			// Refresh object to avoid conflict on the status update
+			_ = r.Get(ctx, client.ObjectKeyFromObject(w), w)
 			w.Status.Phase = "Failed"
 			w.Status.Message = fmt.Sprintf("package resolve/extract failed: %v", err)
 			r.Status().Update(ctx, w)
@@ -91,6 +97,7 @@ func (r *WorkerReconciler) handleCreate(ctx context.Context, w *v1beta1.Worker) 
 		}
 		if extractedDir != "" {
 			if err := r.Packages.DeployToMinIO(ctx, extractedDir, w.Name); err != nil {
+				_ = r.Get(ctx, client.ObjectKeyFromObject(w), w)
 				w.Status.Phase = "Failed"
 				w.Status.Message = fmt.Sprintf("package deploy failed: %v", err)
 				r.Status().Update(ctx, w)
@@ -148,6 +155,7 @@ func (r *WorkerReconciler) handleCreate(ctx context.Context, w *v1beta1.Worker) 
 		args...,
 	)
 	if err != nil {
+		_ = r.Get(ctx, client.ObjectKeyFromObject(w), w)
 		w.Status.Phase = "Failed"
 		w.Status.Message = fmt.Sprintf("create-worker.sh failed: %v", err)
 		r.Status().Update(ctx, w)
