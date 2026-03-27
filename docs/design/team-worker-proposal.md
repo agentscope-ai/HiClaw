@@ -578,7 +578,6 @@ manager/agent/team-leader-agent/
 ### 后续规划
 
 - incluster 模式完整实现（client-go apply/get/delete）
-- `--watch` 模式（fsnotify 文件变更实时推送）
 - Template 市场（预置常见 Worker/Team 模板包）
 - 多 IM 平台支持（飞书、钉钉、企微等 Channel 适配）
 - 审计日志和成本追踪
