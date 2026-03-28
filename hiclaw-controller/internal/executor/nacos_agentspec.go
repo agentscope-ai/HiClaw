@@ -17,8 +17,9 @@ import (
 )
 
 const (
-	nacosAuthTypeNone  = "none"
-	nacosAuthTypeNacos = "nacos"
+	nacosAuthTypeNone     = "none"
+	nacosAuthTypeNacos    = "nacos"
+	nacosPreflightTimeout = 5 * time.Second
 )
 
 type nacosAgentSpecClient struct {
@@ -83,6 +84,10 @@ func newNacosAgentSpecClient(ctx context.Context, rawAddr, namespace string) (*n
 		client.namespace = "public"
 	}
 
+	if err := client.preflightConnect(ctx); err != nil {
+		return nil, err
+	}
+
 	if client.authType == nacosAuthTypeNacos {
 		if err := client.login(ctx); err != nil {
 			return nil, fmt.Errorf("login failed: %w", err)
@@ -90,6 +95,20 @@ func newNacosAgentSpecClient(ctx context.Context, rawAddr, namespace string) (*n
 	}
 
 	return client, nil
+}
+
+func (c *nacosAgentSpecClient) preflightConnect(ctx context.Context) error {
+	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, nacosPreflightTimeout)
+		defer cancel()
+	}
+
+	conn, err := (&net.Dialer{}).DialContext(ctx, "tcp", c.serverAddr)
+	if err != nil {
+		return fmt.Errorf("failed to connect to %s: %w", c.serverAddr, err)
+	}
+	return conn.Close()
 }
 
 func (c *nacosAgentSpecClient) GetAgentSpec(ctx context.Context, name, outputDir string, version, label string) error {
