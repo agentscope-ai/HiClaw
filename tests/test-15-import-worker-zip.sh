@@ -270,13 +270,6 @@ else
         ROOM_ENC="$(_encode_room_id "${ROOM_ID}")"
         WORKER_MATRIX_ID="@${TEST_WORKER}:${TEST_MATRIX_DOMAIN}"
 
-        # Admin must join the Worker Room first (create-worker.sh only invites)
-        exec_in_manager curl -s -X POST \
-            "${TEST_MATRIX_DIRECT_URL}/_matrix/client/v3/rooms/${ROOM_ENC}/join" \
-            -H "Authorization: Bearer ${ADMIN_TOKEN}" \
-            -H 'Content-Type: application/json' -d '{}' 2>/dev/null | jq -r '.room_id // empty' > /dev/null
-        log_info "Admin joined Worker Room"
-
         # Poll until Worker has joined the room (membership = join)
         log_info "Waiting for Worker to join room..."
         WORKER_READY_TIMEOUT=120
@@ -299,6 +292,14 @@ else
             log_pass "Worker joined room (took ~${WORKER_READY_ELAPSED}s)"
         else
             log_fail "Worker did not join room within ${WORKER_READY_TIMEOUT}s"
+        fi
+
+        # Verify admin auto-joined the worker room (create-worker.sh should auto-join)
+        ADMIN_MATRIX_ID="@${TEST_ADMIN_USER}:${TEST_MATRIX_DOMAIN}"
+        if echo "${MEMBERS}" | grep -q "${ADMIN_MATRIX_ID}"; then
+            log_pass "Admin auto-joined worker room"
+        else
+            log_fail "Admin is NOT joined in worker room (auto-join may have failed)"
         fi
 
         # Send message with @mention (Worker requires m.mentions to wake up)

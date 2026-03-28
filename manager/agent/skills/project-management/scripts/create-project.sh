@@ -147,6 +147,28 @@ curl -sf -X POST "${HICLAW_MATRIX_SERVER}/_matrix/client/v3/rooms/${ROOM_ID}/inv
     -d "{\"user_id\": \"${ADMIN_MATRIX_ID}\"}" > /dev/null 2>&1 || true
 log "  Admin ${ADMIN_MATRIX_ID} invited to project room"
 
+# Auto-join admin into project room
+ADMIN_TOKEN=""
+if [ -n "${HICLAW_ADMIN_PASSWORD:-}" ]; then
+    ADMIN_TOKEN=$(curl -sf -X POST ${HICLAW_MATRIX_SERVER}/_matrix/client/v3/login \
+        -H 'Content-Type: application/json' \
+        -d '{"type":"m.login.password","identifier":{"type":"m.id.user","user":"'"${ADMIN_USER}"'"},"password":"'"${HICLAW_ADMIN_PASSWORD}"'"}' \
+        2>/dev/null | jq -r '.access_token // empty')
+fi
+if [ -n "${ADMIN_TOKEN}" ]; then
+    ROOM_ENC=$(echo "${ROOM_ID}" | sed 's/!/%21/g')
+    if curl -sf -X POST "${HICLAW_MATRIX_SERVER}/_matrix/client/v3/rooms/${ROOM_ENC}/join" \
+        -H "Authorization: Bearer ${ADMIN_TOKEN}" \
+        -H 'Content-Type: application/json' \
+        -d '{}' > /dev/null 2>&1; then
+        log "  Admin auto-joined project room"
+    else
+        log "  WARNING: Admin failed to auto-join project room"
+    fi
+else
+    log "  WARNING: Could not obtain admin token — admin will need to accept invite manually"
+fi
+
 # ============================================================
 # Step 3: Add Workers to Manager's groupAllowFrom
 # ============================================================
