@@ -322,6 +322,38 @@ Human permissions are enforced through two mechanisms:
 6. Push updated configs to MinIO, notify Agents to `file-sync`
 7. Send a welcome email (if SMTP and email are configured)
 
+### Automatic Welcome Email
+
+When `spec.email` is set and SMTP is configured, a welcome email is automatically sent after the Human account is created, containing all the information needed to log in:
+
+```
+Subject: Welcome to HiClaw - Your Account Details
+
+Hi {displayName},
+
+Your HiClaw account has been created:
+
+  Username: {matrix_user_id}
+  Password: {generated_password}
+  Login URL: {element_web_url}
+
+Please log in and change your password immediately.
+
+— HiClaw
+```
+
+SMTP is configured via environment variables in the Manager container:
+
+| Variable | Description |
+|----------|-------------|
+| `HICLAW_SMTP_HOST` | SMTP server address |
+| `HICLAW_SMTP_PORT` | SMTP port |
+| `HICLAW_SMTP_USER` | SMTP username |
+| `HICLAW_SMTP_PASS` | SMTP password |
+| `HICLAW_SMTP_FROM` | Sender address |
+
+If SMTP is not configured or `spec.email` is empty, email sending is skipped without affecting account creation. The initial password is still recorded in `status.initialPassword` and can be retrieved via `hiclaw get human <name>`.
+
 ### Notes
 
 - Humans don't need containers, MinIO spaces, or Higress authorization — only a Matrix account and Room permissions

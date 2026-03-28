@@ -322,6 +322,38 @@ Human 的权限通过两个机制实现：
 6. 推送更新后的配置到 MinIO，通知 Agent 执行 `file-sync`
 7. 发送欢迎邮件（如配置了 SMTP 和 email）
 
+### 自动发送欢迎邮件
+
+当 `spec.email` 不为空且系统配置了 SMTP 时，Human 创建完成后会自动发送一封欢迎邮件，包含登录所需的全部信息：
+
+```
+Subject: Welcome to HiClaw - Your Account Details
+
+Hi {displayName},
+
+Your HiClaw account has been created:
+
+  Username: {matrix_user_id}
+  Password: {generated_password}
+  Login URL: {element_web_url}
+
+Please log in and change your password immediately.
+
+— HiClaw
+```
+
+SMTP 通过以下环境变量配置（在 Manager 容器中）：
+
+| 环境变量 | 说明 |
+|---------|------|
+| `HICLAW_SMTP_HOST` | SMTP 服务器地址 |
+| `HICLAW_SMTP_PORT` | SMTP 端口 |
+| `HICLAW_SMTP_USER` | SMTP 用户名 |
+| `HICLAW_SMTP_PASS` | SMTP 密码 |
+| `HICLAW_SMTP_FROM` | 发件人地址 |
+
+如果未配置 SMTP 或 `spec.email` 为空，邮件发送会被跳过，不影响 Human 账号的正常创建。初始密码仍会记录在 `status.initialPassword` 中，可通过 `hiclaw get human <name>` 查看。
+
 ### 注意事项
 
 - Human 不需要容器、MinIO 空间或 Higress 授权——只需要 Matrix 账号和 Room 权限
