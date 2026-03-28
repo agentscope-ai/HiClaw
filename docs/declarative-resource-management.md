@@ -460,6 +460,8 @@ GET    /api/v1/humans                    # List all Humans
 DELETE /api/v1/workers/alice             # Delete a specific resource
 ```
 
+> **Note:** In the current single-container deployment mode, port 8090 is NOT exposed to the host — it is only accessible from within the Manager container. In the future K8s deployment mode (`HICLAW_KUBE_MODE=incluster`), the controller will be deployed as a standalone Pod, exposing this API via a Kubernetes Service.
+
 ## Batch Deployment
 
 Use `---` separators to define all resources in a single YAML file and deploy an entire organization in one apply.

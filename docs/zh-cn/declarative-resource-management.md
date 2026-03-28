@@ -460,6 +460,8 @@ GET    /api/v1/humans                    # 列出所有 Human
 DELETE /api/v1/workers/alice             # 删除指定资源
 ```
 
+> **注意：** 当前单容器部署模式下，8090 端口未对宿主机暴露，仅在 Manager 容器内部可访问。后续支持 K8s 部署模式（`HICLAW_KUBE_MODE=incluster`）时，controller 将作为独立 Pod 部署，通过 Kubernetes Service 对外提供该 API 能力。
+
 ## 批量部署
 
 用 `---` 分隔符在一个 YAML 文件中定义所有资源，一次 apply 完成整个组织的部署。
