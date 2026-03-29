@@ -2,9 +2,9 @@ package controller
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/json"
 	"fmt"
+	"reflect"
+	"sync"
 	"time"
 
 	v1beta1 "github.com/hiclaw/hiclaw-controller/api/v1beta1"
@@ -17,8 +17,7 @@ import (
 )
 
 const (
-	finalizerName      = "hiclaw.io/cleanup"
-	specHashAnnotation = "hiclaw.io/spec-hash"
+	finalizerName = "hiclaw.io/cleanup"
 )
 
 // WorkerReconciler reconciles Worker resources by calling existing bash scripts.
@@ -26,6 +25,41 @@ type WorkerReconciler struct {
 	client.Client
 	Executor *executor.Shell
 	Packages *executor.PackageResolver
+
+	// lastSpec tracks the last-processed spec per worker name (in memory).
+	// Used by handleUpdate to detect real spec changes via DeepEqual.
+	// Stored in memory (not annotations) to avoid r.Update() calls that
+	// would overwrite spec changes made by the file-watcher during long
+	// create-worker.sh runs (~30s).
+	lastSpecMu sync.Mutex
+	lastSpec   map[string]v1beta1.WorkerSpec
+}
+
+func (r *WorkerReconciler) getLastSpec(name string) (v1beta1.WorkerSpec, bool) {
+	r.lastSpecMu.Lock()
+	defer r.lastSpecMu.Unlock()
+	if r.lastSpec == nil {
+		return v1beta1.WorkerSpec{}, false
+	}
+	spec, ok := r.lastSpec[name]
+	return spec, ok
+}
+
+func (r *WorkerReconciler) setLastSpec(name string, spec v1beta1.WorkerSpec) {
+	r.lastSpecMu.Lock()
+	defer r.lastSpecMu.Unlock()
+	if r.lastSpec == nil {
+		r.lastSpec = make(map[string]v1beta1.WorkerSpec)
+	}
+	r.lastSpec[name] = spec
+}
+
+func (r *WorkerReconciler) deleteLastSpec(name string) {
+	r.lastSpecMu.Lock()
+	defer r.lastSpecMu.Unlock()
+	if r.lastSpec != nil {
+		delete(r.lastSpec, name)
+	}
 }
 
 func (r *WorkerReconciler) Reconcile(ctx context.Context, req reconcile.Request) (reconcile.Result, error) {
@@ -162,22 +196,21 @@ func (r *WorkerReconciler) handleCreate(ctx context.Context, w *v1beta1.Worker) 
 		return reconcile.Result{RequeueAfter: time.Minute}, err
 	}
 
+	// Record the spec we just processed (in memory, not annotation)
+	r.setLastSpec(w.Name, w.Spec)
+
+	// Re-read object before status update to avoid stale resourceVersion.
+	// The file-watcher may have updated the spec while create-worker.sh
+	// was running (~30s), bumping the resourceVersion.
+	if err := r.Get(ctx, client.ObjectKeyFromObject(w), w); err != nil {
+		return reconcile.Result{}, err
+	}
 	w.Status.Phase = "Running"
 	w.Status.MatrixUserID = result.MatrixUserID
 	w.Status.RoomID = result.RoomID
 	w.Status.Message = ""
-
-	// Store spec hash for change detection
-	if w.Annotations == nil {
-		w.Annotations = map[string]string{}
-	}
-	w.Annotations[specHashAnnotation] = computeSpecHash(w.Spec)
-	if err := r.Update(ctx, w); err != nil {
-		return reconcile.Result{}, err
-	}
-
 	if err := r.Status().Update(ctx, w); err != nil {
-		return reconcile.Result{}, err
+		logger.Error(err, "failed to update status after create (non-fatal)", "name", w.Name)
 	}
 
 	logger.Info("worker created", "name", w.Name, "roomID", result.RoomID)
@@ -187,14 +220,9 @@ func (r *WorkerReconciler) handleCreate(ctx context.Context, w *v1beta1.Worker) 
 func (r *WorkerReconciler) handleUpdate(ctx context.Context, w *v1beta1.Worker) (reconcile.Result, error) {
 	logger := log.FromContext(ctx)
 
-	// Compare current spec hash with stored hash
-	currentHash := computeSpecHash(w.Spec)
-	storedHash := ""
-	if w.Annotations != nil {
-		storedHash = w.Annotations[specHashAnnotation]
-	}
-
-	if currentHash == storedHash {
+	// Compare current spec (from informer, always fresh) with last-processed spec
+	lastSpec, exists := r.getLastSpec(w.Name)
+	if exists && reflect.DeepEqual(w.Spec, lastSpec) {
 		return reconcile.Result{}, nil // no spec change
 	}
 
@@ -257,19 +285,15 @@ func (r *WorkerReconciler) handleUpdate(ctx context.Context, w *v1beta1.Worker) 
 		return reconcile.Result{RequeueAfter: time.Minute}, err
 	}
 
-	// 3. Update spec hash and status
-	if w.Annotations == nil {
-		w.Annotations = map[string]string{}
-	}
-	w.Annotations[specHashAnnotation] = currentHash
-	if err := r.Update(ctx, w); err != nil {
-		return reconcile.Result{}, err
-	}
+	// Record the spec we just processed
+	r.setLastSpec(w.Name, w.Spec)
 
+	// Re-read before status update
+	_ = r.Get(ctx, client.ObjectKeyFromObject(w), w)
 	w.Status.Phase = "Running"
 	w.Status.Message = "Configuration updated (memory preserved, skills merged)"
 	if err := r.Status().Update(ctx, w); err != nil {
-		return reconcile.Result{}, err
+		logger.Error(err, "failed to update status after update (non-fatal)", "name", w.Name)
 	}
 
 	logger.Info("worker updated", "name", w.Name)
@@ -279,6 +303,8 @@ func (r *WorkerReconciler) handleUpdate(ctx context.Context, w *v1beta1.Worker) 
 func (r *WorkerReconciler) handleDelete(ctx context.Context, w *v1beta1.Worker) error {
 	logger := log.FromContext(ctx)
 	logger.Info("deleting worker", "name", w.Name)
+
+	r.deleteLastSpec(w.Name)
 
 	// Stop container via lifecycle script
 	_, err := r.Executor.RunSimple(ctx,
@@ -301,12 +327,6 @@ func joinStrings(ss []string) string {
 		result += s
 	}
 	return result
-}
-
-func computeSpecHash(spec v1beta1.WorkerSpec) string {
-	data, _ := json.Marshal(spec)
-	h := sha256.Sum256(data)
-	return fmt.Sprintf("%x", h[:8])
 }
 
 func storagePrefix() string {
