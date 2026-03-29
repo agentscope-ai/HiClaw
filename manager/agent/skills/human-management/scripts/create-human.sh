@@ -101,10 +101,16 @@ REG_RESP=$(curl -s -X POST ${HICLAW_MATRIX_SERVER}/_matrix/client/v3/register \
     }' 2>/dev/null) || true
 
 if echo "${REG_RESP}" | jq -e '.access_token' > /dev/null 2>&1; then
+    HUMAN_TOKEN=$(echo "${REG_RESP}" | jq -r '.access_token')
     log "  Registered new account: ${MATRIX_ID}"
 else
     log "  Account may already exist (registration response: ${REG_RESP:0:100})"
     log "  Proceeding with permission configuration..."
+    # Try to login to get a token for auto-joining rooms
+    HUMAN_TOKEN=$(curl -sf -X POST ${HICLAW_MATRIX_SERVER}/_matrix/client/v3/login \
+        -H 'Content-Type: application/json' \
+        -d '{"type":"m.login.password","identifier":{"type":"m.id.user","user":"'"${HUMAN_USERNAME}"'"},"password":"'"${HUMAN_PASSWORD}"'"}' \
+        2>/dev/null | jq -r '.access_token // empty')
 fi
 
 # ============================================================
@@ -164,7 +170,7 @@ _add_to_manager() {
     log "    Added to Manager's groupAllowFrom + dm.allowFrom"
 }
 
-# Helper: invite human to a Matrix room
+# Helper: invite human to a Matrix room and auto-join if token available
 _invite_to_room() {
     local room_id="$1"
     [ -z "${room_id}" ] || [ "${room_id}" = "null" ] && return
@@ -174,6 +180,16 @@ _invite_to_room() {
         -H 'Content-Type: application/json' \
         -d '{"user_id": "'"${MATRIX_ID}"'"}' 2>/dev/null || true
     ROOMS_INVITED+=("${room_id}")
+
+    # Auto-join on behalf of the human
+    if [ -n "${HUMAN_TOKEN:-}" ]; then
+        local _room_enc
+        _room_enc=$(echo "${room_id}" | sed 's/!/%21/g')
+        curl -sf -X POST "${HICLAW_MATRIX_SERVER}/_matrix/client/v3/rooms/${_room_enc}/join" \
+            -H "Authorization: Bearer ${HUMAN_TOKEN}" \
+            -H 'Content-Type: application/json' \
+            -d '{}' > /dev/null 2>&1 || true
+    fi
 }
 
 # --- Level 1: Admin equivalent ---

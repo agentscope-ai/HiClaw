@@ -233,7 +233,37 @@ LEADER_CTX=$(echo "${LEADER_AGENTS}" | sed -n '/hiclaw-team-context-start/,/hicl
 assert_contains "${LEADER_CTX}" "Team Admin" "Leader team-context mentions Team Admin"
 
 # ============================================================
-# Section 7: Verify containers running
+# Section 7: Verify admin auto-joined worker rooms
+# ============================================================
+log_section "Verify Admin Auto-Joined Worker Rooms"
+
+ADMIN_LOGIN=$(matrix_login "${TEST_ADMIN_USER}" "${TEST_ADMIN_PASSWORD}" 2>/dev/null)
+ADMIN_TOKEN=$(echo "${ADMIN_LOGIN}" | jq -r '.access_token // empty')
+if [ -n "${ADMIN_TOKEN}" ] && [ "${ADMIN_TOKEN}" != "null" ]; then
+    ADMIN_MATRIX_ID="@${TEST_ADMIN_USER}:${TEST_MATRIX_DOMAIN}"
+    for w in "${TEST_LEADER}" "${TEST_W1}"; do
+        W_ROOM=$(exec_in_manager jq -r --arg w "${w}" '.workers[$w].room_id // empty' /root/manager-workspace/workers-registry.json 2>/dev/null)
+        if [ -n "${W_ROOM}" ] && [ "${W_ROOM}" != "null" ]; then
+            W_ROOM_ENC=$(echo "${W_ROOM}" | sed 's/!/%21/g')
+            W_MEMBERS=$(exec_in_manager curl -sf \
+                "${TEST_MATRIX_DIRECT_URL}/_matrix/client/v3/rooms/${W_ROOM_ENC}/members" \
+                -H "Authorization: Bearer ${ADMIN_TOKEN}" 2>/dev/null | \
+                jq -r '.chunk[] | select(.content.membership == "join") | .state_key' 2>/dev/null)
+            if echo "${W_MEMBERS}" | grep -q "${ADMIN_MATRIX_ID}"; then
+                log_pass "Admin auto-joined ${w} worker room"
+            else
+                log_fail "Admin is NOT joined in ${w} worker room"
+            fi
+        else
+            log_info "Skipping ${w} room check (no room_id)"
+        fi
+    done
+else
+    log_info "Skipping worker room membership checks (no admin token)"
+fi
+
+# ============================================================
+# Section 8: Verify containers running
 # ============================================================
 log_section "Verify Containers"
 

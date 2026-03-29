@@ -13,6 +13,7 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/lib/test-helpers.sh"
 source "${SCRIPT_DIR}/lib/minio-client.sh"
+source "${SCRIPT_DIR}/lib/matrix-client.sh"
 
 test_setup "18-team-config-verify"
 
@@ -111,6 +112,25 @@ assert_eq "2" "${TEAM_WORKERS_REG}" "Team has 2 workers"
 
 TEAM_ROOM=$(echo "${TEAM_ENTRY}" | jq -r '.team_room_id // empty')
 assert_not_empty "${TEAM_ROOM}" "Team Room ID exists: ${TEAM_ROOM}"
+
+# Verify admin auto-joined the team room
+ADMIN_LOGIN=$(matrix_login "${TEST_ADMIN_USER}" "${TEST_ADMIN_PASSWORD}" 2>/dev/null)
+ADMIN_TOKEN=$(echo "${ADMIN_LOGIN}" | jq -r '.access_token // empty')
+if [ -n "${ADMIN_TOKEN}" ] && [ "${ADMIN_TOKEN}" != "null" ] && [ -n "${TEAM_ROOM}" ]; then
+    ROOM_ENC=$(echo "${TEAM_ROOM}" | sed 's/!/%21/g')
+    MEMBERS=$(exec_in_manager curl -sf \
+        "${TEST_MATRIX_DIRECT_URL}/_matrix/client/v3/rooms/${ROOM_ENC}/members" \
+        -H "Authorization: Bearer ${ADMIN_TOKEN}" 2>/dev/null | \
+        jq -r '.chunk[] | select(.content.membership == "join") | .state_key' 2>/dev/null)
+    ADMIN_MATRIX_ID="@${TEST_ADMIN_USER}:${TEST_MATRIX_DOMAIN}"
+    if echo "${MEMBERS}" | grep -q "${ADMIN_MATRIX_ID}"; then
+        log_pass "Admin auto-joined team room"
+    else
+        log_fail "Admin is NOT joined in team room (auto-join may have failed)"
+    fi
+else
+    log_info "Skipping admin room membership check (no admin token)"
+fi
 
 # ============================================================
 # Section 4: Verify workers-registry.json roles
@@ -257,7 +277,35 @@ TEAM_AGENT_COUNT=$(exec_in_manager jq -r --arg t "${TEST_TEAM}" '[.workers | to_
 assert_eq "3" "${TEAM_AGENT_COUNT}" "Team has 3 agents total (1 leader + 2 workers)"
 
 # ============================================================
-# Section 10: Verify containers running
+# Section 10: Verify admin auto-joined worker rooms
+# ============================================================
+log_section "Verify Admin Auto-Joined Worker Rooms"
+
+if [ -n "${ADMIN_TOKEN}" ] && [ "${ADMIN_TOKEN}" != "null" ]; then
+    ADMIN_MATRIX_ID="@${TEST_ADMIN_USER}:${TEST_MATRIX_DOMAIN}"
+    for w in "${TEST_LEADER}" "${TEST_W1}" "${TEST_W2}"; do
+        W_ROOM=$(exec_in_manager jq -r --arg w "${w}" '.workers[$w].room_id // empty' /root/manager-workspace/workers-registry.json 2>/dev/null)
+        if [ -n "${W_ROOM}" ] && [ "${W_ROOM}" != "null" ]; then
+            W_ROOM_ENC=$(echo "${W_ROOM}" | sed 's/!/%21/g')
+            W_MEMBERS=$(exec_in_manager curl -sf \
+                "${TEST_MATRIX_DIRECT_URL}/_matrix/client/v3/rooms/${W_ROOM_ENC}/members" \
+                -H "Authorization: Bearer ${ADMIN_TOKEN}" 2>/dev/null | \
+                jq -r '.chunk[] | select(.content.membership == "join") | .state_key' 2>/dev/null)
+            if echo "${W_MEMBERS}" | grep -q "${ADMIN_MATRIX_ID}"; then
+                log_pass "Admin auto-joined ${w} worker room"
+            else
+                log_fail "Admin is NOT joined in ${w} worker room"
+            fi
+        else
+            log_info "Skipping ${w} room check (no room_id)"
+        fi
+    done
+else
+    log_info "Skipping worker room membership checks (no admin token)"
+fi
+
+# ============================================================
+# Section 11: Verify containers running
 # ============================================================
 log_section "Verify Containers"
 

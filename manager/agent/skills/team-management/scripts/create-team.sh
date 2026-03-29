@@ -95,6 +95,44 @@ if [ -z "${MANAGER_MATRIX_TOKEN:-}" ]; then
     fi
 fi
 
+# Obtain Team Admin's Matrix token so we can auto-join rooms on their behalf.
+# This only works when Team Admin is the Global Admin (we have the password).
+TEAM_ADMIN_TOKEN=""
+_obtain_team_admin_token() {
+    local _admin_name="${1:-${ADMIN_USER}}"
+    if [ "${_admin_name}" = "${ADMIN_USER}" ] && [ -n "${HICLAW_ADMIN_PASSWORD:-}" ]; then
+        TEAM_ADMIN_TOKEN=$(curl -sf -X POST ${HICLAW_MATRIX_SERVER}/_matrix/client/v3/login \
+            -H 'Content-Type: application/json' \
+            -d '{"type":"m.login.password","identifier":{"type":"m.id.user","user":"'"${_admin_name}"'"},"password":"'"${HICLAW_ADMIN_PASSWORD}"'"}' \
+            2>/dev/null | jq -r '.access_token // empty')
+        if [ -n "${TEAM_ADMIN_TOKEN}" ]; then
+            log "  Obtained Team Admin token for auto-join"
+        else
+            log "  WARNING: Failed to obtain Team Admin token — admin will need to accept invites manually"
+        fi
+    else
+        log "  WARNING: Custom Team Admin (${_admin_name}) — cannot auto-join, admin will need to accept invites manually"
+    fi
+}
+
+# Auto-join a room on behalf of Team Admin
+_admin_auto_join() {
+    local _room_id="$1"
+    if [ -z "${TEAM_ADMIN_TOKEN}" ] || [ -z "${_room_id}" ]; then
+        return 0
+    fi
+    local _room_enc
+    _room_enc=$(echo "${_room_id}" | sed 's/!/%21/g')
+    if curl -sf -X POST "${HICLAW_MATRIX_SERVER}/_matrix/client/v3/rooms/${_room_enc}/join" \
+        -H "Authorization: Bearer ${TEAM_ADMIN_TOKEN}" \
+        -H 'Content-Type: application/json' \
+        -d '{}' > /dev/null 2>&1; then
+        log "  Team Admin auto-joined room ${_room_id}"
+    else
+        log "  WARNING: Team Admin failed to auto-join room ${_room_id}"
+    fi
+}
+
 # ============================================================
 # Resolve Team Admin Matrix ID (before creating workers so they get it)
 # ============================================================
@@ -111,6 +149,8 @@ else
     TEAM_ADMIN_MID="@${ADMIN_USER}:${MATRIX_DOMAIN}"
     log "  No --team-admin specified, defaulting to Global Admin (${ADMIN_USER})"
 fi
+
+_obtain_team_admin_token "${TEAM_ADMIN}"
 
 # ============================================================
 # Step 1: Create Team Leader
@@ -226,6 +266,9 @@ if [ -z "${TEAM_ROOM_ID}" ]; then
 fi
 log "  Team Room created: ${TEAM_ROOM_ID}"
 
+# Auto-join Team Admin into Team Room
+_admin_auto_join "${TEAM_ROOM_ID}"
+
 # ============================================================
 # Step 4: Update Leader's groupAllowFrom to include team workers + Team Admin
 # ============================================================
@@ -313,6 +356,8 @@ if [ -n "${TEAM_ADMIN_MID}" ]; then
     LEADER_DM_ROOM_ID=$(echo "${LEADER_DM_RESP}" | jq -r '.room_id // empty')
     if [ -n "${LEADER_DM_ROOM_ID}" ]; then
         log "  Leader DM room created: ${LEADER_DM_ROOM_ID}"
+        # Auto-join Team Admin into Leader DM room
+        _admin_auto_join "${LEADER_DM_ROOM_ID}"
     else
         log "  WARNING: Could not extract Leader DM room_id"
     fi

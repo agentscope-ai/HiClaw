@@ -366,6 +366,29 @@ CREDS
     chmod 600 "${WORKER_CREDS_FILE}"
 fi
 
+# Auto-join global admin into the worker room
+if [ -n "${HICLAW_ADMIN_PASSWORD:-}" ]; then
+    _ADMIN_TOKEN=$(curl -sf -X POST ${HICLAW_MATRIX_SERVER}/_matrix/client/v3/login \
+        -H 'Content-Type: application/json' \
+        -d '{"type":"m.login.password","identifier":{"type":"m.id.user","user":"'"${ADMIN_USER}"'"},"password":"'"${HICLAW_ADMIN_PASSWORD}"'"}' \
+        2>/dev/null | jq -r '.access_token // empty')
+    if [ -n "${_ADMIN_TOKEN}" ]; then
+        _ROOM_ENC=$(echo "${ROOM_ID}" | sed 's/!/%21/g')
+        if curl -sf -X POST "${HICLAW_MATRIX_SERVER}/_matrix/client/v3/rooms/${_ROOM_ENC}/join" \
+            -H "Authorization: Bearer ${_ADMIN_TOKEN}" \
+            -H 'Content-Type: application/json' \
+            -d '{}' > /dev/null 2>&1; then
+            log "  Admin auto-joined worker room ${ROOM_ID}"
+        else
+            log "  WARNING: Admin failed to auto-join worker room"
+        fi
+    else
+        log "  WARNING: Could not obtain admin token for auto-join"
+    fi
+else
+    log "  WARNING: HICLAW_ADMIN_PASSWORD not set — admin will need to accept invite manually"
+fi
+
 # ============================================================
 # Steps 3-5: Gateway consumer and authorization
 # ============================================================

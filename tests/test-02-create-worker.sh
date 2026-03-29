@@ -46,6 +46,12 @@ wait_for_manager_agent_ready 300 "${DM_ROOM}" "${ADMIN_TOKEN}" || {
     exit 1
 }
 
+# Wait for Manager to finish processing any pending messages from previous tests
+# (e.g., SOUL.md configuration from test-01) before sending a new request.
+# Without this, the SOUL.md reply may arrive after our baseline snapshot and
+# get mistaken for the create-worker reply.
+wait_for_session_stable 5 60
+
 # Snapshot metrics baseline before sending message (to calculate delta later)
 METRICS_BASELINE=$(snapshot_baseline)
 

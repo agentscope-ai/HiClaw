@@ -504,16 +504,16 @@ Runs on the host, forwarding YAML to the `hiclaw` CLI inside the Manager contain
 
 ```bash
 # Create/update a single resource
-bash hiclaw-apply.sh -f worker.yaml
+bash install/hiclaw-apply.sh -f worker.yaml
 
 # Batch create (use --- separators in YAML)
-bash hiclaw-apply.sh -f company-setup.yaml
+bash install/hiclaw-apply.sh -f company-setup.yaml
 
 # Full sync (delete resources not in YAML)
-bash hiclaw-apply.sh -f company-setup.yaml --prune
+bash install/hiclaw-apply.sh -f company-setup.yaml --prune
 
 # Preview changes
-bash hiclaw-apply.sh -f company-setup.yaml --dry-run
+bash install/hiclaw-apply.sh -f company-setup.yaml --dry-run
 ```
 
 | Option | Description |
@@ -529,16 +529,16 @@ For importing Workers from ZIP packages:
 
 ```bash
 # Import from local ZIP
-bash hiclaw-import.sh worker --name alice --zip ./alice.zip
+bash install/hiclaw-import.sh worker --name alice --zip ./alice.zip
 
 # Import from URL
-bash hiclaw-import.sh worker --name alice --zip https://example.com/alice.zip
+bash install/hiclaw-import.sh worker --name alice --zip https://example.com/alice.zip
 
 # Import from Nacos
-bash hiclaw-import.sh worker --name alice --package nacos://instance-xxx/ns/agent-spec/alice/v1
+bash install/hiclaw-import.sh worker --name alice --package nacos://instance-xxx/ns/agent-spec/alice/v1
 
 # Create without a package
-bash hiclaw-import.sh worker --name bob --model claude-sonnet-4-6 \
+bash install/hiclaw-import.sh worker --name bob --model claude-sonnet-4-6 \
     --skills github-operations,git-delegation --mcp-servers github
 ```
 
@@ -665,13 +665,13 @@ spec:
 One-command deployment:
 
 ```bash
-bash hiclaw-apply.sh -f company-setup.yaml
+bash install/hiclaw-apply.sh -f company-setup.yaml
 ```
 
 For subsequent changes, just edit the YAML and re-apply. Use `--prune` to automatically clean up removed resources:
 
 ```bash
-bash hiclaw-apply.sh -f company-setup.yaml --prune
+bash install/hiclaw-apply.sh -f company-setup.yaml --prune
 ```
 
 ## Controller Architecture

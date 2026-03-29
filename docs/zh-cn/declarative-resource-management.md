@@ -504,16 +504,16 @@ Nacos URI 格式：`nacos://{instance-id}/{namespace}/{group}/{data-id}/{version
 
 ```bash
 # 创建/更新单个资源
-bash hiclaw-apply.sh -f worker.yaml
+bash install/hiclaw-apply.sh -f worker.yaml
 
 # 批量创建（YAML 中用 --- 分隔多个资源）
-bash hiclaw-apply.sh -f company-setup.yaml
+bash install/hiclaw-apply.sh -f company-setup.yaml
 
 # 全量同步（删除 YAML 中不存在的资源）
-bash hiclaw-apply.sh -f company-setup.yaml --prune
+bash install/hiclaw-apply.sh -f company-setup.yaml --prune
 
 # 预览变更
-bash hiclaw-apply.sh -f company-setup.yaml --dry-run
+bash install/hiclaw-apply.sh -f company-setup.yaml --dry-run
 ```
 
 | 选项 | 说明 |
@@ -529,16 +529,16 @@ bash hiclaw-apply.sh -f company-setup.yaml --dry-run
 
 ```bash
 # 从本地 ZIP 导入
-bash hiclaw-import.sh worker --name alice --zip ./alice.zip
+bash install/hiclaw-import.sh worker --name alice --zip ./alice.zip
 
 # 从 URL 导入
-bash hiclaw-import.sh worker --name alice --zip https://example.com/alice.zip
+bash install/hiclaw-import.sh worker --name alice --zip https://example.com/alice.zip
 
 # 从 Nacos 导入
-bash hiclaw-import.sh worker --name alice --package nacos://instance-xxx/ns/agent-spec/alice/v1
+bash install/hiclaw-import.sh worker --name alice --package nacos://instance-xxx/ns/agent-spec/alice/v1
 
 # 不带包，直接创建
-bash hiclaw-import.sh worker --name bob --model claude-sonnet-4-6 \
+bash install/hiclaw-import.sh worker --name bob --model claude-sonnet-4-6 \
     --skills github-operations,git-delegation --mcp-servers github
 ```
 
@@ -665,13 +665,13 @@ spec:
 一键部署：
 
 ```bash
-bash hiclaw-apply.sh -f company-setup.yaml
+bash install/hiclaw-apply.sh -f company-setup.yaml
 ```
 
 后续人员变动只需修改 YAML 并重新 apply。使用 `--prune` 可以自动清理已移除的资源：
 
 ```bash
-bash hiclaw-apply.sh -f company-setup.yaml --prune
+bash install/hiclaw-apply.sh -f company-setup.yaml --prune
 ```
 
 ## Controller 架构
