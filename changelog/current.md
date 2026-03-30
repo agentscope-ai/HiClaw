@@ -72,6 +72,8 @@ Record image-affecting changes to `manager/`, `worker/`, `openclaw-base/` here b
 
 - Install `@nacos-group/cli` in Worker images so both OpenClaw and CoPaw workers can call `nacos-cli` directly for Nacos-backed skill and agentspec workflows.
 
+- Improve Worker `find-skills` relevance on the Nacos backend — use `skill-list --name` for filtered recall, switch local reranking to token coverage plus word-boundary-aware scoring, and add regression tests for `react performance` / `pr review`.
+
 ---
 
 **新增功能**
@@ -141,6 +143,8 @@ Record image-affecting changes to `manager/`, `worker/`, `openclaw-base/` here b
 - 支持 `HICLAW_NACOS_USERNAME` 和 `HICLAW_NACOS_PASSWORD` 作为默认 Nacos 凭证（当 `nacos://` URI 省略 `user:pass@` 时）；从 URI 提取 Nacos 地址并添加预检验证。
 
 - 在 Worker 镜像中安装 `@nacos-group/cli`，让 OpenClaw 和 CoPaw Worker 都能直接使用 `nacos-cli` 执行基于 Nacos 的 skill 与 agentspec 工作流。
+
+- 优化 Worker `find-skills` 在 Nacos 后端的相关性 —— 使用 `skill-list --name` 做过滤召回，本地精排改为基于 token 覆盖率和词边界感知打分，并补充 `react performance` / `pr review` 的回归测试。
 
 ---
 
