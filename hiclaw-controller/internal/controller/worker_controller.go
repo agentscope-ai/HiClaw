@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"reflect"
 	"sync"
@@ -172,6 +173,11 @@ func (r *WorkerReconciler) handleCreate(ctx context.Context, w *v1beta1.Worker) 
 	if len(w.Spec.McpServers) > 0 {
 		args = append(args, "--mcp-servers", joinStrings(w.Spec.McpServers))
 	}
+	if w.Spec.ChannelPolicy != nil {
+		if policyJSON, err := json.Marshal(w.Spec.ChannelPolicy); err == nil {
+			args = append(args, "--channel-policy", string(policyJSON))
+		}
+	}
 
 	// Check for team annotations (set by TeamReconciler)
 	if role := w.Annotations["hiclaw.io/role"]; role != "" {
@@ -272,6 +278,11 @@ func (r *WorkerReconciler) handleUpdate(ctx context.Context, w *v1beta1.Worker) 
 	}
 	if packageDir != "" {
 		args = append(args, "--package-dir", packageDir)
+	}
+	if w.Spec.ChannelPolicy != nil {
+		if policyJSON, err := json.Marshal(w.Spec.ChannelPolicy); err == nil {
+			args = append(args, "--channel-policy", string(policyJSON))
+		}
 	}
 
 	_, err := r.Executor.Run(ctx,

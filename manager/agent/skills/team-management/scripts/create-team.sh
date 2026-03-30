@@ -37,6 +37,10 @@ WORKER_SKILLS_CSV=""
 WORKER_MCP_SERVERS_CSV=""
 TEAM_ADMIN=""
 TEAM_ADMIN_MATRIX_ID=""
+PEER_MENTIONS="true"            # default: team workers can @mention each other
+TEAM_CHANNEL_POLICY_JSON=""     # team-level ChannelPolicySpec JSON
+LEADER_CHANNEL_POLICY_JSON=""   # leader-specific ChannelPolicySpec JSON
+WORKER_CHANNEL_POLICIES_CSV=""  # per-worker ChannelPolicySpec JSONs, ":" separated
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -49,6 +53,10 @@ while [ $# -gt 0 ]; do
         --worker-mcp-servers) WORKER_MCP_SERVERS_CSV="$2"; shift 2 ;;
         --team-admin)     TEAM_ADMIN="$2"; shift 2 ;;
         --team-admin-matrix-id) TEAM_ADMIN_MATRIX_ID="$2"; shift 2 ;;
+        --peer-mentions)  PEER_MENTIONS="$2"; shift 2 ;;
+        --team-channel-policy) TEAM_CHANNEL_POLICY_JSON="$2"; shift 2 ;;
+        --leader-channel-policy) LEADER_CHANNEL_POLICY_JSON="$2"; shift 2 ;;
+        --worker-channel-policies) WORKER_CHANNEL_POLICIES_CSV="$2"; shift 2 ;;
         *) echo "Unknown option: $1"; exit 1 ;;
     esac
 done
@@ -64,6 +72,8 @@ IFS=',' read -ra WORKER_MODELS <<< "${WORKER_MODELS_CSV:-}"
 # Per-worker skills/mcpServers use : as separator between workers
 IFS=':' read -ra WORKER_SKILLS_ARR <<< "${WORKER_SKILLS_CSV:-}"
 IFS=':' read -ra WORKER_MCP_ARR <<< "${WORKER_MCP_SERVERS_CSV:-}"
+# Per-worker comm policies use | as separator (: would break JSON)
+IFS='|' read -ra WORKER_CHANNEL_POLICIES_ARR <<< "${WORKER_CHANNEL_POLICIES_CSV:-}"
 
 MATRIX_DOMAIN="${HICLAW_MATRIX_DOMAIN:-matrix-local.hiclaw.io:8080}"
 ADMIN_USER="${HICLAW_ADMIN_USER:-admin}"
@@ -163,6 +173,21 @@ fi
 if [ -n "${TEAM_ADMIN_MID}" ]; then
     LEADER_ARGS+=(--team-admin-matrix-id "${TEAM_ADMIN_MID}")
 fi
+# Merge team-level + leader-specific comm policy
+if [ -n "${TEAM_CHANNEL_POLICY_JSON}" ] || [ -n "${LEADER_CHANNEL_POLICY_JSON}" ]; then
+    LEADER_MERGED_POLICY=$(jq -n \
+        --argjson team "${TEAM_CHANNEL_POLICY_JSON:-null}" \
+        --argjson member "${LEADER_CHANNEL_POLICY_JSON:-null}" \
+        '{
+            groupAllowExtra: ((($team.groupAllowExtra // []) + ($member.groupAllowExtra // [])) | unique),
+            groupDenyExtra:  ((($team.groupDenyExtra // [])  + ($member.groupDenyExtra // []))  | unique),
+            dmAllowExtra:    ((($team.dmAllowExtra // [])    + ($member.dmAllowExtra // []))    | unique),
+            dmDenyExtra:     ((($team.dmDenyExtra // [])     + ($member.dmDenyExtra // []))     | unique)
+        } | with_entries(select(.value | length > 0))')
+    if [ "${LEADER_MERGED_POLICY}" != "{}" ]; then
+        LEADER_ARGS+=(--channel-policy "${LEADER_MERGED_POLICY}")
+    fi
+fi
 
 LEADER_RESULT=$(bash /opt/hiclaw/agent/skills/worker-management/scripts/create-worker.sh "${LEADER_ARGS[@]}" 2>&1)
 LEADER_JSON=$(echo "${LEADER_RESULT}" | sed -n '/---RESULT---/,$ p' | tail -n +2)
@@ -201,6 +226,22 @@ for i in "${!WORKER_NAMES[@]}"; do
     fi
     if [ -n "${TEAM_ADMIN_MID}" ]; then
         W_ARGS+=(--team-admin-matrix-id "${TEAM_ADMIN_MID}")
+    fi
+    # Merge team-level + per-worker comm policy
+    w_channel_policy="${WORKER_CHANNEL_POLICIES_ARR[$i]:-}"
+    if [ -n "${TEAM_CHANNEL_POLICY_JSON}" ] || [ -n "${w_channel_policy}" ]; then
+        W_MERGED_POLICY=$(jq -n \
+            --argjson team "${TEAM_CHANNEL_POLICY_JSON:-null}" \
+            --argjson member "${w_channel_policy:-null}" \
+            '{
+                groupAllowExtra: ((($team.groupAllowExtra // []) + ($member.groupAllowExtra // [])) | unique),
+                groupDenyExtra:  ((($team.groupDenyExtra // [])  + ($member.groupDenyExtra // []))  | unique),
+                dmAllowExtra:    ((($team.dmAllowExtra // [])    + ($member.dmAllowExtra // []))    | unique),
+                dmDenyExtra:     ((($team.dmDenyExtra // [])     + ($member.dmDenyExtra // []))     | unique)
+            } | with_entries(select(.value | length > 0))')
+        if [ "${W_MERGED_POLICY}" != "{}" ]; then
+            W_ARGS+=(--channel-policy "${W_MERGED_POLICY}")
+        fi
     fi
 
     W_RESULT=$(bash /opt/hiclaw/agent/skills/worker-management/scripts/create-worker.sh "${W_ARGS[@]}" 2>&1)
@@ -328,6 +369,59 @@ if [ -n "${TEAM_ADMIN_MID}" ]; then
         fi
     done
     log "  Team Admin added to all Workers' groupAllowFrom"
+fi
+
+# ============================================================
+# Step 4a: Enable peer mentions for team workers (default: true)
+# Each worker gets all other team workers added to groupAllowFrom.
+# After adding peers, re-apply groupDenyExtra to honor deny overrides.
+# ============================================================
+if [ "${PEER_MENTIONS}" = "true" ]; then
+    log "Step 4a: Enabling peer mentions for team workers..."
+    ensure_mc_credentials 2>/dev/null || true
+    for i in "${!WORKER_NAMES[@]}"; do
+        target=$(echo "${WORKER_NAMES[$i]}" | tr -d ' ')
+        [ -z "${target}" ] && continue
+        TARGET_CONFIG="/root/hiclaw-fs/agents/${target}/openclaw.json"
+        [ ! -f "${TARGET_CONFIG}" ] && continue
+
+        # Add all other workers to this worker's groupAllowFrom
+        for j in "${!WORKER_NAMES[@]}"; do
+            peer=$(echo "${WORKER_NAMES[$j]}" | tr -d ' ')
+            [ -z "${peer}" ] && continue
+            [ "${peer}" = "${target}" ] && continue
+            PEER_ID="@${peer}:${MATRIX_DOMAIN}"
+            jq --arg w "${PEER_ID}" \
+                'if (.channels.matrix.groupAllowFrom | index($w)) then .
+                 else .channels.matrix.groupAllowFrom += [$w]
+                 end' \
+                "${TARGET_CONFIG}" > /tmp/peer-mention-tmp.json
+            mv /tmp/peer-mention-tmp.json "${TARGET_CONFIG}"
+        done
+
+        # Re-apply groupDenyExtra from merged comm policy (team + per-worker)
+        # to ensure deny still wins after peer additions
+        w_channel_policy="${WORKER_CHANNEL_POLICIES_ARR[$i]:-}"
+        DENY_ENTRIES=$(jq -n \
+            --argjson team "${TEAM_CHANNEL_POLICY_JSON:-null}" \
+            --argjson member "${w_channel_policy:-null}" \
+            --arg domain "${MATRIX_DOMAIN}" \
+            '(($team.groupDenyExtra // []) + ($member.groupDenyExtra // []))
+             | map(if startswith("@") then . else "@\(.):\($domain)" end)
+             | unique')
+        if [ "${DENY_ENTRIES}" != "[]" ]; then
+            jq --argjson deny "${DENY_ENTRIES}" \
+                '.channels.matrix.groupAllowFrom |= [.[] | select(. as $id | $deny | index($id) | not)]' \
+                "${TARGET_CONFIG}" > /tmp/peer-deny-tmp.json
+            mv /tmp/peer-deny-tmp.json "${TARGET_CONFIG}"
+        fi
+
+        mc cp "${TARGET_CONFIG}" "${HICLAW_STORAGE_PREFIX}/agents/${target}/openclaw.json" 2>/dev/null \
+            || log "  WARNING: Failed to push ${target} config to MinIO"
+    done
+    log "  Peer mentions enabled for all team workers"
+else
+    log "Step 4a: Peer mentions disabled (peerMentions=false)"
 fi
 
 # ============================================================

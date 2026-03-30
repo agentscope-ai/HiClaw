@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -128,6 +129,76 @@ func (r *TeamReconciler) handleCreate(ctx context.Context, t *v1beta1.Team) (rec
 	}
 	if hasModels {
 		args = append(args, "--worker-models", strings.Join(workerModels, ","))
+	}
+
+	// Peer mentions toggle (default true, only pass when explicitly false)
+	if t.Spec.PeerMentions != nil && !*t.Spec.PeerMentions {
+		args = append(args, "--peer-mentions", "false")
+	}
+
+	// Team-level comm policy
+	if t.Spec.ChannelPolicy != nil {
+		if policyJSON, err := json.Marshal(t.Spec.ChannelPolicy); err == nil {
+			args = append(args, "--team-channel-policy", string(policyJSON))
+		}
+	}
+
+	// Leader comm policy
+	if t.Spec.Leader.ChannelPolicy != nil {
+		if policyJSON, err := json.Marshal(t.Spec.Leader.ChannelPolicy); err == nil {
+			args = append(args, "--leader-channel-policy", string(policyJSON))
+		}
+	}
+
+	// Per-worker comm policies (: separated, aligned with worker names CSV)
+	workerPolicies := make([]string, len(t.Spec.Workers))
+	hasPolicies := false
+	for i, w := range t.Spec.Workers {
+		if w.ChannelPolicy != nil {
+			if p, err := json.Marshal(w.ChannelPolicy); err == nil {
+				workerPolicies[i] = string(p)
+				hasPolicies = true
+			}
+		}
+	}
+	if hasPolicies {
+		args = append(args, "--worker-channel-policies", strings.Join(workerPolicies, "|"))
+	}
+
+	// Per-worker skills (: separated)
+	workerSkills := make([]string, len(t.Spec.Workers))
+	hasSkills := false
+	for i, w := range t.Spec.Workers {
+		if len(w.Skills) > 0 {
+			workerSkills[i] = joinStrings(w.Skills)
+			hasSkills = true
+		}
+	}
+	if hasSkills {
+		args = append(args, "--worker-skills", strings.Join(workerSkills, ":"))
+	}
+
+	// Per-worker MCP servers (: separated)
+	workerMcpServers := make([]string, len(t.Spec.Workers))
+	hasMcpServers := false
+	for i, w := range t.Spec.Workers {
+		if len(w.McpServers) > 0 {
+			workerMcpServers[i] = joinStrings(w.McpServers)
+			hasMcpServers = true
+		}
+	}
+	if hasMcpServers {
+		args = append(args, "--worker-mcp-servers", strings.Join(workerMcpServers, ":"))
+	}
+
+	// Team admin
+	if t.Spec.Admin != nil {
+		if t.Spec.Admin.Name != "" {
+			args = append(args, "--team-admin", t.Spec.Admin.Name)
+		}
+		if t.Spec.Admin.MatrixUserID != "" {
+			args = append(args, "--team-admin-matrix-id", t.Spec.Admin.MatrixUserID)
+		}
 	}
 
 	result, err := r.Executor.Run(ctx,

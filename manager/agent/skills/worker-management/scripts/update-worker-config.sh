@@ -35,6 +35,7 @@ MODEL_ID=""
 MCP_SERVERS=""
 WORKER_SKILLS=""
 PACKAGE_DIR=""
+CHANNEL_POLICY_JSON=""
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -43,6 +44,7 @@ while [ $# -gt 0 ]; do
         --skills)      WORKER_SKILLS="$2"; shift 2 ;;
         --mcp-servers) MCP_SERVERS="$2"; shift 2 ;;
         --package-dir) PACKAGE_DIR="$2"; shift 2 ;;
+        --channel-policy) CHANNEL_POLICY_JSON="$2"; shift 2 ;;
         *) echo "Unknown option: $1"; exit 1 ;;
     esac
 done
@@ -238,6 +240,16 @@ if [ -n "${MODEL_ID}" ]; then
     GEN_ARGS=("${WORKER_NAME}" "${WORKER_MATRIX_TOKEN}" "${WORKER_KEY}" "${MODEL_ID}")
     if [ -n "${TEAM_LEADER}" ]; then
         GEN_ARGS+=("${TEAM_LEADER}")
+    fi
+
+    # Persist new comm policy if provided, then export for generate-worker-config.sh
+    AGENT_DIR="/root/hiclaw-fs/agents/${WORKER_NAME}"
+    POLICY_FILE="${AGENT_DIR}/channel-policy.json"
+    if [ -n "${CHANNEL_POLICY_JSON}" ]; then
+        echo "${CHANNEL_POLICY_JSON}" > "${POLICY_FILE}"
+    fi
+    if [ -f "${POLICY_FILE}" ]; then
+        export WORKER_CHANNEL_POLICY=$(cat "${POLICY_FILE}")
     fi
 
     bash /opt/hiclaw/agent/skills/worker-management/scripts/generate-worker-config.sh "${GEN_ARGS[@]}"

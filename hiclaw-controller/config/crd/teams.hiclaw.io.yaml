@@ -18,6 +18,29 @@ spec:
               properties:
                 description:
                   type: string
+                peerMentions:
+                  type: boolean
+                  description: "Whether team workers can @mention each other in group rooms (default: true)"
+                channelPolicy:
+                  type: object
+                  description: "Team-wide communication policy overrides (applied to all members)"
+                  properties:
+                    groupAllowExtra:
+                      type: array
+                      items:
+                        type: string
+                    groupDenyExtra:
+                      type: array
+                      items:
+                        type: string
+                    dmAllowExtra:
+                      type: array
+                      items:
+                        type: string
+                    dmDenyExtra:
+                      type: array
+                      items:
+                        type: string
                 admin:
                   type: object
                   description: "Team-specific admin (human). Has admin authority within this team."
@@ -44,6 +67,25 @@ spec:
                       type: string
                     package:
                       type: string
+                    channelPolicy:
+                      type: object
+                      properties:
+                        groupAllowExtra:
+                          type: array
+                          items:
+                            type: string
+                        groupDenyExtra:
+                          type: array
+                          items:
+                            type: string
+                        dmAllowExtra:
+                          type: array
+                          items:
+                            type: string
+                        dmDenyExtra:
+                          type: array
+                          items:
+                            type: string
                 workers:
                   type: array
                   items:
@@ -75,6 +117,25 @@ spec:
                           type: string
                       package:
                         type: string
+                      channelPolicy:
+                        type: object
+                        properties:
+                          groupAllowExtra:
+                            type: array
+                            items:
+                              type: string
+                          groupDenyExtra:
+                            type: array
+                            items:
+                              type: string
+                          dmAllowExtra:
+                            type: array
+                            items:
+                              type: string
+                          dmDenyExtra:
+                            type: array
+                            items:
+                              type: string
             status:
               type: object
               properties:

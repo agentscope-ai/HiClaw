@@ -48,6 +48,30 @@ spec:
                 package:
                   type: string
                   description: "Package URI: file://, http(s)://, nacos://, or packages/{name}.zip"
+                channelPolicy:
+                  type: object
+                  description: "Additive/subtractive overrides for communication policies (on top of defaults)"
+                  properties:
+                    groupAllowExtra:
+                      type: array
+                      items:
+                        type: string
+                      description: "Additional Matrix user IDs to allow in group @mentions"
+                    groupDenyExtra:
+                      type: array
+                      items:
+                        type: string
+                      description: "Matrix user IDs to deny from group @mentions (overrides allow)"
+                    dmAllowExtra:
+                      type: array
+                      items:
+                        type: string
+                      description: "Additional Matrix user IDs to allow in DMs"
+                    dmDenyExtra:
+                      type: array
+                      items:
+                        type: string
+                      description: "Matrix user IDs to deny from DMs (overrides allow)"
             status:
               type: object
               properties:

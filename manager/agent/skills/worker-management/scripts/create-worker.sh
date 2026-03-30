@@ -47,6 +47,7 @@ WORKER_ROLE="worker"        # worker | team_leader
 TEAM_NAME=""                # optional: team this worker belongs to
 TEAM_LEADER_NAME=""         # optional: for team workers, who their leader is
 TEAM_ADMIN_MATRIX_ID=""     # optional: team admin Matrix ID for team-context injection
+CHANNEL_POLICY_JSON=""         # optional: JSON string of ChannelPolicySpec overrides
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -63,6 +64,7 @@ while [ $# -gt 0 ]; do
         --team)       TEAM_NAME="$2"; shift 2 ;;
         --team-leader) TEAM_LEADER_NAME="$2"; shift 2 ;;
         --team-admin-matrix-id) TEAM_ADMIN_MATRIX_ID="$2"; shift 2 ;;
+        --channel-policy) CHANNEL_POLICY_JSON="$2"; shift 2 ;;
         *) echo "Unknown option: $1"; exit 1 ;;
     esac
 done
@@ -432,6 +434,10 @@ fi
 # Pass team-leader name as 5th arg so groupAllowFrom uses Leader instead of Manager
 if [ -n "${TEAM_LEADER_NAME}" ]; then
     GEN_ARGS+=("${TEAM_LEADER_NAME}")
+fi
+# Export comm policy JSON for generate-worker-config.sh to apply allow/deny overrides
+if [ -n "${CHANNEL_POLICY_JSON}" ]; then
+    export WORKER_CHANNEL_POLICY="${CHANNEL_POLICY_JSON}"
 fi
 bash /opt/hiclaw/agent/skills/worker-management/scripts/generate-worker-config.sh "${GEN_ARGS[@]}"
 

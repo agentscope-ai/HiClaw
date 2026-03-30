@@ -240,3 +240,48 @@ if [ -n "${TEAM_LEADER_NAME}" ]; then
     mv "${OUTPUT_DIR}/openclaw.json.tmp" "${OUTPUT_DIR}/openclaw.json"
     log "  Overrode groupAllowFrom/dm.allowFrom for team worker (leader=${TEAM_LEADER_NAME})"
 fi
+
+# ============================================================
+# Apply communication policy overrides (additive/subtractive on top of defaults)
+# WORKER_CHANNEL_POLICY is a JSON string with optional fields:
+#   groupAllowExtra, groupDenyExtra, dmAllowExtra, dmDenyExtra
+# Values can be full Matrix IDs (@user:domain) or short usernames (auto-resolved).
+# Deny takes precedence over allow.
+# ============================================================
+if [ -n "${WORKER_CHANNEL_POLICY:-}" ]; then
+    jq --argjson policy "${WORKER_CHANNEL_POLICY}" \
+       --arg domain "${MATRIX_DOMAIN_FOR_ID}" \
+       '
+       # Resolve short username to full Matrix ID
+       def resolve_id: if startswith("@") then . else "@\(.):\($domain)" end;
+
+       # Add groupAllowExtra
+       (if ($policy.groupAllowExtra // [] | length) > 0 then
+           .channels.matrix.groupAllowFrom += [$policy.groupAllowExtra[] | resolve_id]
+           | .channels.matrix.groupAllowFrom |= unique
+       else . end)
+
+       # Add dmAllowExtra
+       | (if ($policy.dmAllowExtra // [] | length) > 0 then
+           .channels.matrix.dm.allowFrom += [$policy.dmAllowExtra[] | resolve_id]
+           | .channels.matrix.dm.allowFrom |= unique
+       else . end)
+
+       # Remove groupDenyExtra (deny wins)
+       | (if ($policy.groupDenyExtra // [] | length) > 0 then
+           ([$policy.groupDenyExtra[] | resolve_id]) as $deny
+           | .channels.matrix.groupAllowFrom |= [.[] | select(. as $id | $deny | index($id) | not)]
+       else . end)
+
+       # Remove dmDenyExtra (deny wins)
+       | (if ($policy.dmDenyExtra // [] | length) > 0 then
+           ([$policy.dmDenyExtra[] | resolve_id]) as $deny
+           | .channels.matrix.dm.allowFrom |= [.[] | select(. as $id | $deny | index($id) | not)]
+       else . end)
+       ' "${OUTPUT_DIR}/openclaw.json" > "${OUTPUT_DIR}/openclaw.json.tmp"
+    mv "${OUTPUT_DIR}/openclaw.json.tmp" "${OUTPUT_DIR}/openclaw.json"
+
+    # Persist policy for future updates (update-worker-config.sh reads this back)
+    echo "${WORKER_CHANNEL_POLICY}" > "${OUTPUT_DIR}/channel-policy.json"
+    log "  Applied channelPolicy overrides"
+fi

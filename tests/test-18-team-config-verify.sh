@@ -84,9 +84,20 @@ log_pass "SOUL.md files prepared for all team members"
 # ============================================================
 log_section "Create Team"
 
+# Channel policy test:
+#   Team-level: add "test-external-bot" to all members' groupAllowFrom
+#   Worker 1 (dev): deny Worker 2 (qa) from groupAllowFrom (overrides peer mention)
+#   Worker 2 (qa): no per-worker policy (should still have W1 via peer mention)
+TEAM_CP='{"groupAllowExtra":["test-external-bot"]}'
+# Per-worker policies use ":" separator; W1 gets deny, W2 gets empty
+W1_CP='{"groupDenyExtra":["'"${TEST_W2}"'"]}'
+WORKER_CPS="${W1_CP}|"
+
 CREATE_OUTPUT=$(exec_in_manager bash -c "
     bash /opt/hiclaw/agent/skills/team-management/scripts/create-team.sh \
-        --name '${TEST_TEAM}' --leader '${TEST_LEADER}' --workers '${TEST_W1},${TEST_W2}'
+        --name '${TEST_TEAM}' --leader '${TEST_LEADER}' --workers '${TEST_W1},${TEST_W2}' \
+        --team-channel-policy '${TEAM_CP}' \
+        --worker-channel-policies '${WORKER_CPS}'
 " 2>&1)
 
 if echo "${CREATE_OUTPUT}" | grep -q "RESULT"; then
@@ -229,6 +240,53 @@ if echo "${W1_GAF}" | grep -q "@manager:"; then
     log_fail "Worker 1 groupAllowFrom includes Manager (should NOT)"
 else
     log_pass "Worker 1 groupAllowFrom does NOT include Manager"
+fi
+
+# Peer mentions: Workers should have each other in groupAllowFrom (default peerMentions=true)
+# EXCEPT: W1 has groupDenyExtra for W2, so W1 should NOT have W2
+W2_GAF=$(exec_in_manager mc cat "${STORAGE_PREFIX}/agents/${TEST_W2}/openclaw.json" 2>/dev/null | jq -r '.channels.matrix.groupAllowFrom[]' 2>/dev/null)
+
+if echo "${W1_GAF}" | grep -q "@${TEST_W2}:"; then
+    log_fail "Worker 1 groupAllowFrom includes Worker 2 (should be denied by channelPolicy)"
+else
+    log_pass "Worker 1 groupAllowFrom does NOT include Worker 2 (denied by channelPolicy)"
+fi
+
+if echo "${W2_GAF}" | grep -q "@${TEST_W1}:"; then
+    log_pass "Worker 2 groupAllowFrom includes Worker 1 (peer mention)"
+else
+    log_fail "Worker 2 groupAllowFrom missing Worker 1 (peer mention should be enabled by default)"
+fi
+
+if echo "${W2_GAF}" | grep -q "@${TEST_LEADER}:"; then
+    log_pass "Worker 2 groupAllowFrom includes Leader"
+else
+    log_fail "Worker 2 groupAllowFrom missing Leader"
+fi
+
+if echo "${W2_GAF}" | grep -q "@manager:"; then
+    log_fail "Worker 2 groupAllowFrom includes Manager (should NOT)"
+else
+    log_pass "Worker 2 groupAllowFrom does NOT include Manager"
+fi
+
+# channelPolicy: team-level groupAllowExtra should add test-external-bot to all members
+if echo "${LEADER_GAF}" | grep -q "@test-external-bot:"; then
+    log_pass "Leader groupAllowFrom includes test-external-bot (team channelPolicy)"
+else
+    log_fail "Leader groupAllowFrom missing test-external-bot (team channelPolicy)"
+fi
+
+if echo "${W1_GAF}" | grep -q "@test-external-bot:"; then
+    log_pass "Worker 1 groupAllowFrom includes test-external-bot (team channelPolicy)"
+else
+    log_fail "Worker 1 groupAllowFrom missing test-external-bot (team channelPolicy)"
+fi
+
+if echo "${W2_GAF}" | grep -q "@test-external-bot:"; then
+    log_pass "Worker 2 groupAllowFrom includes test-external-bot (team channelPolicy)"
+else
+    log_fail "Worker 2 groupAllowFrom missing test-external-bot (team channelPolicy)"
 fi
 
 # Manager: should have Leader but NOT team workers
