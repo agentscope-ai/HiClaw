@@ -60,7 +60,44 @@ run_nacos_install() {
         echo "error: skill name is required for install" >&2
         exit 1
     fi
-    exec npx -y @nacos-group/cli skill-get "$1"
+    run_nacos_cli skill-get "$1"
+}
+
+derive_nacos_connection() {
+    host="${HICLAW_NACOS_HOST:-}"
+    port="${HICLAW_NACOS_PORT:-}"
+    namespace="${HICLAW_NACOS_NAMESPACE:-}"
+    username="${HICLAW_NACOS_USERNAME:-}"
+    password="${HICLAW_NACOS_PASSWORD:-}"
+    token="${HICLAW_NACOS_TOKEN:-}"
+
+    printf '%s\n%s\n%s\n%s\n%s\n%s\n' \
+        "${host}" "${port}" "${namespace}" "${username}" "${password}" "${token}"
+}
+
+run_nacos_cli() {
+    if [ $# -lt 1 ]; then
+        return 0
+    fi
+
+    connection="$(
+        derive_nacos_connection
+    )"
+    host="$(printf '%s\n' "${connection}" | sed -n '1p')"
+    port="$(printf '%s\n' "${connection}" | sed -n '2p')"
+    namespace="$(printf '%s\n' "${connection}" | sed -n '3p')"
+    username="$(printf '%s\n' "${connection}" | sed -n '4p')"
+    password="$(printf '%s\n' "${connection}" | sed -n '5p')"
+    token="$(printf '%s\n' "${connection}" | sed -n '6p')"
+
+    set -- npx -y @nacos-group/cli "$@"
+    [ -n "${host}" ] && set -- "$@" --host "${host}"
+    [ -n "${port}" ] && set -- "$@" --port "${port}"
+    [ -n "${namespace}" ] && set -- "$@" --namespace "${namespace}"
+    [ -n "${username}" ] && set -- "$@" --username "${username}"
+    [ -n "${password}" ] && set -- "$@" --password "${password}"
+    [ -n "${token}" ] && set -- "$@" --token "${token}"
+    "$@"
 }
 
 append_skill_lines() {
@@ -86,7 +123,7 @@ fetch_nacos_pattern() {
 
     page=1
     while :; do
-        page_output="$(npx -y @nacos-group/cli skill-list --name "${pattern}" --page "${page}" --size "${PAGE_SIZE}" 2>&1)" || {
+        page_output="$(run_nacos_cli skill-list --name "${pattern}" --page "${page}" --size "${PAGE_SIZE}" 2>&1)" || {
             printf '%s\n' "${page_output}" >&2
             exit 1
         }

@@ -165,6 +165,20 @@ run_case() {
     /bin/sh "${script_path}" find ${query}
 }
 
+run_case_with_env() {
+    local script_path="$1" query="$2" log_file="$3" nacos_host="$4" nacos_port="$5"
+    local mockbin="${TMPDIR_ROOT}/mockbin"
+    create_mock_npx "${mockbin}"
+
+    PATH="${mockbin}:${PATH}" \
+    TEST_NPX_LOG="${log_file}" \
+    HICLAW_NACOS_HOST="${nacos_host}" \
+    HICLAW_NACOS_PORT="${nacos_port}" \
+    HICLAW_FIND_SKILL_MAX_RESULTS=3 \
+    HICLAW_FIND_SKILL_NACOS_PAGE_SIZE=50 \
+    /bin/sh "${script_path}" find ${query}
+}
+
 echo ""
 echo "=== TC1: react performance should still return React skills ==="
 for script_path in "${WORKER_SCRIPT}" "${COPAW_SCRIPT}"; do
@@ -196,6 +210,19 @@ for script_path in "${WORKER_SCRIPT}" "${COPAW_SCRIPT}"; do
 
         assert_eq "${case_name}: first result should be requesting-code-review" "requesting-code-review" "${first}"
         assert_eq "${case_name}: second result should be receiving-code-review" "receiving-code-review" "${second}"
+    }
+done
+
+echo ""
+echo "=== TC3: nacos backend should use explicit HICLAW_NACOS host/port without interactive profile ==="
+for script_path in "${WORKER_SCRIPT}" "${COPAW_SCRIPT}"; do
+    {
+        case_name="$(basename "$(dirname "$(dirname "${script_path}")")")"
+        log_file="${TMPDIR_ROOT}/${case_name}-nacos-conn.log"
+        output="$(run_case_with_env "${script_path}" "review" "${log_file}" "host.containers.internal" "8848" | strip_ansi)"
+        assert_contains "${case_name}: should still return results with explicit nacos env" "requesting-code-review" "${output}"
+        assert_contains "${case_name}: should pass HICLAW_NACOS_HOST" "--host host.containers.internal" "$(cat "${log_file}")"
+        assert_contains "${case_name}: should pass HICLAW_NACOS_PORT" "--port 8848" "$(cat "${log_file}")"
     }
 done
 

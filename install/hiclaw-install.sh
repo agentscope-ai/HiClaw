@@ -2502,7 +2502,7 @@ install_worker() {
     local FS_SECRET=""
     local RESET=false
     local SKILLS_API_URL=""
-    local FIND_SKILL_BACKEND="${HICLAW_FIND_SKILL_BACKEND:-}"
+    local FIND_SKILL_BACKEND="${HICLAW_FIND_SKILL_BACKEND:-nacos}"
 
     # Parse arguments
     while [ $# -gt 0 ]; do
@@ -2554,9 +2554,25 @@ install_worker() {
         DOCKER_ENV="${DOCKER_ENV} -e SKILLS_API_URL=${SKILLS_API_URL}"
         log "$(msg worker.skills_url "${SKILLS_API_URL}")"
     fi
-    if [ -n "${FIND_SKILL_BACKEND}" ]; then
-        DOCKER_ENV="${DOCKER_ENV} -e HICLAW_FIND_SKILL_BACKEND=${FIND_SKILL_BACKEND}"
-        log "find-skills backend: ${FIND_SKILL_BACKEND}"
+    DOCKER_ENV="${DOCKER_ENV} -e HICLAW_FIND_SKILL_BACKEND=${FIND_SKILL_BACKEND}"
+    log "find-skills backend: ${FIND_SKILL_BACKEND}"
+    if [ -n "${HICLAW_NACOS_HOST:-}" ]; then
+        DOCKER_ENV="${DOCKER_ENV} -e HICLAW_NACOS_HOST=${HICLAW_NACOS_HOST}"
+    fi
+    if [ -n "${HICLAW_NACOS_PORT:-}" ]; then
+        DOCKER_ENV="${DOCKER_ENV} -e HICLAW_NACOS_PORT=${HICLAW_NACOS_PORT}"
+    fi
+    if [ -n "${HICLAW_NACOS_NAMESPACE:-}" ]; then
+        DOCKER_ENV="${DOCKER_ENV} -e HICLAW_NACOS_NAMESPACE=${HICLAW_NACOS_NAMESPACE}"
+    fi
+    if [ -n "${HICLAW_NACOS_USERNAME:-}" ]; then
+        DOCKER_ENV="${DOCKER_ENV} -e HICLAW_NACOS_USERNAME=${HICLAW_NACOS_USERNAME}"
+    fi
+    if [ -n "${HICLAW_NACOS_PASSWORD:-}" ]; then
+        DOCKER_ENV="${DOCKER_ENV} -e HICLAW_NACOS_PASSWORD=${HICLAW_NACOS_PASSWORD}"
+    fi
+    if [ -n "${HICLAW_NACOS_TOKEN:-}" ]; then
+        DOCKER_ENV="${DOCKER_ENV} -e HICLAW_NACOS_TOKEN=${HICLAW_NACOS_TOKEN}"
     fi
 
     # shellcheck disable=SC2086

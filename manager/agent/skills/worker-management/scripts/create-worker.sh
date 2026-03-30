@@ -40,7 +40,7 @@ MCP_SERVERS=""
 WORKER_SKILLS=""
 REMOTE_MODE=false
 SKILLS_API_URL=""
-FIND_SKILL_BACKEND="${HICLAW_FIND_SKILL_BACKEND:-}"
+FIND_SKILL_BACKEND="${HICLAW_FIND_SKILL_BACKEND:-nacos}"
 WORKER_RUNTIME="${HICLAW_DEFAULT_WORKER_RUNTIME:-openclaw}"   # openclaw | copaw
 CONSOLE_PORT=""             # copaw only: web console port (e.g. 8088)
 CUSTOM_IMAGE=""             # optional: custom Docker image for this worker
@@ -767,8 +767,24 @@ _build_extra_env() {
     if [ -n "${SKILLS_API_URL}" ]; then
         items+=("SKILLS_API_URL=${SKILLS_API_URL}")
     fi
-    if [ -n "${FIND_SKILL_BACKEND}" ]; then
-        items+=("HICLAW_FIND_SKILL_BACKEND=${FIND_SKILL_BACKEND}")
+    items+=("HICLAW_FIND_SKILL_BACKEND=${FIND_SKILL_BACKEND}")
+    if [ -n "${HICLAW_NACOS_HOST:-}" ]; then
+        items+=("HICLAW_NACOS_HOST=${HICLAW_NACOS_HOST}")
+    fi
+    if [ -n "${HICLAW_NACOS_PORT:-}" ]; then
+        items+=("HICLAW_NACOS_PORT=${HICLAW_NACOS_PORT}")
+    fi
+    if [ -n "${HICLAW_NACOS_NAMESPACE:-}" ]; then
+        items+=("HICLAW_NACOS_NAMESPACE=${HICLAW_NACOS_NAMESPACE}")
+    fi
+    if [ -n "${HICLAW_NACOS_USERNAME:-}" ]; then
+        items+=("HICLAW_NACOS_USERNAME=${HICLAW_NACOS_USERNAME}")
+    fi
+    if [ -n "${HICLAW_NACOS_PASSWORD:-}" ]; then
+        items+=("HICLAW_NACOS_PASSWORD=${HICLAW_NACOS_PASSWORD}")
+    fi
+    if [ -n "${HICLAW_NACOS_TOKEN:-}" ]; then
+        items+=("HICLAW_NACOS_TOKEN=${HICLAW_NACOS_TOKEN}")
     fi
     if [ -n "${CONSOLE_PORT}" ]; then
         items+=("HICLAW_CONSOLE_PORT=${CONSOLE_PORT}")
