@@ -54,6 +54,31 @@ get_skills_api_url() {
     printf '%s\n' "https://skills.sh"
 }
 
+get_registry_label() {
+    backend="$1"
+    api_url="$(get_skills_api_url)"
+    case "${backend}" in
+        nacos)
+            connection="$(
+                derive_nacos_connection
+            )"
+            host="$(printf '%s\n' "${connection}" | sed -n '1p')"
+            port="$(printf '%s\n' "${connection}" | sed -n '2p')"
+            if [ -n "${host}" ]; then
+                printf '%s\n' "Nacos (nacos://${host}:${port})"
+            else
+                printf '%s\n' "Nacos"
+            fi
+            ;;
+        skills_sh)
+            printf '%s\n' "skills.sh (${api_url})"
+            ;;
+        *)
+            printf '%s\n' "${backend}"
+            ;;
+    esac
+}
+
 detect_backend() {
     api_url="$(get_skills_api_url)"
     case "${api_url}" in
@@ -64,7 +89,9 @@ detect_backend() {
 }
 
 run_skills_find() {
-    exec skills find "$@"
+    output="$(skills find "$@")" || exit $?
+    printf 'Registry: %s\n\n' "$(get_registry_label "skills_sh")"
+    printf '%s\n' "${output}"
 }
 
 run_skills_install() {
@@ -395,6 +422,7 @@ run_nacos_find() {
 
     first_name="$(awk -F '\t' 'NR == 1 { print $2; exit }' "${sorted}")"
 
+    printf '%sRegistry:%s %s\n\n' "${DIM}" "${RESET}" "$(get_registry_label "nacos")"
     printf '%sInstall with%s %shiclaw-find-skill install %s%s\n\n' \
         "${DIM}" "${RESET}" "${TEXT}" "${first_name}" "${RESET}"
 

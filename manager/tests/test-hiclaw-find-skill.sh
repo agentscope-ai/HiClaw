@@ -223,6 +223,7 @@ for script_path in "${WORKER_SCRIPT}" "${COPAW_SCRIPT}"; do
         output="$(run_case "${script_path}" "react performance" "${log_file}" | strip_ansi)"
         assert_not_contains "${case_name}: query should not be empty result" 'No skills found for "react performance"' "${output}"
         assert_contains "${case_name}: output should include a React skill" "react-render-performance" "${output}"
+        assert_contains "${case_name}: output should identify nacos registry" "Registry: Nacos (nacos://registry.local:8848)" "${output}"
         assert_contains "${case_name}: backend call should use plain token filter" "--name react" "$(cat "${log_file}")"
         if grep -Eq 'skill-list( |$)' "${log_file}" && ! grep -q -- '--name' "${log_file}"; then
             fail "${case_name}: should not call unfiltered skill-list" "all skill-list calls include --name" "$(cat "${log_file}")"
@@ -258,6 +259,7 @@ for script_path in "${WORKER_SCRIPT}" "${COPAW_SCRIPT}"; do
         skills_log="${TMPDIR_ROOT}/${case_name}-nacos-skills.log"
         output="$(run_case_with_env "${script_path}" "review" "${log_file}" "nacos://host.containers.internal:8848" "${skills_log}" | strip_ansi)"
         assert_contains "${case_name}: should still return results with nacos URL" "requesting-code-review" "${output}"
+        assert_contains "${case_name}: output should identify derived nacos registry" "Registry: Nacos (nacos://host.containers.internal:8848)" "${output}"
         assert_contains "${case_name}: should derive host from SKILLS_API_URL" "--host host.containers.internal" "$(cat "${log_file}")"
         assert_contains "${case_name}: should derive port from SKILLS_API_URL" "--port 8848" "$(cat "${log_file}")"
     }
@@ -271,6 +273,7 @@ for script_path in "${WORKER_SCRIPT}" "${COPAW_SCRIPT}"; do
         log_file="${TMPDIR_ROOT}/${case_name}-skills-sh.log"
         skills_log="${TMPDIR_ROOT}/${case_name}-skills-cli.log"
         output="$(run_case_with_env "${script_path}" "react performance" "${log_file}" "https://skills.sh" "${skills_log}" | strip_ansi)"
+        assert_contains "${case_name}: output should identify skills.sh registry" "Registry: skills.sh (https://skills.sh)" "${output}"
         assert_contains "${case_name}: should use skills CLI output" "react-performance-toolkit" "${output}"
         assert_contains "${case_name}: should call skills find" "find react performance" "$(cat "${skills_log}")"
         assert_eq "${case_name}: nacos cli should not be used for https registry" "" "$(cat "${log_file}" 2>/dev/null || true)"
