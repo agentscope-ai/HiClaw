@@ -4,7 +4,6 @@ Record image-affecting changes to `manager/`, `worker/`, `openclaw-base/` here b
 
 ---
 
-<<<<<<< HEAD
 **What's New**
 
 - **Team, Human & Declarative Management (hiclaw-controller)** — Introduced the `hiclaw-controller` binary for declarative resource management. Define Teams, Humans, and Workers as YAML resources and apply them with `hiclaw apply`. Teams group Workers under a leader with shared goals; Humans bind Matrix users to Workers for direct interaction. The controller watches for resource changes and reconciles state automatically. Supports inline `identity`, `soul`, and `agents` fields for Worker configuration, eliminating the need for separate files.

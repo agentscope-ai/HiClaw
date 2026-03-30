@@ -639,6 +639,30 @@ msg() {
         "llm.openai.test.no_curl.en") text="⚠️  curl not found, skipping API connectivity test" ;;
         "llm.openai.test.confirm.zh") text="是否仍要继续安装？[y/N/b] " ;;
         "llm.openai.test.confirm.en") text="Continue with installation anyway? [y/N/b] " ;;
+        "llm.embedding.title.zh") text="📦 记忆搜索配置" ;;
+        "llm.embedding.title.en") text="📦 Memory Search Configuration" ;;
+        "llm.embedding.hint.zh") text="  Embedding 模型可提升记忆搜索质量（语义匹配）。不启用也可正常使用记忆功能（关键词匹配）。" ;;
+        "llm.embedding.hint.en") text="  Embedding model improves memory search quality (semantic matching). Memory still works without it (keyword matching)." ;;
+        "llm.embedding.option.default.zh") text="  1) text-embedding-v4（推荐）" ;;
+        "llm.embedding.option.default.en") text="  1) text-embedding-v4 (Recommended)" ;;
+        "llm.embedding.option.custom.zh") text="  2) 自定义 Embedding 模型" ;;
+        "llm.embedding.option.custom.en") text="  2) Custom embedding model" ;;
+        "llm.embedding.option.disable.zh") text="  3) 不启用" ;;
+        "llm.embedding.option.disable.en") text="  3) Do not enable" ;;
+        "llm.embedding.select.zh") text="选择" ;;
+        "llm.embedding.select.en") text="Select" ;;
+        "llm.embedding.custom_prompt.zh") text="  Embedding 模型名称" ;;
+        "llm.embedding.custom_prompt.en") text="  Embedding model name" ;;
+        "llm.embedding.test.testing.zh") text="正在测试 Embedding API 联通性..." ;;
+        "llm.embedding.test.testing.en") text="Testing Embedding API connectivity..." ;;
+        "llm.embedding.test.ok.zh") text="✅ Embedding API 联通性测试通过" ;;
+        "llm.embedding.test.ok.en") text="✅ Embedding API connectivity test passed" ;;
+        "llm.embedding.test.fail.zh") text="⚠️  Embedding API 测试失败（HTTP %s）。响应: %s" ;;
+        "llm.embedding.test.fail.en") text="⚠️  Embedding API test failed (HTTP %s). Response: %s" ;;
+        "llm.embedding.auto_disabled.zh") text="⚠️  Embedding 已自动禁用，记忆搜索将使用关键词匹配。您可以稍后在 hiclaw-manager.env 中设置 HICLAW_EMBEDDING_MODEL 启用。" ;;
+        "llm.embedding.auto_disabled.en") text="⚠️  Embedding auto-disabled. Memory search will use keyword matching. You can enable it later in hiclaw-manager.env by setting HICLAW_EMBEDDING_MODEL." ;;
+        "llm.embedding.disabled.zh") text="ℹ️  Embedding 已禁用，记忆搜索将使用关键词匹配。" ;;
+        "llm.embedding.disabled.en") text="ℹ️  Embedding disabled. Memory search will use keyword matching." ;;
         "llm.openai.test.aborted.zh") text="安装已中止。" ;;
         "llm.openai.test.aborted.en") text="Installation aborted." ;;
         "nav.back_hint.zh") text="（输入 b 返回上一步）" ;;
@@ -1500,6 +1524,7 @@ step_llm() {
         log "$(msg llm.provider.qwen_default "${HICLAW_LLM_PROVIDER}")"
         log "$(msg llm.model.default "${HICLAW_DEFAULT_MODEL}")"
         prompt HICLAW_LLM_API_KEY "$(msg llm.apikey_prompt)" "" "true"
+        HICLAW_EMBEDDING_MODEL="${HICLAW_EMBEDDING_MODEL-text-embedding-v4}"
         return 0
     fi
     echo ""
@@ -1636,6 +1661,53 @@ step_llm() {
             error "$(msg llm.provider.invalid "${PROVIDER_CHOICE}")"
             ;;
     esac
+    # --- Embedding model (optional, auto-tested) ---
+    echo ""
+    log "$(msg llm.embedding.title)"
+    log "$(msg llm.embedding.hint)"
+    echo ""
+    echo "$(msg llm.embedding.option.default)"
+    echo "$(msg llm.embedding.option.custom)"
+    echo "$(msg llm.embedding.option.disable)"
+    echo ""
+    local EMB_CHOICE
+    read -e -p "$(msg llm.embedding.select) [1]: " EMB_CHOICE
+    EMB_CHOICE="${EMB_CHOICE:-1}"
+    if [ "${EMB_CHOICE}" = "b" ]; then STEP_RESULT="back"; return 0; fi
+
+    case "${EMB_CHOICE}" in
+        1)
+            HICLAW_EMBEDDING_MODEL="text-embedding-v4"
+            ;;
+        2)
+            read -e -p "$(msg llm.embedding.custom_prompt): " HICLAW_EMBEDDING_MODEL
+            if [ "${HICLAW_EMBEDDING_MODEL}" = "b" ]; then STEP_RESULT="back"; return 0; fi
+            if [ -z "${HICLAW_EMBEDDING_MODEL}" ]; then
+                HICLAW_EMBEDDING_MODEL=""
+                log "$(msg llm.embedding.disabled)"
+            fi
+            ;;
+        3)
+            HICLAW_EMBEDDING_MODEL=""
+            log "$(msg llm.embedding.disabled)"
+            ;;
+        *)
+            HICLAW_EMBEDDING_MODEL="text-embedding-v4"
+            ;;
+    esac
+
+    if [ -n "${HICLAW_EMBEDDING_MODEL}" ]; then
+        # Qwen provider uses dashscope directly; others use OPENAI_BASE_URL
+        local EMB_BASE_URL="${HICLAW_OPENAI_BASE_URL}"
+        if [ "${HICLAW_LLM_PROVIDER}" = "qwen" ]; then
+            EMB_BASE_URL="https://dashscope.aliyuncs.com/compatible-mode/v1"
+        fi
+        if ! test_embedding_connectivity "${EMB_BASE_URL}" "${HICLAW_LLM_API_KEY}" "${HICLAW_EMBEDDING_MODEL}"; then
+            HICLAW_EMBEDDING_MODEL=""
+            log "$(msg llm.embedding.auto_disabled)"
+        fi
+    fi
+
     export HICLAW_LLM_PROVIDER HICLAW_DEFAULT_MODEL
     [ -n "${HICLAW_OPENAI_BASE_URL+x}" ] && export HICLAW_OPENAI_BASE_URL
     log ""
@@ -2060,6 +2132,9 @@ HICLAW_MODEL_CONTEXT_WINDOW=${HICLAW_MODEL_CONTEXT_WINDOW:-}
 HICLAW_MODEL_MAX_TOKENS=${HICLAW_MODEL_MAX_TOKENS:-}
 HICLAW_MODEL_REASONING=${HICLAW_MODEL_REASONING:-}
 HICLAW_MODEL_VISION=${HICLAW_MODEL_VISION:-}
+
+# Embedding model (empty = disabled, default: text-embedding-v4)
+HICLAW_EMBEDDING_MODEL=${HICLAW_EMBEDDING_MODEL}
 
 # Admin
 HICLAW_ADMIN_USER=${HICLAW_ADMIN_USER}
@@ -2540,6 +2615,35 @@ test_llm_connectivity() {
                 exit 1
             fi
         fi
+    fi
+}
+
+test_embedding_connectivity() {
+    local base_url="$1"
+    local api_key="$2"
+    local model="$3"
+    if ! command -v curl >/dev/null 2>&1; then
+        return 0
+    fi
+    log "$(msg llm.embedding.test.testing)"
+    local _body _http_code _tmpfile
+    _tmpfile=$(mktemp)
+    _http_code=$(curl -s -o "${_tmpfile}" -w "%{http_code}" \
+        -X POST "${base_url%/}/embeddings" \
+        -H "Authorization: Bearer ${api_key}" \
+        -H "Content-Type: application/json" \
+        -H "User-Agent: HiClaw/${HICLAW_VERSION:-latest}" \
+        --max-time 30 \
+        -d "{\"model\":\"${model}\",\"input\":\"test\"}" \
+        2>/dev/null)
+    _body=$(cat "${_tmpfile}")
+    rm -f "${_tmpfile}"
+    if [ "${_http_code}" = "200" ] || [ "${_http_code}" = "201" ]; then
+        log "$(msg llm.embedding.test.ok)"
+        return 0
+    else
+        echo -e "\033[33m$(msg llm.embedding.test.fail "${_http_code}" "${_body}")\033[0m"
+        return 1
     fi
 }
 

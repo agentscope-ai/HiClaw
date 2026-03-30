@@ -117,18 +117,29 @@ mkdir -p "${OUTPUT_DIR}"
 
 envsubst < /opt/hiclaw/agent/skills/worker-management/references/worker-openclaw.json.tmpl > "${OUTPUT_DIR}/openclaw.json"
 
-# Inject custom model if not in the built-in list
+# Post-envsubst injection: memorySearch + custom model (single jq pass when possible)
 if ! jq -e --arg model "${MODEL_NAME}" '.models.providers["hiclaw-gateway"].models | map(.id) | index($model)' "${OUTPUT_DIR}/openclaw.json" > /dev/null 2>&1; then
     log "Custom model '${MODEL_NAME}' not in built-in list, injecting into worker config..."
-    jq --arg model "${MODEL_NAME}" \
+    jq --arg emb_model "${HICLAW_EMBEDDING_MODEL}" \
+       --arg aigw "${HICLAW_AI_GATEWAY}" \
+       --arg key "${WORKER_GATEWAY_KEY}" \
+       --arg model "${MODEL_NAME}" \
        --argjson ctx "${CTX}" \
        --argjson max "${MAX}" \
        --argjson reasoning "${MODEL_REASONING}" \
        --argjson input "${INPUT}" \
        '
-        .models.providers["hiclaw-gateway"].models += [{"id": $model, "name": $model, "reasoning": $reasoning, "contextWindow": $ctx, "maxTokens": $max, "input": $input}]
+        (if $emb_model != "" then .agents.defaults.memorySearch = {"provider":"openai","model":$emb_model,"remote":{"baseUrl":($aigw + "/v1"),"apiKey":$key}} else . end)
+        | .models.providers["hiclaw-gateway"].models += [{"id": $model, "name": $model, "reasoning": $reasoning, "contextWindow": $ctx, "maxTokens": $max, "input": $input}]
         | .agents.defaults.models += {("hiclaw-gateway/" + $model): {"alias": $model}}
        ' "${OUTPUT_DIR}/openclaw.json" > "${OUTPUT_DIR}/openclaw.json.tmp" && \
+        mv "${OUTPUT_DIR}/openclaw.json.tmp" "${OUTPUT_DIR}/openclaw.json"
+elif [ -n "${HICLAW_EMBEDDING_MODEL}" ]; then
+    jq --arg emb_model "${HICLAW_EMBEDDING_MODEL}" \
+       --arg aigw "${HICLAW_AI_GATEWAY}" \
+       --arg key "${WORKER_GATEWAY_KEY}" \
+       '.agents.defaults.memorySearch = {"provider":"openai","model":$emb_model,"remote":{"baseUrl":($aigw + "/v1"),"apiKey":$key}}' \
+       "${OUTPUT_DIR}/openclaw.json" > "${OUTPUT_DIR}/openclaw.json.tmp" && \
         mv "${OUTPUT_DIR}/openclaw.json.tmp" "${OUTPUT_DIR}/openclaw.json"
 fi
 

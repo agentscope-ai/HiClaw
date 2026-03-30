@@ -521,8 +521,8 @@ if [ -f /root/manager-workspace/openclaw.json ]; then
         | .commands.restart = true
         | .gateway.controlUi.dangerouslyDisableDeviceAuth = true
         | .channels.matrix.encryption = $e2ee
-        # Ensure memorySearch config exists (embedding model for memory)
-        | .agents.defaults.memorySearch //= {"provider":"openai","model":$emb_model,"remote":{"baseUrl":("http://" + $aigw_domain + ":8080/v1"),"apiKey":$key}}
+        # Ensure memorySearch config exists (embedding model for memory) — skip if embedding model is empty
+        | if $emb_model != "" then .agents.defaults.memorySearch //= {"provider":"openai","model":$emb_model,"remote":{"baseUrl":("http://" + $aigw_domain + ":8080/v1"),"apiKey":$key}} else . end
        ' \
        /root/manager-workspace/openclaw.json > /tmp/openclaw.json.tmp && \
         mv /tmp/openclaw.json.tmp /root/manager-workspace/openclaw.json
@@ -536,18 +536,29 @@ if [ -f /root/manager-workspace/openclaw.json ]; then
 else
     log "Manager openclaw.json not found, generating from template..."
     envsubst < /opt/hiclaw/configs/manager-openclaw.json.tmpl > /root/manager-workspace/openclaw.json
-    # Inject custom model if not in the built-in list
+    # Post-envsubst injection: memorySearch + custom model (single jq pass when possible)
     if ! jq -e --arg model "${MODEL_NAME}" '.models.providers["hiclaw-gateway"].models | map(.id) | index($model)' /root/manager-workspace/openclaw.json > /dev/null 2>&1; then
         log "Custom model '${MODEL_NAME}' not in built-in list, injecting into config..."
-        jq --arg model "${MODEL_NAME}" \
+        jq --arg emb_model "${HICLAW_EMBEDDING_MODEL}" \
+           --arg aigw_domain "${AI_GATEWAY_DOMAIN}" \
+           --arg key "${HICLAW_MANAGER_GATEWAY_KEY}" \
+           --arg model "${MODEL_NAME}" \
            --argjson ctx "${MODEL_CONTEXT_WINDOW}" \
            --argjson max "${MODEL_MAX_TOKENS}" \
            --argjson reasoning "${MODEL_REASONING}" \
            --argjson input "${MODEL_INPUT}" \
            '
-            .models.providers["hiclaw-gateway"].models += [{"id": $model, "name": $model, "reasoning": $reasoning, "contextWindow": $ctx, "maxTokens": $max, "input": $input}]
+            (if $emb_model != "" then .agents.defaults.memorySearch = {"provider":"openai","model":$emb_model,"remote":{"baseUrl":("http://" + $aigw_domain + ":8080/v1"),"apiKey":$key}} else . end)
+            | .models.providers["hiclaw-gateway"].models += [{"id": $model, "name": $model, "reasoning": $reasoning, "contextWindow": $ctx, "maxTokens": $max, "input": $input}]
             | .agents.defaults.models += {("hiclaw-gateway/" + $model): {"alias": $model}}
            ' /root/manager-workspace/openclaw.json > /tmp/openclaw.json.tmp && \
+            mv /tmp/openclaw.json.tmp /root/manager-workspace/openclaw.json
+    elif [ -n "${HICLAW_EMBEDDING_MODEL}" ]; then
+        jq --arg emb_model "${HICLAW_EMBEDDING_MODEL}" \
+           --arg aigw_domain "${AI_GATEWAY_DOMAIN}" \
+           --arg key "${HICLAW_MANAGER_GATEWAY_KEY}" \
+           '.agents.defaults.memorySearch = {"provider":"openai","model":$emb_model,"remote":{"baseUrl":("http://" + $aigw_domain + ":8080/v1"),"apiKey":$key}}' \
+           /root/manager-workspace/openclaw.json > /tmp/openclaw.json.tmp && \
             mv /tmp/openclaw.json.tmp /root/manager-workspace/openclaw.json
     fi
     _written_token=$(jq -r '.channels.matrix.accessToken' /root/manager-workspace/openclaw.json 2>/dev/null)

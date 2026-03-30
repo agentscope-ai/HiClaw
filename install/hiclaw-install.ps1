@@ -462,6 +462,18 @@ $script:Messages = @{
     "llm.openai.test.fail.codingplan" = @{ zh = "提示: 请确认您的 API Key 已开通阿里云百炼 CodingPlan 服务。开通地址: https://www.aliyun.com/benefit/scene/codingplan"; en = "Hint: Please verify that your API Key has CodingPlan service enabled. Enable at: https://www.alibabacloud.com/en/campaign/ai-scene-coding" }
     "llm.openai.test.confirm" = @{ zh = "是否仍要继续安装？[y/N/b]"; en = "Continue with installation anyway? [y/N/b]" }
     "llm.openai.test.aborted" = @{ zh = "安装已中止。"; en = "Installation aborted." }
+    "llm.embedding.title" = @{ zh = "📦 记忆搜索配置"; en = "📦 Memory Search Configuration" }
+    "llm.embedding.hint" = @{ zh = "  Embedding 模型可提升记忆搜索质量（语义匹配）。不启用也可正常使用记忆功能（关键词匹配）。"; en = "  Embedding model improves memory search quality (semantic matching). Memory still works without it (keyword matching)." }
+    "llm.embedding.option.default" = @{ zh = "  1) text-embedding-v4（推荐）"; en = "  1) text-embedding-v4 (Recommended)" }
+    "llm.embedding.option.custom" = @{ zh = "  2) 自定义 Embedding 模型"; en = "  2) Custom embedding model" }
+    "llm.embedding.option.disable" = @{ zh = "  3) 不启用"; en = "  3) Do not enable" }
+    "llm.embedding.select" = @{ zh = "选择"; en = "Select" }
+    "llm.embedding.custom_prompt" = @{ zh = "  Embedding 模型名称"; en = "  Embedding model name" }
+    "llm.embedding.test.testing" = @{ zh = "正在测试 Embedding API 联通性..."; en = "Testing Embedding API connectivity..." }
+    "llm.embedding.test.ok" = @{ zh = "✅ Embedding API 联通性测试通过"; en = "✅ Embedding API connectivity test passed" }
+    "llm.embedding.test.fail" = @{ zh = "⚠️  Embedding API 测试失败（HTTP {0}）。响应: {1}"; en = "⚠️  Embedding API test failed (HTTP {0}). Response: {1}" }
+    "llm.embedding.auto_disabled" = @{ zh = "⚠️  Embedding 已自动禁用，记忆搜索将使用关键词匹配。您可以稍后在 hiclaw-manager.env 中设置 HICLAW_EMBEDDING_MODEL 启用。"; en = "⚠️  Embedding auto-disabled. Memory search will use keyword matching. You can enable it later in hiclaw-manager.env by setting HICLAW_EMBEDDING_MODEL." }
+    "llm.embedding.disabled" = @{ zh = "ℹ️  Embedding 已禁用，记忆搜索将使用关键词匹配。"; en = "ℹ️  Embedding disabled. Memory search will use keyword matching." }
     "nav.back_hint" = @{ zh = "（输入 b 返回上一步）"; en = "(enter b to go back)" }
     # --- OpenAI-compatible provider creation ---
     "install.openai_compat.missing" = @{ zh = "警告: OpenAI Base URL 或 API Key 未设置，跳过提供商创建"; en = "WARNING: OpenAI Base URL or API Key not set, skipping provider creation" }
@@ -758,6 +770,9 @@ HICLAW_MODEL_MAX_TOKENS=$($Config.MODEL_MAX_TOKENS)
 HICLAW_MODEL_REASONING=$($Config.MODEL_REASONING)
 HICLAW_MODEL_VISION=$($Config.MODEL_VISION)
 
+# Embedding model (empty = disabled, default: text-embedding-v4)
+HICLAW_EMBEDDING_MODEL=$($Config.EMBEDDING_MODEL)
+
 # Admin
 HICLAW_ADMIN_USER=$($Config.ADMIN_USER)
 HICLAW_ADMIN_PASSWORD=$($Config.ADMIN_PASSWORD)
@@ -980,6 +995,40 @@ function Test-LlmConnectivity {
                 Exit-Script 1
             }
         }
+    }
+}
+
+function Test-EmbeddingConnectivity {
+    param(
+        [string]$BaseUrl,
+        [string]$ApiKey,
+        [string]$Model
+    )
+    Write-Log (Get-Msg "llm.embedding.test.testing")
+    $uri = ($BaseUrl.TrimEnd('/')) + "/embeddings"
+    $bodyHash = @{
+        model = $Model
+        input = "test"
+    }
+    $body = $bodyHash | ConvertTo-Json -Compress
+    try {
+        $response = Invoke-WebRequest -Uri $uri -Method POST `
+            -Headers @{ "Authorization" = "Bearer $ApiKey"; "Content-Type" = "application/json"; "User-Agent" = "HiClaw/$($script:HICLAW_VERSION)" } `
+            -Body $body -TimeoutSec 30 -ErrorAction Stop -UseBasicParsing
+        Write-Log (Get-Msg "llm.embedding.test.ok")
+        return $true
+    } catch {
+        $statusCode = if ($_.Exception.Response) { [int]$_.Exception.Response.StatusCode } else { 0 }
+        $responseBody = ""
+        if ($_.Exception.Response) {
+            try {
+                $stream = $_.Exception.Response.GetResponseStream()
+                $reader = New-Object System.IO.StreamReader($stream)
+                $responseBody = $reader.ReadToEnd()
+            } catch {}
+        }
+        Write-Host (Get-Msg "llm.embedding.test.fail" -f $statusCode, $responseBody) -ForegroundColor Yellow
+        return $false
     }
 }
 
@@ -1338,6 +1387,7 @@ function Step-Llm {
         Write-Log (Get-Msg "llm.model.label" -f $script:config.DEFAULT_MODEL)
         Write-Log ""
         $script:config.LLM_API_KEY = Read-Prompt -VarName "HICLAW_LLM_API_KEY" -PromptText (Get-Msg "llm.apikey_prompt") -Secret
+        $script:config.EMBEDDING_MODEL = if ($null -ne $env:HICLAW_EMBEDDING_MODEL) { $env:HICLAW_EMBEDDING_MODEL } else { "text-embedding-v4" }
         return
     }
 
@@ -1471,6 +1521,55 @@ function Step-Llm {
         }
         default {
             Write-Error (Get-Msg "llm.provider.invalid" -f $providerChoice)
+        }
+    }
+
+    # --- Embedding model (optional, auto-tested) ---
+    Write-Host ""
+    Write-Log (Get-Msg "llm.embedding.title")
+    Write-Log (Get-Msg "llm.embedding.hint")
+    Write-Host ""
+    Write-Host (Get-Msg "llm.embedding.option.default")
+    Write-Host (Get-Msg "llm.embedding.option.custom")
+    Write-Host (Get-Msg "llm.embedding.option.disable")
+    Write-Host ""
+    $embChoice = Read-Host "$(Get-Msg 'llm.embedding.select') [1]"
+    $embChoice = if ($embChoice) { $embChoice } else { "1" }
+    if ($embChoice -eq "b") { $script:StepResult = "back"; return }
+
+    switch ($embChoice) {
+        "1" {
+            $script:config.EMBEDDING_MODEL = "text-embedding-v4"
+        }
+        "2" {
+            $embCustom = Read-Host (Get-Msg "llm.embedding.custom_prompt")
+            if ($embCustom -eq "b") { $script:StepResult = "back"; return }
+            if ($embCustom) {
+                $script:config.EMBEDDING_MODEL = $embCustom
+            } else {
+                $script:config.EMBEDDING_MODEL = ""
+                Write-Log (Get-Msg "llm.embedding.disabled")
+            }
+        }
+        "3" {
+            $script:config.EMBEDDING_MODEL = ""
+            Write-Log (Get-Msg "llm.embedding.disabled")
+        }
+        default {
+            $script:config.EMBEDDING_MODEL = "text-embedding-v4"
+        }
+    }
+
+    if ($script:config.EMBEDDING_MODEL) {
+        # Qwen provider uses dashscope directly; others use OPENAI_BASE_URL
+        $embBaseUrl = $script:config.OPENAI_BASE_URL
+        if ($script:config.LLM_PROVIDER -eq "qwen") {
+            $embBaseUrl = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+        }
+        $embResult = Test-EmbeddingConnectivity -BaseUrl $embBaseUrl -ApiKey $script:config.LLM_API_KEY -Model $script:config.EMBEDDING_MODEL
+        if (-not $embResult) {
+            $script:config.EMBEDDING_MODEL = ""
+            Write-Log (Get-Msg "llm.embedding.auto_disabled")
         }
     }
 
