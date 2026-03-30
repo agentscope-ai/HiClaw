@@ -30,25 +30,12 @@ If `skills` command is not found, install it: `npm install -g skills`
 
 **Key commands:**
 
-- `hiclaw-find-skill find [query]` - Search for skills using the configured registry backend
-- `hiclaw-find-skill install <skill>` - Install a skill from the configured registry backend
-- `skills check` - Check for skill updates (skills.sh backend only)
-- `skills update` - Update all installed skills (skills.sh backend only)
+- `hiclaw-find-skill find [query]` - Search for relevant skills
+- `hiclaw-find-skill install <skill>` - Install a skill
+- `skills check` - Check for skill updates
+- `skills update` - Update all installed skills
 
 **Browse skills at:** https://skills.sh/
-
-## Environment Variables
-
-```bash
-SKILLS_API_URL         # https://... uses skills.sh, nacos://host[:port] uses Nacos
-HICLAW_NACOS_USERNAME  # Optional Nacos username
-HICLAW_NACOS_PASSWORD  # Optional Nacos password
-HICLAW_NACOS_TOKEN     # Optional Nacos token
-```
-
-`SKILLS_API_URL` controls the backend:
-- `https://skills.sh` (or any `http://` / `https://` URL) uses `skills find`
-- `nacos://host`, `nacos://host:port`, or `nacos://host:port/namespace` uses Nacos (`port` defaults to `8848`; namespace comes from the URL path)
 
 ## How to Help Users Find Skills
 
@@ -83,17 +70,12 @@ vercel-react-best-practices
 └ React and Next.js performance guidance
 ```
 
-The exact result format depends on the backend:
-- `skills_sh`: you will see the original `skills find` output unchanged
-- `nacos`: you will see a skills-style rendering of `nacos-cli skill-list` results
-
 ### Step 3: Present Options to the User
 
 When you find relevant skills, present them to the user with:
 
 1. The skill name and what it does
 2. The install command they can run
-3. The registry source (`skills.sh` or Nacos)
 
 Example response:
 
@@ -103,8 +85,6 @@ best practices for Remotion video creation in React.
 
 To install it:
 hiclaw-find-skill install remotion-best-practices
-
-Registry: Nacos skill registry
 ```
 
 ### Step 4: Offer to Install
@@ -154,13 +134,3 @@ I can still help you with this task directly! Would you like me to proceed?
 If this is something you do often, you could create your own skill:
 skills init my-xyz-skill
 ```
-
-## Enterprise Private Registry
-
-If your admin configured `SKILLS_API_URL=nacos://...`:
-- Searches use Nacos directly
-- Public or internal skills published to Nacos will appear in results
-
-If your admin configured `SKILLS_API_URL=https://...`:
-- Searches use `skills find` unchanged
-- `SKILLS_API_URL` can point to a private proxy registry
