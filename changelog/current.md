@@ -70,6 +70,8 @@ Record image-affecting changes to `manager/`, `worker/`, `openclaw-base/` here b
 
 - Add dual-backend `find-skills` support for Workers — introduce `hiclaw-find-skill` wrapper with default Nacos-backed discovery, optional `skills_sh` fallback via `HICLAW_FIND_SKILL_BACKEND`, and runtime wrapper installation for both OpenClaw and CoPaw workers.
 
+- Install `@nacos-group/cli` in Worker images so both OpenClaw and CoPaw workers can call `nacos-cli` directly for Nacos-backed skill and agentspec workflows.
+
 ---
 
 **新增功能**
@@ -138,6 +140,8 @@ Record image-affecting changes to `manager/`, `worker/`, `openclaw-base/` here b
 
 - 支持 `HICLAW_NACOS_USERNAME` 和 `HICLAW_NACOS_PASSWORD` 作为默认 Nacos 凭证（当 `nacos://` URI 省略 `user:pass@` 时）；从 URI 提取 Nacos 地址并添加预检验证。
 
+- 在 Worker 镜像中安装 `@nacos-group/cli`，让 OpenClaw 和 CoPaw Worker 都能直接使用 `nacos-cli` 执行基于 Nacos 的 skill 与 agentspec 工作流。
+
 ---
 
 - feat: add Team, Human, and declarative management (hiclaw-controller) ([fd3b413](https://github.com/alibaba/hiclaw/commit/fd3b413))
@@ -172,6 +176,7 @@ Record image-affecting changes to `manager/`, `worker/`, `openclaw-base/` here b
 - fix: add explicit Matrix room join with retry before sending welcome message ([0569d1a](https://github.com/alibaba/hiclaw/commit/0569d1a))
 - fix: add multi-phase collaboration protocol to task-lifecycle ([d9393fa](https://github.com/alibaba/hiclaw/commit/d9393fa))
 - fix(controller): support HICLAW_NACOS_USERNAME/PASSWORD as default Nacos credentials ([ccf242c](https://github.com/alibaba/hiclaw/commit/ccf242c))
+- feat(worker): install @nacos-group/cli in OpenClaw and CoPaw worker images ([unreleased](https://github.com/higress-group/hiclaw))
 - refactor(network): replace ExtraHosts IP injection with Docker network aliases ([0eb635d](https://github.com/alibaba/hiclaw/commit/0eb635d))
 - refactor: unify DM room creation into manager agent startup ([0569d1a](https://github.com/alibaba/hiclaw/commit/0569d1a))
 - feat(memory): add default embedding model (text-embedding-v4) support for Manager and Worker, with openclaw→copaw bridge
