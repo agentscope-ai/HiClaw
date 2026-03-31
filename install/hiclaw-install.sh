@@ -26,6 +26,8 @@
 #   HICLAW_INSTALL_MANAGER_IMAGE       Override manager image (e.g., local build)
 #   HICLAW_INSTALL_WORKER_IMAGE        Override worker image  (e.g., local build)
 #   HICLAW_INSTALL_COPAW_WORKER_IMAGE  Override copaw worker image (e.g., local build)
+#   HICLAW_NACOS_REGISTRY_URI          Default Nacos registry URI for Worker market search/import
+#                                      (default: nacos://nacos.market.hiclaw.io/public)
 #   HICLAW_NACOS_USERNAME              Default Nacos username for nacos:// package imports (optional)
 #   HICLAW_NACOS_PASSWORD              Default Nacos password for nacos:// package imports (optional)
 #   HICLAW_CMS_TRACES_ENABLED          Enable openclaw-cms-plugin traces for Manager AND all Workers (default: false)
@@ -2242,7 +2244,8 @@ HICLAW_REGISTRATION_TOKEN=${HICLAW_REGISTRATION_TOKEN}
 # GitHub (optional)
 HICLAW_GITHUB_TOKEN=${HICLAW_GITHUB_TOKEN:-}
 
-# Nacos package import defaults (optional)
+# Nacos package import defaults
+HICLAW_NACOS_REGISTRY_URI=${HICLAW_NACOS_REGISTRY_URI:-nacos://nacos.market.hiclaw.io/public}
 HICLAW_NACOS_USERNAME=${HICLAW_NACOS_USERNAME:-}
 HICLAW_NACOS_PASSWORD=${HICLAW_NACOS_PASSWORD:-}
 HICLAW_NACOS_TOKEN=${HICLAW_NACOS_TOKEN:-}

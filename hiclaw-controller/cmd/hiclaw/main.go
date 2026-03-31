@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -135,6 +136,8 @@ func applyWorkerCmd() *cobra.Command {
 
   hiclaw apply worker --name alice --zip worker.zip
   hiclaw apply worker --name alice --model claude-sonnet-4-6 --package nacos://inst/ns/spec/v1
+  hiclaw apply worker --name alice --package reviewer
+  hiclaw apply worker --name alice --package reviewer/label:latest
   hiclaw apply worker --name bob --model qwen3.5-plus
   hiclaw apply worker --name charlie --model gpt-5-mini --skills github-operations --mcp-servers github`,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -159,7 +162,7 @@ func applyWorkerCmd() *cobra.Command {
 	cmd.Flags().StringVar(&name, "name", "", "Worker name (required)")
 	cmd.Flags().StringVar(&model, "model", "", "LLM model ID (default: qwen3.5-plus)")
 	cmd.Flags().StringVar(&zipFile, "zip", "", "Local ZIP package (manifest.json)")
-	cmd.Flags().StringVar(&packageURI, "package", "", "Remote package URI (nacos://, http://, oss://)")
+	cmd.Flags().StringVar(&packageURI, "package", "", "Remote package URI (nacos://, http://, oss://) or Nacos shorthand (name, name/version, name/label:latest)")
 	cmd.Flags().StringVar(&skills, "skills", "", "Comma-separated built-in skills")
 	cmd.Flags().StringVar(&mcpServers, "mcp-servers", "", "Comma-separated MCP servers")
 	cmd.Flags().StringVar(&runtime, "runtime", "openclaw", "Agent runtime (openclaw|copaw)")
@@ -170,6 +173,14 @@ func applyWorkerCmd() *cobra.Command {
 
 // applyWorkerFromParams generates a Worker YAML from CLI params and writes to MinIO
 func applyWorkerFromParams(name, model, packageURI, skills, mcpServers, runtime string, dryRun bool) error {
+	if packageURI != "" {
+		var err error
+		packageURI, err = expandPackageURI(packageURI)
+		if err != nil {
+			return err
+		}
+	}
+
 	// Preflight: validate nacos:// URI before persisting
 	if strings.HasPrefix(packageURI, "nacos://") {
 		fmt.Printf("  Validating nacos URI: %s\n", packageURI)
@@ -243,6 +254,37 @@ spec:
 	}
 	fmt.Printf("  worker/%s %s\n", name, action)
 	return nil
+}
+
+func expandPackageURI(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || strings.Contains(raw, "://") {
+		return raw, nil
+	}
+
+	base := strings.TrimSpace(os.Getenv("HICLAW_NACOS_REGISTRY_URI"))
+	if base == "" {
+		base = "nacos://nacos.market.hiclaw.io/public"
+	}
+	if !strings.HasPrefix(base, "nacos://") {
+		return "", fmt.Errorf("invalid HICLAW_NACOS_REGISTRY_URI %q: must start with nacos://", base)
+	}
+	base = strings.TrimRight(base, "/")
+	if base == "nacos:" || base == "nacos:/" || base == "nacos://" {
+		return "", fmt.Errorf("invalid HICLAW_NACOS_REGISTRY_URI %q: missing host/namespace", base)
+	}
+
+	parts := strings.Split(raw, "/")
+	encoded := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			return "", fmt.Errorf("invalid package shorthand %q: empty path segment", raw)
+		}
+		encoded = append(encoded, url.PathEscape(part))
+	}
+
+	return base + "/" + strings.Join(encoded, "/"), nil
 }
 
 // applyEmbedded writes YAML files to MinIO hiclaw-config/{kind}s/{name}.yaml

@@ -499,11 +499,25 @@ func ValidateNacosURI(ctx context.Context, raw string) error {
 		nacosAddr = u.User.String() + "@" + u.Host
 	}
 	namespace := parts[0]
+	specName := parts[1]
+	version := ""
+	if len(parts) >= 3 {
+		version = parts[2]
+	}
+
+	label := ""
+	if strings.HasPrefix(version, "label:") {
+		label = strings.TrimPrefix(version, "label:")
+		version = ""
+	}
 
 	// newNacosAgentSpecClient validates the address format, connects, and
 	// performs login when credentials are present.
-	_, err = newNacosAgentSpecClient(ctx, nacosAddr, namespace)
+	client, err := newNacosAgentSpecClient(ctx, nacosAddr, namespace)
 	if err != nil {
+		return fmt.Errorf("nacos preflight check failed for %q: %w", raw, err)
+	}
+	if err := client.CheckAgentSpecExists(ctx, specName, version, label); err != nil {
 		return fmt.Errorf("nacos preflight check failed for %q: %w", raw, err)
 	}
 	return nil
