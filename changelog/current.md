@@ -74,7 +74,7 @@ Record image-affecting changes to `manager/`, `worker/`, `openclaw-base/` here b
 
 - Simplify Worker-facing `find-skills` guidance so registry/backend details stay internal to the runtime and are not exposed in Worker skill docs.
 
-- Default `HICLAW_SKILLS_API_URL` to `nacos://nacos.market.hiclaw.io/public` for install flows and Manager-created Workers.
+- Default `HICLAW_SKILLS_API_URL` to `nacos://market.hiclaw.io/public` for install flows and Manager-created Workers.
 
 ---
 
@@ -150,7 +150,7 @@ Record image-affecting changes to `manager/`, `worker/`, `openclaw-base/` here b
 
 - 简化 Worker 侧 `find-skills` 使用说明 —— 将 registry / backend 细节保留在运行时内部，不再在 Worker 技能文档中暴露这些实现信息。
 
-- 将安装流程与 Manager 创建 Worker 时的 `HICLAW_SKILLS_API_URL` 默认值改为 `nacos://nacos.market.hiclaw.io/public`。
+- 将安装流程与 Manager 创建 Worker 时的 `HICLAW_SKILLS_API_URL` 默认值改为 `nacos://market.hiclaw.io/public`。
 
 ---
 

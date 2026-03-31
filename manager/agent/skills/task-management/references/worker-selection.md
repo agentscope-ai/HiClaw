@@ -56,4 +56,4 @@ If you already ran `find-worker.sh`, do NOT run a separate container check. Only
 
 Check registry URL: `echo "${HICLAW_SKILLS_API_URL:-https://skills.sh}"`
 
-`find-skills` is a builtin skill (always available). The backend is inferred from `HICLAW_SKILLS_API_URL`: `https://...` uses `skills find`, while `nacos://host[:port]` uses the Nacos backend. You can optionally ask admin for a custom registry URL and pass it to `create-worker.sh` via `--skills-api-url`.
+`find-skills` is a builtin skill (always available). You can optionally ask admin for a custom registry URL and pass it to `create-worker.sh` via `--skills-api-url`.
