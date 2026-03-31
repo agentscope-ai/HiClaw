@@ -36,6 +36,58 @@ logger = logging.getLogger(__name__)
 _MC_ALIAS = "hiclaw"
 
 
+def _deep_merge(base: dict, override: dict) -> dict:
+    """Deep merge override into base (override wins leaf conflicts)."""
+    result = dict(base)
+    for key, val in override.items():
+        if key in result and isinstance(result[key], dict) and isinstance(val, dict):
+            result[key] = _deep_merge(result[key], val)
+        else:
+            result[key] = val
+    return result
+
+
+def _merge_openclaw_config(remote_text: str, local_text: str) -> str:
+    """Merge remote and local openclaw.json, preserving Worker additions.
+
+    Rules:
+      - plugins: union arrays, deep merge entries (remote wins shared)
+      - channels: deep merge (remote wins shared types, local-only preserved)
+      - channels.matrix.accessToken: local wins
+      - Everything else: remote as-is
+    """
+    remote = json.loads(remote_text)
+    local = json.loads(local_text)
+    merged = dict(remote)
+
+    # plugins: union arrays, deep merge entries
+    r_plugins = remote.get("plugins", {})
+    l_plugins = local.get("plugins", {})
+    if r_plugins or l_plugins:
+        merged["plugins"] = {
+            "allow": sorted(set(r_plugins.get("allow", []) + l_plugins.get("allow", []))),
+            "load": {
+                "paths": sorted(set(
+                    r_plugins.get("load", {}).get("paths", [])
+                    + l_plugins.get("load", {}).get("paths", [])
+                )),
+            },
+            "entries": _deep_merge(l_plugins.get("entries", {}), r_plugins.get("entries", {})),
+        }
+
+    # channels: deep merge, remote wins shared, local-only preserved
+    r_channels = remote.get("channels", {})
+    l_channels = local.get("channels", {})
+    if r_channels or l_channels:
+        merged["channels"] = _deep_merge(l_channels, r_channels)
+        # accessToken: local wins (Worker re-login)
+        l_token = local.get("channels", {}).get("matrix", {}).get("accessToken")
+        if l_token:
+            merged.setdefault("channels", {}).setdefault("matrix", {})["accessToken"] = l_token
+
+    return json.dumps(merged, indent=2)
+
+
 def _mc(*args: str, check: bool = True) -> subprocess.CompletedProcess:
     """Run an mc command and return the result."""
     mc_bin = shutil.which("mc")
@@ -235,6 +287,10 @@ class FileSync:
         """Pull Manager-managed files only (allowlist). Returns list of filenames that changed.
 
         Does NOT pull AGENTS.md, SOUL.md (Worker-managed, sync up but never overwrite).
+
+        For openclaw.json, performs a field-level merge instead of blind overwrite:
+        remote (MinIO/Manager) is authoritative base, but Worker's own plugins,
+        channels (e.g. discord), and accessToken are preserved.
         """
         changed: list[str] = []
         # Manager-managed files (allowlist)
@@ -258,7 +314,15 @@ class FileSync:
                 continue
             local = self.local_dir / name
             existing = local.read_text() if local.exists() else None
-            if content != existing:
+
+            # ── openclaw.json: merge instead of overwrite ──
+            if name == "openclaw.json" and existing is not None:
+                merged = _merge_openclaw_config(content, existing)
+                if merged != existing:
+                    local.parent.mkdir(parents=True, exist_ok=True)
+                    local.write_text(merged)
+                    changed.append(name)
+            elif content != existing:
                 local.parent.mkdir(parents=True, exist_ok=True)
                 local.write_text(content)
                 changed.append(name)

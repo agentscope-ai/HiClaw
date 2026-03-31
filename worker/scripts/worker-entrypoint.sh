@@ -8,6 +8,7 @@
 
 set -e
 source /opt/hiclaw/scripts/lib/hiclaw-env.sh
+source /opt/hiclaw/scripts/lib/merge-openclaw-config.sh
 
 WORKER_NAME="${HICLAW_WORKER_NAME:?HICLAW_WORKER_NAME is required}"
 FS_ENDPOINT="${HICLAW_FS_ENDPOINT:-}"
@@ -176,7 +177,9 @@ log "Local->Remote change-triggered sync started (PID: $!)"
     while true; do
         sleep 300
         ensure_mc_credentials 2>/dev/null || true
-        mc cp "${HICLAW_STORAGE_PREFIX}/agents/${WORKER_NAME}/openclaw.json" "${WORKSPACE}/openclaw.json" 2>/dev/null || true
+        mc cp "${HICLAW_STORAGE_PREFIX}/agents/${WORKER_NAME}/openclaw.json" /tmp/openclaw-remote.json 2>/dev/null || true
+        merge_openclaw_config /tmp/openclaw-remote.json "${WORKSPACE}/openclaw.json"
+        rm -f /tmp/openclaw-remote.json
         mc cp "${HICLAW_STORAGE_PREFIX}/agents/${WORKER_NAME}/config/mcporter.json" "${WORKSPACE}/config/mcporter.json" 2>/dev/null || true
         mc mirror "${HICLAW_STORAGE_PREFIX}/agents/${WORKER_NAME}/skills/" "${WORKSPACE}/skills/" --overwrite 2>/dev/null || true
         find "${WORKSPACE}/skills" -name '*.sh' -exec chmod +x {} + 2>/dev/null || true
