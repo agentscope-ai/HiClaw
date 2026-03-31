@@ -67,6 +67,8 @@ def post_process_config(
     matrix_cfg = config.setdefault("channels", {}).setdefault("matrix", {})
     if user_id:
         matrix_cfg["user_id"] = user_id
+    else:
+        print("WARNING: Could not derive Matrix user_id, channel config may be incomplete", flush=True)
     matrix_cfg["require_mention"] = True
 
     # --- require_approval: False ---

@@ -76,10 +76,6 @@ BUILTIN_VERSION_ARG = --build-arg BUILTIN_VERSION=$(VERSION)
 # Named build context for shared libraries (requires BuildKit / Docker 23+)
 SHARED_LIB_CTX = --build-context shared=./shared/lib
 
-# Named build context for local CoPaw source (override with COPAW_SRC_DIR=/path/to/CoPaw)
-COPAW_SRC_DIR ?= /Users/yuhuafeng/Documents/working/CoPaw
-COPAW_SRC_CTX = --build-context copaw-src=$(COPAW_SRC_DIR)
-
 # Named build context for local copaw_worker extension
 COPAW_WORKER_CTX = --build-context copaw-worker=./copaw
 

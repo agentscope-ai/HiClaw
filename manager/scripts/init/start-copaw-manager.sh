@@ -90,11 +90,25 @@ DM_ROOMS_FILE=$(mktemp)
 echo '{}' > "${DM_ROOMS_FILE}"
 MATRIX_API="http://127.0.0.1:6167"
 if [ -n "${MANAGER_MATRIX_TOKEN_VAL}" ] && [ "${MANAGER_MATRIX_TOKEN_VAL}" != "null" ]; then
-    JOINED_ROOMS=$(curl -sf "${MATRIX_API}/_matrix/client/v3/joined_rooms" \
-        -H "Authorization: Bearer ${MANAGER_MATRIX_TOKEN_VAL}" 2>/dev/null \
-        | jq -r '.joined_rooms[]' 2>/dev/null)
+    # Retry DM room detection in case Tuwunel is not ready yet
+    _max_retries=5
+    _retry=0
+    JOINED_ROOMS=""
+    while [ $_retry -lt $_max_retries ]; do
+        JOINED_ROOMS=$(curl -sf "${MATRIX_API}/_matrix/client/v3/joined_rooms" \
+            -H "Authorization: Bearer ${MANAGER_MATRIX_TOKEN_VAL}" 2>/dev/null \
+            | jq -r '.joined_rooms[]' 2>/dev/null)
+        if [ -n "${JOINED_ROOMS}" ]; then
+            break
+        fi
+        _retry=$((_retry + 1))
+        if [ $_retry -lt $_max_retries ]; then
+            log "Retrying DM room detection ($_retry/$_max_retries)..."
+            sleep 3
+        fi
+    done
     if [ -z "${JOINED_ROOMS}" ]; then
-        log "WARNING: Could not fetch joined rooms (Tuwunel may not be ready yet)"
+        log "WARNING: Could not fetch joined rooms after ${_max_retries} retries (Tuwunel may not be ready)"
     else
         while IFS= read -r ROOM_ID; do
             MEMBER_COUNT=$(curl -sf "${MATRIX_API}/_matrix/client/v3/rooms/${ROOM_ID}/members?membership=join" \
