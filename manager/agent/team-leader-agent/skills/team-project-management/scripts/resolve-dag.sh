@@ -168,63 +168,59 @@ action_validate() {
         return 0
     fi
 
-    # Kahn's algorithm: iteratively remove nodes with no incoming edges
-    local result
-    result=$(echo "$tasks" | jq '
-        # Build adjacency: for each task, track its unresolved dependency count
-        . as $tasks |
+    # Check for unknown dependency references
+    local missing
+    missing=$(echo "$tasks" | jq -r '
         [.[] | .id] as $all_ids |
+        [.[] | .depends[] | select(. as $d | $all_ids | index($d) | not)] | unique')
+    if [ "$(echo "$missing" | jq 'length')" -gt 0 ]; then
+        echo "$missing" | jq --argjson total "$total" \
+            '{valid: false, message: "Unknown task IDs in depends: \(. | join(", "))", task_count: $total}'
+        return 1
+    fi
 
-        # Validate: check all depends reference existing task IDs
-        (reduce .[] as $t ([]; . + [$t.depends[] | select(. as $d | $all_ids | index($d) | not)])) as $missing |
-        if ($missing | length) > 0 then
-            {valid: false, message: "Unknown task IDs in depends: \($missing | unique | join(", "))", task_count: ($tasks | length)}
-        else
-            # Kahn: compute in-degree for each node
-            (reduce $tasks[] as $t (
-                {};
-                . as $deg |
-                ($t.id) as $id |
-                (if $deg[$id] then $deg else $deg + {($id): 0} end) as $deg |
-                reduce ($t.depends[]) as $dep (
-                    $deg;
-                    . + {($id): ((.[$id] // 0) + 1)}
-                )
-            )) as $in_degree |
+    # Kahn's algorithm via iterative shell loop
+    # Build in-degree map and adjacency
+    local in_degree_json
+    in_degree_json=$(echo "$tasks" | jq '
+        reduce .[] as $t ({};
+            . as $acc |
+            ($t.id) as $id |
+            (if $acc[$id] then $acc else ($acc + {($id): 0}) end) as $acc |
+            reduce ($t.depends[]) as $dep ($acc; . + {($id): (.[$id] + 1)})
+        )')
 
-            # Find initial zero-degree nodes
-            [$all_ids[] | select(($in_degree[.] // 0) == 0)] as $queue |
+    local visited=0
+    local queue
+    queue=$(echo "$in_degree_json" | jq -r '[to_entries[] | select(.value == 0) | .key] | .[]')
 
-            # Process queue
-            {queue: $queue, visited: 0, in_degree: $in_degree} |
-            until(.queue | length == 0;
-                .queue[0] as $node |
-                .queue[1:] as $rest |
-                .visited + 1 as $v |
-                # Find tasks that depend on $node and decrement their in-degree
-                (reduce ($tasks[] | select(.depends | index($node))) as $t (
-                    {deg: .in_degree, new_ready: []};
-                    ($t.id) as $tid |
-                    ((.deg[$tid] // 0) - 1) as $new_deg |
-                    .deg + {($tid): $new_deg} |
-                    if $new_deg == 0 then .new_ready += [$tid] else . end
-                )) as $update |
-                {queue: ($rest + $update.new_ready), visited: $v, in_degree: $update.deg}
-            ) |
-            if .visited == ($tasks | length) then
-                {valid: true, message: "DAG is valid — no cycles detected", task_count: ($tasks | length)}
-            else
-                {valid: false, message: "Cycle detected in DAG! \(.visited) of \($tasks | length) tasks are reachable", task_count: ($tasks | length)}
-            end
-        end
-    ')
+    while [ -n "$queue" ]; do
+        local next_queue=""
+        for node in $queue; do
+            visited=$((visited + 1))
+            # Find tasks that depend on this node, decrement their in-degree
+            local dependents
+            dependents=$(echo "$tasks" | jq -r --arg node "$node" \
+                '[.[] | select(.depends | index($node)) | .id] | .[]')
+            for dep in $dependents; do
+                in_degree_json=$(echo "$in_degree_json" | jq --arg dep "$dep" \
+                    '.[$dep] -= 1')
+                local new_deg
+                new_deg=$(echo "$in_degree_json" | jq -r --arg dep "$dep" '.[$dep]')
+                if [ "$new_deg" -eq 0 ]; then
+                    next_queue="$next_queue $dep"
+                fi
+            done
+        done
+        queue=$(echo "$next_queue" | xargs)
+    done
 
-    echo "$result"
-
-    # Exit with error code if invalid
-    local valid
-    valid=$(echo "$result" | jq -r '.valid')
-    if [ "$valid" != "true" ]; then
+    if [ "$visited" -eq "$total" ]; then
+        jq -n --argjson total "$total" \
+            '{valid: true, message: "DAG is valid — no cycles detected", task_count: $total}'
+    else
+        jq -n --argjson visited "$visited" --argjson total "$total" \
+            '{valid: false, message: "Cycle detected in DAG! \($visited) of \($total) tasks are reachable", task_count: $total}'
         return 1
     fi
 }
