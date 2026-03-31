@@ -498,6 +498,33 @@ else
     fi
 fi
 
+# CoPaw runtime: sync group_allow_from from openclaw.json to agent.json and config.json
+# This ensures both files have the complete list, not just the new worker
+COPAW_AGENT_CONFIG="${HOME}/.copaw/workspaces/default/agent.json"
+COPAW_CONFIG="${HOME}/.copaw/config.json"
+
+# Get the full groupAllowFrom from openclaw.json
+GROUP_ALLOW_LIST=$(jq -c '.channels.matrix.groupAllowFrom // []' "${MANAGER_CONFIG}" 2>/dev/null)
+
+if [ -n "${GROUP_ALLOW_LIST}" ] && [ "${GROUP_ALLOW_LIST}" != "null" ]; then
+    # Update config.json
+    if [ -f "${COPAW_CONFIG}" ]; then
+        _tmp_cfg=$(mktemp)
+        jq --argjson list "${GROUP_ALLOW_LIST}" \
+            '.channels.matrix.group_allow_from = $list' \
+            "${COPAW_CONFIG}" > "${_tmp_cfg}" && mv "${_tmp_cfg}" "${COPAW_CONFIG}"
+        log "  Synced group_allow_from to config.json: ${GROUP_ALLOW_LIST}"
+    fi
+    # Update agent.json
+    if [ -f "${COPAW_AGENT_CONFIG}" ]; then
+        _tmp_cfg=$(mktemp)
+        jq --argjson list "${GROUP_ALLOW_LIST}" \
+            '.channels.matrix.group_allow_from = $list' \
+            "${COPAW_AGENT_CONFIG}" > "${_tmp_cfg}" && mv "${_tmp_cfg}" "${COPAW_AGENT_CONFIG}"
+        log "  Synced group_allow_from to agent.json: ${GROUP_ALLOW_LIST}"
+    fi
+fi
+
 # ============================================================
 # Step 8: Sync to MinIO
 # ============================================================

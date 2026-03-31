@@ -3,8 +3,26 @@
 # Supports both local (supervisord) and cloud (SAE single-process) deployments.
 # In local mode this is the last supervisord component to start (priority 800).
 # In cloud mode (HICLAW_RUNTIME=aliyun) this is the container entrypoint.
+#
+# Runtime selection:
+#   HICLAW_MANAGER_RUNTIME=openclaw (default) - OpenClaw gateway mode
+#   HICLAW_MANAGER_RUNTIME=copaw              - CoPaw workspace mode
 
 source /opt/hiclaw/scripts/lib/hiclaw-env.sh
+
+# ============================================================
+# Runtime selection
+# ============================================================
+MANAGER_RUNTIME="${HICLAW_MANAGER_RUNTIME:-openclaw}"
+case "${MANAGER_RUNTIME}" in
+    copaw)
+        log "Manager runtime: CoPaw (Python workspace)"
+        ;;
+    *)
+        log "Manager runtime: OpenClaw (Node.js gateway)"
+        MANAGER_RUNTIME="openclaw"
+        ;;
+esac
 
 # ============================================================
 # Set timezone from TZ env var
@@ -15,7 +33,7 @@ if [ -n "${TZ}" ] && [ -f "/usr/share/zoneinfo/${TZ}" ]; then
     log "Timezone set to ${TZ}"
 fi
 
-MATRIX_DOMAIN="${HICLAW_MATRIX_DOMAIN:-matrix-local.hiclaw.io:8080}"
+export MATRIX_DOMAIN="${HICLAW_MATRIX_DOMAIN:-matrix-local.hiclaw.io:8080}"
 AI_GATEWAY_DOMAIN="${HICLAW_AI_GATEWAY_DOMAIN:-aigw-local.hiclaw.io}"
 
 # ============================================================
@@ -355,9 +373,6 @@ else
     # Schedule welcome message in background (only on first boot)
     if [ -n "${DM_ROOM_ID}" ] && [ ! -f "/root/manager-workspace/soul-configured" ]; then
         log "Scheduling welcome message (background, waiting for OpenClaw to start)..."
-        # Double-fork so the welcome-message process is reparented to PID 1
-        # and does not become a zombie after `exec openclaw` replaces this shell.
-        (
         (
             _HICLAW_LANGUAGE="${HICLAW_LANGUAGE:-zh}"
             _HICLAW_TIMEZONE="${TZ:-Asia/Shanghai}"
@@ -427,8 +442,8 @@ The human admin will start chatting shortly."
             else
                 echo "[manager] WARNING: Failed to send welcome message (HTTP ${_http_code}): ${_send_resp}"
             fi
-        ) & )
-        log "Welcome message background process started"
+        ) &
+        log "Welcome message background process started (PID: $!)"
     fi
 fi
 
@@ -890,16 +905,12 @@ if [ -f /root/manager-workspace/.upgrade-pending-worker-notify ]; then
 fi
 
 # ============================================================
-# Start OpenClaw Manager Agent
+# Start Manager Agent
 # ============================================================
-log "Starting Manager Agent (OpenClaw)..."
+log "Starting Manager Agent (${MANAGER_RUNTIME})..."
 
 # HOME is already set to /root/manager-workspace via docker run -e HOME=...
-export OPENCLAW_CONFIG_PATH="/root/manager-workspace/openclaw.json"
-
-# Symlink to default OpenClaw config path so CLI commands find the config
-mkdir -p "${HOME}/.openclaw"
-ln -sf "/root/manager-workspace/openclaw.json" "${HOME}/.openclaw/openclaw.json"
+cd "${HOME}"
 
 # Ensure host credential symlinks exist under HOME
 if [ -d "/host-share" ]; then
@@ -907,17 +918,6 @@ if [ -d "/host-share" ]; then
 fi
 
 log "HOME=${HOME} (manager-workspace, host-mounted)"
-cd "${HOME}"
-
-# Clean orphaned session write locks (e.g. from SIGKILL or crash before exit handlers)
-# Prevents "session file locked (timeout 10000ms)" when PID was reused
-find "${HOME}/.openclaw/agents" -name "*.jsonl.lock" -delete 2>/dev/null || true
-log "Cleaned up any orphaned session write locks"
-
-# Clean Matrix crypto storage (SQLite WAL may be corrupted after unclean shutdown)
-# Crypto state is re-negotiated on startup; losing it only means re-establishing E2EE sessions
-rm -rf "${HOME}/.openclaw/matrix" 2>/dev/null || true
-log "Cleaned Matrix crypto storage (will re-establish E2EE sessions)"
 
 # ── Render agent doc templates ────────────────────────────────────────────
 # Replace ${VAR} placeholders with actual values so the AI agent reads
@@ -973,5 +973,49 @@ if [ "${HICLAW_RUNTIME}" = "aliyun" ]; then
     log "OSS→Local sync started (every 5m, PID: $!)"
 fi
 
-# Launch OpenClaw
-exec openclaw gateway run --verbose --force
+# ============================================================
+# Auto-generate Manager mcporter config for pre-configured MCP servers
+# If HICLAW_GITHUB_TOKEN was set at install time, setup-higress.sh already
+# configured GitHub MCP on Higress. Run setup-mcp-server.sh now so that
+# config/mcporter.json exists when the Agent starts — no need to ask user for PAT.
+# ============================================================
+if [ -n "${HICLAW_GITHUB_TOKEN}" ] && [ "${HICLAW_RUNTIME}" != "aliyun" ]; then
+    if [ ! -f "${HOME}/config/mcporter.json" ]; then
+        log "Auto-generating Manager mcporter config for GitHub MCP (HICLAW_GITHUB_TOKEN set)..."
+        bash /opt/hiclaw/agent/skills/mcp-server-management/scripts/setup-mcp-server.sh \
+            github "${HICLAW_GITHUB_TOKEN}" 2>&1 | while IFS= read -r line; do log "  [setup-mcp] ${line}"; done || \
+            log "WARNING: setup-mcp-server.sh failed — Agent may need to configure GitHub MCP manually"
+    else
+        log "Manager mcporter config already exists, skipping auto-generate"
+    fi
+fi
+
+# ============================================================
+# Runtime-specific startup
+# ============================================================
+if [ "${MANAGER_RUNTIME}" = "copaw" ]; then
+    # Delegate to CoPaw startup script
+    exec /opt/hiclaw/scripts/init/start-copaw-manager.sh
+else
+    # ── OpenClaw Runtime ─────────────────────────────────────────────────────
+    log "Starting OpenClaw Manager..."
+
+    export OPENCLAW_CONFIG_PATH="/root/manager-workspace/openclaw.json"
+
+    # Symlink to default OpenClaw config path so CLI commands find the config
+    mkdir -p "${HOME}/.openclaw"
+    ln -sf "/root/manager-workspace/openclaw.json" "${HOME}/.openclaw/openclaw.json"
+
+    # Clean orphaned session write locks (e.g. from SIGKILL or crash before exit handlers)
+    # Prevents "session file locked (timeout 10000ms)" when PID was reused
+    find "${HOME}/.openclaw/agents" -name "*.jsonl.lock" -delete 2>/dev/null || true
+    log "Cleaned up any orphaned session write locks"
+
+    # Clean Matrix crypto storage (SQLite WAL may be corrupted after unclean shutdown)
+    # Crypto state is re-negotiated on startup; losing it only means re-establishing E2EE sessions
+    rm -rf "${HOME}/.openclaw/matrix" 2>/dev/null || true
+    log "Cleaned Matrix crypto storage (will re-establish E2EE sessions)"
+
+    # Launch OpenClaw
+    exec openclaw gateway run --verbose --force
+fi

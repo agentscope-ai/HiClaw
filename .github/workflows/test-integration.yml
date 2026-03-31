@@ -45,6 +45,7 @@ on:
 
 env:
   MANAGER_IMAGE: hiclaw/manager-agent:ci-test
+  MANAGER_COPAW_IMAGE: hiclaw/manager-copaw:ci-test
   WORKER_IMAGE: hiclaw/worker-agent:ci-test
   COPAW_WORKER_IMAGE: hiclaw/copaw-worker:ci-test
   DOCKER_PROXY_IMAGE: hiclaw/docker-proxy:ci-test
@@ -86,12 +87,14 @@ jobs:
       - name: Build images
         run: |
           RUNTIME="${{ inputs.worker_runtime || 'openclaw' }}"
+          BUILD_TARGETS="build-manager build-docker-proxy"
           if [ "$RUNTIME" = "copaw" ]; then
-            make build-manager build-copaw-worker build-docker-proxy VERSION=ci-test HIGRESS_REGISTRY=higress-registry.us-west-1.cr.aliyuncs.com \
-              DOCKER_BUILD_ARGS="--build-arg APT_MIRROR= --build-arg PIP_INDEX_URL=https://pypi.org/simple/"
+            BUILD_TARGETS="build-manager-copaw build-copaw-worker build-docker-proxy"
           else
-            make build-manager build-worker build-docker-proxy VERSION=ci-test HIGRESS_REGISTRY=higress-registry.us-west-1.cr.aliyuncs.com
+            BUILD_TARGETS="build-manager build-worker build-docker-proxy"
           fi
+          make ${BUILD_TARGETS} VERSION=ci-test HIGRESS_REGISTRY=higress-registry.us-west-1.cr.aliyuncs.com \
+            DOCKER_BUILD_ARGS="--build-arg APT_MIRROR= --build-arg PIP_INDEX_URL=https://pypi.org/simple/"
 
       - name: Install dependencies
         run: sudo apt-get update && sudo apt-get install -y jq curl unzip
@@ -104,17 +107,23 @@ jobs:
           MODEL="${{ inputs.model || 'qwen3.5-plus' }}"
           if [ "$RUNTIME" = "copaw" ]; then
             WORKER_IMG="${{ env.COPAW_WORKER_IMAGE }}"
+            MANAGER_IMG="${{ env.MANAGER_COPAW_IMAGE }}"
+            MANAGER_RUNTIME="copaw"
           else
             WORKER_IMG="${{ env.WORKER_IMAGE }}"
+            MANAGER_IMG="${{ env.MANAGER_IMAGE }}"
+            MANAGER_RUNTIME="openclaw"
           fi
           HICLAW_NON_INTERACTIVE=1 \
           HICLAW_VERSION=ci-test \
           HICLAW_MOUNT_SOCKET=1 \
           HICLAW_MATRIX_E2EE=0 \
           HICLAW_LLM_PROVIDER=qwen \
+          HICLAW_MANAGER_RUNTIME="$MANAGER_RUNTIME" \
           HICLAW_DEFAULT_WORKER_RUNTIME="$RUNTIME" \
           HICLAW_DEFAULT_MODEL="$MODEL" \
-          HICLAW_INSTALL_MANAGER_IMAGE=${{ env.MANAGER_IMAGE }} \
+          HICLAW_INSTALL_MANAGER_IMAGE="$MANAGER_IMG" \
+          HICLAW_INSTALL_MANAGER_COPAW_IMAGE="${{ env.MANAGER_COPAW_IMAGE }}" \
           HICLAW_INSTALL_WORKER_IMAGE="$WORKER_IMG" \
           HICLAW_INSTALL_DOCKER_PROXY_IMAGE=${{ env.DOCKER_PROXY_IMAGE }} \
           bash ./install/hiclaw-install.sh manager

@@ -171,3 +171,4 @@ Record image-affecting changes to `manager/`, `worker/`, `openclaw-base/` here b
 - refactor(network): replace ExtraHosts IP injection with Docker network aliases ([0eb635d](https://github.com/alibaba/hiclaw/commit/0eb635d))
 - refactor: unify DM room creation into manager agent startup ([0569d1a](https://github.com/alibaba/hiclaw/commit/0569d1a))
 - feat(memory): add default embedding model (text-embedding-v4) support for Manager and Worker, with openclaw→copaw bridge
+- feat(manager): add CoPaw runtime support for Manager container — Manager can now run with `HICLAW_MANAGER_RUNTIME=copaw` (Python/AgentScope) as an alternative to the default OpenClaw (Node.js) runtime. Includes dedicated `Dockerfile.copaw`, CoPaw Manager Agent config (AGENTS.md, HEARTBEAT.md), custom Matrix channel with mentions/DM support, and Manager-specific config bridge script. All OpenClaw paths remain unchanged.

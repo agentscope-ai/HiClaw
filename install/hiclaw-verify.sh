@@ -136,15 +136,31 @@ else
     check_fail "Higress Console reachable (HTTP ${console_status} on port ${PORT_CONSOLE})"
 fi
 
-# 6. OpenClaw Agent healthy (internal via docker exec)
-# TODO(k8s): replace with `kubectl exec <manager-pod> -- openclaw gateway health --json`
+# 6. Manager Agent healthy (runtime-aware check)
+# TODO(k8s): replace with `kubectl exec <manager-pod> -- <health-check-command>`
 #   Pod name must be resolved dynamically before this call.
-agent_output=$("${DOCKER_CMD}" exec "${CONTAINER}" \
-    openclaw gateway health --json 2>/dev/null) || agent_output=""
-if echo "${agent_output}" | grep -q '"ok"'; then
-    check_pass "OpenClaw Agent healthy"
+MANAGER_RUNTIME=$(echo "$container_env" | grep ^HICLAW_MANAGER_RUNTIME= | cut -d= -f2-)
+MANAGER_RUNTIME="${MANAGER_RUNTIME:-openclaw}"
+
+if [ "${MANAGER_RUNTIME}" = "copaw" ]; then
+    # CoPaw: check app API health endpoint
+    agent_status=$("${DOCKER_CMD}" exec "${CONTAINER}" \
+        curl -s -o /dev/null -w "%{http_code}" --max-time 10 \
+        "http://127.0.0.1:18799/health" 2>/dev/null) || agent_status="000"
+    if [ "${agent_status}" = "200" ]; then
+        check_pass "CoPaw Agent healthy"
+    else
+        check_fail "CoPaw Agent healthy (HTTP ${agent_status})"
+    fi
 else
-    check_fail "OpenClaw Agent healthy (output: ${agent_output:-<empty>})"
+    # OpenClaw: check gateway health
+    agent_output=$("${DOCKER_CMD}" exec "${CONTAINER}" \
+        openclaw gateway health --json 2>/dev/null) || agent_output=""
+    if echo "${agent_output}" | grep -q '"ok"'; then
+        check_pass "OpenClaw Agent healthy"
+    else
+        check_fail "OpenClaw Agent healthy (output: ${agent_output:-<empty>})"
+    fi
 fi
 
 # ---------- Summary ----------

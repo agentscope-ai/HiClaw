@@ -14,6 +14,7 @@ AGENT_SRC="/opt/hiclaw/agent"
 WORKSPACE="/root/manager-workspace"
 REGISTRY="${WORKSPACE}/workers-registry.json"
 IMAGE_VERSION=$(cat "${AGENT_SRC}/.builtin-version" 2>/dev/null || echo "unknown")
+MANAGER_RUNTIME="${HICLAW_MANAGER_RUNTIME:-openclaw}"
 
 source /opt/hiclaw/scripts/lib/hiclaw-env.sh
 source /opt/hiclaw/scripts/lib/builtin-merge.sh
@@ -28,22 +29,44 @@ log() {
 log "Step 1: Upgrading Manager workspace .md files..."
 
 update_builtin_section "${WORKSPACE}/SOUL.md" "${AGENT_SRC}/SOUL.md"
-update_builtin_section "${WORKSPACE}/HEARTBEAT.md" "${AGENT_SRC}/HEARTBEAT.md"
-update_builtin_section "${WORKSPACE}/AGENTS.md" "${AGENT_SRC}/AGENTS.md"
+# Use runtime-specific HEARTBEAT.md for CoPaw
+if [ "${MANAGER_RUNTIME}" = "copaw" ] && [ -f "${AGENT_SRC}/copaw-manager-agent/HEARTBEAT.md" ]; then
+    update_builtin_section "${WORKSPACE}/HEARTBEAT.md" "${AGENT_SRC}/copaw-manager-agent/HEARTBEAT.md"
+else
+    update_builtin_section "${WORKSPACE}/HEARTBEAT.md" "${AGENT_SRC}/HEARTBEAT.md"
+fi
+# Use runtime-specific AGENTS.md for CoPaw
+if [ "${MANAGER_RUNTIME}" = "copaw" ] && [ -f "${AGENT_SRC}/copaw-manager-agent/AGENTS.md" ]; then
+    update_builtin_section "${WORKSPACE}/AGENTS.md" "${AGENT_SRC}/copaw-manager-agent/AGENTS.md"
+else
+    update_builtin_section "${WORKSPACE}/AGENTS.md" "${AGENT_SRC}/AGENTS.md"
+fi
 update_builtin_section "${WORKSPACE}/TOOLS.md" "${AGENT_SRC}/TOOLS.md"
+
+# SKILL.md upgrade strategy depends on runtime:
+#   - CoPaw: direct copy (YAML front matter must be at byte 0; markers would break parsing)
+#   - OpenClaw: marker-based merge (preserves user content after builtin-end marker)
+_upgrade_skill_md() {
+    local src="$1" dst="$2"
+    [ -f "${src}" ] || return 0
+    mkdir -p "$(dirname "${dst}")"
+    if [ "${MANAGER_RUNTIME}" = "copaw" ]; then
+        cp "${src}" "${dst}"
+    else
+        update_builtin_section "${dst}" "${src}"
+    fi
+}
 
 for skill_dir in "${AGENT_SRC}/skills"/*/; do
     skill_name=$(basename "${skill_dir}")
-    src="${skill_dir}SKILL.md"
-    dst="${WORKSPACE}/skills/${skill_name}/SKILL.md"
-    [ -f "${src}" ] && update_builtin_section "${dst}" "${src}"
+    _upgrade_skill_md "${skill_dir}SKILL.md" "${WORKSPACE}/skills/${skill_name}/SKILL.md"
+    log "  Upgraded: skills/${skill_name}/SKILL.md"
 done
 
 for skill_dir in "${AGENT_SRC}/worker-skills"/*/; do
     skill_name=$(basename "${skill_dir}")
-    src="${skill_dir}SKILL.md"
-    dst="${WORKSPACE}/worker-skills/${skill_name}/SKILL.md"
-    [ -f "${src}" ] && update_builtin_section "${dst}" "${src}"
+    _upgrade_skill_md "${skill_dir}SKILL.md" "${WORKSPACE}/worker-skills/${skill_name}/SKILL.md"
+    log "  Upgraded: worker-skills/${skill_name}/SKILL.md"
 done
 
 # ============================================================

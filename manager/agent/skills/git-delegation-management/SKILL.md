@@ -1,6 +1,6 @@
 ---
 name: git-delegation-management
-description: Execute git operations on behalf of Workers who don't have git credentials. Use when a Worker sends a git-request: message to clone, push, pull, commit, rebase, or perform any git operation.
+description: "Execute git operations on behalf of Workers who don't have git credentials. Use when a Worker sends a git-request: message to clone, push, pull, commit, rebase, or perform any git operation."
 ---
 
 # Git Delegation Management

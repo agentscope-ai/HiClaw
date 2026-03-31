@@ -1,5 +1,5 @@
 # ============================================================
-# HiClaw Manager Agent - All-in-One Container
+# HiClaw Manager Agent - All-in-One Container (OpenClaw Runtime)
 # ============================================================
 # Based on openclaw-base (which includes all-in-one + Node.js + OpenClaw)
 # and layers on Tuwunel, MinIO, and Element Web.

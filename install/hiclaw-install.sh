@@ -39,6 +39,8 @@
 #   HICLAW_PORT_GATEWAY       Host port for Higress gateway (default: 18080)
 #   HICLAW_PORT_CONSOLE       Host port for Higress console (default: 18001)
 #   HICLAW_PORT_ELEMENT_WEB   Host port for Element Web direct access (default: 18088)
+#   HICLAW_PORT_OPENCLAW_CONSOLE  Host port for OpenClaw console (default: 18888)
+#   HICLAW_PORT_COPAW_APP     Host port for CoPaw app API (default: 18799)
 #   HICLAW_WORKER_IDLE_TIMEOUT  Worker idle timeout in minutes (default: 720, i.e. 12 hours)
 
 set -e
@@ -439,6 +441,8 @@ msg() {
         "port.element_prompt.en") text="Host port for Element Web direct access (8088 inside container)" ;;
         "port.openclaw_console_prompt.zh") text="OpenClaw 控制台主机端口（容器内 18888）" ;;
         "port.openclaw_console_prompt.en") text="Host port for OpenClaw console (18888 inside container)" ;;
+        "port.copaw_app_prompt.zh") text="CoPaw App API 主机端口（容器内 18799）" ;;
+        "port.copaw_app_prompt.en") text="Host port for CoPaw App API (18799 inside container)" ;;
         # --- Local-only binding ---
         "port.local_only.title.zh") text="--- 网络访问模式 ---" ;;
         "port.local_only.title.en") text="--- Network Access Mode ---" ;;
@@ -517,6 +521,18 @@ msg() {
         "worker_runtime.selected.en") text="Default Worker runtime: %s" ;;
         "worker_runtime.title_short.zh") text="默认 Worker 运行时" ;;
         "worker_runtime.title_short.en") text="Default Worker Runtime" ;;
+        "manager_runtime.title.zh") text="--- Manager 运行时 ---" ;;
+        "manager_runtime.title.en") text="--- Manager Runtime ---" ;;
+        "manager_runtime.openclaw.zh") text="OpenClaw（Node.js）" ;;
+        "manager_runtime.openclaw.en") text="OpenClaw (Node.js)" ;;
+        "manager_runtime.copaw.zh") text="CoPaw（Python，AgentScope 框架）" ;;
+        "manager_runtime.copaw.en") text="CoPaw (Python, AgentScope framework)" ;;
+        "manager_runtime.choice.zh") text="请选择 [1/2]" ;;
+        "manager_runtime.choice.en") text="Enter choice [1/2]" ;;
+        "manager_runtime.selected.zh") text="Manager 运行时: %s" ;;
+        "manager_runtime.selected.en") text="Manager runtime: %s" ;;
+        "manager_runtime.title_short.zh") text="Manager 运行时" ;;
+        "manager_runtime.title_short.en") text="Manager Runtime" ;;
         # --- Secrets and config ---
         "install.generating_secrets.zh") text="正在生成密钥..." ;;
         "install.generating_secrets.en") text="Generating secrets..." ;;
@@ -749,6 +765,8 @@ msg() {
         "success.openclaw_console.en") text="  OpenClaw Console (local): http://localhost:%s (no login required)" ;;
         "success.openclaw_console_gateway.zh") text="  OpenClaw 控制台（网关）: http://console-local.hiclaw.io（用户名: %s / 密码: %s）" ;;
         "success.openclaw_console_gateway.en") text="  OpenClaw Console (gateway): http://console-local.hiclaw.io (Username: %s / Password: %s)" ;;
+        "success.copaw_console.zh") text="  CoPaw App API: http://localhost:%s（无需登录）" ;;
+        "success.copaw_console.en") text="  CoPaw App API: http://localhost:%s (no login required)" ;;
         "success.switch_llm.title.zh") text="--- 切换 LLM 提供商 ---" ;;
         "success.switch_llm.title.en") text="--- Switch LLM Providers ---" ;;
         "success.switch_llm.hint.zh") text="  您可以通过 Higress 控制台切换到其他 LLM 提供商（OpenAI、Anthropic 等）。" ;;
@@ -864,12 +882,14 @@ HICLAW_REGISTRY="${HICLAW_REGISTRY:-$(detect_registry)}"
 # Image variables are resolved after version selection in step_version().
 # These placeholders allow early code paths to reference them without errors.
 MANAGER_IMAGE="${HICLAW_INSTALL_MANAGER_IMAGE:-}"
+MANAGER_COPAW_IMAGE="${HICLAW_INSTALL_MANAGER_COPAW_IMAGE:-}"
 WORKER_IMAGE="${HICLAW_INSTALL_WORKER_IMAGE:-}"
 COPAW_WORKER_IMAGE="${HICLAW_INSTALL_COPAW_WORKER_IMAGE:-}"
 DOCKER_PROXY_IMAGE="${HICLAW_INSTALL_DOCKER_PROXY_IMAGE:-}"
 
 resolve_image_tags() {
     MANAGER_IMAGE="${HICLAW_INSTALL_MANAGER_IMAGE:-${HICLAW_REGISTRY}/higress/hiclaw-manager:${HICLAW_VERSION}}"
+    MANAGER_COPAW_IMAGE="${HICLAW_INSTALL_MANAGER_COPAW_IMAGE:-${HICLAW_REGISTRY}/higress/hiclaw-manager-copaw:${HICLAW_VERSION}}"
     WORKER_IMAGE="${HICLAW_INSTALL_WORKER_IMAGE:-${HICLAW_REGISTRY}/higress/hiclaw-worker:${HICLAW_VERSION}}"
     COPAW_WORKER_IMAGE="${HICLAW_INSTALL_COPAW_WORKER_IMAGE:-${HICLAW_REGISTRY}/higress/hiclaw-copaw-worker:${HICLAW_VERSION}}"
     # docker-proxy: prefer versioned tag, fall back to :latest at pull time
@@ -963,12 +983,23 @@ wait_manager_ready() {
 
     log "$(msg install.wait_ready "${timeout}")"
 
-    # Wait for OpenClaw gateway to be healthy inside the container
+    # Wait for Manager agent to be healthy inside the container
+    local runtime="${HICLAW_MANAGER_RUNTIME:-openclaw}"
     while [ "${elapsed}" -lt "${timeout}" ]; do
-        if ${DOCKER_CMD} exec "${container}" openclaw gateway health --json 2>/dev/null | grep -q '"ok"' 2>/dev/null; then
-            log "$(msg install.wait_ready.ok)"
-            return 0
-        fi
+        case "${runtime}" in
+            copaw)
+                if ${DOCKER_CMD} exec "${container}" curl -sf http://127.0.0.1:18799/api/agents 2>/dev/null | grep -q '"agents"'; then
+                    log "$(msg install.wait_ready.ok)"
+                    return 0
+                fi
+                ;;
+            *)
+                if ${DOCKER_CMD} exec "${container}" openclaw gateway health --json 2>/dev/null | grep -q '"ok"' 2>/dev/null; then
+                    log "$(msg install.wait_ready.ok)"
+                    return 0
+                fi
+                ;;
+        esac
         sleep 5
         elapsed=$((elapsed + 5))
         printf "\r\033[36m[HiClaw]\033[0m $(msg install.wait_ready.waiting "${elapsed}" "${timeout}")"
@@ -1241,6 +1272,10 @@ should_skip_step() {
             [ "${HICLAW_NON_INTERACTIVE}" = "1" ] && return 0
             [ "${HICLAW_QUICKSTART}" = "1" ] && [ "${HICLAW_UPGRADE}" != "1" ] && return 0
             ;;
+        step_manager_runtime)
+            [ "${HICLAW_NON_INTERACTIVE}" = "1" ] && return 0
+            [ "${HICLAW_QUICKSTART}" = "1" ] && [ "${HICLAW_UPGRADE}" != "1" ] && return 0
+            ;;
         step_hostshare)
             [ "${HICLAW_NON_INTERACTIVE}" = "1" ] && return 0
             [ "${HICLAW_QUICKSTART}" = "1" ] && return 0
@@ -1265,7 +1300,7 @@ clear_step_vars() {
         step_network) unset HICLAW_LOCAL_ONLY ;;
         step_ports)
             unset HICLAW_PORT_GATEWAY HICLAW_PORT_CONSOLE
-            unset HICLAW_PORT_ELEMENT_WEB HICLAW_PORT_OPENCLAW_CONSOLE
+            unset HICLAW_PORT_ELEMENT_WEB HICLAW_PORT_OPENCLAW_CONSOLE HICLAW_PORT_COPAW_APP
             ;;
         step_domains)
             unset HICLAW_MATRIX_DOMAIN HICLAW_MATRIX_CLIENT_DOMAIN
@@ -1276,6 +1311,7 @@ clear_step_vars() {
         step_volume)    unset HICLAW_DATA_DIR ;;
         step_workspace) unset HICLAW_WORKSPACE_DIR ;;
         step_runtime)   unset HICLAW_DEFAULT_WORKER_RUNTIME ;;
+        step_manager_runtime) unset HICLAW_MANAGER_RUNTIME ;;
         step_e2ee)      unset HICLAW_MATRIX_E2EE ;;
         step_docker_proxy) unset HICLAW_DOCKER_PROXY; unset HICLAW_PROXY_ALLOWED_REGISTRIES ;;
         step_idle)      unset HICLAW_WORKER_IDLE_TIMEOUT ;;
@@ -1764,7 +1800,11 @@ step_ports() {
     prompt HICLAW_PORT_GATEWAY "$(msg port.gateway_prompt)" "18080" || return 0
     prompt HICLAW_PORT_CONSOLE "$(msg port.console_prompt)" "18001" || return 0
     prompt HICLAW_PORT_ELEMENT_WEB "$(msg port.element_prompt)" "18088" || return 0
-    prompt HICLAW_PORT_OPENCLAW_CONSOLE "$(msg port.openclaw_console_prompt)" "18888" || return 0
+    if [ "${HICLAW_MANAGER_RUNTIME}" = "copaw" ]; then
+        prompt HICLAW_PORT_COPAW_APP "$(msg port.copaw_app_prompt)" "18799" || return 0
+    else
+        prompt HICLAW_PORT_OPENCLAW_CONSOLE "$(msg port.openclaw_console_prompt)" "18888" || return 0
+    fi
     log ""
 }
 
@@ -1775,7 +1815,9 @@ step_domains() {
     prompt HICLAW_MATRIX_CLIENT_DOMAIN "$(msg domain.element_prompt)" "matrix-client-local.hiclaw.io" || return 0
     prompt HICLAW_AI_GATEWAY_DOMAIN "$(msg domain.gateway_prompt)" "aigw-local.hiclaw.io" || return 0
     prompt HICLAW_FS_DOMAIN "$(msg domain.fs_prompt)" "fs-local.hiclaw.io" || return 0
-    prompt HICLAW_CONSOLE_DOMAIN "$(msg domain.console_prompt)" "console-local.hiclaw.io" || return 0
+    if [ "${HICLAW_MANAGER_RUNTIME}" != "copaw" ]; then
+        prompt HICLAW_CONSOLE_DOMAIN "$(msg domain.console_prompt)" "console-local.hiclaw.io" || return 0
+    fi
     log ""
 }
 
@@ -1849,6 +1891,39 @@ step_runtime() {
     fi
     export HICLAW_DEFAULT_WORKER_RUNTIME
     log "$(msg worker_runtime.selected "${HICLAW_DEFAULT_WORKER_RUNTIME}")"
+}
+
+step_manager_runtime() {
+    log "$(msg manager_runtime.title)"
+    echo ""
+    echo "  1) $(msg manager_runtime.openclaw)"
+    echo "  2) $(msg manager_runtime.copaw)"
+    echo ""
+    if [ "${HICLAW_NON_INTERACTIVE}" = "1" ]; then
+        HICLAW_MANAGER_RUNTIME="${HICLAW_MANAGER_RUNTIME:-openclaw}"
+    elif [ "${HICLAW_UPGRADE}" = "1" ] && [ -n "${HICLAW_MANAGER_RUNTIME}" ]; then
+        log "$(msg prompt.upgrade_keep "$(msg manager_runtime.title_short)" "${HICLAW_MANAGER_RUNTIME}")"
+        local _runtime_choice
+        read -e -p "$(msg manager_runtime.choice): " _runtime_choice
+        if [ "${_runtime_choice}" = "b" ]; then STEP_RESULT="back"; return 0; fi
+        if [ -n "${_runtime_choice}" ]; then
+            case "${_runtime_choice}" in
+                2) HICLAW_MANAGER_RUNTIME="copaw" ;;
+                *) HICLAW_MANAGER_RUNTIME="openclaw" ;;
+            esac
+        fi
+    elif [ -z "${HICLAW_MANAGER_RUNTIME+x}" ]; then
+        local _runtime_choice
+        read -e -p "$(msg manager_runtime.choice): " _runtime_choice
+        if [ "${_runtime_choice}" = "b" ]; then STEP_RESULT="back"; return 0; fi
+        _runtime_choice="${_runtime_choice:-1}"
+        case "${_runtime_choice}" in
+            2) HICLAW_MANAGER_RUNTIME="copaw" ;;
+            *) HICLAW_MANAGER_RUNTIME="openclaw" ;;
+        esac
+    fi
+    export HICLAW_MANAGER_RUNTIME
+    log "$(msg manager_runtime.selected "${HICLAW_MANAGER_RUNTIME}")"
 }
 
 step_e2ee() {
@@ -2059,7 +2134,7 @@ install_manager() {
     # ── State machine ─────────────────────────────────────────────────────────
     local _STEPS=( step_lang step_mode step_version step_existing step_llm step_admin step_network \
                    step_ports step_domains step_github step_skills step_volume \
-                   step_workspace step_runtime step_e2ee step_docker_proxy step_idle step_hostshare )
+                   step_workspace step_manager_runtime step_runtime step_e2ee step_docker_proxy step_idle step_hostshare )
     local _STEP_HISTORY=()
     local _step_idx=0
     while [ "${_step_idx}" -lt "${#_STEPS[@]}" ]; do
@@ -2096,6 +2171,8 @@ install_manager() {
     fi
     HICLAW_WORKSPACE_DIR="$(cd "${HICLAW_WORKSPACE_DIR}" 2>/dev/null && pwd || echo "${HICLAW_WORKSPACE_DIR}")"
     mkdir -p "${HICLAW_WORKSPACE_DIR}"
+    HICLAW_MANAGER_RUNTIME="${HICLAW_MANAGER_RUNTIME:-openclaw}"
+    export HICLAW_MANAGER_RUNTIME
     HICLAW_DEFAULT_WORKER_RUNTIME="${HICLAW_DEFAULT_WORKER_RUNTIME:-openclaw}"
     HICLAW_MATRIX_E2EE="${HICLAW_MATRIX_E2EE:-0}"
     export HICLAW_MATRIX_E2EE
@@ -2146,6 +2223,10 @@ HICLAW_PORT_GATEWAY=${HICLAW_PORT_GATEWAY}
 HICLAW_PORT_CONSOLE=${HICLAW_PORT_CONSOLE}
 HICLAW_PORT_ELEMENT_WEB=${HICLAW_PORT_ELEMENT_WEB}
 HICLAW_PORT_OPENCLAW_CONSOLE=${HICLAW_PORT_OPENCLAW_CONSOLE:-18888}
+HICLAW_PORT_COPAW_APP=${HICLAW_PORT_COPAW_APP:-18799}
+
+# Manager runtime (openclaw | copaw)
+HICLAW_MANAGER_RUNTIME=${HICLAW_MANAGER_RUNTIME:-openclaw}
 
 # Matrix
 HICLAW_MATRIX_DOMAIN=${HICLAW_MATRIX_DOMAIN}
@@ -2292,8 +2373,12 @@ EOF
         ${DOCKER_CMD} pull "${_img}"
     }
 
-    # Manager image is always required
-    _pull_image "${MANAGER_IMAGE}" "install.image.exists" "install.image.pulling_manager"
+    # Manager image is always required (select based on runtime)
+    if [ "${HICLAW_MANAGER_RUNTIME}" = "copaw" ]; then
+        _pull_image "${MANAGER_COPAW_IMAGE}" "install.image.exists" "install.image.pulling_manager"
+    else
+        _pull_image "${MANAGER_IMAGE}" "install.image.exists" "install.image.pulling_manager"
+    fi
 
     # Pull worker image for the selected runtime
     if [ "${HICLAW_DEFAULT_WORKER_RUNTIME}" = "copaw" ]; then
@@ -2397,6 +2482,7 @@ EOF
         -e HOME=/root/manager-workspace \
         -w /root/manager-workspace \
         -e HOST_ORIGINAL_HOME="${HICLAW_HOST_SHARE_DIR}" \
+        -e HICLAW_MANAGER_RUNTIME="${HICLAW_MANAGER_RUNTIME:-openclaw}" \
         ${YOLO_ARGS} \
         ${TZ_ARGS} \
         ${SOCKET_MOUNT_ARGS} \
@@ -2407,11 +2493,12 @@ EOF
         -p "${_port_prefix}${HICLAW_PORT_CONSOLE}:8001" \
         -p "${_port_prefix}${HICLAW_PORT_ELEMENT_WEB:-18088}:8088" \
         -p "127.0.0.1:${HICLAW_PORT_OPENCLAW_CONSOLE:-18888}:18888" \
+        -p "127.0.0.1:${HICLAW_PORT_COPAW_APP:-18799}:18799" \
         ${DATA_MOUNT_ARGS} \
         ${WORKSPACE_MOUNT_ARGS} \
         ${HOST_SHARE_MOUNT_ARGS} \
         --restart unless-stopped \
-        "${MANAGER_IMAGE}"
+        "$([ "${HICLAW_MANAGER_RUNTIME}" = "copaw" ] && echo "${MANAGER_COPAW_IMAGE}" || echo "${MANAGER_IMAGE}")"
     unset _port_prefix
 
     # Wait for Manager agent to be ready
@@ -2472,8 +2559,12 @@ EOF
     log ""
     log "$(msg success.other_consoles)"
     log "$(msg success.higress_console "${HICLAW_PORT_CONSOLE}" "${HICLAW_ADMIN_USER}" "${HICLAW_ADMIN_PASSWORD}")"
-    log "$(msg success.openclaw_console "${HICLAW_PORT_OPENCLAW_CONSOLE:-18888}")"
-    log "$(msg success.openclaw_console_gateway "${HICLAW_ADMIN_USER}" "${HICLAW_ADMIN_PASSWORD}")"
+    if [ "${HICLAW_MANAGER_RUNTIME}" = "copaw" ]; then
+        log "$(msg success.copaw_console "${HICLAW_PORT_COPAW_APP:-18799}")"
+    else
+        log "$(msg success.openclaw_console "${HICLAW_PORT_OPENCLAW_CONSOLE:-18888}")"
+        log "$(msg success.openclaw_console_gateway "${HICLAW_ADMIN_USER}" "${HICLAW_ADMIN_PASSWORD}")"
+    fi
     log ""
     log "$(msg success.switch_llm.title)"
     log "$(msg success.switch_llm.hint)"
