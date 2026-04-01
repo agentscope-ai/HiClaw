@@ -205,6 +205,18 @@ if [ -d "${WORKER_AGENT_SRC}" ] && mc alias ls hiclaw > /dev/null 2>&1; then
                 done
             fi
 
+            # Push shared skills (used by both Manager and Workers)
+            if [ -d "${AGENT_SRC}/shared-skills" ]; then
+                for _skill_dir in "${AGENT_SRC}/shared-skills"/*/; do
+                    [ ! -d "${_skill_dir}" ] && continue
+                    _skill_name=$(basename "${_skill_dir}")
+                    mc mirror "${_skill_dir}" \
+                        "${HICLAW_STORAGE_PREFIX}/agents/${_worker_name}/skills/${_skill_name}/" --overwrite 2>/dev/null \
+                        && log "    Updated shared skill: ${_skill_name}" \
+                        || log "    WARNING: Failed to sync shared skill ${_skill_name}"
+                done
+            fi
+
             # Push assigned worker-skills (on-demand skills from registry)
             for _skill_name in $(jq -r --arg w "${_worker_name}" \
                 '.workers[$w].skills // [] | .[]' "${REGISTRY}" 2>/dev/null); do

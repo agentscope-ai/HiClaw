@@ -2,7 +2,9 @@
 
 Each skill has a full `SKILL.md` in `skills/<name>/`. The `description` field in each SKILL.md tells the system when to load it.
 
-Available skills: `task-management`, `task-coordination`, `git-delegation-management`, `worker-management`, `project-management`, `channel-management`, `matrix-server-management`, `mcp-server-management`, `model-switch`, `worker-model-switch`, `file-sync-management`
+Available skills: `task-management`, `task-coordination`, `git-delegation-management`, `worker-management`, `project-management`, `channel-management`, `matrix-server-management`, `mcp-server-management`, `model-switch`, `worker-model-switch`, `file-sync-management`, `send-file`
+
+> **Shared skills** (in `shared-skills/<name>/`): `send-file` — available to both Manager and Workers.
 
 ## Cross-Skill Combos
 

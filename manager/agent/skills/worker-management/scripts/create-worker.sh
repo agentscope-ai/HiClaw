@@ -673,6 +673,19 @@ STDCTX
                 || log "  WARNING: Failed to push ${_skill_name} skill"
         done
     fi
+
+    # Push shared skills (used by both Manager and Workers)
+    if [ -d "/opt/hiclaw/agent/shared-skills" ]; then
+        for _skill_dir in /opt/hiclaw/agent/shared-skills/*/; do
+            [ ! -d "${_skill_dir}" ] && continue
+            _skill_name=$(basename "${_skill_dir}")
+            log "  Pushing shared skill ${_skill_name} to worker MinIO..."
+            mc mirror "${_skill_dir}" \
+                "${HICLAW_STORAGE_PREFIX}/agents/${WORKER_NAME}/skills/${_skill_name}/" --overwrite \
+                || log "  WARNING: Failed to push shared skill ${_skill_name}"
+        done
+    fi
+
     log "  Worker agent files pushed"
 else
     log "  WARNING: worker-agent directory not found at ${WORKER_AGENT_SRC}"
