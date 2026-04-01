@@ -1354,15 +1354,13 @@ class MatrixChannel(BaseChannel):
         """Add Matrix mentions to an outgoing event content dict.
 
         Scans the message body for @user:domain patterns and populates
-        ``m.mentions.user_ids`` (MSC3952). The reply target ``user_id``
-        is always included so the recipient processes the message.
-        Does NOT modify the body text.
+        ``m.mentions.user_ids`` (MSC3952). Only includes user IDs that
+        actually appear in the text. Does NOT modify the body text.
         """
         body = content.get("body", "")
         mentioned_ids = self._extract_mentions_from_text(body)
-        # Always include the reply target + any @user:domain found in text
-        all_ids = list(dict.fromkeys([user_id] + mentioned_ids))
-        content["m.mentions"] = {"user_ids": all_ids}
+        if mentioned_ids:
+            content["m.mentions"] = {"user_ids": mentioned_ids}
 
     def _resolve_display_name(self, user_id: str, room_id: str) -> str:
         """Best-effort display name for *user_id* in *room_id*."""
