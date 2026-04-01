@@ -1340,16 +1340,30 @@ class MatrixChannel(BaseChannel):
     # Mention helper — build spec-compliant Matrix mention
     # ------------------------------------------------------------------
 
+    # Regex to match Matrix user IDs: @localpart:domain (with optional port)
+    _MATRIX_USER_ID_RE = re.compile(r'@[a-zA-Z0-9._=+/\-]+:[a-zA-Z0-9.\-]+(?::\d+)?')
+
+    def _extract_mentions_from_text(self, text: str) -> list[str]:
+        """Extract all @user:domain Matrix IDs from message text."""
+        matches = self._MATRIX_USER_ID_RE.findall(text)
+        return list(dict.fromkeys(matches))  # dedupe, preserve order
+
     def _apply_mention(
         self, content: dict[str, Any], user_id: str, room_id: str
     ) -> None:
-        """Add a full Matrix mention to an outgoing event content dict.
+        """Add Matrix mentions to an outgoing event content dict.
 
-        Sets ``m.mentions`` (for push notifications) and adds a
-        ``formatted_body`` with an HTML pill so clients render the
-        mention visually.
+        Scans the message body for @user:domain patterns and populates
+        ``m.mentions.user_ids`` (MSC3952). Falls back to the reply target
+        ``user_id`` if no mentions are found in the text.
+
+        Also prepends an HTML pill for the reply target so clients
+        render the mention visually.
         """
-        content["m.mentions"] = {"user_ids": [user_id]}
+        body = content.get("body", "")
+        mentioned_ids = self._extract_mentions_from_text(body)
+        if mentioned_ids:
+            content["m.mentions"] = {"user_ids": mentioned_ids}
 
         display_name = self._resolve_display_name(user_id, room_id)
         pill = (
