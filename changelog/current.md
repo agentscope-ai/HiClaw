@@ -172,9 +172,7 @@ Record image-affecting changes to `manager/`, `worker/`, `openclaw-base/` here b
 
 - 修复 Worker 模板包导入时路径未做 URL 编码导致的失败。
 
-- 调整默认 `HICLAW_NACOS_REGISTRY_URI`：域名改为 `market.hiclaw.io`，并在 URI 中显式使用端口 `80`（保留独立默认端口回退值不变）。
-
-- 修复控制器预检：采用轻量级 agentspec 预检，并要求 agentspec 保持在线版本。
+- 调整 Worker 模板导入默认 Nacos 配置：`HICLAW_NACOS_REGISTRY_URI` 改为 `nacos://market.hiclaw.io:80/public`，主机默认值同步改为 `market.hiclaw.io`，并补充控制器预检以校验 `apply` 时的 Worker 名称与 AgentSpec 在线状态（保留独立默认端口回退值不变）。
 
 - 修复匿名预检场景：匿名预检改为基于 agentspec 列表进行检查。
 
@@ -190,7 +188,7 @@ Record image-affecting changes to `manager/`, `worker/`, `openclaw-base/` here b
 
 - 新增基于 Nacos AgentSpec 的 Worker 模板搜索与导入流程，让 Manager 可以先推荐匹配模板、经管理员确认后再安装。
 
-- 修复 `hiclaw-find-worker` 自动读取 `~/.nacos-cli/default.conf` 导致默认 registry 被本地 profile 覆盖；现在只使用显式 `HICLAW_NACOS_REGISTRY_URI` 或内建默认值 `nacos.market.hiclaw.io:8848/public`。
+- 修复 `hiclaw-find-worker` 自动读取 `~/.nacos-cli/default.conf` 导致默认 registry 被本地 profile 覆盖；现在只使用显式 `HICLAW_NACOS_REGISTRY_URI` 或内建默认配置。
 
 ---
 

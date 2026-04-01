@@ -107,7 +107,7 @@ parse_registry_uri() {
 
 parse_registry_uri "$NACOS_REGISTRY_URI"
 
-NACOS_HOST="${NACOS_HOST:-nacos.market.hiclaw.io}"
+NACOS_HOST="${NACOS_HOST:-market.hiclaw.io}"
 NACOS_PORT="${NACOS_PORT:-8848}"
 NACOS_NAMESPACE="${NACOS_NAMESPACE:-public}"
 
