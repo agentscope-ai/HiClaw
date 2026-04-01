@@ -229,6 +229,7 @@ PLAN
 # Validate
 VALIDATE_OUTPUT=$(exec_in_manager bash -c "
     export HOME='${LEADER_HOME}'
+    cd '${LEADER_HOME}'
     bash ${LEADER_HOME}/skills/team-project-management/scripts/resolve-dag.sh \
         --plan '${PLAN_PATH}' --action validate
 " 2>&1)
@@ -238,6 +239,7 @@ assert_eq "true" "${VALID}" "DAG validate: no cycles"
 # Wave 1
 READY_OUTPUT=$(exec_in_manager bash -c "
     export HOME='${LEADER_HOME}'
+    cd '${LEADER_HOME}'
     bash ${LEADER_HOME}/skills/team-project-management/scripts/resolve-dag.sh \
         --plan '${PLAN_PATH}' --action ready
 " 2>&1)
@@ -252,6 +254,7 @@ exec_in_manager bash -c "
 
 WAVE2_OUTPUT=$(exec_in_manager bash -c "
     export HOME='${LEADER_HOME}'
+    cd '${LEADER_HOME}'
     bash ${LEADER_HOME}/skills/team-project-management/scripts/resolve-dag.sh \
         --plan '${PLAN_PATH}' --action ready
 " 2>&1)
@@ -266,6 +269,7 @@ exec_in_manager bash -c "
 
 WAVE3_OUTPUT=$(exec_in_manager bash -c "
     export HOME='${LEADER_HOME}'
+    cd '${LEADER_HOME}'
     bash ${LEADER_HOME}/skills/team-project-management/scripts/resolve-dag.sh \
         --plan '${PLAN_PATH}' --action ready
 " 2>&1)
@@ -285,6 +289,7 @@ PLAN
 
 CYCLE_OUTPUT=$(exec_in_manager bash -c "
     export HOME='${LEADER_HOME}'
+    cd '${LEADER_HOME}'
     bash /opt/hiclaw/agent/team-leader-agent/skills/team-project-management/scripts/resolve-dag.sh \
         --plan /tmp/cycle-plan.md --action validate 2>&1 || true
 " 2>&1)
@@ -304,12 +309,16 @@ STATE_SCRIPT="${LEADER_HOME}/skills/team-task-management/scripts/manage-team-sta
 exec_in_manager bash -c "
     rm -f '${LEADER_HOME}/team-state.json'
     export HOME='${LEADER_HOME}'
+    cd '${LEADER_HOME}'
+    cd '${LEADER_HOME}'
     bash '${STATE_SCRIPT}' --action init
 " 2>/dev/null
 
 # Manager source
 ADD_OUT=$(exec_in_manager bash -c "
     export HOME='${LEADER_HOME}'
+    cd '${LEADER_HOME}'
+    cd '${LEADER_HOME}'
     bash '${STATE_SCRIPT}' --action add-project --project-id tp-mgr --title 'Mgr Project' --source manager --parent-task-id task-mgr
 " 2>&1)
 assert_contains "${ADD_OUT}" "OK" "add-project (manager source)"
@@ -317,6 +326,7 @@ assert_contains "${ADD_OUT}" "OK" "add-project (manager source)"
 # Team Admin source
 ADD_OUT2=$(exec_in_manager bash -c "
     export HOME='${LEADER_HOME}'
+    cd '${LEADER_HOME}'
     bash '${STATE_SCRIPT}' --action add-project --project-id tp-admin --title 'Admin Project' --source team-admin --requester '@admin:domain'
 " 2>&1)
 assert_contains "${ADD_OUT2}" "OK" "add-project (team-admin source)"
@@ -327,6 +337,7 @@ assert_eq "2" "$(echo "${STATE_JSON}" | jq '.active_projects | length')" "2 acti
 # Complete manager project
 exec_in_manager bash -c "
     export HOME='${LEADER_HOME}'
+    cd '${LEADER_HOME}'
     bash '${STATE_SCRIPT}' --action complete-project --project-id tp-mgr
 " 2>/dev/null
 STATE_JSON2=$(exec_in_manager cat "${LEADER_HOME}/team-state.json" 2>/dev/null)

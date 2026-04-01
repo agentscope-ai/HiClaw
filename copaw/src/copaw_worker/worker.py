@@ -573,5 +573,26 @@ class Worker:
 
             bridge_openclaw_to_copaw(openclaw_cfg, self._copaw_working_dir)
             console.print("[green]Config re-bridged.[/green]")
+
+            # Restart ChannelManager so MatrixChannel picks up new config
+            # (e.g., updated groupAllowFrom after team creation)
+            if self._channel_manager is not None:
+                console.print("[yellow]Restarting channels to apply new config...[/yellow]")
+                await self._channel_manager.stop_all()
+
+                from copaw.config.utils import load_config
+                from copaw.app.channels.manager import ChannelManager
+                from copaw.app.channels.utils import make_process_from_runner
+                from copaw.app.channels.registry import clear_builtin_channel_cache
+
+                clear_builtin_channel_cache()
+                config = load_config()
+                self._channel_manager = ChannelManager.from_config(
+                    process=make_process_from_runner(self._runner),
+                    config=config,
+                    on_last_dispatch=None,
+                )
+                await self._channel_manager.start_all()
+                console.print("[green]Channels restarted with new config.[/green]")
         except Exception as exc:
             console.print(f"[red]Re-bridge failed: {exc}[/red]")

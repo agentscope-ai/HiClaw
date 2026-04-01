@@ -1027,30 +1027,12 @@ class MatrixChannel(BaseChannel):
         text = event.body or ""
         is_dm = len(room.users) == 2
 
-        logger.info(
-            "MatrixChannel: text msg in %s from %s (is_dm=%s, users=%d, text=%s)",
-            room_id, sender_id, is_dm, len(room.users), text[:80],
-        )
-
         if not self._check_allowed(sender_id, room_id, is_dm):
-            logger.info(
-                "MatrixChannel: BLOCKED by _check_allowed: %s in %s (is_dm=%s, "
-                "dm_policy=%s, dm_allow=%s, group_policy=%s, group_allow=%s)",
-                sender_id, room_id, is_dm,
-                self._cfg.dm_policy, self._cfg.allow_from,
-                self._cfg.group_policy, self._cfg.group_allow_from,
-            )
             return
 
         # Mention check for group rooms
         if not is_dm:
-            mentioned = self._was_mentioned(event, text)
-            require = self._require_mention(room_id)
-            logger.info(
-                "MatrixChannel: group msg mention check: require=%s, mentioned=%s, room=%s",
-                require, mentioned, room_id,
-            )
-            if require and not mentioned:
+            if self._require_mention(room_id) and not self._was_mentioned(event, text):
                 self._record_history(room_id, HistoryEntry(
                     sender=self._get_display_name(room, sender_id),
                     body=text,

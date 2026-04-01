@@ -275,6 +275,7 @@ if [ -n "${LEADER_MERGED_POLICY}" ] && [ "${LEADER_MERGED_POLICY}" != "{}" ]; th
     LEADER_ARGS+=(--channel-policy "${LEADER_MERGED_POLICY}")
 fi
 
+log "  Leader channel-policy: ${LEADER_MERGED_POLICY:-none}"
 LEADER_RESULT=$(bash /opt/hiclaw/agent/skills/worker-management/scripts/create-worker.sh "${LEADER_ARGS[@]}" 2>&1)
 LEADER_JSON=$(echo "${LEADER_RESULT}" | sed -n '/---RESULT---/,$ p' | tail -n +2)
 LEADER_ROOM_ID=$(echo "${LEADER_JSON}" | jq -r '.room_id // empty')
