@@ -1,6 +1,6 @@
 ---
 name: team-task-management
-description: Use when you need to assign tasks to team workers, track team task progress, find available workers in your team, or manage team-state.json. IMPORTANT - you MUST use send-team-message.sh to communicate with workers. Never do worker tasks yourself.
+description: Use when you need to assign tasks to team workers, track team task progress, or manage team-state.json. Use send-team-message.sh to communicate with workers. Never do worker tasks yourself.
 ---
 
 # Team Task Management
@@ -11,35 +11,28 @@ Manage individual tasks within your team. For complex multi-worker tasks with de
 
 **NEVER write code, design APIs, create deliverables, or do any domain work yourself.**
 Your ONLY job is to:
-1. Read your latest team-context: `cat ./AGENTS.md` (get Team Room ID, worker list)
-2. Decompose tasks into sub-tasks
-3. Assign sub-tasks to workers via `send-team-message.sh`
-4. Monitor progress and aggregate results
+1. Decompose tasks into sub-tasks
+2. Assign sub-tasks to workers via `send-team-message.sh`
+3. Monitor progress and aggregate results
 
 If you catch yourself doing a worker's job — STOP and delegate instead.
 
-## First Step: Read Your Team Context
-
-Before doing ANYTHING, run:
-```bash
-cat ./AGENTS.md
-```
-This gives you the **Team Room ID**, **Leader DM**, and **worker list with room IDs** you need for delegation. These may not be in your initial context — always read the file.
-
 ## How to Assign Tasks to Workers
 
-You MUST use `send-team-message.sh` to @mention workers. Workers ONLY process messages that contain `m.mentions` — they will ignore plain text.
+Your Coordination section (in AGENTS.md, already loaded in your system prompt) has everything you need:
+- **Team Room** ID — the room where you @mention workers
+- **Team Workers** — each worker's full Matrix ID and Room ID
 
-Look up the **Team Room** and **worker Matrix IDs** from your AGENTS.md `## Coordination` section.
+Use these values directly with `send-team-message.sh`:
 
 ```bash
-# Step 1: Create task spec files and push to MinIO
-# Step 2: Send @mention to worker in Team Room
 bash ./skills/team-task-management/scripts/send-team-message.sh \
-  --room-id '<TEAM_ROOM_ID from your Coordination section>' \
-  --to '@worker-name:domain' \
-  --message '@worker-name:domain New task [st-01]: Design API endpoints. Please file-sync and read teams/{team}/tasks/st-01/spec.md. @mention me when complete.'
+  --room-id '<Team Room from Coordination section>' \
+  --to '<worker Matrix ID from Coordination section>' \
+  --message '@worker-name:domain New task [st-01]: ... Please file-sync. @mention me when complete.'
 ```
+
+Workers ONLY process messages with `m.mentions` — they will ignore plain text. The script handles this automatically.
 
 ## Task Sources
 
@@ -51,10 +44,7 @@ bash ./skills/team-task-management/scripts/send-team-message.sh \
 ## Key Scripts
 
 ```bash
-# Find available team workers
-bash ./skills/team-task-management/scripts/find-team-worker.sh
-
-# Send @mention to a worker in a room (REQUIRED for task assignment)
+# Send @mention to a worker in Team Room (REQUIRED for task assignment)
 bash ./skills/team-task-management/scripts/send-team-message.sh \
   --room-id '!teamroom:domain' --to '@worker:domain' \
   --message '@worker:domain Your task message here'
@@ -87,5 +77,4 @@ Read the relevant doc **before** executing. Do not load all of them.
 | Situation | Read |
 |---|---|
 | Assign a task or handle completion | `references/finite-tasks.md` |
-| Need to pick a worker | `references/worker-selection.md` |
 | State management details | `references/state-management.md` |

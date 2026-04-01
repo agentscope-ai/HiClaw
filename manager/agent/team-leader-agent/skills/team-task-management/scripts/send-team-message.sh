@@ -30,7 +30,7 @@ fi
 # Read Matrix credentials from openclaw.json
 # CoPaw workers store openclaw.json in the working dir, not HOME
 OPENCLAW=""
-for _candidate in "${HOME}/openclaw.json" "${HOME}/.copaw-worker/"*/openclaw.json ./*/openclaw.json; do
+for _candidate in "./openclaw.json" "../openclaw.json" "${HOME}/openclaw.json"; do
     if [ -f "${_candidate}" ]; then
         OPENCLAW="${_candidate}"
         break

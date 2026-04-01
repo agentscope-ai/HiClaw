@@ -41,9 +41,12 @@ fi
 
 # Resolve team name from SOUL.md or environment
 if [ -z "${TEAM_NAME:-}" ]; then
-    if [ -f "${HOME}/SOUL.md" ]; then
-        TEAM_NAME=$(grep -oP 'Team Leader of \K[^\s]+' "${HOME}/SOUL.md" 2>/dev/null || true)
-    fi
+    for _soul in "./SOUL.md" "../SOUL.md" "${HOME}/SOUL.md"; do
+        if [ -f "${_soul}" ]; then
+            TEAM_NAME=$(grep -oP 'Team: \K\S+' "${_soul}" 2>/dev/null || grep -oP 'Team Leader of \K[^\s]+' "${_soul}" 2>/dev/null || true)
+            [ -n "${TEAM_NAME}" ] && break
+        fi
+    done
 fi
 if [ -z "${TEAM_NAME:-}" ]; then
     echo "ERROR: Cannot determine TEAM_NAME. Set it via environment or ensure SOUL.md contains team info." >&2

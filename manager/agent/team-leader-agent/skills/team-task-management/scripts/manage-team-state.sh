@@ -14,7 +14,23 @@
 
 set -euo pipefail
 
-STATE_FILE="${HOME}/team-state.json"
+# Resolve state file path — try working dir first, then HOME
+_resolve_state_file() {
+    for _candidate in "./team-state.json" "../team-state.json" "${HOME}/team-state.json"; do
+        if [ -f "${_candidate}" ]; then
+            echo "${_candidate}"
+            return
+        fi
+    done
+    # Default: create in current dir or parent (whichever has AGENTS.md)
+    if [ -f "../AGENTS.md" ]; then
+        echo "../team-state.json"
+    else
+        echo "./team-state.json"
+    fi
+}
+
+STATE_FILE="$(_resolve_state_file)"
 
 _ts() {
     date -u '+%Y-%m-%dT%H:%M:%SZ'
