@@ -6,6 +6,7 @@
 # Usage:
 #   .\hiclaw-import.ps1 worker -Name <name> -Zip <path-or-url>
 #   .\hiclaw-import.ps1 worker -Name <name> -Package <nacos://...> [-Model MODEL]
+#   .\hiclaw-import.ps1 worker -Name <name>                        # auto-imports package <name>
 #   .\hiclaw-import.ps1 worker -Name <name> -Model MODEL [-Skills s1,s2] [-McpServers m1,m2]
 #   .\hiclaw-import.ps1 -File <resource.yaml> [-Prune] [-DryRun]
 
@@ -136,6 +137,7 @@ switch ($ResourceType) {
         }
 
         # Other params
+        if (-not $Zip -and -not $Package) { $Package = $Name }
         if ($Model) { $hiclawArgs += @("--model", $Model) }
         if ($Package) { $hiclawArgs += @("--package", $Package) }
         if ($Skills) { $hiclawArgs += @("--skills", $Skills) }
@@ -151,6 +153,7 @@ switch ($ResourceType) {
         Write-Host "Usage:"
         Write-Host "  .\hiclaw-import.ps1 worker -Name <name> -Zip <path-or-url>"
         Write-Host "  .\hiclaw-import.ps1 worker -Name <name> -Package <nacos://...> [-Model MODEL]"
+        Write-Host "  .\hiclaw-import.ps1 worker -Name <name>                        # auto-import package <name>"
         Write-Host "  .\hiclaw-import.ps1 worker -Name <name> -Model MODEL [-Skills s1,s2] [-McpServers m1,m2]"
         Write-Host "  .\hiclaw-import.ps1 -File <resource.yaml> [-Prune] [-DryRun]"
         exit 0
