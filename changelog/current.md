@@ -172,6 +172,8 @@ Record image-affecting changes to `manager/`, `worker/`, `openclaw-base/` here b
 
 - 修复 Worker 模板包导入时路径未做 URL 编码导致的失败。
 
+- 调整默认 `HICLAW_NACOS_REGISTRY_URI`：域名改为 `market.hiclaw.io`，并在 URI 中显式使用端口 `80`（保留独立默认端口回退值不变）。
+
 - 修复控制器预检：采用轻量级 agentspec 预检，并要求 agentspec 保持在线版本。
 
 - 修复匿名预检场景：匿名预检改为基于 agentspec 列表进行检查。

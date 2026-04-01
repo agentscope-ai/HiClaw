@@ -269,7 +269,7 @@ func expandPackageURI(raw string) (string, error) {
 
 	base := strings.TrimSpace(os.Getenv("HICLAW_NACOS_REGISTRY_URI"))
 	if base == "" {
-		base = "nacos://nacos.market.hiclaw.io/public"
+		base = "nacos://market.hiclaw.io:80/public"
 	}
 	if !strings.HasPrefix(base, "nacos://") {
 		return "", fmt.Errorf("invalid HICLAW_NACOS_REGISTRY_URI %q: must start with nacos://", base)
