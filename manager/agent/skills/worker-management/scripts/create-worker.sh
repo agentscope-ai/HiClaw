@@ -784,122 +784,86 @@ _build_install_cmd() {
     echo "${cmd}"
 }
 
-# Build extra environment variables JSON for container creation
-_build_extra_env() {
-    local items=()
-    if [ -n "${SKILLS_API_URL}" ]; then
-        items+=("SKILLS_API_URL=${SKILLS_API_URL}")
-    fi
-    if [ -n "${CONSOLE_PORT}" ]; then
-        items+=("HICLAW_CONSOLE_PORT=${CONSOLE_PORT}")
-    fi
-    if [ ${#items[@]} -eq 0 ]; then
-        echo "[]"
-    else
-        printf '%s\n' "${items[@]}" | jq -R . | jq -s .
-    fi
-}
-
 if [ "${REMOTE_MODE}" = true ]; then
     log "Step 9: Remote mode requested"
     INSTALL_CMD=$(_build_install_cmd)
-elif [ "${HICLAW_RUNTIME}" = "aliyun" ]; then
-    log "Step 9: Creating Worker via cloud backend (SAE, runtime=${WORKER_RUNTIME})..."
+elif container_api_available; then
+    log "Step 9: Creating Worker via orchestrator (runtime=${WORKER_RUNTIME})..."
 
-    # Select SAE image based on worker runtime
-    SAE_IMAGE=""
-    if [ "${WORKER_RUNTIME}" = "copaw" ]; then
-        SAE_IMAGE="${HICLAW_SAE_COPAW_WORKER_IMAGE:-}"
-        if [ -z "${SAE_IMAGE}" ]; then
-            _fail "HICLAW_SAE_COPAW_WORKER_IMAGE not set (required for copaw runtime on cloud)"
-        fi
-    fi
-
-    # Build complete SAE environment variables (Worker needs these to connect)
-    SAE_ENVS=$(jq -cn \
+    # Build environment variables for the worker
+    WORKER_ENV=$(jq -cn \
         --arg worker_name "${WORKER_NAME}" \
         --arg worker_key "${WORKER_KEY}" \
         --arg matrix_url "${HICLAW_MATRIX_URL:-}" \
         --arg matrix_domain "${MATRIX_DOMAIN}" \
         --arg matrix_token "${WORKER_MATRIX_TOKEN}" \
         --arg ai_gw_url "${HICLAW_AI_GATEWAY_URL:-}" \
-        --arg oss_bucket "${HICLAW_OSS_BUCKET:-hiclaw-cloud-storage}" \
+        --arg oss_bucket "${HICLAW_OSS_BUCKET:-}" \
         --arg region "${HICLAW_REGION:-cn-hangzhou}" \
         --arg runtime "${WORKER_RUNTIME}" \
         --arg console_port "${CONSOLE_PORT:-}" \
+        --arg skills_api_url "${SKILLS_API_URL:-}" \
+        --arg fs_domain "${HICLAW_FS_DOMAIN:-fs-local.hiclaw.io}" \
+        --arg fs_access_key "${WORKER_NAME}" \
+        --arg fs_secret_key "${WORKER_MINIO_PASSWORD}" \
+        --arg orchestrator_url "${HICLAW_ORCHESTRATOR_URL:-}" \
         '{
+            "HICLAW_WORKER_NAME": $worker_name,
             "HICLAW_WORKER_GATEWAY_KEY": $worker_key,
             "HICLAW_MATRIX_URL": $matrix_url,
             "HICLAW_MATRIX_DOMAIN": $matrix_domain,
             "HICLAW_WORKER_MATRIX_TOKEN": $matrix_token,
             "HICLAW_AI_GATEWAY_URL": $ai_gw_url,
-            "HICLAW_OSS_BUCKET": $oss_bucket,
-            "HICLAW_REGION": $region
+            "HICLAW_FS_ENDPOINT": ("http://" + ($fs_domain | split(":")[0]) + ":8080"),
+            "HICLAW_FS_ACCESS_KEY": $fs_access_key,
+            "HICLAW_FS_SECRET_KEY": $fs_secret_key
         }
-        | if $runtime == "copaw" then
-            . + { "HICLAW_RUNTIME": "aliyun" }
-            | if $console_port != "" then . + { "HICLAW_CONSOLE_PORT": $console_port } else . end
-          else
+        | if $orchestrator_url != "" then . + { "HICLAW_ORCHESTRATOR_URL": $orchestrator_url } else . end
+        | if $oss_bucket != "" then . + { "HICLAW_OSS_BUCKET": $oss_bucket, "HICLAW_REGION": $region } else . end
+        | if $skills_api_url != "" then . + { "SKILLS_API_URL": $skills_api_url } else . end
+        | if $console_port != "" then . + { "HICLAW_CONSOLE_PORT": $console_port } else . end
+        | if $runtime != "copaw" then
             . + {
                 "OPENCLAW_DISABLE_BONJOUR": "1",
-                "OPENCLAW_MDNS_HOSTNAME": ("hiclaw-w-" + $worker_name)
+                "OPENCLAW_MDNS_HOSTNAME": ("hiclaw-w-" + $worker_name),
+                "HOME": ("/root/hiclaw-fs/agents/" + $worker_name)
             }
-          end')
-    log "  SAE_ENVS: ${SAE_ENVS:0:200}..."
+          else . end')
 
-    CREATE_OUTPUT=$(sae_create_worker "${WORKER_NAME}" "${SAE_ENVS}" "${SAE_IMAGE}" 2>/dev/null) || true
-    log "  SAE create response: ${CREATE_OUTPUT:0:300}"
-    SAE_STATUS=$(echo "${CREATE_OUTPUT}" | jq -r '.status // "error"' 2>/dev/null)
+    # Build create request body
+    CREATE_BODY=$(jq -cn \
+        --arg name "${WORKER_NAME}" \
+        --arg image "${CUSTOM_IMAGE:-}" \
+        --arg runtime "${WORKER_RUNTIME}" \
+        --argjson env "${WORKER_ENV}" \
+        '{name: $name, runtime: $runtime, env: $env}
+         | if $image != "" then . + {image: $image} else . end')
 
-    if [ "${SAE_STATUS}" = "created" ] || [ "${SAE_STATUS}" = "exists" ]; then
-        DEPLOY_MODE="cloud"
-        WORKER_STATUS="starting"
-        log "  SAE application ready for ${WORKER_NAME}"
-    else
-        log "  WARNING: SAE application creation returned: ${CREATE_OUTPUT}"
-        WORKER_STATUS="error"
-    fi
-elif container_api_available; then
-    log "Step 9: Starting Worker container locally (runtime=${WORKER_RUNTIME})..."
-    EXTRA_ENV_JSON=$(_build_extra_env)
+    CREATE_OUTPUT=$(worker_backend_create "${CREATE_BODY}" 2>/dev/null) || true
+    log "  Create response: ${CREATE_OUTPUT:0:300}"
 
-    if [ "${WORKER_RUNTIME}" = "copaw" ]; then
-        CREATE_OUTPUT=$(container_create_copaw_worker "${WORKER_NAME}" "${WORKER_NAME}" "${WORKER_MINIO_PASSWORD}" "${EXTRA_ENV_JSON}" "${CUSTOM_IMAGE}" 2>&1) || true
-    else
-        CREATE_OUTPUT=$(container_create_worker "${WORKER_NAME}" "${WORKER_NAME}" "${WORKER_MINIO_PASSWORD}" "${EXTRA_ENV_JSON}" "${CUSTOM_IMAGE}" 2>&1) || true
-    fi
+    CREATE_STATUS=$(echo "${CREATE_OUTPUT}" | jq -r '.status // "error"' 2>/dev/null)
+    CONTAINER_ID=$(echo "${CREATE_OUTPUT}" | jq -r '.container_id // empty' 2>/dev/null)
+    CONSOLE_HOST_PORT=$(echo "${CREATE_OUTPUT}" | jq -r '.console_host_port // empty' 2>/dev/null)
 
-    CONTAINER_ID=$(echo "${CREATE_OUTPUT}" | tail -1)
-    CONSOLE_HOST_PORT=$(echo "${CREATE_OUTPUT}" | grep -o 'CONSOLE_HOST_PORT=[0-9]*' | head -1 | cut -d= -f2)
-    if [ -n "${CONTAINER_ID}" ] && [ ${#CONTAINER_ID} -ge 12 ]; then
-        DEPLOY_MODE="local"
-        if [ -n "${CONSOLE_HOST_PORT}" ]; then
-            log "  Console available at host port ${CONSOLE_HOST_PORT}"
-        fi
+    if [ "${CREATE_STATUS}" = "running" ] || [ "${CREATE_STATUS}" = "starting" ]; then
+        DEPLOY_MODE=$(echo "${CREATE_OUTPUT}" | jq -r '.deployment_mode // "local"' 2>/dev/null)
+
+        # Wait for worker to report ready (unified — works for both Docker and SAE)
         log "  Waiting for Worker agent to be ready..."
-        if [ "${WORKER_RUNTIME}" = "copaw" ]; then
-            if container_wait_copaw_worker_ready "${WORKER_NAME}" 120; then
-                WORKER_STATUS="ready"
-                log "  CoPaw Worker agent is ready!"
-            else
-                WORKER_STATUS="starting"
-                log "  WARNING: CoPaw Worker agent not ready within timeout (container may still be initializing)"
-            fi
+        if worker_backend_wait_ready "${WORKER_NAME}" 120; then
+            WORKER_STATUS="ready"
+            log "  Worker agent is ready!"
         else
-            if container_wait_worker_ready "${WORKER_NAME}" 120; then
-                WORKER_STATUS="ready"
-                log "  Worker agent is ready!"
-            else
-                WORKER_STATUS="starting"
-                log "  WARNING: Worker agent not ready within timeout (container may still be initializing)"
-            fi
+            WORKER_STATUS="starting"
+            log "  WARNING: Worker agent not ready within timeout"
         fi
     else
-        log "  WARNING: Container creation failed, falling back to remote mode"
+        log "  WARNING: Worker creation failed, falling back to remote mode"
         INSTALL_CMD=$(_build_install_cmd)
     fi
 else
-    log "Step 9: No container runtime socket available"
+    log "Step 9: No orchestrator available"
     INSTALL_CMD=$(_build_install_cmd)
 fi
 

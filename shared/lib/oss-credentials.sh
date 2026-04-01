@@ -1,35 +1,41 @@
 #!/bin/bash
-# oss-credentials.sh - Shared STS credential management for mc (MinIO Client)
+# oss-credentials.sh - STS credential management for mc (MinIO Client)
 #
-# In cloud SAE mode, mc requires STS temporary credentials via MC_HOST_hiclaw.
-# STS tokens expire after 1 hour. This library provides lazy-refresh: credentials
-# are cached in a file and refreshed only when they are about to expire.
+# Two credential paths (checked in priority order):
+#
+# 1. RRSA OIDC (Manager, Orchestrator — any SAE app with oidc_role_name):
+#    ALIBABA_CLOUD_OIDC_TOKEN_FILE exists → call STS AssumeRoleWithOIDC directly.
+#    Worker inline policy applied when HICLAW_WORKER_NAME is set.
+#
+# 2. Orchestrator-mediated STS (Workers without RRSA):
+#    HICLAW_ORCHESTRATOR_URL + HICLAW_WORKER_API_KEY → call orchestrator /credentials/sts.
+#
+# 3. Neither → no-op (local mode, mc alias configured with static credentials).
+#
+# STS tokens expire after 1 hour. Credentials are cached and lazy-refreshed.
 #
 # Usage:
 #   source /opt/hiclaw/scripts/lib/oss-credentials.sh
 #   ensure_mc_credentials   # call before any mc command
-#   mc mirror ...
-#
-# In local mode (no OIDC env vars), ensure_mc_credentials is a no-op.
 
 _OSS_CRED_FILE="/tmp/mc-oss-credentials.env"
 _OSS_CRED_REFRESH_MARGIN=600  # refresh if less than 10 minutes remaining
 
-# Internal: build an inline STS policy that restricts OSS access to the
-# worker's own prefix (agents/<name>/*) and the shared prefix (shared/*).
-# Called only when HICLAW_WORKER_NAME is set (i.e. worker context).
-# Manager does not set HICLAW_WORKER_NAME, so it gets unrestricted access.
+# --------------------------------------------------------------------------
+# Path 1: Direct STS via RRSA OIDC
+# --------------------------------------------------------------------------
+
+# Build an inline STS policy restricting OSS access to the worker's own prefix.
+# Only used when HICLAW_WORKER_NAME is set (worker context).
 _oss_build_worker_policy() {
     local worker="$1"
     local bucket="${HICLAW_OSS_BUCKET:-hiclaw-cloud-storage}"
-
     cat <<POLICY
 {"Version":"1","Statement":[{"Effect":"Allow","Action":["oss:ListObjects"],"Resource":["acs:oss:*:*:${bucket}"],"Condition":{"StringLike":{"oss:Prefix":["agents/${worker}/*","shared/*"]}}},{"Effect":"Allow","Action":["oss:GetObject","oss:PutObject","oss:DeleteObject"],"Resource":["acs:oss:*:*:${bucket}/agents/${worker}/*","acs:oss:*:*:${bucket}/shared/*"]}]}
 POLICY
 }
 
-# Internal: call STS AssumeRoleWithOIDC and write credentials to file
-_oss_refresh_sts() {
+_oss_refresh_sts_direct() {
     local oidc_token region sts_resp http_code
     local sts_ak sts_sk sts_token expires_at
 
@@ -82,7 +88,6 @@ _oss_refresh_sts() {
         return 1
     fi
 
-    # expires_at = now + 3600 seconds (STS token lifetime)
     expires_at=$(( $(date +%s) + 3600 ))
 
     cat > "${_OSS_CRED_FILE}" <<EOF
@@ -91,22 +96,81 @@ _OSS_CRED_EXPIRES_AT=${expires_at}
 EOF
     chmod 600 "${_OSS_CRED_FILE}"
 
-    echo "[oss-credentials] STS credentials refreshed (AK prefix: ${sts_ak:0:8}..., expires: $(date -d @${expires_at} '+%H:%M:%S' 2>/dev/null || date -r ${expires_at} '+%H:%M:%S' 2>/dev/null || echo ${expires_at}))" >&2
+    echo "[oss-credentials] STS credentials refreshed via RRSA (AK prefix: ${sts_ak:0:8}..., expires: $(date -d @${expires_at} '+%H:%M:%S' 2>/dev/null || date -r ${expires_at} '+%H:%M:%S' 2>/dev/null || echo ${expires_at}))" >&2
 }
 
-# Public: ensure MC_HOST_hiclaw is set with valid (non-expired) STS credentials.
-# In local mode (no OIDC env vars), this is a no-op.
-ensure_mc_credentials() {
-    # Skip in local mode — mc alias is configured with static credentials
-    if [ -z "${ALIBABA_CLOUD_OIDC_TOKEN_FILE:-}" ] || [ ! -f "${ALIBABA_CLOUD_OIDC_TOKEN_FILE:-/nonexistent}" ]; then
-        return 0
+# --------------------------------------------------------------------------
+# Path 2: STS via Orchestrator (workers without RRSA)
+# --------------------------------------------------------------------------
+
+_oss_refresh_sts_via_orchestrator() {
+    local resp http_code
+    local sts_ak sts_sk sts_token oss_endpoint oss_bucket
+
+    resp=$(curl -s -w "\n%{http_code}" -X POST "${HICLAW_ORCHESTRATOR_URL}/credentials/sts" \
+        -H "Authorization: Bearer ${HICLAW_WORKER_API_KEY}" \
+        --connect-timeout 10 --max-time 30 2>&1)
+
+    http_code=$(echo "${resp}" | tail -1)
+    resp=$(echo "${resp}" | sed '$d')
+
+    if [ "${http_code}" != "200" ]; then
+        echo "[oss-credentials] ERROR: orchestrator STS request failed (HTTP ${http_code})" >&2
+        echo "[oss-credentials] Response: ${resp}" >&2
+        return 1
     fi
 
+    sts_ak=$(echo "${resp}" | jq -r '.access_key_id')
+    sts_sk=$(echo "${resp}" | jq -r '.access_key_secret')
+    sts_token=$(echo "${resp}" | jq -r '.security_token')
+    oss_endpoint=$(echo "${resp}" | jq -r '.oss_endpoint')
+
+    if [ -z "${sts_ak}" ] || [ "${sts_ak}" = "null" ]; then
+        echo "[oss-credentials] ERROR: Failed to parse STS credentials from orchestrator" >&2
+        echo "[oss-credentials] Response: ${resp}" >&2
+        return 1
+    fi
+
+    local expires_at
+    expires_at=$(( $(date +%s) + 3600 ))
+
+    cat > "${_OSS_CRED_FILE}" <<EOF
+MC_HOST_hiclaw="https://${sts_ak}:${sts_sk}:${sts_token}@${oss_endpoint}"
+_OSS_CRED_EXPIRES_AT=${expires_at}
+EOF
+    chmod 600 "${_OSS_CRED_FILE}"
+
+    echo "[oss-credentials] STS credentials refreshed via orchestrator (AK prefix: ${sts_ak:0:8}..., expires: $(date -d @${expires_at} '+%H:%M:%S' 2>/dev/null || date -r ${expires_at} '+%H:%M:%S' 2>/dev/null || echo ${expires_at}))" >&2
+}
+
+# --------------------------------------------------------------------------
+# Public API
+# --------------------------------------------------------------------------
+
+ensure_mc_credentials() {
+    # Priority 1: RRSA OIDC token file exists → direct STS call
+    if [ -n "${ALIBABA_CLOUD_OIDC_TOKEN_FILE:-}" ] && [ -f "${ALIBABA_CLOUD_OIDC_TOKEN_FILE}" ]; then
+        _oss_ensure_refresh _oss_refresh_sts_direct
+        return $?
+    fi
+
+    # Priority 2: Orchestrator URL + worker API key → orchestrator-mediated STS
+    if [ -n "${HICLAW_ORCHESTRATOR_URL:-}" ] && [ -n "${HICLAW_WORKER_API_KEY:-}" ]; then
+        _oss_ensure_refresh _oss_refresh_sts_via_orchestrator
+        return $?
+    fi
+
+    # Priority 3: local mode — mc alias configured with static credentials
+    return 0
+}
+
+# Shared lazy-refresh logic: call the given refresh function only if needed.
+_oss_ensure_refresh() {
+    local refresh_fn="$1"
     local now needs_refresh=false
     now=$(date +%s)
 
     if [ -f "${_OSS_CRED_FILE}" ]; then
-        # Source to get _OSS_CRED_EXPIRES_AT
         . "${_OSS_CRED_FILE}"
         if [ -z "${_OSS_CRED_EXPIRES_AT:-}" ] || [ $(( _OSS_CRED_EXPIRES_AT - now )) -lt ${_OSS_CRED_REFRESH_MARGIN} ]; then
             needs_refresh=true
@@ -116,7 +180,7 @@ ensure_mc_credentials() {
     fi
 
     if [ "${needs_refresh}" = true ]; then
-        _oss_refresh_sts || return 1
+        ${refresh_fn} || return 1
         . "${_OSS_CRED_FILE}"
     fi
 

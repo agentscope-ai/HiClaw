@@ -125,10 +125,7 @@ class FileSync:
         self.local_dir.mkdir(parents=True, exist_ok=True)
         self._prefix = f"agents/{worker_name}"
         self._alias_set = False
-        self._cloud_mode = bool(
-            os.environ.get("ALIBABA_CLOUD_OIDC_TOKEN_FILE")
-            and Path(os.environ.get("ALIBABA_CLOUD_OIDC_TOKEN_FILE", "")).is_file()
-        )
+        self._cloud_mode = os.environ.get("HICLAW_RUNTIME") == "aliyun"
 
     # ------------------------------------------------------------------
     # mc alias management

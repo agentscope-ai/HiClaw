@@ -23,19 +23,6 @@ FROM ${OPENCLAW_BASE_IMAGE}
 # mc (MinIO Client) — real binary; wrapper installed after shared libs are copied
 COPY --from=mc /usr/bin/mc /usr/local/bin/mc.bin
 
-# Install Python packages for cloud Worker management (SAE API via OIDC/AK)
-# python3 is already in openclaw-base; install pip and SDK
-ARG PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
-RUN apt-get update && apt-get install -y --no-install-recommends python3-pip && \
-    rm -rf /var/lib/apt/lists/* && \
-    pip3 install --no-cache-dir \
-        --index-url "${PIP_INDEX_URL}" \
-        --trusted-host "$(echo ${PIP_INDEX_URL} | sed 's|https\?://||;s|/.*||')" \
-        alibabacloud-sae20190506 \
-        alibabacloud-apig20240327 \
-        alibabacloud-credentials \
-        alibabacloud-tea-openapi
-
 # ---- Built-in observability plugin (bundled unconditionally, enabled at runtime) ----
 # Placed before agent/configs COPY so that code changes do not invalidate this layer.
 ARG OPENCLAW_CMS_PLUGIN_URL=https://arms-apm-cn-hangzhou-pre.oss-cn-hangzhou.aliyuncs.com/openclaw-cms-plugin/0.1.1/openclaw-cms-plugin.tar.gz
@@ -61,7 +48,6 @@ COPY manager/agent/ /opt/hiclaw/agent/
 COPY manager/configs/ /opt/hiclaw/configs/
 
 # ---- Copy scripts: shared libs first, then manager scripts ----
-# manager/scripts/ includes lib/cloud/aliyun-api.py and lib/cloud/aliyun-sae.sh
 COPY shared/lib/ /opt/hiclaw/scripts/lib/
 COPY manager/scripts/ /opt/hiclaw/scripts/
 

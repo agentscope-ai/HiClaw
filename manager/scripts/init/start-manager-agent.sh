@@ -828,11 +828,22 @@ if container_api_available; then
                 _runtime=$(jq -r --arg w "${_worker_name}" '.workers[$w].runtime // "openclaw"' "${REGISTRY_FILE}" 2>/dev/null)
                 _recreated=false
                 for _attempt in 1 2 3; do
-                    if [ "${_runtime}" = "copaw" ]; then
-                        container_create_copaw_worker "${_worker_name}" "${_worker_name}" "${WORKER_MINIO_PASSWORD}" 2>&1 && _recreated=true && break
-                    else
-                        container_create_worker "${_worker_name}" "${_worker_name}" "${WORKER_MINIO_PASSWORD}" 2>&1 && _recreated=true && break
-                    fi
+                    local _env_map _create_body
+                    _env_map=$(jq -cn \
+                        --arg name "${_worker_name}" \
+                        --arg fak "${_worker_name}" \
+                        --arg fsk "${WORKER_MINIO_PASSWORD:-}" \
+                        --arg fs_domain "${HICLAW_FS_DOMAIN:-fs-local.hiclaw.io}" \
+                        --arg orchestrator_url "${HICLAW_ORCHESTRATOR_URL:-}" \
+                        '{
+                            "HICLAW_WORKER_NAME": $name,
+                            "HICLAW_FS_ENDPOINT": ("http://" + ($fs_domain | split(":")[0]) + ":8080"),
+                            "HICLAW_FS_ACCESS_KEY": $fak,
+                            "HICLAW_FS_SECRET_KEY": $fsk
+                        }
+                        | if $orchestrator_url != "" then . + {"HICLAW_ORCHESTRATOR_URL": $orchestrator_url} else . end')
+                    _create_body=$(jq -cn --arg name "${_worker_name}" --arg runtime "${_runtime}" --argjson env "${_env_map}" '{name: $name, runtime: $runtime, env: $env}')
+                    worker_backend_create "${_create_body}" > /dev/null 2>&1 && _recreated=true && break
                     log "  Attempt ${_attempt}/3 failed for ${_worker_name}, retrying in $((5 * _attempt))s..."
                     sleep $((5 * _attempt))
                 done

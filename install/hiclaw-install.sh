@@ -288,8 +288,8 @@ msg() {
         "install.reinstall.warn_workspace.en") text="   - Manager workspace: %s" ;;
         "install.reinstall.warn_workers.zh") text="   - 所有 worker 容器" ;;
         "install.reinstall.warn_workers.en") text="   - All worker containers" ;;
-        "install.reinstall.warn_proxy.zh") text="   - Docker API 代理容器: hiclaw-docker-proxy" ;;
-        "install.reinstall.warn_proxy.en") text="   - Docker API proxy container: hiclaw-docker-proxy" ;;
+        "install.reinstall.warn_proxy.zh") text="   - Docker API 代理容器: hiclaw-orchestrator" ;;
+        "install.reinstall.warn_proxy.en") text="   - Docker API proxy container: hiclaw-orchestrator" ;;
         "install.reinstall.warn_network.zh") text="   - Docker 网络: hiclaw-net" ;;
         "install.reinstall.warn_network.en") text="   - Docker network: hiclaw-net" ;;
         "install.reinstall.confirm_type.zh") text="请输入工作空间路径以确认删除（或按 Ctrl+C 取消）:" ;;
@@ -306,8 +306,8 @@ msg() {
         "install.reinstall.removing_volume.en") text="Removing Docker volume: hiclaw-data" ;;
         "install.reinstall.warn_volume_fail.zh") text="  警告: 无法移除卷（可能有引用）" ;;
         "install.reinstall.warn_volume_fail.en") text="  Warning: Could not remove volume (may have references)" ;;
-        "install.reinstall.removing_proxy.zh") text="正在移除 Docker API 代理容器: hiclaw-docker-proxy" ;;
-        "install.reinstall.removing_proxy.en") text="Removing Docker API proxy container: hiclaw-docker-proxy" ;;
+        "install.reinstall.removing_proxy.zh") text="正在移除 Docker API 代理容器: hiclaw-orchestrator" ;;
+        "install.reinstall.removing_proxy.en") text="Removing Docker API proxy container: hiclaw-orchestrator" ;;
         "install.reinstall.removing_network.zh") text="正在移除 Docker 网络: hiclaw-net" ;;
         "install.reinstall.removing_network.en") text="Removing Docker network: hiclaw-net" ;;
         "install.reinstall.removing_workspace.zh") text="正在移除工作空间目录: %s" ;;
@@ -878,46 +878,48 @@ detect_registry() {
 }
 
 HICLAW_REGISTRY="${HICLAW_REGISTRY:-$(detect_registry)}"
+# Backward compatibility: accept old env var names from previous versions
+HICLAW_INSTALL_ORCHESTRATOR_IMAGE="${HICLAW_INSTALL_ORCHESTRATOR_IMAGE:-${HICLAW_INSTALL_DOCKER_PROXY_IMAGE:-}}"
 # Image variables are resolved after version selection in step_version().
 # These placeholders allow early code paths to reference them without errors.
 MANAGER_IMAGE="${HICLAW_INSTALL_MANAGER_IMAGE:-}"
 MANAGER_COPAW_IMAGE="${HICLAW_INSTALL_MANAGER_COPAW_IMAGE:-}"
 WORKER_IMAGE="${HICLAW_INSTALL_WORKER_IMAGE:-}"
 COPAW_WORKER_IMAGE="${HICLAW_INSTALL_COPAW_WORKER_IMAGE:-}"
-DOCKER_PROXY_IMAGE="${HICLAW_INSTALL_DOCKER_PROXY_IMAGE:-}"
+ORCHESTRATOR_IMAGE="${HICLAW_INSTALL_ORCHESTRATOR_IMAGE:-}"
 
 resolve_image_tags() {
     MANAGER_IMAGE="${HICLAW_INSTALL_MANAGER_IMAGE:-${HICLAW_REGISTRY}/higress/hiclaw-manager:${HICLAW_VERSION}}"
     MANAGER_COPAW_IMAGE="${HICLAW_INSTALL_MANAGER_COPAW_IMAGE:-${HICLAW_REGISTRY}/higress/hiclaw-manager-copaw:${HICLAW_VERSION}}"
     WORKER_IMAGE="${HICLAW_INSTALL_WORKER_IMAGE:-${HICLAW_REGISTRY}/higress/hiclaw-worker:${HICLAW_VERSION}}"
     COPAW_WORKER_IMAGE="${HICLAW_INSTALL_COPAW_WORKER_IMAGE:-${HICLAW_REGISTRY}/higress/hiclaw-copaw-worker:${HICLAW_VERSION}}"
-    # docker-proxy: prefer versioned tag, fall back to :latest at pull time
-    # via resolve_docker_proxy_image().
-    DOCKER_PROXY_IMAGE="${HICLAW_INSTALL_DOCKER_PROXY_IMAGE:-${HICLAW_REGISTRY}/higress/hiclaw-docker-proxy:${HICLAW_VERSION}}"
+    # orchestrator: prefer versioned tag, fall back to :latest at pull time
+    # via resolve_orchestrator_image().
+    ORCHESTRATOR_IMAGE="${HICLAW_INSTALL_ORCHESTRATOR_IMAGE:-${HICLAW_REGISTRY}/higress/hiclaw-orchestrator:${HICLAW_VERSION}}"
 }
 
-# Resolve the docker-proxy image: try the versioned tag first; if the registry
+# Resolve the orchestrator image: try the versioned tag first; if the registry
 # doesn't have it (component didn't exist yet in that release), fall back to :latest.
-# Sets DOCKER_PROXY_IMAGE to the tag that will actually be pulled.
-resolve_docker_proxy_image() {
+# Sets ORCHESTRATOR_IMAGE to the tag that will actually be pulled.
+resolve_orchestrator_image() {
     # If the user explicitly overrode the image, respect it as-is.
-    [ -n "${HICLAW_INSTALL_DOCKER_PROXY_IMAGE:-}" ] && return 0
+    [ -n "${HICLAW_INSTALL_ORCHESTRATOR_IMAGE:-}" ] && return 0
 
-    local _versioned="${HICLAW_REGISTRY}/higress/hiclaw-docker-proxy:${HICLAW_VERSION}"
-    local _latest="${HICLAW_REGISTRY}/higress/hiclaw-docker-proxy:latest"
+    local _versioned="${HICLAW_REGISTRY}/higress/hiclaw-orchestrator:${HICLAW_VERSION}"
+    local _latest="${HICLAW_REGISTRY}/higress/hiclaw-orchestrator:latest"
 
     # Skip probe when HICLAW_VERSION is "latest" — no point trying the same tag twice.
     if [ "${HICLAW_VERSION}" = "latest" ]; then
-        DOCKER_PROXY_IMAGE="${_latest}"
+        ORCHESTRATOR_IMAGE="${_latest}"
         return 0
     fi
 
     if ${DOCKER_CMD} pull "${_versioned}" >/dev/null 2>&1; then
-        DOCKER_PROXY_IMAGE="${_versioned}"
+        ORCHESTRATOR_IMAGE="${_versioned}"
     else
-        log "docker-proxy ${HICLAW_VERSION} not found, using latest"
+        log "orchestrator ${HICLAW_VERSION} not found, using latest"
         ${DOCKER_CMD} pull "${_latest}" >/dev/null 2>&1 || true
-        DOCKER_PROXY_IMAGE="${_latest}"
+        ORCHESTRATOR_IMAGE="${_latest}"
     fi
 }
 
@@ -1506,10 +1508,10 @@ step_existing() {
                 ${DOCKER_CMD} rm "${w}" 2>/dev/null || true
                 log "$(msg install.reinstall.removed_worker "${w}")"
             done
-            if ${DOCKER_CMD} ps -a --format '{{.Names}}' | grep -q "^hiclaw-docker-proxy$"; then
+            if ${DOCKER_CMD} ps -a --format '{{.Names}}' | grep -q "^hiclaw-orchestrator$"; then
                 log "$(msg install.reinstall.removing_proxy)"
-                ${DOCKER_CMD} stop hiclaw-docker-proxy 2>/dev/null || true
-                ${DOCKER_CMD} rm hiclaw-docker-proxy 2>/dev/null || true
+                ${DOCKER_CMD} stop hiclaw-orchestrator 2>/dev/null || true
+                ${DOCKER_CMD} rm hiclaw-orchestrator 2>/dev/null || true
             fi
             if ${DOCKER_CMD} network ls --format '{{.Name}}' | grep -q "^hiclaw-net$"; then
                 log "$(msg install.reinstall.removing_network)"
@@ -2396,16 +2398,16 @@ EOF
         fi
     fi
 
-    # Resolve and pull docker-proxy image (probes versioned tag, falls back to latest)
+    # Resolve and pull orchestrator image (probes versioned tag, falls back to latest)
     if [ "${HICLAW_DOCKER_PROXY:-0}" = "1" ]; then
-        resolve_docker_proxy_image
+        resolve_orchestrator_image
     fi
 
     # Stop and remove existing containers (deferred from upgrade detection
     # so that all configuration is collected and images are pulled first)
-    if ${DOCKER_CMD} ps -a --format '{{.Names}}' | grep -q "^hiclaw-docker-proxy$"; then
-        ${DOCKER_CMD} stop hiclaw-docker-proxy 2>/dev/null || true
-        ${DOCKER_CMD} rm hiclaw-docker-proxy 2>/dev/null || true
+    if ${DOCKER_CMD} ps -a --format '{{.Names}}' | grep -q "^hiclaw-orchestrator$"; then
+        ${DOCKER_CMD} stop hiclaw-orchestrator 2>/dev/null || true
+        ${DOCKER_CMD} rm hiclaw-orchestrator 2>/dev/null || true
     fi
     if ${DOCKER_CMD} ps -a --format '{{.Names}}' | grep -q "^hiclaw-manager$"; then
         log "$(msg install.removing_existing)"
@@ -2448,17 +2450,19 @@ EOF
     # Start Docker API proxy if enabled (security layer between Manager and Docker daemon)
     PROXY_ARGS=""
     if [ "${HICLAW_DOCKER_PROXY:-0}" = "1" ] && [ -n "${CONTAINER_SOCK:-}" ]; then
-        local _proxy_image="${DOCKER_PROXY_IMAGE}"
+        local _proxy_image="${ORCHESTRATOR_IMAGE}"
         log "Starting Docker API proxy..."
         ${DOCKER_CMD} run -d \
-            --name hiclaw-docker-proxy \
+            --name hiclaw-orchestrator \
             --network hiclaw-net \
             -v "${CONTAINER_SOCK}:/var/run/docker.sock" \
             --security-opt label=disable \
+            -e HICLAW_WORKER_IMAGE="${WORKER_IMAGE}" \
+            -e HICLAW_COPAW_WORKER_IMAGE="${COPAW_WORKER_IMAGE}" \
             ${HICLAW_PROXY_ALLOWED_REGISTRIES:+-e HICLAW_PROXY_ALLOWED_REGISTRIES="${HICLAW_PROXY_ALLOWED_REGISTRIES}"} \
             --restart unless-stopped \
             "${_proxy_image}"
-        PROXY_ARGS="-e HICLAW_CONTAINER_API=http://hiclaw-docker-proxy:2375"
+        PROXY_ARGS="-e HICLAW_ORCHESTRATOR_URL=http://hiclaw-orchestrator:2375"
         SOCKET_MOUNT_ARGS=""  # Manager no longer needs direct socket access
     fi
 
