@@ -227,9 +227,6 @@ Record image-affecting changes to `manager/`, `worker/`, `openclaw-base/` here b
 - feat(worker): install @nacos-group/cli in OpenClaw and CoPaw worker images ([unreleased](https://github.com/higress-group/hiclaw))
 - refactor(network): replace ExtraHosts IP injection with Docker network aliases ([0eb635d](https://github.com/alibaba/hiclaw/commit/0eb635d))
 - refactor: unify DM room creation into manager agent startup ([0569d1a](https://github.com/alibaba/hiclaw/commit/0569d1a))
-<<<<<<< HEAD
 - feat(memory): add default embedding model (text-embedding-v4) support for Manager and Worker, with openclaw→copaw bridge
 - feat(manager): add CoPaw runtime support for Manager container ([f6c8f8d](https://github.com/maplefeng-a/hiclaw/commit/f6c8f8d))
-=======
 - feat(manager): support worker template import flow, including `hiclaw-find-worker`, generalized import paths, package shorthand, controller preflight fixes, URL-encoded package paths, and explicit registry defaults ([c010206](https://github.com/alibaba/hiclaw/commit/c010206))
->>>>>>> 3bc1be3 (feat(manager): support worker template import flow)
