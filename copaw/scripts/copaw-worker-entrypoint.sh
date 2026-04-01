@@ -63,6 +63,10 @@ mkdir -p "${WORKER_SKILLS_DIR}"
 mkdir -p "${HOME}/.agents"
 ln -sfn "${WORKER_SKILLS_DIR}" "${HOME}/.agents/skills"
 
+# Create /root/hiclaw-fs symlink so scripts using absolute paths work in CoPaw
+# (OpenClaw workers use /root/hiclaw-fs natively; CoPaw stores synced files under INSTALL_DIR)
+ln -sfn "${INSTALL_DIR}/${WORKER_NAME}" /root/hiclaw-fs 2>/dev/null || true
+
 if [ -n "${CONSOLE_PORT}" ]; then
     # ---------- Standard mode: copaw-worker (PyPI CoPaw venv, with console) ----------
     VENV="/opt/venv/standard"

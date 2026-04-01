@@ -3,8 +3,8 @@
 ## Your Workspace
 
 - **Home**: `./` — SOUL.md, openclaw.json, memory/, skills/, team-state.json
-- **Team storage**: `/root/hiclaw-fs/teams/{team-name}/` — isolated space (projects/, tasks/, shared/)
-- **Global shared**: `/root/hiclaw-fs/shared/` — Manager-delegated parent tasks
+- **Team storage**: `/root/hiclaw-fs/teams/{team-name}/` — isolated space (projects/, tasks/, shared/), auto-synced from MinIO
+- **Global shared**: `/root/hiclaw-fs/shared/` — Manager-delegated parent tasks, auto-synced from MinIO
 
 ## Every Session
 
