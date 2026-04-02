@@ -51,7 +51,7 @@ def _merge_openclaw_config(remote_text: str, local_text: str) -> str:
     """Merge remote and local openclaw.json, preserving Worker additions.
 
     Rules:
-      - plugins: union arrays, deep merge entries (remote wins shared)
+      - plugins: deep merge entries (remote wins shared), union load.paths
       - channels: deep merge (remote wins shared types, local-only preserved)
       - channels.matrix.accessToken: local wins
       - Everything else: remote as-is
@@ -60,20 +60,18 @@ def _merge_openclaw_config(remote_text: str, local_text: str) -> str:
     local = json.loads(local_text)
     merged = dict(remote)
 
-    # plugins: union arrays, deep merge entries
+    # plugins: union arrays, deep merge entries — only touch fields that exist
     r_plugins = remote.get("plugins", {})
     l_plugins = local.get("plugins", {})
     if r_plugins or l_plugins:
-        merged["plugins"] = {
-            "allow": sorted(set(r_plugins.get("allow", []) + l_plugins.get("allow", []))),
-            "load": {
-                "paths": sorted(set(
-                    r_plugins.get("load", {}).get("paths", [])
-                    + l_plugins.get("load", {}).get("paths", [])
-                )),
-            },
-            "entries": _deep_merge(l_plugins.get("entries", {}), r_plugins.get("entries", {})),
-        }
+        m_plugins = _deep_merge(l_plugins, r_plugins)
+        r_paths = r_plugins.get("load", {}).get("paths")
+        l_paths = l_plugins.get("load", {}).get("paths")
+        if r_paths is not None or l_paths is not None:
+            m_plugins.setdefault("load", {})["paths"] = sorted(
+                set((r_paths or []) + (l_paths or []))
+            )
+        merged["plugins"] = m_plugins
 
     # channels: deep merge, remote wins shared, local-only preserved
     r_channels = remote.get("channels", {})

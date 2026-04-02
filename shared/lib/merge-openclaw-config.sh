@@ -6,7 +6,7 @@
 #   Only plugins and channels are merged (Worker may add its own).
 #   Everything else (models, agents.defaults, etc.) uses remote as-is.
 #   Merge rules:
-#     - plugins: union arrays, deep merge entries
+#     - plugins: deep merge entries, union load.paths
 #     - channels: deep merge (remote wins shared types, local-only types preserved)
 #     - channels.matrix.accessToken: local wins (Worker re-login)
 #
@@ -35,13 +35,20 @@ merge_openclaw_config() {
     local merged
     merged=$(jq -n --argfile remote "${remote_path}" --argfile local "${local_path}" '
         $remote
-        # ── plugins: union arrays, deep merge entries (remote wins shared) ──
-        | .plugins.allow = ([(.plugins.allow // [])[], ($local.plugins.allow // [])[]] | unique)
-        | .plugins.load.paths = ([(.plugins.load.paths // [])[], ($local.plugins.load.paths // [])[]] | unique)
-        | .plugins.entries = ($local.plugins.entries // {}) * (.plugins.entries // {})
-        # ── channels: deep merge, remote wins shared types (matrix), local-only types preserved ──
-        | .channels = ($local.channels // {}) * (.channels // {})
-        | .channels.matrix.accessToken = ($local.channels.matrix.accessToken // .channels.matrix.accessToken)
+        # ── plugins: only touch fields that exist in at least one side ──
+        | if ($remote.plugins.entries // null) != null or ($local.plugins.entries // null) != null then
+            .plugins.entries = (($local.plugins.entries // {}) * (.plugins.entries // {}))
+          else . end
+        | if ($remote.plugins.load.paths // null) != null or ($local.plugins.load.paths // null) != null then
+            .plugins.load.paths = ([(.plugins.load.paths // [])[], ($local.plugins.load.paths // [])[]] | unique)
+          else . end
+        # ── channels: deep merge only when present ──
+        | if ($remote.channels // null) != null or ($local.channels // null) != null then
+            .channels = (($local.channels // {}) * (.channels // {}))
+          else . end
+        | if ($local.channels.matrix.accessToken // null) != null then
+            .channels.matrix.accessToken = $local.channels.matrix.accessToken
+          else . end
     ' 2>/dev/null)
 
     if [ $? -eq 0 ] && [ -n "${merged}" ]; then
