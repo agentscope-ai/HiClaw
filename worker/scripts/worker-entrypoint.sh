@@ -274,4 +274,8 @@ else
     log "No Matrix password found in MinIO, skipping re-login (E2EE may not work after restart)"
 fi
 
+# Disable full-process respawn so the CLI uses its internal restart loop.
+# Without this, config reload spawns a detached child and exits, killing the container.
+export OPENCLAW_NO_RESPAWN=1
+
 exec openclaw gateway run --verbose --force
