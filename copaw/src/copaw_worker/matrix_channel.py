@@ -757,6 +757,18 @@ class MatrixChannel(BaseChannel):
                         })
         elif isinstance(event, RoomMessageFile):
             body_desc = f"[sent a file: {body}]" if body else "[sent a file]"
+            mxc_url = getattr(event, "url", "") or ""
+            if mxc_url:
+                eid = event.event_id[:8].lstrip("$")
+                filename = body or f"matrix_media_{eid}"
+                filename = f"{eid}_{filename}"
+                local_path = await self._download_mxc(mxc_url, filename)
+                if local_path:
+                    media_parts.append({
+                        "type": "file",
+                        "file_url": Path(local_path).as_uri(),
+                        "filename": body or filename,
+                    })
         elif isinstance(event, RoomMessageAudio):
             body_desc = f"[sent audio: {body}]" if body else "[sent audio]"
         elif isinstance(event, RoomMessageVideo):
