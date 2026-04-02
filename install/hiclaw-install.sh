@@ -26,6 +26,8 @@
 #   HICLAW_INSTALL_MANAGER_IMAGE       Override manager image (e.g., local build)
 #   HICLAW_INSTALL_WORKER_IMAGE        Override worker image  (e.g., local build)
 #   HICLAW_INSTALL_COPAW_WORKER_IMAGE  Override copaw worker image (e.g., local build)
+#   HICLAW_NACOS_REGISTRY_URI          Default Nacos registry URI for Worker market search/import
+#                                      (default: nacos://market.hiclaw.io:80/public)
 #   HICLAW_NACOS_USERNAME              Default Nacos username for nacos:// package imports (optional)
 #   HICLAW_NACOS_PASSWORD              Default Nacos password for nacos:// package imports (optional)
 #   HICLAW_CMS_TRACES_ENABLED          Enable openclaw-cms-plugin traces for Manager AND all Workers (default: false)
@@ -482,10 +484,10 @@ msg() {
         "github.token_prompt.zh") text="GitHub 个人访问令牌（可选）" ;;
         "github.token_prompt.en") text="GitHub Personal Access Token (optional)" ;;
         # --- Skills Registry ---
-        "skills.title.zh") text="--- Skills 注册中心（可选，按回车使用默认 https://skills.sh）---" ;;
-        "skills.title.en") text="--- Skills Registry (optional, press Enter for default https://skills.sh) ---" ;;
-        "skills.url_prompt.zh") text="Skills 注册中心 URL（留空使用默认 https://skills.sh）" ;;
-        "skills.url_prompt.en") text="Skills Registry URL (leave empty for default https://skills.sh)" ;;
+        "skills.title.zh") text="--- Skills 注册中心（可选，按回车使用默认 nacos://market.hiclaw.io:80/public）---" ;;
+        "skills.title.en") text="--- Skills Registry (optional, press Enter for default nacos://market.hiclaw.io:80/public) ---" ;;
+        "skills.url_prompt.zh") text="Skills 注册中心 URL（留空使用默认 nacos://market.hiclaw.io:80/public）" ;;
+        "skills.url_prompt.en") text="Skills Registry URL (leave empty for default nacos://market.hiclaw.io:80/public)" ;;
         # --- Data Persistence ---
         "data.title.zh") text="--- 数据持久化 ---" ;;
         "data.title.en") text="--- Data Persistence ---" ;;
@@ -2246,12 +2248,14 @@ HICLAW_REGISTRATION_TOKEN=${HICLAW_REGISTRATION_TOKEN}
 # GitHub (optional)
 HICLAW_GITHUB_TOKEN=${HICLAW_GITHUB_TOKEN:-}
 
-# Nacos package import defaults (optional)
+# Nacos package import defaults
+HICLAW_NACOS_REGISTRY_URI=${HICLAW_NACOS_REGISTRY_URI:-nacos://market.hiclaw.io:80/public}
 HICLAW_NACOS_USERNAME=${HICLAW_NACOS_USERNAME:-}
 HICLAW_NACOS_PASSWORD=${HICLAW_NACOS_PASSWORD:-}
+HICLAW_NACOS_TOKEN=${HICLAW_NACOS_TOKEN:-}
 
-# Skills Registry (optional, default: https://skills.sh)
-HICLAW_SKILLS_API_URL=${HICLAW_SKILLS_API_URL:-}
+# Skills Registry (optional, default: nacos://market.hiclaw.io:80/public)
+HICLAW_SKILLS_API_URL=${HICLAW_SKILLS_API_URL:-nacos://market.hiclaw.io:80/public}
 
 # OpenClaw CMS plugin (optional)
 HICLAW_CMS_TRACES_ENABLED=${HICLAW_CMS_TRACES_ENABLED:-false}
@@ -2639,10 +2643,25 @@ install_worker() {
     DOCKER_ENV="${DOCKER_ENV} -e HICLAW_FS_ACCESS_KEY=${FS_KEY}"
     DOCKER_ENV="${DOCKER_ENV} -e HICLAW_FS_SECRET_KEY=${FS_SECRET}"
 
+    if [ -z "${SKILLS_API_URL}" ]; then
+        if [ -n "${HICLAW_SKILLS_API_URL:-}" ]; then
+            SKILLS_API_URL="${HICLAW_SKILLS_API_URL}"
+        else
+            SKILLS_API_URL="nacos://market.hiclaw.io:80/public"
+        fi
+    fi
+
     # Add SKILLS_API_URL if specified
-    if [ -n "${SKILLS_API_URL}" ]; then
-        DOCKER_ENV="${DOCKER_ENV} -e SKILLS_API_URL=${SKILLS_API_URL}"
-        log "$(msg worker.skills_url "${SKILLS_API_URL}")"
+    DOCKER_ENV="${DOCKER_ENV} -e SKILLS_API_URL=${SKILLS_API_URL}"
+    log "$(msg worker.skills_url "${SKILLS_API_URL}")"
+    if [ -n "${HICLAW_NACOS_USERNAME:-}" ]; then
+        DOCKER_ENV="${DOCKER_ENV} -e HICLAW_NACOS_USERNAME=${HICLAW_NACOS_USERNAME}"
+    fi
+    if [ -n "${HICLAW_NACOS_PASSWORD:-}" ]; then
+        DOCKER_ENV="${DOCKER_ENV} -e HICLAW_NACOS_PASSWORD=${HICLAW_NACOS_PASSWORD}"
+    fi
+    if [ -n "${HICLAW_NACOS_TOKEN:-}" ]; then
+        DOCKER_ENV="${DOCKER_ENV} -e HICLAW_NACOS_TOKEN=${HICLAW_NACOS_TOKEN}"
     fi
 
     # shellcheck disable=SC2086

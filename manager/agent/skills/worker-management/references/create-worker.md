@@ -1,5 +1,7 @@
 # Create a Worker
 
+If the admin asks you to import an existing Worker template, search a registry for a matching template, or install a direct package URI such as `nacos://...`, stop here and use the `hiclaw-find-worker` skill. This document is only for hand-authored Workers.
+
 ## Step 0: Determine runtime
 
 | Admin says | Runtime | Flags |
@@ -116,4 +118,4 @@ Only use `--remote` when admin **explicitly** requests deploying on a separate m
 
 ## Imported Worker Pull-Up
 
-When `hiclaw-import.sh` sends a message to start an imported Worker, all config is already in place. **Do NOT run `create-worker.sh`** — just start the container following the message instructions.
+When a template import finishes and sends a message to start an imported Worker, all config is already in place. **Do NOT run `create-worker.sh`** — just start the container following the message instructions.

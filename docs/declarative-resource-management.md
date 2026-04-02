@@ -451,9 +451,9 @@ Both Workers and Team Workers support custom configuration packages via `spec.pa
 |--------|---------|-------------|
 | `file://` | `file://./alice.zip` | Local file, transferred via `docker cp` |
 | `http(s)://` | `https://example.com/worker.zip` | Remote download |
-| `nacos://` | `nacos://instance-xxx/ns/agent-spec/worker-xxx/v1` | Pulled from Nacos config center |
+| `nacos://` | `nacos://host:8848/ns/worker-xxx/v1` | Pulled from Nacos |
 
-Nacos URI format: `nacos://{instance-id}/{namespace}/{group}/{data-id}/{version}`
+Nacos URI format: `nacos://[user:pass@]host:port/{namespace}/{agentspec-name}[/{version}|/label:{label}]`
 
 ### Package Directory Structure
 
@@ -535,7 +535,8 @@ bash install/hiclaw-import.sh worker --name alice --zip ./alice.zip
 bash install/hiclaw-import.sh worker --name alice --zip https://example.com/alice.zip
 
 # Import from Nacos
-bash install/hiclaw-import.sh worker --name alice --package nacos://instance-xxx/ns/agent-spec/alice/v1
+bash install/hiclaw-import.sh worker --name alice --package nacos://host:8848/ns/alice/v1
+bash install/hiclaw-import.sh worker --name alice --package nacos://host:8848/ns/alice/label:latest
 
 # Create without a package
 bash install/hiclaw-import.sh worker --name bob --model claude-sonnet-4-6 \

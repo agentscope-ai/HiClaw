@@ -88,5 +88,6 @@ manager/
 | `HICLAW_MINIO_PASSWORD` | Yes | - | MinIO root password |
 | `HICLAW_MANAGER_GATEWAY_KEY` | Yes | - | Manager's Higress consumer key |
 | `HICLAW_GITHUB_TOKEN` | No | - | GitHub PAT for MCP Server |
-| `HICLAW_NACOS_USERNAME` | No | - | Default Nacos username for `nacos://` package imports when URI omits `user:pass@` |
-| `HICLAW_NACOS_PASSWORD` | No | - | Default Nacos password for `nacos://` package imports when URI omits `user:pass@` |
+| `HICLAW_NACOS_REGISTRY_URI` | No | `nacos://market.hiclaw.io:80/public` | Default Nacos registry URI for Worker template search/import, format `nacos://host[:port]/namespace` |
+| `HICLAW_NACOS_USERNAME` | No | - | Default Nacos username for template search and `nacos://` package imports when URI omits `user:pass@` |
+| `HICLAW_NACOS_PASSWORD` | No | - | Default Nacos password for template search and `nacos://` package imports when URI omits `user:pass@` |

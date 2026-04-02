@@ -55,13 +55,13 @@ COPY --from=mc /usr/bin/mc /usr/local/bin/mc.bin
 
 ARG NPM_REGISTRY=https://registry.npmjs.org/
 
-# Install Node.js 22 for mcporter and skills CLI
+# Install Node.js 22 for shared Worker CLIs
 RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
     apt-get install -y --no-install-recommends nodejs && \
     rm -rf /var/lib/apt/lists/*
 
 RUN npm config set registry ${NPM_REGISTRY} && \
-    npm install -g mcporter skills && \
+    npm install -g mcporter skills @nacos-group/cli && \
     rm -rf /root/.npm
 
 # Download lite CoPaw source archive from GitHub

@@ -56,6 +56,34 @@ type nacosAgentSpecResource struct {
 	Metadata map[string]interface{} `json:"metadata,omitempty"`
 }
 
+type nacosAgentSpecMeta struct {
+	NamespaceID string                          `json:"namespaceId"`
+	Name        string                          `json:"name"`
+	Description string                          `json:"description"`
+	OnlineCnt   int                             `json:"onlineCnt"`
+	Labels      map[string]string               `json:"labels,omitempty"`
+	Versions    []nacosAgentSpecVersionMetadata `json:"versions,omitempty"`
+}
+
+type nacosAgentSpecVersionMetadata struct {
+	Version string `json:"version"`
+	Status  string `json:"status"`
+}
+
+type nacosAgentSpecSummary struct {
+	NamespaceID string            `json:"namespaceId"`
+	Name        string            `json:"name"`
+	Description string            `json:"description"`
+	Enable      bool              `json:"enable"`
+	Labels      map[string]string `json:"labels,omitempty"`
+	OnlineCnt   int               `json:"onlineCnt"`
+}
+
+type nacosAgentSpecListResponse struct {
+	TotalCount int                     `json:"totalCount"`
+	PageItems  []nacosAgentSpecSummary `json:"pageItems"`
+}
+
 func newNacosAgentSpecClient(ctx context.Context, rawAddr, namespace string) (*nacosAgentSpecClient, error) {
 	host, port, username, password, err := parseNacosAddr(rawAddr)
 	if err != nil {
@@ -112,53 +140,9 @@ func (c *nacosAgentSpecClient) preflightConnect(ctx context.Context) error {
 }
 
 func (c *nacosAgentSpecClient) GetAgentSpec(ctx context.Context, name, outputDir string, version, label string) error {
-	if err := c.ensureTokenValid(ctx); err != nil {
+	spec, err := c.fetchAgentSpec(ctx, name, version, label)
+	if err != nil {
 		return err
-	}
-
-	params := url.Values{}
-	params.Set("namespaceId", c.namespace)
-	params.Set("name", name)
-	if version != "" {
-		params.Set("version", version)
-	}
-	if label != "" {
-		params.Set("label", label)
-	}
-
-	apiURL := fmt.Sprintf("http://%s/nacos/v3/client/ai/agentspecs?%s", c.serverAddr, params.Encode())
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
-	if err != nil {
-		return fmt.Errorf("failed to build request: %w", err)
-	}
-	c.setAuthHeaders(req)
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("failed to get agentspec: %w", err)
-	}
-	defer resp.Body.Close()
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return fmt.Errorf("failed to read response: %w", err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return parseNacosHTTPError(resp.StatusCode, respBody, "get agentspec")
-	}
-
-	var v3Resp nacosV3Response
-	if err := json.Unmarshal(respBody, &v3Resp); err != nil {
-		return fmt.Errorf("failed to parse response: %w", err)
-	}
-	if v3Resp.Code != 0 {
-		return fmt.Errorf("get agentspec failed: code=%d, message=%s", v3Resp.Code, v3Resp.Message)
-	}
-
-	var spec nacosAgentSpec
-	if err := json.Unmarshal(v3Resp.Data, &spec); err != nil {
-		return fmt.Errorf("failed to parse agentspec: %w", err)
 	}
 
 	specDir := filepath.Join(outputDir, name)
@@ -196,6 +180,149 @@ func (c *nacosAgentSpecClient) GetAgentSpec(ctx context.Context, name, outputDir
 	}
 
 	return writeAgentSpecManifest(specDir, spec.Content)
+}
+
+func (c *nacosAgentSpecClient) CheckAgentSpecExists(ctx context.Context, name, version, label string) error {
+	summary, err := c.fetchAgentSpecSummary(ctx, name)
+	if err != nil {
+		return err
+	}
+
+	if !summary.Enable {
+		return formatNacosHTTPError("check agentspec", http.StatusNotFound, "", fmt.Sprintf("agentspec %q is disabled", name))
+	}
+	if summary.OnlineCnt <= 0 {
+		return formatNacosHTTPError("check agentspec", http.StatusNotFound, "", fmt.Sprintf("agentspec %q has no online version", name))
+	}
+	if version == "" && label == "" {
+		return nil
+	}
+
+	if _, err := c.fetchAgentSpec(ctx, name, version, label); err != nil {
+		if isNacosHTTPStatus(err, http.StatusNotFound) {
+			if version != "" {
+				return formatNacosHTTPError("check agentspec", http.StatusNotFound, "", fmt.Sprintf("online version %q not found for agentspec %q", version, name))
+			}
+			if label != "" {
+				return formatNacosHTTPError("check agentspec", http.StatusNotFound, "", fmt.Sprintf("label %q for agentspec %q does not point to an online version", label, name))
+			}
+		}
+		return err
+	}
+	return nil
+}
+
+func isNacosHTTPStatus(err error, statusCode int) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(err.Error(), fmt.Sprintf("(HTTP %d)", statusCode))
+}
+
+func (c *nacosAgentSpecClient) fetchAgentSpecSummary(ctx context.Context, name string) (*nacosAgentSpecSummary, error) {
+	if err := c.ensureTokenValid(ctx); err != nil {
+		return nil, err
+	}
+
+	params := url.Values{}
+	params.Set("namespaceId", c.namespace)
+	params.Set("agentSpecName", name)
+	params.Set("search", "accurate")
+	params.Set("pageNo", "1")
+	params.Set("pageSize", "1")
+
+	apiURL := fmt.Sprintf("http://%s/nacos/v3/admin/ai/agentspecs/list?%s", c.serverAddr, params.Encode())
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build request: %w", err)
+	}
+	c.setAuthHeaders(req)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get agentspec meta: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, parseNacosHTTPError(resp.StatusCode, respBody, "check agentspec")
+	}
+
+	var v3Resp nacosV3Response
+	if err := json.Unmarshal(respBody, &v3Resp); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	if v3Resp.Code != 0 {
+		return nil, fmt.Errorf("check agentspec failed: code=%d, message=%s", v3Resp.Code, v3Resp.Message)
+	}
+
+	var listResp nacosAgentSpecListResponse
+	if err := json.Unmarshal(v3Resp.Data, &listResp); err != nil {
+		return nil, fmt.Errorf("failed to parse agentspec list: %w", err)
+	}
+	for _, item := range listResp.PageItems {
+		if item.Name == name {
+			return &item, nil
+		}
+	}
+	return nil, formatNacosHTTPError("check agentspec", http.StatusNotFound, "", fmt.Sprintf("agentspec %q not found", name))
+}
+
+func (c *nacosAgentSpecClient) fetchAgentSpec(ctx context.Context, name, version, label string) (*nacosAgentSpec, error) {
+	if err := c.ensureTokenValid(ctx); err != nil {
+		return nil, err
+	}
+
+	params := url.Values{}
+	params.Set("namespaceId", c.namespace)
+	params.Set("name", name)
+	if version != "" {
+		params.Set("version", version)
+	}
+	if label != "" {
+		params.Set("label", label)
+	}
+
+	apiURL := fmt.Sprintf("http://%s/nacos/v3/client/ai/agentspecs?%s", c.serverAddr, params.Encode())
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build request: %w", err)
+	}
+	c.setAuthHeaders(req)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get agentspec: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, parseNacosHTTPError(resp.StatusCode, respBody, "get agentspec")
+	}
+
+	var v3Resp nacosV3Response
+	if err := json.Unmarshal(respBody, &v3Resp); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	if v3Resp.Code != 0 {
+		return nil, fmt.Errorf("get agentspec failed: code=%d, message=%s", v3Resp.Code, v3Resp.Message)
+	}
+
+	var spec nacosAgentSpec
+	if err := json.Unmarshal(v3Resp.Data, &spec); err != nil {
+		return nil, fmt.Errorf("failed to parse agentspec: %w", err)
+	}
+	return &spec, nil
 }
 
 func (c *nacosAgentSpecClient) ensureTokenValid(ctx context.Context) error {

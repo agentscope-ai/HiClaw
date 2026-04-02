@@ -286,7 +286,8 @@ bash hiclaw-import.sh worker --name devops-alice --zip https://example.com/templ
 ### 从远程包（Nacos）导入
 
 ```bash
-bash hiclaw-import.sh worker --name devops-alice --package nacos://instance-xxx/namespace/agent-spec/devops/v1
+bash hiclaw-import.sh worker --name devops-alice --package nacos://host:8848/namespace/devops/v1
+bash hiclaw-import.sh worker --name devops-alice --package nacos://host:8848/namespace/devops/label:latest
 ```
 
 ### 不使用包，直接创建 Worker

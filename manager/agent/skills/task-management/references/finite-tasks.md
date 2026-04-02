@@ -27,7 +27,6 @@
    ```
    @{worker}:{domain} New task [{task-id}]: {title}. Use your file-sync skill to pull the spec: shared/tasks/{task-id}/spec.md. @mention me when complete.
    ```
-   If Worker has `find-skills` (`test -d /root/hiclaw-fs/agents/{worker}/skills/find-skills`), add: `Run \`skills find <keyword>\` if you need additional capabilities.`
 
 5. **MANDATORY — Add to state.json** (this step is NOT optional, even for coordination, research, or management tasks):
    ```bash

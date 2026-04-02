@@ -5,6 +5,118 @@ import (
 	"testing"
 )
 
+func TestExpandPackageURI(t *testing.T) {
+	t.Setenv("HICLAW_NACOS_REGISTRY_URI", "nacos://registry.example.com/public")
+
+	tests := []struct {
+		name    string
+		input   string
+		want    string
+		wantErr string
+	}{
+		{
+			name:  "shorthand name",
+			input: "worker-name",
+			want:  "nacos://registry.example.com/public/worker-name",
+		},
+		{
+			name:  "shorthand version",
+			input: "worker-name/v1",
+			want:  "nacos://registry.example.com/public/worker-name/v1",
+		},
+		{
+			name:  "shorthand label latest",
+			input: "worker-name/label:latest",
+			want:  "nacos://registry.example.com/public/worker-name/label:latest",
+		},
+		{
+			name:  "full nacos uri unchanged",
+			input: "nacos://host:8848/public/worker-name/v1",
+			want:  "nacos://host:8848/public/worker-name/v1",
+		},
+		{
+			name:  "full http uri unchanged",
+			input: "https://example.com/worker.zip",
+			want:  "https://example.com/worker.zip",
+		},
+		{
+			name:    "invalid empty segment",
+			input:   "worker-name/",
+			wantErr: "empty path segment",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := expandPackageURI(tt.input)
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("expandPackageURI() error = %v, want substring %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("expandPackageURI() unexpected error: %v", err)
+			}
+			if got != tt.want {
+				t.Fatalf("expandPackageURI() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestValidateWorkerName(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		wantErr string
+	}{
+		{
+			name:  "simple",
+			input: "alice",
+		},
+		{
+			name:  "hyphenated",
+			input: "dev-01",
+		},
+		{
+			name:    "empty",
+			input:   "",
+			wantErr: "name is required",
+		},
+		{
+			name:    "uppercase rejected",
+			input:   "Alice",
+			wantErr: "invalid worker name",
+		},
+		{
+			name:    "underscore rejected",
+			input:   "alice_dev",
+			wantErr: "invalid worker name",
+		},
+		{
+			name:    "leading hyphen rejected",
+			input:   "-alice",
+			wantErr: "invalid worker name",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateWorkerName(tt.input)
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("validateWorkerName() error = %v, want substring %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("validateWorkerName() unexpected error: %v", err)
+			}
+		})
+	}
+}
+
 func TestLoadResources_SingleWorker(t *testing.T) {
 	yaml := `apiVersion: hiclaw.io/v1beta1
 kind: Worker

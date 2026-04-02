@@ -91,9 +91,14 @@ fi
 # copaw runtime supports both container and pip-installed modes
 # (previously forced REMOTE_MODE=true; now containers are supported)
 
-# Fallback: if HICLAW_SKILLS_API_URL env is set and no --skills-api-url was passed, use it
-if [ -z "${SKILLS_API_URL}" ] && [ -n "${HICLAW_SKILLS_API_URL}" ]; then
-    SKILLS_API_URL="${HICLAW_SKILLS_API_URL}"
+# Fallback: if HICLAW_SKILLS_API_URL env is set and no --skills-api-url was passed, use it.
+# Default to skills.sh when nothing is configured.
+if [ -z "${SKILLS_API_URL}" ]; then
+    if [ -n "${HICLAW_SKILLS_API_URL:-}" ]; then
+        SKILLS_API_URL="${HICLAW_SKILLS_API_URL}"
+    else
+        SKILLS_API_URL="nacos://market.hiclaw.io:80/public"
+    fi
 fi
 
 MATRIX_DOMAIN="${HICLAW_MATRIX_DOMAIN:-matrix-local.hiclaw.io:8080}"
@@ -795,15 +800,21 @@ _build_install_cmd() {
     if [ -n "${SKILLS_API_URL}" ]; then
         cmd="${cmd} --skills-api-url ${SKILLS_API_URL}"
     fi
-
     echo "${cmd}"
 }
 
 # Build extra environment variables JSON for container creation
 _build_extra_env() {
     local items=()
-    if [ -n "${SKILLS_API_URL}" ]; then
-        items+=("SKILLS_API_URL=${SKILLS_API_URL}")
+    items+=("SKILLS_API_URL=${SKILLS_API_URL}")
+    if [ -n "${HICLAW_NACOS_USERNAME:-}" ]; then
+        items+=("HICLAW_NACOS_USERNAME=${HICLAW_NACOS_USERNAME}")
+    fi
+    if [ -n "${HICLAW_NACOS_PASSWORD:-}" ]; then
+        items+=("HICLAW_NACOS_PASSWORD=${HICLAW_NACOS_PASSWORD}")
+    fi
+    if [ -n "${HICLAW_NACOS_TOKEN:-}" ]; then
+        items+=("HICLAW_NACOS_TOKEN=${HICLAW_NACOS_TOKEN}")
     fi
     if [ -n "${CONSOLE_PORT}" ]; then
         items+=("HICLAW_CONSOLE_PORT=${CONSOLE_PORT}")

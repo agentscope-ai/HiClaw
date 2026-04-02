@@ -355,8 +355,8 @@ $script:Messages = @{
     "github.token_prompt" = @{ zh = "GitHub 个人访问令牌（可选）"; en = "GitHub Personal Access Token (optional)" }
 
     # --- Skills Registry ---
-    "skills.title" = @{ zh = "--- Skills 注册中心（可选，按回车使用默认 https://skills.sh）---"; en = "--- Skills Registry (optional, press Enter for default https://skills.sh) ---" }
-    "skills.url_prompt" = @{ zh = "Skills 注册中心 URL（留空使用默认 https://skills.sh）"; en = "Skills Registry URL (leave empty for default https://skills.sh)" }
+    "skills.title" = @{ zh = "--- Skills 注册中心（可选，按回车使用默认 nacos://market.hiclaw.io:80/public）---"; en = "--- Skills Registry (optional, press Enter for default nacos://market.hiclaw.io:80/public) ---" }
+    "skills.url_prompt" = @{ zh = "Skills 注册中心 URL（留空使用默认 nacos://market.hiclaw.io:80/public）"; en = "Skills Registry URL (leave empty for default nacos://market.hiclaw.io:80/public)" }
 
     # --- Data Persistence ---
     "data.title" = @{ zh = "--- 数据持久化 ---"; en = "--- Data Persistence ---" }
@@ -814,8 +814,13 @@ HICLAW_REGISTRATION_TOKEN=$($Config.REGISTRATION_TOKEN)
 # GitHub (optional)
 HICLAW_GITHUB_TOKEN=$($Config.GITHUB_TOKEN)
 
-# Skills Registry (optional, default: https://skills.sh)
-HICLAW_SKILLS_API_URL=$($Config.SKILLS_API_URL)
+# Nacos defaults for Worker skill discovery / package import (optional)
+HICLAW_NACOS_USERNAME=$($env:HICLAW_NACOS_USERNAME)
+HICLAW_NACOS_PASSWORD=$($env:HICLAW_NACOS_PASSWORD)
+HICLAW_NACOS_TOKEN=$($env:HICLAW_NACOS_TOKEN)
+
+# Skills Registry (optional, default: nacos://market.hiclaw.io:80/public)
+HICLAW_SKILLS_API_URL=$(if ($Config.SKILLS_API_URL) { $Config.SKILLS_API_URL } else { "nacos://market.hiclaw.io:80/public" })
 
 # Worker images (for direct container creation)
 HICLAW_WORKER_IMAGE=$($Config.WORKER_IMAGE)
@@ -2463,10 +2468,26 @@ function Install-Worker {
         "-e", "HICLAW_FS_SECRET_KEY=$FsSecret"
     )
 
-    # Add SKILLS_API_URL if find-skills is enabled and URL is specified
+    if (-not $SkillsApiUrl) {
+        if ($env:HICLAW_SKILLS_API_URL) {
+            $SkillsApiUrl = $env:HICLAW_SKILLS_API_URL
+        } else {
+            $SkillsApiUrl = "nacos://market.hiclaw.io:80/public"
+        }
+    }
+
     if ($FindSkills -and $SkillsApiUrl) {
         $dockerArgs += @("-e", "SKILLS_API_URL=$SkillsApiUrl")
         Write-Log (Get-Msg "worker.skills_url" -f $SkillsApiUrl)
+    }
+    if ($env:HICLAW_NACOS_USERNAME) {
+        $dockerArgs += @("-e", "HICLAW_NACOS_USERNAME=$($env:HICLAW_NACOS_USERNAME)")
+    }
+    if ($env:HICLAW_NACOS_PASSWORD) {
+        $dockerArgs += @("-e", "HICLAW_NACOS_PASSWORD=$($env:HICLAW_NACOS_PASSWORD)")
+    }
+    if ($env:HICLAW_NACOS_TOKEN) {
+        $dockerArgs += @("-e", "HICLAW_NACOS_TOKEN=$($env:HICLAW_NACOS_TOKEN)")
     }
 
     $dockerArgs += @("--restart", "unless-stopped", $workerImage)
