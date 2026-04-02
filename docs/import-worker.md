@@ -288,7 +288,8 @@ bash hiclaw-import.sh worker --name devops-alice --zip https://example.com/templ
 ### Import from a Remote Package (Nacos)
 
 ```bash
-bash hiclaw-import.sh worker --name devops-alice --package nacos://instance-xxx/namespace/agent-spec/devops/v1
+bash hiclaw-import.sh worker --name devops-alice --package nacos://host:8848/namespace/devops/v1
+bash hiclaw-import.sh worker --name devops-alice --package nacos://host:8848/namespace/devops/label:latest
 ```
 
 ### Create a Worker Without a Package

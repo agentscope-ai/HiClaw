@@ -2,6 +2,8 @@ package executor
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -401,7 +403,113 @@ func TestValidateNacosURI_PartialEnvCredentialsFail(t *testing.T) {
 	}
 }
 
+func TestValidateNacosURI_ChecksAgentSpecExists(t *testing.T) {
+	server := newNacosAgentSpecCheckTestServer(t,
+		http.StatusOK,
+		`{"code":0,"message":"success","data":{"totalCount":0,"pageItems":[]}}`,
+		0,
+		"",
+	)
+	defer server.Close()
+
+	err := ValidateNacosURI(context.Background(), "nacos://"+server.Listener.Addr().String()+"/public/missing-spec")
+	if err == nil {
+		t.Fatal("expected missing agentspec error, got nil")
+	}
+	if !strings.Contains(err.Error(), `agentspec "missing-spec" not found`) {
+		t.Fatalf("expected explicit missing-spec error, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "missing-spec") {
+		t.Fatalf("expected spec name in error, got: %v", err)
+	}
+}
+
+func TestValidateNacosURI_SucceedsWhenAgentSpecExists(t *testing.T) {
+	server := newNacosAgentSpecCheckTestServer(t,
+		http.StatusOK,
+		`{"code":0,"message":"success","data":{"totalCount":1,"pageItems":[{"namespaceId":"public","name":"existing-spec","description":"demo","enable":true,"onlineCnt":1,"labels":{"latest":"v1"}}]}}`,
+		0,
+		"",
+	)
+	defer server.Close()
+
+	err := ValidateNacosURI(context.Background(), "nacos://"+server.Listener.Addr().String()+"/public/existing-spec")
+	if err != nil {
+		t.Fatalf("expected success, got: %v", err)
+	}
+}
+
+func TestValidateNacosURI_FailsWhenAgentSpecHasNoOnlineVersion(t *testing.T) {
+	server := newNacosAgentSpecCheckTestServer(t,
+		http.StatusOK,
+		`{"code":0,"message":"success","data":{"totalCount":1,"pageItems":[{"namespaceId":"public","name":"offline-spec","description":"demo","enable":true,"onlineCnt":0,"labels":{}}]}}`,
+		0,
+		"",
+	)
+	defer server.Close()
+
+	err := ValidateNacosURI(context.Background(), "nacos://"+server.Listener.Addr().String()+"/public/offline-spec")
+	if err == nil {
+		t.Fatal("expected offline agentspec error, got nil")
+	}
+	if !strings.Contains(err.Error(), "has no online version") {
+		t.Fatalf("expected no-online-version error, got: %v", err)
+	}
+}
+
+func TestValidateNacosURI_FailsWhenRequestedVersionIsNotOnline(t *testing.T) {
+	server := newNacosAgentSpecCheckTestServer(t,
+		http.StatusOK,
+		`{"code":0,"message":"success","data":{"totalCount":1,"pageItems":[{"namespaceId":"public","name":"mixed-spec","description":"demo","enable":true,"onlineCnt":1,"labels":{"latest":"v2"}}]}}`,
+		http.StatusNotFound,
+		`{"code":404,"message":"AgentSpec version not online: mixed-spec"}`,
+	)
+	defer server.Close()
+
+	err := ValidateNacosURI(context.Background(), "nacos://"+server.Listener.Addr().String()+"/public/mixed-spec/v1")
+	if err == nil {
+		t.Fatal("expected offline version error, got nil")
+	}
+	if !strings.Contains(err.Error(), `online version "v1" not found`) {
+		t.Fatalf("expected online-version-not-found error, got: %v", err)
+	}
+}
+
 // --- helpers ---
+func newNacosAgentSpecCheckTestServer(t *testing.T, listStatus int, listBody string, getStatus int, getBody string) *httptest.Server {
+	t.Helper()
+
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/nacos/v3/admin/ai/agentspecs/list":
+			if r.URL.Query().Get("namespaceId") == "" || r.URL.Query().Get("agentSpecName") == "" {
+				t.Fatalf("expected namespaceId and agentSpecName query params, got: %s", r.URL.RawQuery)
+			}
+			if r.URL.Query().Get("search") != "accurate" {
+				t.Fatalf("expected accurate search, got: %s", r.URL.RawQuery)
+			}
+			if r.URL.Query().Get("pageNo") != "1" || r.URL.Query().Get("pageSize") != "1" {
+				t.Fatalf("expected first-page single-item query, got: %s", r.URL.RawQuery)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(listStatus)
+			_, _ = w.Write([]byte(listBody))
+		case "/nacos/v3/client/ai/agentspecs":
+			if getStatus == 0 {
+				t.Fatalf("unexpected get request: %s?%s", r.URL.Path, r.URL.RawQuery)
+			}
+			if r.URL.Query().Get("namespaceId") == "" || r.URL.Query().Get("name") == "" {
+				t.Fatalf("expected namespaceId and name query params, got: %s", r.URL.RawQuery)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(getStatus)
+			_, _ = w.Write([]byte(getBody))
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+}
+
 func assertFileContent(t *testing.T, path, expected string) {
 	t.Helper()
 	data, err := os.ReadFile(path)

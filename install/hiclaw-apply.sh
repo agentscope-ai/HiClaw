@@ -45,6 +45,9 @@ if ! ${CONTAINER_CMD} ps --filter name=hiclaw-manager --format '{{.Names}}' 2>/d
     error "hiclaw-manager container is not running"
 fi
 
+# Ensure /tmp/import exists before copying files into container
+${CONTAINER_CMD} exec hiclaw-manager mkdir -p /tmp/import 2>/dev/null || true
+
 # ============================================================
 # Copy YAML files and referenced packages into container
 # ============================================================
@@ -73,9 +76,6 @@ for arg in "$@"; do
 
     ARGS+=("${arg}")
 done
-
-# Ensure /tmp/import exists
-${CONTAINER_CMD} exec hiclaw-manager mkdir -p /tmp/import 2>/dev/null || true
 
 # ============================================================
 # Forward to hiclaw CLI inside container

@@ -7,6 +7,7 @@
 # Usage:
 #   ./hiclaw-import.sh worker --name <name> --zip <path-or-url> [--yes]
 #   ./hiclaw-import.sh worker --name <name> --package <nacos://...> [--model MODEL]
+#   ./hiclaw-import.sh worker --name <name>                         # auto-imports package <name>
 #   ./hiclaw-import.sh worker --name <name> --model MODEL [--skills s1,s2] [--mcp-servers m1,m2]
 #   ./hiclaw-import.sh -f <resource.yaml> [--prune] [--dry-run]
 #
@@ -69,11 +70,21 @@ case "${RESOURCE_TYPE}" in
         # Parse worker-specific arguments
         HICLAW_ARGS=("apply" "worker")
         ZIP_FILE=""
+        WORKER_NAME=""
+        PACKAGE_URI=""
         while [ $# -gt 0 ]; do
             case "$1" in
                 --zip)
                     ZIP_FILE="$2"; shift 2 ;;
-                --name|--model|--package|--skills|--mcp-servers|--runtime)
+                --name)
+                    WORKER_NAME="$2"
+                    HICLAW_ARGS+=("$1" "$2")
+                    shift 2 ;;
+                --package)
+                    PACKAGE_URI="$2"
+                    HICLAW_ARGS+=("$1" "$2")
+                    shift 2 ;;
+                --model|--skills|--mcp-servers|--runtime)
                     HICLAW_ARGS+=("$1" "$2"); shift 2 ;;
                 --dry-run)
                     HICLAW_ARGS+=("$1"); shift ;;
@@ -99,6 +110,10 @@ case "${RESOURCE_TYPE}" in
             HICLAW_ARGS+=("--zip" "/tmp/import/${ZIP_BASENAME}")
         fi
 
+        if [ -z "${ZIP_FILE}" ] && [ -n "${WORKER_NAME}" ] && [ -z "${PACKAGE_URI}" ]; then
+            HICLAW_ARGS+=("--package" "${WORKER_NAME}")
+        fi
+
         # `hiclaw-import.sh` accepts `--yes` for backward compatibility, but the
         # container-internal `hiclaw apply worker` CLI does not support it.
         # Swallow the flag here instead of forwarding it and breaking imports.
@@ -109,6 +124,7 @@ case "${RESOURCE_TYPE}" in
         echo "Usage:"
         echo "  $0 worker --name <name> --zip <path-or-url>"
         echo "  $0 worker --name <name> --package <nacos://...> [--model MODEL]"
+        echo "  $0 worker --name <name>                         # auto-import package <name>"
         echo "  $0 worker --name <name> --model MODEL [--skills s1,s2] [--mcp-servers m1,m2]"
         echo "  $0 -f <resource.yaml> [--prune] [--dry-run]"
         exit 0

@@ -24,7 +24,17 @@ Record image-affecting changes to `manager/`, `worker/`, `openclaw-base/` here b
 
 - **Multi-Phase Collaboration Protocol** — Added multi-phase collaboration protocol to task-lifecycle, improving coordination between Manager and Workers on complex tasks.
 
+- **Template Import Flow** — Added `hiclaw-find-worker` as a dedicated Manager skill so worker creation can follow the template/package-import flow and avoid manually creating workers.
+
+- **Template Package Shorthand** — Added shorthand package syntax with optional version and defaults to simplify worker template imports.
+
+- **Generalized Template Imports** — Expanded the `hiclaw-find-worker` import flow so market and registry template imports behave consistently.
+
+- **Market Worker Import Flow** — Refined market worker import behaviour for cleaner path handling and clearer completion.
+
 **Bug Fixes**
+
+- Fixed stale local declarative config after delete in embedded mode — `start-mc-mirror.sh` now mirrors `hiclaw-config/` with `--remove`, so deleting a resource removes the corresponding local watched YAML instead of leaving stale files under `/root/hiclaw-fs/hiclaw-config/`.
 
 - Fixed `hiclaw apply` silently ignoring all resources — `loadResources()` called `strings.TrimSpace(line)` first then checked `strings.HasPrefix(line, "  name:")` which could never match after trimming. Fixed by checking `strings.HasPrefix(line, "name:")` on the already-trimmed line.
 
@@ -66,7 +76,23 @@ Record image-affecting changes to `manager/`, `worker/`, `openclaw-base/` here b
 
 - Fixed explicit Matrix room join with retry before sending welcome message to prevent race condition.
 
+- Fixed worker template package path encoding by URL-encoding package paths during import requests.
+
+- Fixed controller preflight by using lightweight agentspec checks and requiring online agentspec versions.
+
+- Fixed anonymous preflight for agent specs by switching anonymous preflight to agentspec list checks.
+
 - Support `HICLAW_NACOS_USERNAME` and `HICLAW_NACOS_PASSWORD` as default Nacos credentials when `nacos://` URIs omit `user:pass@`; extract Nacos address from URI and add preflight validation.
+
+- Install `@nacos-group/cli` in Worker images so both OpenClaw and CoPaw workers can call `nacos-cli` directly for Nacos-backed skill and agentspec workflows.
+
+- Rework Worker `find-skills` discovery — introduce the `hiclaw-find-skill` wrapper for both OpenClaw and CoPaw workers, infer the backend from `HICLAW_SKILLS_API_URL` (`https://...` for skills.sh, `nacos://host[:port][/namespace]` for Nacos with default port `8848`), surface the resolved registry in command output, propagate registry/Nacos auth during install and Worker creation, and improve Nacos recall/ranking with regression coverage for `react performance` and `pr review`.
+
+- Simplify Worker-facing `find-skills` guidance so registry/backend details stay internal to the runtime and are not exposed in Worker skill docs.
+
+- Default `HICLAW_SKILLS_API_URL` to `nacos://market.hiclaw.io/public` for install flows and Manager-created Workers.
+
+- Added Manager-side worker template search/import flow backed by Nacos AgentSpecs, so the Manager can recommend matching templates and install them after admin confirmation.
 
 ---
 
@@ -90,7 +116,17 @@ Record image-affecting changes to `manager/`, `worker/`, `openclaw-base/` here b
 
 - **多阶段协作协议** — 在 task-lifecycle 中新增多阶段协作协议，改进 Manager 与 Worker 在复杂任务上的协调。
 
+- **模板化 Worker 导入** — 新增 Manager 内建技能 `hiclaw-find-worker`，将 Worker 创建统一为模板/包导入流程，避免回退到手工创建。
+
+- **模板包简写支持** — 增加模板包简写语法，支持可选版本和默认值，简化导入输入。
+
+- **模板导入路径泛化** — 扩展 `hiclaw-find-worker` 的导入入口，使 market / registry 场景使用一致的导入方式。
+
+- **优化 market Worker 导入流程** — 完善市场 Worker 导入链路，使模板包路径和导入闭环处理更加稳定。
+
 **Bug 修复**
+
+- 修复 embedded 模式删除后本地声明式配置残留问题 — `start-mc-mirror.sh` 现在对 `hiclaw-config/` 使用 `--remove`，删除资源时会同步移除本地被监听的 YAML，避免 `/root/hiclaw-fs/hiclaw-config/` 下残留 stale 文件。
 
 - 修复 `hiclaw apply` 静默忽略所有资源 — `loadResources()` 先调用 `strings.TrimSpace(line)` 再检查 `strings.HasPrefix(line, "  name:")`，去除空格后永远无法匹配。修复为对已 trim 的行检查 `strings.HasPrefix(line, "name:")`。
 
@@ -118,6 +154,8 @@ Record image-affecting changes to `manager/`, `worker/`, `openclaw-base/` here b
 
 - 修复云端部署中欢迎消息的可靠投递和运行时检测。
 
+- 为 Worker 新增双后端 `find-skills` 支持 —— 引入 `hiclaw-find-skill` 统一封装，默认使用 Nacos 发现技能，并可通过 `HICLAW_FIND_SKILL_BACKEND` 切回 `skills_sh`；同时为 OpenClaw 和 CoPaw Worker 安装运行时 wrapper。
+
 - 修复 Worker 导入：从 zip 部署 cron job 到 Worker；未安装 HiClaw 时添加安装命令提示；更新 migrate skill 导入命令的 CLI 用法。
 
 - 修复 PowerShell 脚本重装 bug；重装时清理 docker-proxy 容器和 hiclaw-net 网络。
@@ -132,7 +170,25 @@ Record image-affecting changes to `manager/`, `worker/`, `openclaw-base/` here b
 
 - 修复发送欢迎消息前显式加入 Matrix 房间并重试，防止竞态条件。
 
+- 修复 Worker 模板包导入时路径未做 URL 编码导致的失败。
+
+- 调整 Worker 模板导入默认 Nacos 配置：`HICLAW_NACOS_REGISTRY_URI` 改为 `nacos://market.hiclaw.io:80/public`，主机默认值同步改为 `market.hiclaw.io`，并补充控制器预检以校验 `apply` 时的 Worker 名称与 AgentSpec 在线状态（保留独立默认端口回退值不变）。
+
+- 修复匿名预检场景：匿名预检改为基于 agentspec 列表进行检查。
+
 - 支持 `HICLAW_NACOS_USERNAME` 和 `HICLAW_NACOS_PASSWORD` 作为默认 Nacos 凭证（当 `nacos://` URI 省略 `user:pass@` 时）；从 URI 提取 Nacos 地址并添加预检验证。
+
+- 在 Worker 镜像中安装 `@nacos-group/cli`，让 OpenClaw 和 CoPaw Worker 都能直接使用 `nacos-cli` 执行基于 Nacos 的 skill 与 agentspec 工作流。
+
+- 重构 Worker `find-skills` 发现链路 —— 为 OpenClaw 和 CoPaw Worker 引入统一的 `hiclaw-find-skill` wrapper，按 `HICLAW_SKILLS_API_URL` 推断后端（`https://...` 走 skills.sh，`nacos://host[:port][/namespace]` 走 Nacos，默认端口 `8848`），在命令输出中明确展示实际 registry 来源，在安装与创建 Worker 时透传 registry / Nacos 鉴权配置，并优化 Nacos 检索召回与排序，补充 `react performance` / `pr review` 回归测试。
+
+- 简化 Worker 侧 `find-skills` 使用说明 —— 将 registry / backend 细节保留在运行时内部，不再在 Worker 技能文档中暴露这些实现信息。
+
+- 将安装流程与 Manager 创建 Worker 时的 `HICLAW_SKILLS_API_URL` 默认值改为 `nacos://market.hiclaw.io/public`。
+
+- 新增基于 Nacos AgentSpec 的 Worker 模板搜索与导入流程，让 Manager 可以先推荐匹配模板、经管理员确认后再安装。
+
+- 修复 `hiclaw-find-worker` 自动读取 `~/.nacos-cli/default.conf` 导致默认 registry 被本地 profile 覆盖；现在只使用显式 `HICLAW_NACOS_REGISTRY_URI` 或内建默认配置。
 
 ---
 
@@ -168,6 +224,9 @@ Record image-affecting changes to `manager/`, `worker/`, `openclaw-base/` here b
 - fix: add explicit Matrix room join with retry before sending welcome message ([0569d1a](https://github.com/alibaba/hiclaw/commit/0569d1a))
 - fix: add multi-phase collaboration protocol to task-lifecycle ([d9393fa](https://github.com/alibaba/hiclaw/commit/d9393fa))
 - fix(controller): support HICLAW_NACOS_USERNAME/PASSWORD as default Nacos credentials ([ccf242c](https://github.com/alibaba/hiclaw/commit/ccf242c))
+- feat(worker): install @nacos-group/cli in OpenClaw and CoPaw worker images ([unreleased](https://github.com/higress-group/hiclaw))
 - refactor(network): replace ExtraHosts IP injection with Docker network aliases ([0eb635d](https://github.com/alibaba/hiclaw/commit/0eb635d))
 - refactor: unify DM room creation into manager agent startup ([0569d1a](https://github.com/alibaba/hiclaw/commit/0569d1a))
 - feat(memory): add default embedding model (text-embedding-v4) support for Manager and Worker, with openclaw→copaw bridge
+- feat(manager): add CoPaw runtime support for Manager container ([f6c8f8d](https://github.com/maplefeng-a/hiclaw/commit/f6c8f8d))
+- feat(manager): support worker template import flow, including `hiclaw-find-worker`, generalized import paths, package shorthand, controller preflight fixes, URL-encoded package paths, and explicit registry defaults ([c010206](https://github.com/alibaba/hiclaw/commit/c010206))

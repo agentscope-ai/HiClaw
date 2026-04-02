@@ -30,8 +30,8 @@ If `skills` command is not found, install it: `npm install -g skills`
 
 **Key commands:**
 
-- `skills find [query]` - Search for skills interactively or by keyword
-- `skills add <owner/repo@skill> -g -y` - Install a skill from GitHub or other sources
+- `scripts/hiclaw-find-skill.sh find [query]` - Search for relevant skills
+- `scripts/hiclaw-find-skill.sh install <skill>` - Install a skill
 - `skills check` - Check for skill updates
 - `skills update` - Update all installed skills
 
@@ -40,7 +40,7 @@ If `skills` command is not found, install it: `npm install -g skills`
 ## Environment Variables
 
 ```bash
-SKILLS_API_URL  # Skills registry API endpoint (default: https://skills.sh)
+SKILLS_API_URL  # Skills registry API endpoint (default: nacos://market.hiclaw.io:80/public)
 ```
 
 Can be configured by admin to point to an enterprise-private registry.
@@ -60,53 +60,43 @@ When a user asks for help with something, identify:
 Run the find command with a relevant query:
 
 ```bash
-skills find [query]
+scripts/hiclaw-find-skill.sh find [query]
 ```
 
 For example:
 
-- User asks "how do I make my React app faster?" → `skills find react performance`
-- User asks "can you help me with PR reviews?" → `skills find pr review`
-- User asks "I need to create a changelog" → `skills find changelog`
+- User asks "how do I make my React app faster?" → `scripts/hiclaw-find-skill.sh find react performance`
+- User asks "can you help me with PR reviews?" → `scripts/hiclaw-find-skill.sh find pr review`
+- User asks "I need to create a changelog" → `scripts/hiclaw-find-skill.sh find changelog`
 
 The command will return results like:
 
 ```
-Install with skills add <owner/repo@skill>
+Install with scripts/hiclaw-find-skill.sh install <skill>
 
-vercel-labs/agent-skills@vercel-react-best-practices
-└ https://skills.sh/vercel-labs/agent-skills/vercel-react-best-practices
+vercel-react-best-practices
+└ React and Next.js performance guidance
 ```
 
-> **Critical**: Always use the exact `owner/repo@skill` format shown in search results.
-> Never guess or shorten the package name — doing so will fail.
->
-> ```bash
-> # Wrong ❌ - short name only
-> skills add higress-wasm-go-plugin -g -y
->
-> # Correct ✓ - full owner/repo@skill format from search results
-> skills add alibaba/higress@higress-wasm-go-plugin -g -y
-> ```
+> **Critical**: Always use the exact install command shown in search results.
+> Never guess or shorten the package name or command, because that may fail.
 
 ### Step 3: Present Options to the User
 
 When you find relevant skills, present them to the user with:
 
 1. The skill name and what it does
-2. The install command they can run (copy exactly from search results, including `owner/repo@`)
+2. The install command they can run (copy exactly from search results)
 3. A link to learn more at skills.sh
 
 Example response:
 
 ```
-I found a skill that might help! The "vercel-react-best-practices" skill provides
-React and Next.js performance optimization guidelines from Vercel Engineering.
+I found a skill that might help! The "remotion-best-practices" skill provides
+best practices for Remotion video creation in React.
 
 To install it:
-skills add vercel-labs/agent-skills@vercel-react-best-practices -g -y
-
-Learn more: https://skills.sh/vercel-labs/agent-skills/vercel-react-best-practices
+scripts/hiclaw-find-skill.sh install remotion-best-practices
 ```
 
 ### Step 4: Offer to Install
@@ -114,10 +104,8 @@ Learn more: https://skills.sh/vercel-labs/agent-skills/vercel-react-best-practic
 If the user wants to proceed, you can install the skill for them:
 
 ```bash
-skills add <owner/repo@skill> -g -y
+scripts/hiclaw-find-skill.sh install <skill>
 ```
-
-The `-g` flag installs globally (user-level) and `-y` skips confirmation prompts.
 
 The default install location for `skills add -g` is `~/.agents/skills/`. In container mode this is symlinked to the worker's MinIO-synced skills directory. In host mode (non-container), you need to check `~/.agents/skills/` for installed skills and load them manually.
 
@@ -159,9 +147,6 @@ If this is something you do often, you could create your own skill:
 skills init my-xyz-skill
 ```
 
-## Enterprise Private Registry
+## Skill Resources
 
-If your admin configured `SKILLS_API_URL` to point to an enterprise registry:
-- All searches will query the private registry
-- Skills from your organization will be available
-- You can still access public skills if the registry proxies them
+`scripts/hiclaw-find-skill.sh` is a resource that belongs to this skill. Treat the `scripts/` path as relative to the current skill directory when you use it.

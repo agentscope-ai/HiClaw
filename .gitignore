@@ -12,6 +12,10 @@ debug-log/
 .kiro/
 .idea/
 
+# Claude Code IDE
+.claude/
+CLAUDE.md
+
 # OS files
 .DS_Store
 

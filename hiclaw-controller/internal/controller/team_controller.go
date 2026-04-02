@@ -280,21 +280,30 @@ func (r *TeamReconciler) handleDelete(ctx context.Context, t *v1beta1.Team) erro
 
 	// Delete all team workers first, then leader
 	for _, w := range t.Spec.Workers {
-		r.Executor.RunSimple(ctx,
+		_, err := r.Executor.RunSimple(ctx,
 			"/opt/hiclaw/agent/skills/worker-management/scripts/lifecycle-worker.sh",
 			"--action", "delete", "--worker", w.Name,
 		)
+		if err != nil {
+			logger.Error(err, "failed to delete team worker (may already be removed)", "team", t.Name, "worker", w.Name)
+		}
 	}
-	r.Executor.RunSimple(ctx,
+	_, err := r.Executor.RunSimple(ctx,
 		"/opt/hiclaw/agent/skills/worker-management/scripts/lifecycle-worker.sh",
 		"--action", "delete", "--worker", t.Spec.Leader.Name,
 	)
+	if err != nil {
+		logger.Error(err, "failed to delete team leader (may already be removed)", "team", t.Name, "worker", t.Spec.Leader.Name)
+	}
 
 	// Remove from teams-registry
-	r.Executor.RunSimple(ctx,
+	_, err = r.Executor.RunSimple(ctx,
 		"/opt/hiclaw/agent/skills/team-management/scripts/manage-teams-registry.sh",
 		"--action", "remove", "--team-name", t.Name,
 	)
+	if err != nil {
+		logger.Error(err, "failed to remove team from registry", "team", t.Name)
+	}
 
 	return nil
 }

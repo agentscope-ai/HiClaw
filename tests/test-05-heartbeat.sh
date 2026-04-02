@@ -45,12 +45,24 @@ sleep 30
 
 log_section "Trigger Heartbeat"
 
-# Trigger heartbeat manually via openclaw system event
-# This requires access to the Manager container
-log_info "Triggering heartbeat via docker exec..."
-docker exec hiclaw-manager-test bash -c \
-    "cd ~/hiclaw-fs/agents/manager && openclaw system event --mode now" 2>/dev/null || \
-    log_info "Could not trigger heartbeat via docker exec (container name may differ)"
+MANAGER_CONTAINER="${TEST_MANAGER_CONTAINER:-hiclaw-manager}"
+MANAGER_RUNTIME=$(docker exec "${MANAGER_CONTAINER}" printenv HICLAW_MANAGER_RUNTIME 2>/dev/null || echo "openclaw")
+log_info "Triggering heartbeat (runtime=${MANAGER_RUNTIME})..."
+
+case "${MANAGER_RUNTIME}" in
+    copaw)
+        # CoPaw: the internal _heartbeat APScheduler job has no manual trigger API.
+        # Send a heartbeat instruction via Matrix DM to make the Agent execute HEARTBEAT.md.
+        matrix_send_message "${ADMIN_TOKEN}" "${DM_ROOM}" \
+            "Please execute your heartbeat check now. Read ~/HEARTBEAT.md and follow the full checklist. Report findings here."
+        ;;
+    *)
+        # OpenClaw: trigger via system event
+        docker exec "${MANAGER_CONTAINER}" bash -c \
+            "cd ~/hiclaw-fs/agents/manager && openclaw system event --mode now" 2>/dev/null || \
+            log_info "Could not trigger OpenClaw heartbeat via system event"
+        ;;
+esac
 
 log_info "Waiting for heartbeat inquiry..."
 sleep 60

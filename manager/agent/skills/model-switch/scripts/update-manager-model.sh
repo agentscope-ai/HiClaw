@@ -1,8 +1,12 @@
 #!/bin/bash
 # update-manager-model.sh - Hot-update the Manager Agent's model
 #
-# Patches ~/manager-workspace/openclaw.json in-place.
+# Patches config files in-place based on runtime:
+#   - OpenClaw: ~/manager-workspace/openclaw.json (model list + context window in one file)
+#   - CoPaw: ~/.copaw.secret/providers.json (model list) + ~/.copaw/config.json (context window)
+#
 # OpenClaw detects the file change (~300ms) and reloads config automatically.
+# CoPaw may require a restart.
 #
 # Usage:
 #   update-manager-model.sh <MODEL_ID> [--context-window <SIZE>] [--no-reasoning]
@@ -14,6 +18,9 @@
 
 set -e
 source /opt/hiclaw/scripts/lib/hiclaw-env.sh
+
+# Detect runtime
+MANAGER_RUNTIME="${HICLAW_MANAGER_RUNTIME:-openclaw}"
 
 _get_max_tokens_param() {
     local model="$1"
@@ -55,14 +62,25 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-CONFIG_FILE="${HOME}/manager-workspace/openclaw.json"
-if [ ! -f "${CONFIG_FILE}" ]; then
-    # Fallback: openclaw.json may live directly under HOME when HOME=manager-workspace
-    CONFIG_FILE="${HOME}/openclaw.json"
-fi
-if [ ! -f "${CONFIG_FILE}" ]; then
-    echo "ERROR: Manager openclaw.json not found (tried ${HOME}/manager-workspace/openclaw.json and ${HOME}/openclaw.json)"
-    exit 1
+# Determine config files based on runtime
+if [ "${MANAGER_RUNTIME}" = "copaw" ]; then
+    CONFIG_FILE="${HOME}/.copaw/config.json"
+    PROVIDERS_FILE="${HOME}/.copaw.secret/providers.json"
+    if [ ! -f "${CONFIG_FILE}" ] || [ ! -f "${PROVIDERS_FILE}" ]; then
+        echo "ERROR: CoPaw config not found"
+        echo "  config.json: ${CONFIG_FILE} ($([ -f "${CONFIG_FILE}" ] && echo 'exists' || echo 'MISSING'))"
+        echo "  providers.json: ${PROVIDERS_FILE} ($([ -f "${PROVIDERS_FILE}" ] && echo 'exists' || echo 'MISSING'))"
+        exit 1
+    fi
+else
+    CONFIG_FILE="${HOME}/manager-workspace/openclaw.json"
+    if [ ! -f "${CONFIG_FILE}" ]; then
+        CONFIG_FILE="${HOME}/openclaw.json"
+    fi
+    if [ ! -f "${CONFIG_FILE}" ]; then
+        echo "ERROR: OpenClaw config not found (checked ~/manager-workspace/openclaw.json and ~/openclaw.json)"
+        exit 1
+    fi
 fi
 
 # Resolve context window and max tokens
@@ -149,43 +167,60 @@ log "Model test passed (HTTP 200)"
 rm -f /tmp/model-test-resp.json
 # ─────────────────────────────────────────────────────────────────────────────
 
-# Check if the model already exists in the models array
-MODEL_EXISTS=$(jq --arg model "${MODEL_NAME}" \
-    '[.models.providers["hiclaw-gateway"].models[] | select(.id == $model)] | length' \
-    "${CONFIG_FILE}" 2>/dev/null)
-
 TMP=$(mktemp)
-if [ "${MODEL_EXISTS}" -gt 0 ]; then
-    # Known model: switch the primary model pointer and update reasoning
+
+if [ "${MANAGER_RUNTIME}" = "copaw" ]; then
+    # ── CoPaw: update providers.json (model list) + config.json (context window) ──
+    # providers.json: .custom_providers["hiclaw-gateway"].models + .active_llm.model
+    # config.json: .agents.running.max_input_length
     jq --arg model "${MODEL_NAME}" \
-       --argjson reasoning "${REASONING}" \
-       '(.models.providers["hiclaw-gateway"].models[] | select(.id == $model)).reasoning = $reasoning
-        | .agents.defaults.model.primary = ("hiclaw-gateway/" + $model)
-        | .agents.defaults.models["hiclaw-gateway/" + $model] = { "alias": $model }' \
+       '.custom_providers["hiclaw-gateway"].models = [{"id": $model, "name": $model}]
+        | .active_llm.model = $model' \
+       "${PROVIDERS_FILE}" > "${TMP}" && mv "${TMP}" "${PROVIDERS_FILE}"
+    cp "${PROVIDERS_FILE}" "${HOME}/.copaw/providers.json"
+
+    jq --argjson ctx "${CTX}" \
+       '.agents.running.max_input_length = $ctx' \
        "${CONFIG_FILE}" > "${TMP}" && mv "${TMP}" "${CONFIG_FILE}"
 
-    log "Done. Model is now: ${MODEL_NAME}"
+    log "Done. CoPaw model is now: ${MODEL_NAME} (ctx=${CTX})"
+    echo ""
+    echo "RESTART_REQUIRED: Restart the CoPaw service to apply the model switch."
 else
-    # New model: add to models array and switch primary
-    jq --arg model "${MODEL_NAME}" \
-       --argjson ctx "${CTX}" \
-       --argjson max "${MAX}" \
-       --argjson reasoning "${REASONING}" \
-       --argjson input "${INPUT}" \
-       '.models.providers["hiclaw-gateway"].models += [{
-           "id": $model,
-           "name": $model,
-           "reasoning": $reasoning,
-           "contextWindow": $ctx,
-           "maxTokens": $max,
-           "input": $input
-         }]
-        | .agents.defaults.model.primary = ("hiclaw-gateway/" + $model)
-        | .agents.defaults.models["hiclaw-gateway/" + $model] = { "alias": $model }' \
-       "${CONFIG_FILE}" > "${TMP}" && mv "${TMP}" "${CONFIG_FILE}"
+    # ── OpenClaw: update openclaw.json ──
+    MODEL_EXISTS=$(jq --arg model "${MODEL_NAME}" \
+        '[.models.providers["hiclaw-gateway"].models[] | select(.id == $model)] | length' \
+        "${CONFIG_FILE}" 2>/dev/null || echo "0")
 
-    log "Done. Model '${MODEL_NAME}' has been added to the models list."
+    if [ "${MODEL_EXISTS}" -gt 0 ]; then
+        jq --arg model "${MODEL_NAME}" \
+           --argjson reasoning "${REASONING}" \
+           '(.models.providers["hiclaw-gateway"].models[] | select(.id == $model)).reasoning = $reasoning
+            | .agents.defaults.model.primary = ("hiclaw-gateway/" + $model)
+            | .agents.defaults.models["hiclaw-gateway/" + $model] = { "alias": $model }' \
+           "${CONFIG_FILE}" > "${TMP}" && mv "${TMP}" "${CONFIG_FILE}"
+        log "Done. Model is now: ${MODEL_NAME}"
+    else
+        jq --arg model "${MODEL_NAME}" \
+           --argjson ctx "${CTX}" \
+           --argjson max "${MAX}" \
+           --argjson reasoning "${REASONING}" \
+           --argjson input "${INPUT}" \
+           '.models.providers["hiclaw-gateway"].models += [{
+               "id": $model,
+               "name": $model,
+               "reasoning": $reasoning,
+               "contextWindow": $ctx,
+               "maxTokens": $max,
+               "input": $input
+             }]
+            | .agents.defaults.model.primary = ("hiclaw-gateway/" + $model)
+            | .agents.defaults.models["hiclaw-gateway/" + $model] = { "alias": $model }' \
+           "${CONFIG_FILE}" > "${TMP}" && mv "${TMP}" "${CONFIG_FILE}"
+        log "Done. Model '${MODEL_NAME}' has been added to the models list."
+    fi
+    echo ""
+    echo "RESTART_REQUIRED: Run 'openclaw gateway restart' to apply the model switch."
 fi
 
-echo ""
-echo "RESTART_REQUIRED: Run 'openclaw gateway restart' to apply the model switch."
+rm -f "${TMP}"
