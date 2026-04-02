@@ -126,7 +126,7 @@ func (p *PackageResolver) ResolveAndExtract(ctx context.Context, uri, name strin
 
 // DeployToMinIO copies extracted package contents to the worker's MinIO agent space.
 // This ensures SOUL.md, custom skills, etc. are in place before create-worker.sh runs.
-func (p *PackageResolver) DeployToMinIO(ctx context.Context, extractedDir, workerName string) error {
+func (p *PackageResolver) DeployToMinIO(ctx context.Context, extractedDir, workerName string, excludeMemory bool) error {
 	agentDir := fmt.Sprintf("/root/hiclaw-fs/agents/%s", workerName)
 	if err := os.MkdirAll(agentDir, 0755); err != nil {
 		return fmt.Errorf("create agent dir: %w", err)
@@ -200,7 +200,11 @@ func (p *PackageResolver) DeployToMinIO(ctx context.Context, extractedDir, worke
 		storagePrefix = "hiclaw/hiclaw-storage"
 	}
 	minioDest := fmt.Sprintf("%s/agents/%s/", storagePrefix, workerName)
-	mcCmd := exec.CommandContext(ctx, "mc", "mirror", agentDir+"/", minioDest, "--overwrite")
+	args := []string{"mirror", agentDir + "/", minioDest, "--overwrite"}
+	if excludeMemory {
+		args = append(args, "--exclude", "memory/*", "--exclude", "MEMORY.md")
+	}
+	mcCmd := exec.CommandContext(ctx, "mc", args...)
 	if out, err := mcCmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("mc mirror to %s failed: %s: %w", minioDest, string(out), err)
 	}

@@ -131,7 +131,7 @@ func (r *WorkerReconciler) handleCreate(ctx context.Context, w *v1beta1.Worker) 
 			return reconcile.Result{RequeueAfter: time.Minute}, err
 		}
 		if extractedDir != "" {
-			if err := r.Packages.DeployToMinIO(ctx, extractedDir, w.Name); err != nil {
+			if err := r.Packages.DeployToMinIO(ctx, extractedDir, w.Name, false); err != nil {
 				_ = r.Get(ctx, client.ObjectKeyFromObject(w), w)
 				w.Status.Phase = "Failed"
 				w.Status.Message = fmt.Sprintf("package deploy failed: %v", err)
@@ -255,8 +255,16 @@ func (r *WorkerReconciler) handleUpdate(ctx context.Context, w *v1beta1.Worker) 
 			return reconcile.Result{RequeueAfter: time.Minute}, err
 		}
 		if extractedDir != "" {
+			// Deploy package files to local + MinIO atomically (excludes memory to preserve existing state)
+			if err := r.Packages.DeployToMinIO(ctx, extractedDir, w.Name, true); err != nil {
+				_ = r.Get(ctx, client.ObjectKeyFromObject(w), w)
+				w.Status.Phase = "Failed"
+				w.Status.Message = fmt.Sprintf("package deploy failed: %v", err)
+				r.Status().Update(ctx, w)
+				return reconcile.Result{RequeueAfter: time.Minute}, err
+			}
 			packageDir = extractedDir
-			logger.Info("package resolved for update", "name", w.Name, "dir", extractedDir)
+			logger.Info("package deployed for update", "name", w.Name, "dir", extractedDir)
 		}
 	}
 
