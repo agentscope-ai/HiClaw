@@ -198,7 +198,7 @@ Set-ExecutionPolicy Bypass -Scope Process -Force; $wc=New-Object Net.WebClient; 
 
 ```
 选择 CodingPlan 默认模型:
-  1) qwen3.6-plus  - 千问 3.6（推荐）
+  1) qwen3.6-plus  - 千问 3.6（速度最快）
   2) glm-5  - 智谱 GLM-5（编程推荐）
   3) kimi-k2.5  - Moonshot Kimi K2.5
   4) MiniMax-M2.5  - MiniMax M2.5

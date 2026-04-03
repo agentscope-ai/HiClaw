@@ -381,8 +381,8 @@ msg() {
         "llm.alibaba.model.select.en") text="Select model series [1/2]" ;;
         "llm.codingplan.models_title.zh") text="选择 CodingPlan 默认模型:" ;;
         "llm.codingplan.models_title.en") text="Select CodingPlan default model:" ;;
-        "llm.codingplan.model.qwen36plus.zh") text="  1) qwen3.6-plus  - 千问 3.6（推荐）" ;;
-        "llm.codingplan.model.qwen36plus.en") text="  1) qwen3.6-plus  - Qwen 3.6 (recommended)" ;;
+        "llm.codingplan.model.qwen36plus.zh") text="  1) qwen3.6-plus  - 千问 3.6（速度最快）" ;;
+        "llm.codingplan.model.qwen36plus.en") text="  1) qwen3.6-plus  - Qwen 3.6 (fastest)" ;;
         "llm.codingplan.model.glm5.zh") text="  2) glm-5  - 智谱 GLM-5（编程推荐）" ;;
         "llm.codingplan.model.glm5.en") text="  2) glm-5  - Zhipu GLM-5 (recommended for coding)" ;;
         "llm.codingplan.model.kimi.zh") text="  3) kimi-k2.5  - Moonshot Kimi K2.5" ;;

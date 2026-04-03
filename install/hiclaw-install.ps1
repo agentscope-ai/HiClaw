@@ -297,7 +297,7 @@ $script:Messages = @{
     "llm.alibaba.model.qwen" = @{ zh = "  2) 百炼通用接口"; en = "  2) qwen general  - General purpose LLM" }
     "llm.alibaba.model.select" = @{ zh = "选择模型系列 [1/2]"; en = "Select model series [1/2]" }
     "llm.codingplan.models_title" = @{ zh = "选择 CodingPlan 默认模型:"; en = "Select CodingPlan default model:" }
-    "llm.codingplan.model.qwen36plus" = @{ zh = "  1) qwen3.6-plus  - 千问 3.6（推荐）"; en = "  1) qwen3.6-plus  - Qwen 3.6 (recommended)" }
+    "llm.codingplan.model.qwen36plus" = @{ zh = "  1) qwen3.6-plus  - 千问 3.6（速度最快）"; en = "  1) qwen3.6-plus  - Qwen 3.6 (fastest)" }
     "llm.codingplan.model.glm5" = @{ zh = "  2) glm-5  - 智谱 GLM-5（编程推荐）"; en = "  2) glm-5  - Zhipu GLM-5 (recommended for coding)" }
     "llm.codingplan.model.kimi" = @{ zh = "  3) kimi-k2.5  - Moonshot Kimi K2.5"; en = "  3) kimi-k2.5  - Moonshot Kimi K2.5" }
     "llm.codingplan.model.minimax" = @{ zh = "  4) MiniMax-M2.5  - MiniMax M2.5"; en = "  4) MiniMax-M2.5  - MiniMax M2.5" }
