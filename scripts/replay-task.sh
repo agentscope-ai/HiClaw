@@ -318,29 +318,50 @@ else
 fi
 
 # Step 3: Wait for Manager agent to be ready
-# Use `openclaw gateway health` inside the container to confirm the gateway is running
-# and processing Matrix events, then verify Manager has joined the DM room.
+# The readiness probe depends on the selected Manager runtime.
 READY_TIMEOUT="${REPLAY_READY_TIMEOUT:-300}"
 READY_ELAPSED=0
 MANAGER_FULL_ID="@${MANAGER_USER}:${MATRIX_DOMAIN}"
+MANAGER_RUNTIME=$(docker exec "${MANAGER_CONTAINER}" sh -lc 'printf "%s" "${HICLAW_MANAGER_RUNTIME:-openclaw}"' 2>/dev/null || echo "openclaw")
 
 log "Waiting for Manager agent to be ready..."
 
-# Phase 1: Wait for OpenClaw gateway to be healthy inside the container
+# Phase 1: Wait for the runtime-specific health check to pass
 GATEWAY_READY=false
+READY_LABEL="Manager runtime"
 while [ "${READY_ELAPSED}" -lt "${READY_TIMEOUT}" ]; do
-    if docker exec "${MANAGER_CONTAINER}" openclaw gateway health --json 2>/dev/null | grep -q '"ok"' 2>/dev/null; then
+    case "${MANAGER_RUNTIME}" in
+        codex)
+            READY_LABEL="Codex runtime"
+            if docker exec "${MANAGER_CONTAINER}" sh -lc 'grep -q "^ok" /root/manager-workspace/.codex-agent/ready 2>/dev/null'; then
+                GATEWAY_READY=true
+            fi
+            ;;
+        copaw)
+            READY_LABEL="CoPaw runtime"
+            if docker exec "${MANAGER_CONTAINER}" curl -sf http://127.0.0.1:18799/health >/dev/null 2>&1; then
+                GATEWAY_READY=true
+            fi
+            ;;
+        *)
+            READY_LABEL="OpenClaw gateway"
+            if docker exec "${MANAGER_CONTAINER}" openclaw gateway health --json 2>/dev/null | grep -q '"ok"' 2>/dev/null; then
+                GATEWAY_READY=true
+            fi
+            ;;
+    esac
+    if [ "${GATEWAY_READY}" = "true" ]; then
         GATEWAY_READY=true
-        log "Manager OpenClaw gateway is healthy"
+        log "Manager ${READY_LABEL} is healthy"
         break
     fi
     sleep 5
     READY_ELAPSED=$((READY_ELAPSED + 5))
-    printf "\r\033[36m[replay]\033[0m Waiting for OpenClaw gateway... (%ds/%ds)" "${READY_ELAPSED}" "${READY_TIMEOUT}"
+    printf "\r\033[36m[replay]\033[0m Waiting for %s... (%ds/%ds)" "${READY_LABEL}" "${READY_ELAPSED}" "${READY_TIMEOUT}"
 done
 
 if [ "${GATEWAY_READY}" != "true" ]; then
-    error "Manager OpenClaw gateway did not become healthy within ${READY_TIMEOUT}s. Check: docker logs ${MANAGER_CONTAINER}"
+    error "Manager ${READY_LABEL} did not become healthy within ${READY_TIMEOUT}s. Check: docker logs ${MANAGER_CONTAINER}"
 fi
 
 # Phase 2: Wait for Manager to join the DM room (confirms Matrix channel is active)

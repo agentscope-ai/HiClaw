@@ -40,7 +40,7 @@ MCP_SERVERS=""
 WORKER_SKILLS=""
 REMOTE_MODE=false
 SKILLS_API_URL=""
-WORKER_RUNTIME="${HICLAW_DEFAULT_WORKER_RUNTIME:-openclaw}"   # openclaw | copaw
+WORKER_RUNTIME="${HICLAW_DEFAULT_WORKER_RUNTIME:-openclaw}"   # openclaw | codex | copaw
 CONSOLE_PORT=""             # copaw only: web console port (e.g. 8088)
 CUSTOM_IMAGE=""             # optional: custom Docker image for this worker
 WORKER_ROLE="worker"        # worker | team_leader
@@ -74,7 +74,7 @@ while [ $# -gt 0 ]; do
 done
 
 if [ -z "${WORKER_NAME}" ]; then
-    echo "Usage: create-worker.sh --name <NAME> [--model <MODEL_ID>] [--image <IMAGE>] [--mcp-servers s1,s2] [--skills s1,s2] [--skills-api-url <URL>] [--remote] [--runtime openclaw|copaw] [--console-port <PORT>] [--role worker|team_leader] [--team <TEAM>] [--team-leader <LEADER>]"
+    echo "Usage: create-worker.sh --name <NAME> [--model <MODEL_ID>] [--image <IMAGE>] [--mcp-servers s1,s2] [--skills s1,s2] [--skills-api-url <URL>] [--remote] [--runtime openclaw|codex|copaw] [--console-port <PORT>] [--role worker|team_leader] [--team <TEAM>] [--team-leader <LEADER>]"
     exit 1
 fi
 
@@ -106,6 +106,7 @@ if [ -z "${SKILLS_API_URL}" ]; then
 fi
 
 MATRIX_DOMAIN="${HICLAW_MATRIX_DOMAIN:-matrix-local.hiclaw.io:8080}"
+MATRIX_ROOM_VERSION="${HICLAW_MATRIX_ROOM_VERSION:-12}"
 ADMIN_USER="${HICLAW_ADMIN_USER:-admin}"
 CONSUMER_NAME="worker-${WORKER_NAME}"
 SOUL_FILE="/root/hiclaw-fs/agents/${WORKER_NAME}/SOUL.md"
@@ -361,6 +362,7 @@ else
                     "@'"${WORKER_NAME}"':'"${MATRIX_DOMAIN}"'"
                 ],
                 "preset": "trusted_private_chat",
+                "room_version": "'"${MATRIX_ROOM_VERSION}"'",
                 "power_level_content_override": {
                     "users": {
                         "'"${MANAGER_MATRIX_ID}"'": 100,
@@ -384,6 +386,7 @@ else
                     "@'"${WORKER_NAME}"':'"${MATRIX_DOMAIN}"'"
                 ],
                 "preset": "trusted_private_chat",
+                "room_version": "'"${MATRIX_ROOM_VERSION}"'",
                 "power_level_content_override": {
                     "users": {
                         "'"${MANAGER_MATRIX_ID}"'": 100,
@@ -859,7 +862,7 @@ _build_install_cmd() {
         return
     fi
 
-    local cmd="bash hiclaw-install.sh worker --name ${WORKER_NAME} --fs ${fs_internal_endpoint} --fs-key ${fs_access_key} --fs-secret ${fs_secret_key}"
+    local cmd="bash hiclaw-install.sh worker --name ${WORKER_NAME} --fs ${fs_internal_endpoint} --fs-key ${fs_access_key} --fs-secret ${fs_secret_key} --runtime ${WORKER_RUNTIME}"
 
     if [ -n "${SKILLS_API_URL}" ]; then
         cmd="${cmd} --skills-api-url ${SKILLS_API_URL}"
@@ -870,7 +873,11 @@ _build_install_cmd() {
 # Build extra environment variables JSON for container creation
 _build_extra_env() {
     local items=()
+    items+=("HICLAW_WORKER_RUNTIME=${WORKER_RUNTIME}")
     items+=("SKILLS_API_URL=${SKILLS_API_URL}")
+    if [ -n "${ROOM_ID:-}" ]; then
+        items+=("HICLAW_WORKER_ROOM_ID=${ROOM_ID}")
+    fi
     if [ -n "${HICLAW_NACOS_USERNAME:-}" ]; then
         items+=("HICLAW_NACOS_USERNAME=${HICLAW_NACOS_USERNAME}")
     fi
@@ -894,6 +901,9 @@ if [ "${REMOTE_MODE}" = true ]; then
     log "Step 9: Remote mode requested"
     INSTALL_CMD=$(_build_install_cmd)
 elif [ "${HICLAW_RUNTIME}" = "aliyun" ]; then
+    if [ "${WORKER_RUNTIME}" = "codex" ]; then
+        _fail "codex runtime currently requires local container mode with host ~/.codex mounted"
+    fi
     log "Step 9: Creating Worker via cloud backend (SAE, runtime=${WORKER_RUNTIME})..."
 
     # Select SAE image based on worker runtime
@@ -974,6 +984,14 @@ elif container_api_available; then
             else
                 WORKER_STATUS="starting"
                 log "  WARNING: CoPaw Worker agent not ready within timeout (container may still be initializing)"
+            fi
+        elif [ "${WORKER_RUNTIME}" = "codex" ]; then
+            if container_wait_codex_worker_ready "${WORKER_NAME}" 120; then
+                WORKER_STATUS="ready"
+                log "  Codex Worker agent is ready!"
+            else
+                WORKER_STATUS="starting"
+                log "  WARNING: Codex Worker agent not ready within timeout (container may still be initializing)"
             fi
         else
             if container_wait_worker_ready "${WORKER_NAME}" 120; then

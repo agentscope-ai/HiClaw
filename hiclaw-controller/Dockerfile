@@ -11,7 +11,18 @@ FROM ${HIGRESS_REGISTRY}/higress/golang:1.23-alpine AS builder
 
 ARG GOPROXY=https://proxy.golang.org,direct
 ENV GOPROXY=${GOPROXY}
-RUN apk add --no-cache gcc musl-dev
+RUN set -eu; \
+    attempt=1; \
+    while true; do \
+        apk add --no-cache gcc musl-dev && break; \
+        if [ "${attempt}" -ge 5 ]; then \
+            exit 1; \
+        fi; \
+        echo "apk add gcc musl-dev failed (attempt ${attempt}), retrying..." >&2; \
+        rm -rf /var/cache/apk/*; \
+        sleep $((attempt * 5)); \
+        attempt=$((attempt + 1)); \
+    done
 
 WORKDIR /build
 COPY go.mod go.sum ./

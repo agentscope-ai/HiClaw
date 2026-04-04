@@ -76,6 +76,7 @@ IFS=':' read -ra WORKER_MCP_ARR <<< "${WORKER_MCP_SERVERS_CSV:-}"
 IFS='|' read -ra WORKER_CHANNEL_POLICIES_ARR <<< "${WORKER_CHANNEL_POLICIES_CSV:-}"
 
 MATRIX_DOMAIN="${HICLAW_MATRIX_DOMAIN:-matrix-local.hiclaw.io:8080}"
+MATRIX_ROOM_VERSION="${HICLAW_MATRIX_ROOM_VERSION:-12}"
 ADMIN_USER="${HICLAW_ADMIN_USER:-admin}"
 
 log "=== Creating Team: ${TEAM_NAME} ==="
@@ -186,6 +187,7 @@ TEAM_ROOM_RESP=$(curl -sf -X POST ${HICLAW_MATRIX_SERVER}/_matrix/client/v3/crea
         "name": "Team: '"${TEAM_NAME}"'",
         "topic": "Team room for '"${TEAM_NAME}"' — Leader + Workers coordination",
         "preset": "trusted_private_chat",
+        "room_version": "'"${MATRIX_ROOM_VERSION}"'",
         "power_level_content_override": {
             "users": {
                 "'"${MANAGER_MATRIX_ID}"'": 100
@@ -209,6 +211,7 @@ if [ -n "${TEAM_ADMIN_MID}" ]; then
             "name": "Team Admin DM: '"${TEAM_NAME}"'",
             "topic": "Direct channel between Team Admin and Leader of '"${TEAM_NAME}"'",
             "preset": "trusted_private_chat",
+            "room_version": "'"${MATRIX_ROOM_VERSION}"'",
             "power_level_content_override": {
                 "users": {
                     "'"${MANAGER_MATRIX_ID}"'": 100

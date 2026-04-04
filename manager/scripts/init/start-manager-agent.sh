@@ -6,6 +6,7 @@
 #
 # Runtime selection:
 #   HICLAW_MANAGER_RUNTIME=openclaw (default) - OpenClaw gateway mode
+#   HICLAW_MANAGER_RUNTIME=codex              - Codex Matrix bot mode
 #   HICLAW_MANAGER_RUNTIME=copaw              - CoPaw workspace mode
 
 source /opt/hiclaw/scripts/lib/hiclaw-env.sh
@@ -15,6 +16,9 @@ source /opt/hiclaw/scripts/lib/hiclaw-env.sh
 # ============================================================
 MANAGER_RUNTIME="${HICLAW_MANAGER_RUNTIME:-openclaw}"
 case "${MANAGER_RUNTIME}" in
+    codex)
+        log "Manager runtime: Codex (local Codex session)"
+        ;;
     copaw)
         log "Manager runtime: CoPaw (Python workspace)"
         ;;
@@ -34,6 +38,7 @@ if [ -n "${TZ}" ] && [ -f "/usr/share/zoneinfo/${TZ}" ]; then
 fi
 
 export MATRIX_DOMAIN="${HICLAW_MATRIX_DOMAIN:-matrix-local.hiclaw.io:8080}"
+export MATRIX_ROOM_VERSION="${HICLAW_MATRIX_ROOM_VERSION:-12}"
 AI_GATEWAY_DOMAIN="${HICLAW_AI_GATEWAY_DOMAIN:-aigw-local.hiclaw.io}"
 
 # ============================================================
@@ -148,6 +153,9 @@ fi
 # Subsequent boots: compare image version; upgrade only if changed
 # ============================================================
 mkdir -p /root/manager-workspace
+if [ "${MANAGER_RUNTIME}" = "codex" ]; then
+    rm -f /root/manager-workspace/.codex-agent/ready
+fi
 
 IMAGE_VERSION=$(cat /opt/hiclaw/agent/.builtin-version 2>/dev/null || echo "unknown")
 INSTALLED_VERSION=$(cat /root/manager-workspace/.builtin-version 2>/dev/null || echo "")
@@ -349,7 +357,7 @@ else
         _RAW=$(curl -s -w '\nHTTP_CODE:%{http_code}' -X POST "${HICLAW_MATRIX_SERVER}/_matrix/client/v3/createRoom" \
             -H "Authorization: Bearer ${ADMIN_MATRIX_TOKEN}" \
             -H 'Content-Type: application/json' \
-            -d "{\"is_direct\":true,\"invite\":[\"${MANAGER_FULL_ID}\"],\"preset\":\"trusted_private_chat\"}" 2>&1) || true
+            -d "{\"is_direct\":true,\"invite\":[\"${MANAGER_FULL_ID}\"],\"preset\":\"trusted_private_chat\",\"room_version\":\"${MATRIX_ROOM_VERSION}\"}" 2>&1) || true
         _HTTP_CODE=$(echo "${_RAW}" | tail -1 | sed 's/HTTP_CODE://')
         _CREATE_RESP=$(echo "${_RAW}" | sed '$d')
         DM_ROOM_ID=$(echo "${_CREATE_RESP}" | jq -r '.room_id // empty' 2>/dev/null)
@@ -379,15 +387,22 @@ else
             _wait=0
             _ready=false
             while [ "${_wait}" -lt 300 ]; do
-                if curl -sf http://127.0.0.1:18799/ > /dev/null 2>&1; then
-                    _ready=true
-                    break
+                if [ "${MANAGER_RUNTIME}" = "codex" ]; then
+                    if [ -f /root/manager-workspace/.codex-agent/ready ]; then
+                        _ready=true
+                        break
+                    fi
+                else
+                    if curl -sf http://127.0.0.1:18799/ > /dev/null 2>&1; then
+                        _ready=true
+                        break
+                    fi
                 fi
                 sleep 3
                 _wait=$((_wait + 3))
             done
             if [ "${_ready}" != "true" ]; then
-                echo "[manager] WARNING: OpenClaw gateway not ready within 300s, skipping welcome message"
+                echo "[manager] WARNING: Manager runtime not ready within 300s, skipping welcome message"
                 exit 0
             fi
             # Ensure Manager has joined the DM room before sending the welcome
@@ -456,6 +471,8 @@ export MANAGER_GATEWAY_KEY="${HICLAW_MANAGER_GATEWAY_KEY}"
 # Resolve model parameters based on model name
 MODEL_NAME="${HICLAW_DEFAULT_MODEL:-qwen3.5-plus}"
 case "${MODEL_NAME}" in
+    gpt-5.4)
+        export MODEL_CONTEXT_WINDOW=1050000 MODEL_MAX_TOKENS=128000 ;;
     gpt-5.3-codex|gpt-5-mini|gpt-5-nano)
         export MODEL_CONTEXT_WINDOW=400000 MODEL_MAX_TOKENS=128000 ;;
     claude-opus-4-6)
@@ -486,7 +503,16 @@ if [ "${HICLAW_MATRIX_E2EE:-0}" = "1" ] || [ "${HICLAW_MATRIX_E2EE:-}" = "true" 
 else
     export MATRIX_E2EE_ENABLED=false
 fi
+if [ "${HICLAW_MANAGER_GROUP_REQUIRE_MENTION:-0}" = "1" ] || [ "${HICLAW_MANAGER_GROUP_REQUIRE_MENTION:-}" = "true" ]; then
+    export MANAGER_GROUP_REQUIRE_MENTION=true
+else
+    export MANAGER_GROUP_REQUIRE_MENTION=false
+fi
 log "Matrix E2EE: ${MATRIX_E2EE_ENABLED}"
+log "Manager group requireMention: ${MANAGER_GROUP_REQUIRE_MENTION}"
+if [ "${MANAGER_RUNTIME}" = "codex" ] && [ "${MATRIX_E2EE_ENABLED}" = "true" ]; then
+    log "WARNING: Codex runtime does not support Matrix E2EE; disable HICLAW_MATRIX_E2EE for local Codex mode"
+fi
 
 # Resolve input modalities: only vision-capable models get "image"
 case "${MODEL_NAME}" in
@@ -520,6 +546,7 @@ if [ -f /root/manager-workspace/openclaw.json ]; then
        --argjson max "${MODEL_MAX_TOKENS}" \
        --argjson reasoning "${MODEL_REASONING}" \
        --argjson input "${MODEL_INPUT}" \
+       --argjson manager_group_require_mention "${MANAGER_GROUP_REQUIRE_MENTION}" \
        '
         # Merge known models: add any model id not already present
         .models.providers["hiclaw-gateway"].models as $existing
@@ -539,6 +566,8 @@ if [ -f /root/manager-workspace/openclaw.json ]; then
         | .commands.restart = true
         | .gateway.controlUi.dangerouslyDisableDeviceAuth = true
         | .channels.matrix.encryption = $e2ee
+        | .channels.matrix.groups = (.channels.matrix.groups // {})
+        | .channels.matrix.groups["*"] = ((.channels.matrix.groups["*"] // {}) + {"allow": true, "requireMention": $manager_group_require_mention})
         # Ensure memorySearch config exists (embedding model for memory) — skip if embedding model is empty
         | if $emb_model != "" then .agents.defaults.memorySearch //= {"provider":"openai","model":$emb_model,"remote":{"baseUrl":("http://" + $aigw_domain + ":8080/v1"),"apiKey":$key}} else . end
        ' \
@@ -826,12 +855,18 @@ if container_api_available; then
             if [ -f "${_creds_file}" ]; then
                 source "${_creds_file}"
                 _runtime=$(jq -r --arg w "${_worker_name}" '.workers[$w].runtime // "openclaw"' "${REGISTRY_FILE}" 2>/dev/null)
+                _worker_room_id="${WORKER_ROOM_ID:-}"
+                _extra_env=$(jq -cn \
+                    --arg runtime "${_runtime}" \
+                    --arg room_id "${_worker_room_id}" \
+                    '["HICLAW_WORKER_RUNTIME=" + $runtime]
+                     + (if $room_id == "" then [] else ["HICLAW_WORKER_ROOM_ID=" + $room_id] end)')
                 _recreated=false
                 for _attempt in 1 2 3; do
                     if [ "${_runtime}" = "copaw" ]; then
                         container_create_copaw_worker "${_worker_name}" "${_worker_name}" "${WORKER_MINIO_PASSWORD}" 2>&1 && _recreated=true && break
                     else
-                        container_create_worker "${_worker_name}" "${_worker_name}" "${WORKER_MINIO_PASSWORD}" 2>&1 && _recreated=true && break
+                        container_create_worker "${_worker_name}" "${_worker_name}" "${WORKER_MINIO_PASSWORD}" "${_extra_env}" 2>&1 && _recreated=true && break
                     fi
                     log "  Attempt ${_attempt}/3 failed for ${_worker_name}, retrying in $((5 * _attempt))s..."
                     sleep $((5 * _attempt))
@@ -996,6 +1031,13 @@ fi
 if [ "${MANAGER_RUNTIME}" = "copaw" ]; then
     # Delegate to CoPaw startup script
     exec /opt/hiclaw/scripts/init/start-copaw-manager.sh
+elif [ "${MANAGER_RUNTIME}" = "codex" ]; then
+    log "Starting Codex Manager..."
+    export HICLAW_CODEX_SHARED_HOME="${HICLAW_CODEX_SHARED_HOME:-/root/.codex-host}"
+    exec python3 /opt/hiclaw/scripts/lib/codex_matrix_agent.py \
+        --workspace /root/manager-workspace \
+        --role manager \
+        --timeout-seconds "${HICLAW_CODEX_TIMEOUT_SECONDS:-1800}"
 else
     # ── OpenClaw Runtime ─────────────────────────────────────────────────────
     log "Starting OpenClaw Manager..."

@@ -403,12 +403,20 @@ action_start() {
             source "$creds_file"
         fi
         local runtime
+        local extra_env
+        local worker_room_id
         runtime=$(jq -r --arg w "$worker" '.workers[$w].runtime // "openclaw"' "$REGISTRY_FILE" 2>/dev/null)
+        worker_room_id="${WORKER_ROOM_ID:-}"
+        extra_env=$(jq -cn \
+            --arg runtime "$runtime" \
+            --arg room_id "$worker_room_id" \
+            '["HICLAW_WORKER_RUNTIME=" + $runtime]
+             + (if $room_id == "" then [] else ["HICLAW_WORKER_ROOM_ID=" + $room_id] end)')
         if [ "$backend" = "docker" ]; then
             if [ "$runtime" = "copaw" ]; then
                 container_create_copaw_worker "$worker" "$worker" "${WORKER_MINIO_PASSWORD:-}" 2>&1 && ok=true
             else
-                container_create_worker "$worker" "$worker" "${WORKER_MINIO_PASSWORD:-}" 2>&1 && ok=true
+                container_create_worker "$worker" "$worker" "${WORKER_MINIO_PASSWORD:-}" "$extra_env" 2>&1 && ok=true
             fi
         else
             worker_backend_create "$worker" "" "" "[]" 2>&1 && ok=true

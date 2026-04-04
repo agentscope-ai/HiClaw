@@ -18,6 +18,7 @@ MATRIX_CLIENT_DOMAIN="${HICLAW_MATRIX_CLIENT_DOMAIN:-matrix-client-local.hiclaw.
 AI_GATEWAY_DOMAIN="${HICLAW_AI_GATEWAY_DOMAIN:-aigw-local.hiclaw.io}"
 FS_DOMAIN="${HICLAW_FS_DOMAIN:-fs-local.hiclaw.io}"
 CONSOLE_DOMAIN="${HICLAW_CONSOLE_DOMAIN:-console-local.hiclaw.io}"
+MANAGER_RUNTIME="${HICLAW_MANAGER_RUNTIME:-openclaw}"
 # Fixed internal domains used by workers inside hiclaw-net, regardless of user-configured domains.
 # Higress routes always include these so workers can reach manager services reliably.
 AI_GATEWAY_LOCAL_DOMAIN="aigw-local.hiclaw.io"
@@ -107,8 +108,10 @@ if [ ! -f "${SETUP_MARKER}" ]; then
         '{"name":"element-web","type":"static","domain":"127.0.0.1:8088","port":8088,"properties":{},"authN":{"enabled":false}}'
     higress_api POST /v1/service-sources "Registering MinIO service source" \
         '{"name":"minio","type":"static","domain":"127.0.0.1:9000","port":9000,"properties":{},"authN":{"enabled":false}}'
-    higress_api POST /v1/service-sources "Registering OpenClaw Console service source" \
-        '{"name":"openclaw-console","type":"static","domain":"127.0.0.1:18888","port":18888,"properties":{},"authN":{"enabled":false}}'
+    if [ "${MANAGER_RUNTIME}" = "openclaw" ]; then
+        higress_api POST /v1/service-sources "Registering OpenClaw Console service source" \
+            '{"name":"openclaw-console","type":"static","domain":"127.0.0.1:18888","port":18888,"properties":{},"authN":{"enabled":false}}'
+    fi
 
     # 1. Domains
     higress_api POST /v1/domains "Creating Matrix Client domain" \
@@ -120,8 +123,10 @@ if [ ! -f "${SETUP_MARKER}" ]; then
         higress_api POST /v1/domains "Creating internal File System domain" \
             '{"name":"'"${FS_LOCAL_DOMAIN}"'","enableHttps":"off"}'
     fi
-    higress_api POST /v1/domains "Creating OpenClaw Console domain" \
-        '{"name":"'"${CONSOLE_DOMAIN}"'","enableHttps":"off"}'
+    if [ "${MANAGER_RUNTIME}" = "openclaw" ]; then
+        higress_api POST /v1/domains "Creating OpenClaw Console domain" \
+            '{"name":"'"${CONSOLE_DOMAIN}"'","enableHttps":"off"}'
+    fi
 
     # 2. Manager Consumer
     higress_api POST /v1/consumers "Creating Manager consumer" \
@@ -144,12 +149,14 @@ if [ ! -f "${SETUP_MARKER}" ]; then
         '{"name":"http-filesystem","domains":'"${FS_ROUTE_DOMAINS}"',"path":{"matchType":"PRE","matchValue":"/"},"services":[{"name":"minio.static","port":9000,"weight":100}]}'
 
     # 6. OpenClaw Console Route (reverse-proxied via nginx with auto-token injection)
-    higress_api POST /v1/routes "Creating OpenClaw Console route" \
-        '{"name":"openclaw-console","domains":["'"${CONSOLE_DOMAIN}"'"],"path":{"matchType":"PRE","matchValue":"/"},"services":[{"name":"openclaw-console.static","port":18888,"weight":100}]}'
+    if [ "${MANAGER_RUNTIME}" = "openclaw" ]; then
+        higress_api POST /v1/routes "Creating OpenClaw Console route" \
+            '{"name":"openclaw-console","domains":["'"${CONSOLE_DOMAIN}"'"],"path":{"matchType":"PRE","matchValue":"/"},"services":[{"name":"openclaw-console.static","port":18888,"weight":100}]}'
 
-    # 6a. Enable basic-auth on OpenClaw Console route
-    higress_api PUT /v1/routes/openclaw-console/plugin-instances/basic-auth "Enabling basic-auth on OpenClaw Console route" \
-        '{"version":null,"scope":"ROUTE","target":"openclaw-console","targets":{"ROUTE":"openclaw-console"},"pluginName":"basic-auth","pluginVersion":null,"internal":false,"enabled":true,"rawConfigurations":"consumers:\n  - name: admin\n    credential: '"${HICLAW_ADMIN_USER:-admin}"':'"${HICLAW_ADMIN_PASSWORD}"'"}'
+        # 6a. Enable basic-auth on OpenClaw Console route
+        higress_api PUT /v1/routes/openclaw-console/plugin-instances/basic-auth "Enabling basic-auth on OpenClaw Console route" \
+            '{"version":null,"scope":"ROUTE","target":"openclaw-console","targets":{"ROUTE":"openclaw-console"},"pluginName":"basic-auth","pluginVersion":null,"internal":false,"enabled":true,"rawConfigurations":"consumers:\n  - name: admin\n    credential: '"${HICLAW_ADMIN_USER:-admin}"':'"${HICLAW_ADMIN_PASSWORD}"'"}'
+    fi
 
     touch "${SETUP_MARKER}"
     log "First-boot setup complete"

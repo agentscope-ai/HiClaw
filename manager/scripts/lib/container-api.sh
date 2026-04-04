@@ -177,10 +177,14 @@ container_create_worker() {
     local extra_env="${4:-[]}"
     local custom_image="${5:-}"
     local image="${custom_image:-${WORKER_IMAGE}}"
+    local host_codex_dir="${HICLAW_HOST_CODEX_DIR:-}"
 
     _log "Creating Worker container: ${container_name}"
     _log "  Image: ${image}"
     _log "  FS endpoint: ${fs_endpoint}"
+    if [ -n "${host_codex_dir}" ]; then
+        _log "  Host Codex dir: ${host_codex_dir} -> /root/.codex-host"
+    fi
 
     # Pull image if not available locally
     if ! _ensure_image "${image}"; then
@@ -198,7 +202,16 @@ container_create_worker() {
 
     # Create the container
     # Always use hiclaw-net; Docker DNS resolves *-local.hiclaw.io via manager's network aliases
-    local host_config="{\"NetworkMode\":\"hiclaw-net\"}"
+    local host_config='{"NetworkMode":"hiclaw-net"}'
+    if [ -n "${host_codex_dir}" ]; then
+        host_config=$(jq -cn \
+            --arg bind "${host_codex_dir}:/root/.codex-host:ro" \
+            '{
+                "NetworkMode": "hiclaw-net",
+                "Binds": [$bind],
+                "SecurityOpt": ["label=disable"]
+            }')
+    fi
 
     local worker_home="/root/hiclaw-fs/agents/${worker_name}"
 
@@ -380,6 +393,39 @@ container_wait_worker_ready() {
     done
 
     _log "Worker ${worker_name} did not become ready within ${timeout}s"
+    return 1
+}
+
+# Wait for Codex Worker to become ready.
+# The worker runtime writes .codex-agent/ready after the initial catch-up sync.
+container_wait_codex_worker_ready() {
+    local worker_name="$1"
+    local timeout="${2:-120}"
+    local elapsed=0
+    local ready_file="/root/hiclaw-fs/agents/${worker_name}/.codex-agent/ready"
+
+    _log "Waiting for Codex Worker ${worker_name} to be ready (timeout: ${timeout}s)..."
+
+    while [ "${elapsed}" -lt "${timeout}" ]; do
+        local cstatus
+        cstatus=$(container_status_worker "${worker_name}")
+        if [ "${cstatus}" != "running" ]; then
+            _log "Codex Worker container ${worker_name} stopped unexpectedly (status: ${cstatus})"
+            return 1
+        fi
+
+        if container_exec_worker "${worker_name}" cat "${ready_file}" 2>/dev/null \
+                | grep -q 'ok' 2>/dev/null; then
+            _log "Codex Worker ${worker_name} is ready!"
+            return 0
+        fi
+
+        sleep 5
+        elapsed=$((elapsed + 5))
+        _log "Waiting for Codex Worker ${worker_name}... (${elapsed}s/${timeout}s)"
+    done
+
+    _log "Codex Worker ${worker_name} did not become ready within ${timeout}s"
     return 1
 }
 

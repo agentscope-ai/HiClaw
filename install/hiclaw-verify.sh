@@ -152,6 +152,15 @@ if [ "${MANAGER_RUNTIME}" = "copaw" ]; then
     else
         check_fail "CoPaw Agent healthy (HTTP ${agent_status})"
     fi
+elif [ "${MANAGER_RUNTIME}" = "codex" ]; then
+    # Codex: the Matrix runtime writes a ready marker after initial catch-up sync.
+    codex_ready=$("${DOCKER_CMD}" exec "${CONTAINER}" \
+        sh -lc 'cat /root/manager-workspace/.codex-agent/ready 2>/dev/null' 2>/dev/null) || codex_ready=""
+    if echo "${codex_ready}" | grep -q '^ok'; then
+        check_pass "Codex Agent healthy"
+    else
+        check_fail "Codex Agent healthy (ready marker missing)"
+    fi
 else
     # OpenClaw: check gateway health
     agent_output=$("${DOCKER_CMD}" exec "${CONTAINER}" \

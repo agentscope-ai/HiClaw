@@ -83,7 +83,8 @@ RUN git clone --depth 1 --single-branch -b hiclaw-v1 \
 # - mcporter: MCP tool invocation
 # - skills: skills.sh ecosystem
 # - @nacos-group/cli: enterprise Nacos skill/agentspec discovery
-RUN npm install -g mcporter skills @nacos-group/cli && \
+# - @openai/codex: Codex CLI/app-server runtime
+RUN npm install -g mcporter skills @nacos-group/cli @openai/codex && \
     rm -rf /root/.npm
 
 # Clear proxy env vars (they're only needed during build, not at runtime)

@@ -8,6 +8,8 @@ func newTestValidator() *SecurityValidator {
 	return &SecurityValidator{
 		AllowedRegistries: []string{},
 		ContainerPrefix:   "hiclaw-worker-",
+		AllowedBindSource: "/Users/test/.codex",
+		AllowedBindTarget: "/root/.codex-host",
 		DangerousCaps: map[string]bool{
 			"SYS_ADMIN":   true,
 			"SYS_PTRACE":  true,
@@ -221,6 +223,45 @@ func TestRejectBindMounts(t *testing.T) {
 	}
 	if err := v.ValidateContainerCreate(req, "hiclaw-worker-test"); err == nil {
 		t.Error("expected bind mount to be rejected")
+	}
+}
+
+func TestAllowReadonlyCodexBindMount(t *testing.T) {
+	v := newTestValidator()
+	req := ContainerCreateRequest{
+		Image: "hiclaw/worker-agent:latest",
+		HostConfig: &HostConfig{
+			Binds: []string{"/Users/test/.codex:/root/.codex-host:ro"},
+		},
+	}
+	if err := v.ValidateContainerCreate(req, "hiclaw-worker-test"); err != nil {
+		t.Fatalf("expected readonly codex bind mount to pass, got: %v", err)
+	}
+}
+
+func TestRejectWritableCodexBindMount(t *testing.T) {
+	v := newTestValidator()
+	req := ContainerCreateRequest{
+		Image: "hiclaw/worker-agent:latest",
+		HostConfig: &HostConfig{
+			Binds: []string{"/Users/test/.codex:/root/.codex-host:rw"},
+		},
+	}
+	if err := v.ValidateContainerCreate(req, "hiclaw-worker-test"); err == nil {
+		t.Fatal("expected writable codex bind mount to be rejected")
+	}
+}
+
+func TestRejectWrongCodexBindSource(t *testing.T) {
+	v := newTestValidator()
+	req := ContainerCreateRequest{
+		Image: "hiclaw/worker-agent:latest",
+		HostConfig: &HostConfig{
+			Binds: []string{"/tmp/not-codex:/root/.codex-host:ro"},
+		},
+	}
+	if err := v.ValidateContainerCreate(req, "hiclaw-worker-test"); err == nil {
+		t.Fatal("expected wrong codex bind source to be rejected")
 	}
 }
 

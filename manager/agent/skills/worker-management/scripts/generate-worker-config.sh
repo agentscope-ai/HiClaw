@@ -36,6 +36,8 @@ MATRIX_DOMAIN_FOR_ID="${MATRIX_DOMAIN}"
 MATRIX_SERVER_PORT="8080"
 
 case "${MODEL_NAME}" in
+    gpt-5.4)
+        CTX=1050000; MAX=128000 ;;
     gpt-5.3-codex|gpt-5-mini|gpt-5-nano)
         CTX=400000; MAX=128000 ;;
     claude-opus-4-6)

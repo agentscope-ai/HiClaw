@@ -1,6 +1,7 @@
 #!/bin/bash
 # worker-entrypoint.sh - Worker Agent startup
-# Pulls config from centralized file system, starts file sync, launches OpenClaw.
+# Pulls config from centralized file system, starts file sync, launches
+# the selected worker runtime (OpenClaw or Codex).
 #
 # HOME is set to the Worker workspace so all agent-generated files are synced to MinIO:
 #   ~/ = /root/hiclaw-fs/agents/<WORKER_NAME>/  (SOUL.md, openclaw.json, memory/)
@@ -11,6 +12,7 @@ source /opt/hiclaw/scripts/lib/hiclaw-env.sh
 source /opt/hiclaw/scripts/lib/merge-openclaw-config.sh
 
 WORKER_NAME="${HICLAW_WORKER_NAME:?HICLAW_WORKER_NAME is required}"
+WORKER_RUNTIME="${HICLAW_WORKER_RUNTIME:-openclaw}"
 FS_ENDPOINT="${HICLAW_FS_ENDPOINT:-}"
 FS_ACCESS_KEY="${HICLAW_FS_ACCESS_KEY:-}"
 FS_SECRET_KEY="${HICLAW_FS_SECRET_KEY:-}"
@@ -31,6 +33,9 @@ fi
 # Use absolute path because HOME is set to the workspace directory via docker run
 HICLAW_ROOT="/root/hiclaw-fs"
 WORKSPACE="${HICLAW_ROOT}/agents/${WORKER_NAME}"
+if [ "${WORKER_RUNTIME}" = "codex" ]; then
+    rm -f "${WORKSPACE}/.codex-agent/ready"
+fi
 
 # ============================================================
 # Step 1: Configure mc alias for centralized file system
@@ -53,7 +58,10 @@ mkdir -p "${WORKSPACE}" "${HICLAW_ROOT}/shared"
 log "Pulling Worker config from centralized storage..."
 ensure_mc_credentials 2>/dev/null || true
 mc mirror "${HICLAW_STORAGE_PREFIX}/agents/${WORKER_NAME}/" "${WORKSPACE}/" --overwrite \
-    --exclude ".openclaw/matrix/**" --exclude ".openclaw/canvas/**" --exclude "credentials/**"
+    --exclude ".openclaw/matrix/**" --exclude ".openclaw/canvas/**" \
+    --exclude ".codex-agent/ready" \
+    --exclude ".codex-home/auth.json" \
+    --exclude "credentials/**"
 mc mirror "${HICLAW_STORAGE_PREFIX}/shared/" "${HICLAW_ROOT}/shared/" --overwrite 2>/dev/null || true
 
 # Verify essential files exist, retry if sync is still in progress
@@ -68,7 +76,10 @@ while [ ! -f "${WORKSPACE}/openclaw.json" ] || [ ! -f "${WORKSPACE}/SOUL.md" ] \
     log "Waiting for config files to appear in MinIO (attempt ${RETRY}/6)..."
     sleep 5
     mc mirror "${HICLAW_STORAGE_PREFIX}/agents/${WORKER_NAME}/" "${WORKSPACE}/" --overwrite \
-        --exclude ".openclaw/matrix/**" --exclude ".openclaw/canvas/**" --exclude "credentials/**" 2>/dev/null || true
+        --exclude ".openclaw/matrix/**" --exclude ".openclaw/canvas/**" \
+        --exclude ".codex-agent/ready" \
+        --exclude ".codex-home/auth.json" \
+        --exclude "credentials/**" 2>/dev/null || true
 done
 
 # HOME is already set to WORKSPACE via docker run -e HOME=...
@@ -89,6 +100,13 @@ mkdir -p "${HOME}/.agents"
 ln -sfn "${HOME}/skills" "${HOME}/.agents/skills"
 
 log "Worker config pulled successfully"
+if [ "${WORKER_RUNTIME}" = "codex" ]; then
+    rm -f "${WORKSPACE}/.codex-agent/ready"
+fi
+log "Worker runtime: ${WORKER_RUNTIME}"
+if [ "${WORKER_RUNTIME}" = "codex" ] && jq -e '.channels.matrix.encryption == true' "${WORKSPACE}/openclaw.json" > /dev/null 2>&1; then
+    log "WARNING: Codex runtime does not support Matrix E2EE; disable HICLAW_MATRIX_E2EE for this worker"
+fi
 
 # ============================================================
 # Optional: ensure diagnostics-otel npm dependencies are present
@@ -159,6 +177,8 @@ log "HOME set to ${HOME} (workspace files will be synced to MinIO)"
             ensure_mc_credentials 2>/dev/null || true
             if ! mc mirror "${WORKSPACE}/" "${HICLAW_STORAGE_PREFIX}/agents/${WORKER_NAME}/" --overwrite \
                 --exclude "openclaw.json" --exclude "config/mcporter.json" --exclude "mcporter-servers.json" --exclude ".agents/**" \
+                --exclude ".codex-agent/ready" \
+                --exclude ".codex-home/auth.json" \
                 --exclude "credentials/**" \
                 --exclude ".cache/**" --exclude ".npm/**" \
                 --exclude ".local/**" --exclude ".mc/**" --exclude "*.lock" \
@@ -218,6 +238,14 @@ export MCPORTER_CONFIG="${MCPORTER_DEFAULT}"
 log "Starting Worker Agent: ${WORKER_NAME}"
 export OPENCLAW_CONFIG_PATH="${WORKSPACE}/openclaw.json"
 cd "${WORKSPACE}"
+
+if [ "${WORKER_RUNTIME}" = "codex" ]; then
+    export HICLAW_CODEX_SHARED_HOME="${HICLAW_CODEX_SHARED_HOME:-/root/.codex-host}"
+    exec python3 /opt/hiclaw/scripts/lib/codex_matrix_agent.py \
+        --workspace "${WORKSPACE}" \
+        --role worker \
+        --timeout-seconds "${HICLAW_CODEX_TIMEOUT_SECONDS:-1800}"
+fi
 
 # Clean orphaned session write locks (e.g. from SIGKILL or crash before exit handlers)
 # Prevents "session file locked (timeout 10000ms)" when PID was reused

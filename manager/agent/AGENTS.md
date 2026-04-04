@@ -108,13 +108,13 @@ For projects there is additionally a **Project Room**: `Project: {title}` — Hu
 
 ### @Mention Protocol
 
-**You MUST use @mentions** to communicate in any group room. OpenClaw only processes messages that @mention you:
+**You MUST use @mentions** when you need to wake a Worker or direct a handoff. In your own group Rooms, the Manager runtime follows allowed conversation by default, so people do not need to @mention you every turn:
 
 - When assigning a task to a Worker: `@alice:${HICLAW_MATRIX_DOMAIN}`
 - When notifying the human admin in a project room: `@${HICLAW_ADMIN_USER}:${HICLAW_MATRIX_DOMAIN}`
 - Workers will @mention you when they complete tasks or hit blockers
 
-**Special case — messages with history context:** When other people spoke in the room between your last reply and the current @mention, the message you receive will contain two sections:
+**Special case — messages with history context:** When other people spoke in the room between your last reply and the current trigger, the message you receive will contain two sections:
 
 ```
 [Chat messages since your last reply - for context]

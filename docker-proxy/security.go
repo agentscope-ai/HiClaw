@@ -60,6 +60,8 @@ type Mount struct {
 type SecurityValidator struct {
 	AllowedRegistries []string
 	ContainerPrefix   string
+	AllowedBindSource string
+	AllowedBindTarget string
 	DangerousCaps     map[string]bool
 }
 
@@ -85,6 +87,8 @@ func NewSecurityValidator() *SecurityValidator {
 	return &SecurityValidator{
 		AllowedRegistries: allowedRegistries,
 		ContainerPrefix:   prefix,
+		AllowedBindSource: os.Getenv("HICLAW_HOST_CODEX_DIR"),
+		AllowedBindTarget: "/root/.codex-host",
 		DangerousCaps: map[string]bool{
 			"SYS_ADMIN":    true,
 			"SYS_PTRACE":   true,
@@ -115,9 +119,13 @@ func (v *SecurityValidator) ValidateContainerCreate(req ContainerCreateRequest, 
 		return nil
 	}
 
-	// 3. No bind mounts (workers use MinIO, not host volumes)
+	// 3. No bind mounts, except the explicit readonly Codex auth/config mount.
 	if len(req.HostConfig.Binds) > 0 {
-		return fmt.Errorf("bind mounts are not allowed (got %d bind(s))", len(req.HostConfig.Binds))
+		for _, bind := range req.HostConfig.Binds {
+			if err := v.validateBind(bind); err != nil {
+				return err
+			}
+		}
 	}
 	for _, m := range req.HostConfig.Mounts {
 		if strings.EqualFold(m.Type, "bind") {
@@ -145,6 +153,37 @@ func (v *SecurityValidator) ValidateContainerCreate(req ContainerCreateRequest, 
 		if v.DangerousCaps[strings.ToUpper(cap)] {
 			return fmt.Errorf("capability %q is not allowed", cap)
 		}
+	}
+
+	return nil
+}
+
+func (v *SecurityValidator) validateBind(bind string) error {
+	if v.AllowedBindSource == "" {
+		return fmt.Errorf("bind mounts are not allowed (got 1 bind(s))")
+	}
+
+	parts := strings.Split(bind, ":")
+	if len(parts) < 3 {
+		return fmt.Errorf("bind mount %q must be readonly and target %q", bind, v.AllowedBindTarget)
+	}
+
+	source := parts[0]
+	target := parts[1]
+	options := strings.Join(parts[2:], ":")
+	if source != v.AllowedBindSource || target != v.AllowedBindTarget {
+		return fmt.Errorf("bind mount %q is not allowed", bind)
+	}
+
+	readonly := false
+	for _, opt := range strings.Split(options, ",") {
+		if opt == "ro" {
+			readonly = true
+			break
+		}
+	}
+	if !readonly {
+		return fmt.Errorf("bind mount %q must be readonly", bind)
 	}
 
 	return nil

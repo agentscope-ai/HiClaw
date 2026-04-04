@@ -12,9 +12,9 @@
 #
 # Environment variables (for automation):
 #   HICLAW_NON_INTERACTIVE    Skip all prompts, use defaults  (default: 0)
-#   HICLAW_LLM_PROVIDER      LLM provider       (default: alibaba-cloud)
-#   HICLAW_DEFAULT_MODEL      Default model       (default: qwen3.5-plus)
-#   HICLAW_LLM_API_KEY        LLM API key         (required)
+#   HICLAW_LLM_PROVIDER      LLM provider       (default: codex-local when ~/.codex/auth.json exists)
+#   HICLAW_DEFAULT_MODEL      Default model       (default: gpt-5.4 in codex-local mode)
+#   HICLAW_LLM_API_KEY        LLM API key         (not needed in codex-local mode)
 #   HICLAW_ADMIN_USER         Admin username       (default: admin)
 #   HICLAW_ADMIN_PASSWORD     Admin password       (auto-generated if not set, min 8 chars)
 #   HICLAW_MATRIX_DOMAIN      Matrix domain        (default: matrix-local.hiclaw.io:18080)
@@ -59,8 +59,15 @@ STEP_RESULT=""  # Used by state machine to signal "back" navigation
 
 HICLAW_LOG_FILE="${HOME}/hiclaw-install.log"
 
-# Redirect all output (stdout and stderr) to both terminal and log file
-exec > >(tee -a "${HICLAW_LOG_FILE}") 2>&1
+# Redirect all output (stdout and stderr) to both terminal and log file when
+# process substitution is supported. Some sandboxed shells reject /dev/fd-based
+# redirection, so fall back to terminal-only logging instead of aborting.
+if [ "${HICLAW_DISABLE_TEE_LOG:-0}" != "1" ] && \
+   bash -lc 'exec > >(cat >/dev/null) 2>&1; echo ok' >/dev/null 2>&1; then
+    exec > >(tee -a "${HICLAW_LOG_FILE}") 2>&1
+else
+    touch "${HICLAW_LOG_FILE}" 2>/dev/null || true
+fi
 
 echo ""
 echo "========================================"
@@ -143,6 +150,40 @@ detect_language() {
             echo "en"
             ;;
     esac
+}
+
+detect_codex_home() {
+    local codex_dir="${HICLAW_HOST_CODEX_DIR:-${HOME}/.codex}"
+    if [ -f "${codex_dir}/auth.json" ]; then
+        echo "${codex_dir}"
+        return 0
+    fi
+    return 1
+}
+
+codex_local_available() {
+    detect_codex_home >/dev/null 2>&1
+}
+
+configure_codex_local() {
+    local codex_dir
+    codex_dir="$(detect_codex_home)" || {
+        error "Codex local mode requires ${HOME}/.codex/auth.json (or HICLAW_HOST_CODEX_DIR/auth.json)"
+    }
+
+    HICLAW_LLM_PROVIDER="codex-local"
+    HICLAW_DEFAULT_MODEL="${HICLAW_DEFAULT_MODEL:-gpt-5.4}"
+    HICLAW_LLM_API_KEY=""
+    HICLAW_OPENAI_BASE_URL=""
+    HICLAW_EMBEDDING_MODEL=""
+    HICLAW_HOST_CODEX_DIR="${HICLAW_HOST_CODEX_DIR:-${codex_dir}}"
+    HICLAW_MANAGER_RUNTIME="${HICLAW_MANAGER_RUNTIME:-codex}"
+    HICLAW_DEFAULT_WORKER_RUNTIME="${HICLAW_DEFAULT_WORKER_RUNTIME:-codex}"
+    export HICLAW_LLM_PROVIDER HICLAW_DEFAULT_MODEL HICLAW_LLM_API_KEY
+    export HICLAW_OPENAI_BASE_URL HICLAW_EMBEDDING_MODEL HICLAW_HOST_CODEX_DIR
+    export HICLAW_MANAGER_RUNTIME HICLAW_DEFAULT_WORKER_RUNTIME
+    log "Using local Codex session from ${HICLAW_HOST_CODEX_DIR}"
+    log "Manager runtime: ${HICLAW_MANAGER_RUNTIME}, Worker runtime: ${HICLAW_DEFAULT_WORKER_RUNTIME}, model: ${HICLAW_DEFAULT_MODEL}"
 }
 
 # Language priority: env var > existing env file > timezone detection
@@ -994,6 +1035,12 @@ wait_manager_ready() {
                     return 0
                 fi
                 ;;
+            codex)
+                if ${DOCKER_CMD} exec "${container}" cat /root/manager-workspace/.codex-agent/ready 2>/dev/null | grep -q 'ok'; then
+                    log "$(msg install.wait_ready.ok)"
+                    return 0
+                fi
+                ;;
             *)
                 if ${DOCKER_CMD} exec "${container}" openclaw gateway health --json 2>/dev/null | grep -q '"ok"' 2>/dev/null; then
                     log "$(msg install.wait_ready.ok)"
@@ -1294,7 +1341,7 @@ clear_step_vars() {
         step_llm)
             unset HICLAW_LLM_PROVIDER HICLAW_DEFAULT_MODEL HICLAW_OPENAI_BASE_URL
             unset HICLAW_LLM_API_KEY HICLAW_MODEL_CONTEXT_WINDOW HICLAW_MODEL_MAX_TOKENS
-            unset HICLAW_MODEL_REASONING HICLAW_MODEL_VISION
+            unset HICLAW_MODEL_REASONING HICLAW_MODEL_VISION HICLAW_HOST_CODEX_DIR
             ;;
         step_admin)   unset HICLAW_ADMIN_USER HICLAW_ADMIN_PASSWORD ;;
         step_network) unset HICLAW_LOCAL_ONLY ;;
@@ -1554,6 +1601,10 @@ step_existing() {
 
 step_llm() {
     log "$(msg llm.title)"
+    if { [ "${HICLAW_LLM_PROVIDER:-}" = "codex-local" ] || { [ -z "${HICLAW_LLM_PROVIDER+x}" ] && codex_local_available; }; }; then
+        configure_codex_local
+        return 0
+    fi
     if [ "${HICLAW_NON_INTERACTIVE}" = "1" ]; then
         HICLAW_LLM_PROVIDER="${HICLAW_LLM_PROVIDER:-qwen}"
         HICLAW_DEFAULT_MODEL="${HICLAW_DEFAULT_MODEL:-qwen3.5-plus}"
@@ -1800,7 +1851,9 @@ step_ports() {
     prompt HICLAW_PORT_GATEWAY "$(msg port.gateway_prompt)" "18080" || return 0
     prompt HICLAW_PORT_CONSOLE "$(msg port.console_prompt)" "18001" || return 0
     prompt HICLAW_PORT_ELEMENT_WEB "$(msg port.element_prompt)" "18088" || return 0
-    prompt HICLAW_PORT_MANAGER_CONSOLE "$(msg port.manager_console_prompt)" "18888" || return 0
+    if [ "${HICLAW_MANAGER_RUNTIME}" = "openclaw" ]; then
+        prompt HICLAW_PORT_MANAGER_CONSOLE "$(msg port.manager_console_prompt)" "18888" || return 0
+    fi
     log ""
 }
 
@@ -1811,7 +1864,7 @@ step_domains() {
     prompt HICLAW_MATRIX_CLIENT_DOMAIN "$(msg domain.element_prompt)" "matrix-client-local.hiclaw.io" || return 0
     prompt HICLAW_AI_GATEWAY_DOMAIN "$(msg domain.gateway_prompt)" "aigw-local.hiclaw.io" || return 0
     prompt HICLAW_FS_DOMAIN "$(msg domain.fs_prompt)" "fs-local.hiclaw.io" || return 0
-    if [ "${HICLAW_MANAGER_RUNTIME}" != "copaw" ]; then
+    if [ "${HICLAW_MANAGER_RUNTIME}" = "openclaw" ]; then
         prompt HICLAW_CONSOLE_DOMAIN "$(msg domain.console_prompt)" "console-local.hiclaw.io" || return 0
     fi
     log ""
@@ -2167,15 +2220,28 @@ install_manager() {
     fi
     HICLAW_WORKSPACE_DIR="$(cd "${HICLAW_WORKSPACE_DIR}" 2>/dev/null && pwd || echo "${HICLAW_WORKSPACE_DIR}")"
     mkdir -p "${HICLAW_WORKSPACE_DIR}"
+    if [ "${HICLAW_MANAGER_RUNTIME:-openclaw}" = "codex" ]; then
+        rm -f "${HICLAW_WORKSPACE_DIR}/.codex-agent/ready"
+    fi
+    if [ "${HICLAW_LLM_PROVIDER:-}" = "codex-local" ]; then
+        HICLAW_MANAGER_RUNTIME="${HICLAW_MANAGER_RUNTIME:-codex}"
+        HICLAW_DEFAULT_WORKER_RUNTIME="${HICLAW_DEFAULT_WORKER_RUNTIME:-codex}"
+        HICLAW_HOST_CODEX_DIR="${HICLAW_HOST_CODEX_DIR:-$(detect_codex_home 2>/dev/null || true)}"
+    fi
     HICLAW_MANAGER_RUNTIME="${HICLAW_MANAGER_RUNTIME:-openclaw}"
     export HICLAW_MANAGER_RUNTIME
     HICLAW_DEFAULT_WORKER_RUNTIME="${HICLAW_DEFAULT_WORKER_RUNTIME:-openclaw}"
+    export HICLAW_DEFAULT_WORKER_RUNTIME
+    if [ "${HICLAW_LLM_PROVIDER:-}" = "codex-local" ] && [ ! -f "${HICLAW_HOST_CODEX_DIR}/auth.json" ]; then
+        error "Codex local mode requires ${HICLAW_HOST_CODEX_DIR}/auth.json"
+    fi
     HICLAW_MATRIX_E2EE="${HICLAW_MATRIX_E2EE:-0}"
     export HICLAW_MATRIX_E2EE
     HICLAW_WORKER_IDLE_TIMEOUT="${HICLAW_WORKER_IDLE_TIMEOUT:-720}"
     export HICLAW_WORKER_IDLE_TIMEOUT
     HICLAW_HOST_SHARE_DIR="${HICLAW_HOST_SHARE_DIR:-$HOME}"
     export HICLAW_HOST_SHARE_DIR
+    export HICLAW_HOST_CODEX_DIR
 
     log ""
 
@@ -2220,12 +2286,13 @@ HICLAW_PORT_CONSOLE=${HICLAW_PORT_CONSOLE}
 HICLAW_PORT_ELEMENT_WEB=${HICLAW_PORT_ELEMENT_WEB}
 HICLAW_PORT_MANAGER_CONSOLE=${HICLAW_PORT_MANAGER_CONSOLE:-18888}
 
-# Manager runtime (openclaw | copaw)
+# Manager runtime (openclaw | codex | copaw)
 HICLAW_MANAGER_RUNTIME=${HICLAW_MANAGER_RUNTIME:-openclaw}
 
 # Matrix
 HICLAW_MATRIX_DOMAIN=${HICLAW_MATRIX_DOMAIN}
 HICLAW_MATRIX_CLIENT_DOMAIN=${HICLAW_MATRIX_CLIENT_DOMAIN}
+HICLAW_MATRIX_ROOM_VERSION=${HICLAW_MATRIX_ROOM_VERSION:-12}
 
 # Gateway
 HICLAW_AI_GATEWAY_DOMAIN=${HICLAW_AI_GATEWAY_DOMAIN}
@@ -2266,7 +2333,7 @@ HICLAW_CMS_METRICS_ENABLED=${HICLAW_CMS_METRICS_ENABLED:-false}
 HICLAW_WORKER_IMAGE=${WORKER_IMAGE}
 HICLAW_COPAW_WORKER_IMAGE=${COPAW_WORKER_IMAGE}
 
-# Default Worker runtime (openclaw | copaw)
+# Default Worker runtime (openclaw | codex | copaw)
 HICLAW_DEFAULT_WORKER_RUNTIME=${HICLAW_DEFAULT_WORKER_RUNTIME:-openclaw}
 
 # Matrix E2EE (0=disabled, 1=enabled; default: 0)
@@ -2290,6 +2357,8 @@ HICLAW_DATA_DIR=${HICLAW_DATA_DIR:-hiclaw-data}
 HICLAW_WORKSPACE_DIR=${HICLAW_WORKSPACE_DIR:-}
 # Host directory sharing
 HICLAW_HOST_SHARE_DIR=${HICLAW_HOST_SHARE_DIR:-}
+# Host Codex auth/config directory (codex-local mode)
+HICLAW_HOST_CODEX_DIR=${HICLAW_HOST_CODEX_DIR:-}
 EOF
 
     chmod 600 "${ENV_FILE}"
@@ -2341,6 +2410,12 @@ EOF
     else
         log "$(msg host_share.not_exist "${HICLAW_HOST_SHARE_DIR}")"
         HOST_SHARE_MOUNT_ARGS="-v ${HICLAW_HOST_SHARE_DIR}:/host-share"
+    fi
+
+    CODEX_MOUNT_ARGS=""
+    if [ "${HICLAW_LLM_PROVIDER:-}" = "codex-local" ]; then
+        CODEX_MOUNT_ARGS="-v ${HICLAW_HOST_CODEX_DIR}:/root/.codex-host:ro --security-opt label=disable"
+        log "Sharing local Codex auth/config: ${HICLAW_HOST_CODEX_DIR} -> /root/.codex-host"
     fi
 
     # YOLO mode: pass through if set in environment (enables autonomous decisions)
@@ -2465,6 +2540,7 @@ EOF
             -v "${CONTAINER_SOCK}:/var/run/docker.sock" \
             --security-opt label=disable \
             ${HICLAW_PROXY_ALLOWED_REGISTRIES:+-e HICLAW_PROXY_ALLOWED_REGISTRIES="${HICLAW_PROXY_ALLOWED_REGISTRIES}"} \
+            ${HICLAW_HOST_CODEX_DIR:+-e HICLAW_HOST_CODEX_DIR="${HICLAW_HOST_CODEX_DIR}"} \
             --restart unless-stopped \
             "${_proxy_image}"
         PROXY_ARGS="-e HICLAW_CONTAINER_API=http://hiclaw-docker-proxy:2375"
@@ -2476,6 +2552,10 @@ EOF
         _port_prefix="127.0.0.1:"
     else
         _port_prefix=""
+    fi
+    MANAGER_CONSOLE_PORT_ARGS=""
+    if [ "${HICLAW_MANAGER_RUNTIME}" = "openclaw" ]; then
+        MANAGER_CONSOLE_PORT_ARGS="-p 127.0.0.1:${HICLAW_PORT_MANAGER_CONSOLE:-18888}:18888"
     fi
     # shellcheck disable=SC2086
     ${DOCKER_CMD} run -d \
@@ -2494,10 +2574,11 @@ EOF
         -p "${_port_prefix}${HICLAW_PORT_GATEWAY}:8080" \
         -p "${_port_prefix}${HICLAW_PORT_CONSOLE}:8001" \
         -p "${_port_prefix}${HICLAW_PORT_ELEMENT_WEB:-18088}:8088" \
-        -p "127.0.0.1:${HICLAW_PORT_MANAGER_CONSOLE:-18888}:18888" \
+        ${MANAGER_CONSOLE_PORT_ARGS} \
         ${DATA_MOUNT_ARGS} \
         ${WORKSPACE_MOUNT_ARGS} \
         ${HOST_SHARE_MOUNT_ARGS} \
+        ${CODEX_MOUNT_ARGS} \
         --restart unless-stopped \
         "$([ "${HICLAW_MANAGER_RUNTIME}" = "copaw" ] && echo "${MANAGER_COPAW_IMAGE}" || echo "${MANAGER_IMAGE}")"
     unset _port_prefix
@@ -2560,8 +2641,10 @@ EOF
     log ""
     log "$(msg success.other_consoles)"
     log "$(msg success.higress_console "${HICLAW_PORT_CONSOLE}" "${HICLAW_ADMIN_USER}" "${HICLAW_ADMIN_PASSWORD}")"
-    log "$(msg success.manager_console "${HICLAW_PORT_MANAGER_CONSOLE:-18888}")"
-    log "$(msg success.manager_console_gateway "${HICLAW_ADMIN_USER}" "${HICLAW_ADMIN_PASSWORD}")"
+    if [ "${HICLAW_MANAGER_RUNTIME}" = "openclaw" ]; then
+        log "$(msg success.manager_console "${HICLAW_PORT_MANAGER_CONSOLE:-18888}")"
+        log "$(msg success.manager_console_gateway "${HICLAW_ADMIN_USER}" "${HICLAW_ADMIN_PASSWORD}")"
+    fi
     log ""
     log "$(msg success.switch_llm.title)"
     log "$(msg success.switch_llm.hint)"
@@ -2588,6 +2671,7 @@ install_worker() {
     local FS=""
     local FS_KEY=""
     local FS_SECRET=""
+    local WORKER_RUNTIME="${HICLAW_WORKER_RUNTIME:-openclaw}"
     local RESET=false
     local SKILLS_API_URL=""
 
@@ -2598,6 +2682,7 @@ install_worker() {
             --fs)         FS="$2"; shift 2 ;;
             --fs-key)     FS_KEY="$2"; shift 2 ;;
             --fs-secret)  FS_SECRET="$2"; shift 2 ;;
+            --runtime)    WORKER_RUNTIME="$2"; shift 2 ;;
             --skills-api-url) SKILLS_API_URL="$2"; shift 2 ;;
             --reset)      RESET=true; shift ;;
             *)            error "$(msg error.unknown_option "$1")" ;;
@@ -2628,9 +2713,11 @@ install_worker() {
 
     # Build docker run args
     local DOCKER_ENV=""
+    local NETWORK_ARGS=""
     DOCKER_ENV="${DOCKER_ENV} -e HOME=/root/hiclaw-fs/agents/${WORKER_NAME}"
     DOCKER_ENV="${DOCKER_ENV} -w /root/hiclaw-fs/agents/${WORKER_NAME}"
     DOCKER_ENV="${DOCKER_ENV} -e HICLAW_WORKER_NAME=${WORKER_NAME}"
+    DOCKER_ENV="${DOCKER_ENV} -e HICLAW_WORKER_RUNTIME=${WORKER_RUNTIME}"
     DOCKER_ENV="${DOCKER_ENV} -e HICLAW_FS_ENDPOINT=${FS}"
     DOCKER_ENV="${DOCKER_ENV} -e HICLAW_FS_ACCESS_KEY=${FS_KEY}"
     DOCKER_ENV="${DOCKER_ENV} -e HICLAW_FS_SECRET_KEY=${FS_SECRET}"
@@ -2656,10 +2743,23 @@ install_worker() {
         DOCKER_ENV="${DOCKER_ENV} -e HICLAW_NACOS_TOKEN=${HICLAW_NACOS_TOKEN}"
     fi
 
+    local CODEX_MOUNT_ARGS=""
+    if [ "${WORKER_RUNTIME}" = "codex" ]; then
+        local codex_dir="${HICLAW_HOST_CODEX_DIR:-$(detect_codex_home 2>/dev/null || true)}"
+        [ -f "${codex_dir}/auth.json" ] || error "Codex worker runtime requires ${codex_dir}/auth.json"
+        CODEX_MOUNT_ARGS="-v ${codex_dir}:/root/.codex-host:ro --security-opt label=disable"
+        log "Sharing local Codex auth/config: ${codex_dir} -> /root/.codex-host"
+    fi
+    if ${DOCKER_CMD} network inspect hiclaw-net >/dev/null 2>&1; then
+        NETWORK_ARGS="--network hiclaw-net"
+    fi
+
     # shellcheck disable=SC2086
     ${DOCKER_CMD} run -d \
         --name "${CONTAINER_NAME}" \
+        ${NETWORK_ARGS} \
         ${DOCKER_ENV} \
+        ${CODEX_MOUNT_ARGS} \
         --restart unless-stopped \
         "${WORKER_IMAGE}"
 
@@ -2795,13 +2895,15 @@ case "${1:-}" in
         echo "  # Then select '1' for Quick Start mode"
         echo ""
         echo "Non-interactive (for automation):"
-        echo "  HICLAW_NON_INTERACTIVE=1 HICLAW_LLM_API_KEY=sk-xxx $0"
+        echo "  HICLAW_NON_INTERACTIVE=1 $0"
+        echo "  # If ~/.codex/auth.json exists, this defaults to local Codex mode with no API key."
         echo ""
         echo "Worker Options:"
         echo "  --name <name>        Worker name (required)"
         echo "  --fs <url>           MinIO endpoint URL (required)"
         echo "  --fs-key <key>       MinIO access key (required)"
         echo "  --fs-secret <secret> MinIO secret key (required)"
+        echo "  --runtime <name>     Worker runtime: openclaw | codex | copaw"
         echo "  --reset              Remove existing Worker container before creating"
         exit 1
         ;;

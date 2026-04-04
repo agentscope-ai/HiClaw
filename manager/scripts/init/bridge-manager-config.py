@@ -10,7 +10,7 @@ config.json to add Manager-only fields:
   - require_approval: False
   - heartbeat config bridging
   - system_prompt_files (includes TOOLS.md)
-  - require_mention: True for group rooms
+  - require_mention: False for manager group rooms by default
 
 Usage:
   bridge-manager-config.py --openclaw-json <path> --working-dir <path>
@@ -69,7 +69,10 @@ def post_process_config(
         matrix_cfg["user_id"] = user_id
     else:
         print("WARNING: Could not derive Matrix user_id, channel config may be incomplete", flush=True)
-    matrix_cfg["require_mention"] = True
+    manager_group_require_mention = os.environ.get(
+        "HICLAW_MANAGER_GROUP_REQUIRE_MENTION", "false"
+    ).lower() in {"1", "true", "yes"}
+    matrix_cfg["require_mention"] = manager_group_require_mention
 
     # --- require_approval: False ---
     config.setdefault("agents", {}).setdefault("running", {})[

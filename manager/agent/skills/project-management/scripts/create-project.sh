@@ -30,6 +30,7 @@ if [ -z "${PROJECT_ID}" ] || [ -z "${PROJECT_TITLE}" ] || [ -z "${WORKERS_CSV}" 
 fi
 
 MATRIX_DOMAIN="${HICLAW_MATRIX_DOMAIN:-matrix-local.hiclaw.io:8080}"
+MATRIX_ROOM_VERSION="${HICLAW_MATRIX_ROOM_VERSION:-12}"
 ADMIN_USER="${HICLAW_ADMIN_USER:-admin}"
 
 _fail() {
@@ -126,6 +127,7 @@ ROOM_RESP=$(curl -sf -X POST ${HICLAW_MATRIX_SERVER}/_matrix/client/v3/createRoo
         "topic": "Project room for '"${PROJECT_TITLE}"' — managed by @manager",
         "invite": '"${INVITE_LIST}"',
         "preset": "trusted_private_chat",
+        "room_version": "'"${MATRIX_ROOM_VERSION}"'",
         "power_level_content_override": {
             "users": {
                 "'"${MANAGER_MATRIX_ID}"'": 100,
