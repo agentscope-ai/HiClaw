@@ -16,6 +16,11 @@ debug-log/
 .claude/
 CLAUDE.md
 
+# Local agent runtime / planning artifacts
+.omx/
+docs/superpowers/
+tasks/
+
 # OS files
 .DS_Store
 
