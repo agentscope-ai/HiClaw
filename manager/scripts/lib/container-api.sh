@@ -471,6 +471,11 @@ container_create_copaw_worker() {
         all_env="${base_env}"
     fi
 
+    local agentloop_fs_enabled=""
+    local agentloop_fs_mount=""
+    agentloop_fs_enabled=$(echo "${all_env}" | jq -r '.[] | select(startswith("HICLAW_COPAW_AGENTLOOP_FS_MEMORY_ENABLED=")) | split("=")[1]' 2>/dev/null | head -1)
+    agentloop_fs_mount=$(echo "${all_env}" | jq -r '.[] | select(startswith("HICLAW_COPAW_AGENTLOOP_FS_MOUNT=")) | split("=")[1]' 2>/dev/null | head -1)
+
     # Detect HICLAW_CONSOLE_PORT in env to set up port binding
     local console_port=""
     console_port=$(echo "${all_env}" | jq -r '.[] | select(startswith("HICLAW_CONSOLE_PORT=")) | split("=")[1]' 2>/dev/null || true)
@@ -498,16 +503,34 @@ container_create_copaw_worker() {
     local port_attempt=0
 
     while true; do
-        # Build HostConfig with NetworkMode (hiclaw-net), ExtraHosts and optional PortBindings
-        local host_config
-        if [ -n "${console_port}" ] && [ -n "${extra_hosts}" ]; then
-            host_config="{\"NetworkMode\":\"hiclaw-net\",\"ExtraHosts\":[${extra_hosts}],\"PortBindings\":{\"${console_port}/tcp\":[{\"HostPort\":\"${host_port}\"}]}}"
-        elif [ -n "${console_port}" ]; then
-            host_config="{\"NetworkMode\":\"hiclaw-net\",\"PortBindings\":{\"${console_port}/tcp\":[{\"HostPort\":\"${host_port}\"}]}}"
-        elif [ -n "${extra_hosts}" ]; then
-            host_config="{\"NetworkMode\":\"hiclaw-net\",\"ExtraHosts\":[${extra_hosts}]}"
-        else
-            host_config="{\"NetworkMode\":\"hiclaw-net\"}"
+        # Build HostConfig with NetworkMode (hiclaw-net), ExtraHosts, optional
+        # PortBindings, and best-effort FUSE support for AgentLoop FS self-mount.
+        local host_config='{"NetworkMode":"hiclaw-net"}'
+        if [ -n "${extra_hosts}" ]; then
+            host_config=$(printf '%s' "${host_config}" | jq --argjson hosts "[${extra_hosts}]" '. + {ExtraHosts: $hosts}')
+        fi
+        if [ -n "${console_port}" ]; then
+            host_config=$(printf '%s' "${host_config}" \
+                | jq --arg port "${console_port}/tcp" --arg host_port "${host_port}" \
+                    '. + {PortBindings: {($port): [{"HostPort": $host_port}]}}')
+        fi
+        if [ "${agentloop_fs_enabled}" = "true" ]; then
+            if [ -c /dev/fuse ]; then
+                host_config=$(printf '%s' "${host_config}" | jq '
+                    . + {
+                        Devices: ((.Devices // []) + [{
+                            "PathOnHost": "/dev/fuse",
+                            "PathInContainer": "/dev/fuse",
+                            "CgroupPermissions": "rwm"
+                        }]),
+                        CapAdd: ((.CapAdd // []) + ["SYS_ADMIN"]),
+                        SecurityOpt: ((.SecurityOpt // []) + ["apparmor:unconfined"])
+                    }')
+                _log "  AgentLoop FS self-mount enabled at ${agentloop_fs_mount:-/tmp/alibabacloud}"
+                _log "  Added /dev/fuse, SYS_ADMIN, and apparmor:unconfined for CoPaw self-mount"
+            else
+                _log "  WARNING: AgentLoop FS self-mount requested, but /dev/fuse is unavailable on the host runtime"
+            fi
         fi
 
         local create_payload

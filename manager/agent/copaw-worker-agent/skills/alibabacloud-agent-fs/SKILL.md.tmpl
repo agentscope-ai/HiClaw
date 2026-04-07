@@ -1,0 +1,38 @@
+---
+name: alibabacloud-agent-fs
+description: Use your external AgentLoop memory via the filesystem mounted at ${HICLAW_COPAW_AGENTLOOP_FS_MOUNT_RENDERED}. Use it to remember and recall long-term facts before falling back to local memory files.
+---
+
+# Alibaba Cloud Agent FS
+
+You have access to external memory through a local filesystem mount at `${HICLAW_COPAW_AGENTLOOP_FS_MOUNT_RENDERED}`.
+
+Use standard shell commands such as `ls`, `cat`, and `echo`. Do not look for a separate API client.
+
+## Long-Term Memory
+
+Your dedicated memory store is:
+
+`"${HICLAW_COPAW_AGENTLOOP_FS_MOUNT_RENDERED}/agentloop-memory/stores/${HICLAW_COPAW_AGENTLOOP_FS_STORE_RENDERED}/"`
+
+### Search before you write
+
+When you need to recall user preferences, prior decisions, or long-term project facts, search external memory first:
+
+```bash
+cat "${HICLAW_COPAW_AGENTLOOP_FS_MOUNT_RENDERED}/agentloop-memory/stores/${HICLAW_COPAW_AGENTLOOP_FS_STORE_RENDERED}/search/<query>.txt"
+```
+
+Always quote the path so spaces in `<query>` do not break the command.
+
+### Write new memory
+
+When you learn a durable fact worth keeping, append it to external memory:
+
+```bash
+echo "User prefers concise status updates" > "${HICLAW_COPAW_AGENTLOOP_FS_MOUNT_RENDERED}/agentloop-memory/stores/${HICLAW_COPAW_AGENTLOOP_FS_STORE_RENDERED}/_add.txt"
+```
+
+### Fallback
+
+If `${HICLAW_COPAW_AGENTLOOP_FS_MOUNT_RENDERED}` is missing or unavailable, fall back to local `MEMORY.md` and `memory/*.md`.

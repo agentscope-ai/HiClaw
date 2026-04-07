@@ -16,3 +16,6 @@ Record image-affecting changes to `manager/`, `worker/`, `openclaw-base/` here b
 - fix(cloud): respect pre-set `HICLAW_RUNTIME` in hiclaw-env.sh — only auto-detect when unset
 - fix: add explicit Matrix room join with retry before sending welcome message to prevent race condition
 
+### CoPaw
+
+- feat(copaw): add optional AgentLoop FS long-term memory integration with in-container self-mount, managed builtin skill/AGENTS injection, and static or OIDC credential passthrough for local and SAE runtimes

@@ -109,21 +109,41 @@ def main():
         changed = sync.pull_all()
         if changed:
             print(f"✓ Synced {len(changed)} file(s): {', '.join(changed)}")
-            
-            # Re-bridge config if openclaw.json changed
-            if any("openclaw.json" in f for f in changed):
-                print("Re-bridging openclaw.json to CoPaw config...")
-                openclaw_cfg = sync.get_config()
+
+            openclaw_changed = any("openclaw.json" in f for f in changed)
+            soul_changed = any(path.endswith("SOUL.md") for path in changed)
+            agents_changed = any(path.endswith("AGENTS.md") for path in changed)
+
+            if soul_changed:
                 soul = sync.get_soul()
-                agents = sync.get_agents_md()
-                
                 if soul:
                     (working_dir / "SOUL.md").write_text(soul)
+                    (working_dir.parent / "SOUL.md").write_text(soul)
+
+            if agents_changed:
+                agents = sync.get_agents_md()
                 if agents:
                     (working_dir / "AGENTS.md").write_text(agents)
-                
+                    (working_dir.parent / "AGENTS.md").write_text(agents)
+
+            # Re-bridge config if openclaw.json changed
+            if openclaw_changed:
+                print("Re-bridging openclaw.json to CoPaw config...")
+                openclaw_cfg = sync.get_config()
+                if not soul_changed:
+                    soul = sync.get_soul()
+                    if soul:
+                        (working_dir / "SOUL.md").write_text(soul)
+                        (working_dir.parent / "SOUL.md").write_text(soul)
+                if not agents_changed:
+                    agents = sync.get_agents_md()
+                    if agents:
+                        (working_dir / "AGENTS.md").write_text(agents)
+                        (working_dir.parent / "AGENTS.md").write_text(agents)
                 bridge_openclaw_to_copaw(openclaw_cfg, working_dir)
                 print("✓ Config re-bridged. CoPaw will hot-reload automatically.")
+            elif soul_changed or agents_changed:
+                print("✓ Agent instruction files refreshed.")
         else:
             print("✓ No changes detected. All files are up to date.")
     except Exception as exc:

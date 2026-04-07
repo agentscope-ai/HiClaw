@@ -36,6 +36,8 @@ RUN if [ -n "${APT_MIRROR}" ]; then \
             /etc/apt/sources.list.d/debian.sources 2>/dev/null || true; \
     fi && \
     apt-get update && apt-get install -y --no-install-recommends \
+        fuse \
+        libfuse-dev \
         libolm-dev \
         libjemalloc2 \
         curl \
@@ -63,6 +65,11 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
 RUN npm config set registry ${NPM_REGISTRY} && \
     npm install -g mcporter skills && \
     rm -rf /root/.npm
+
+RUN python -m pip install --no-cache-dir \
+        --index-url "${PIP_INDEX_URL}" \
+        --trusted-host "$(echo ${PIP_INDEX_URL} | sed 's|https\?://||;s|/.*||')" \
+        alibabacloud-agent-fs
 
 # Download lite CoPaw source archive from GitHub
 RUN curl -fsSL "${LITE_COPAW_REPO}/archive/${LITE_COPAW_COMMIT}.tar.gz" \

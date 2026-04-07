@@ -17,9 +17,49 @@ IMAGE_VERSION=$(cat "${AGENT_SRC}/.builtin-version" 2>/dev/null || echo "unknown
 
 source /opt/hiclaw/scripts/lib/hiclaw-env.sh
 source /opt/hiclaw/scripts/lib/builtin-merge.sh
+source /opt/hiclaw/scripts/lib/copaw-agentloop-fs.sh
 
 log() {
     echo "[upgrade-builtins $(date '+%Y-%m-%d %H:%M:%S')] $1"
+}
+
+_sync_optional_copaw_agentloop_fs_memory() {
+    local worker="$1"
+    local agents_remote="${HICLAW_STORAGE_PREFIX}/agents/${worker}/AGENTS.md"
+    local skill_remote="${HICLAW_STORAGE_PREFIX}/agents/${worker}/skills/alibabacloud-agent-fs/"
+    local section_key="copaw-agentloop-fs-memory"
+    local tmp_dir
+    tmp_dir=$(mktemp -d /tmp/copaw-agentloop-fs-upgrade-XXXXXX) || {
+        log "    WARNING: mktemp failed, skipping optional AgentLoop FS sync"
+        return 0
+    }
+
+    if copaw_agentloop_fs_enabled; then
+        copaw_agentloop_fs_render_skill_dir "${tmp_dir}/skill" || {
+            log "    WARNING: Failed to render AgentLoop FS skill"
+            rm -rf "${tmp_dir}"
+            return 0
+        }
+        copaw_agentloop_fs_render_agents_section "${tmp_dir}/section.md" || {
+            log "    WARNING: Failed to render AgentLoop FS AGENTS section"
+            rm -rf "${tmp_dir}"
+            return 0
+        }
+
+        mc mirror "${tmp_dir}/skill/" "${skill_remote}" --overwrite 2>/dev/null \
+            && log "    Updated optional AgentLoop FS skill" \
+            || log "    WARNING: Failed to sync optional AgentLoop FS skill"
+        update_managed_section_minio "${agents_remote}" "${tmp_dir}/section.md" "${section_key}" \
+            && log "    Updated optional AgentLoop FS AGENTS section" \
+            || log "    WARNING: Failed to sync optional AgentLoop FS AGENTS section"
+    else
+        mc rm --recursive --force "${skill_remote}" 2>/dev/null || true
+        update_managed_section_minio "${agents_remote}" "" "${section_key}" \
+            && log "    Removed optional AgentLoop FS AGENTS section" \
+            || log "    WARNING: Failed to remove optional AgentLoop FS AGENTS section"
+    fi
+
+    rm -rf "${tmp_dir}"
 }
 
 # ============================================================
@@ -172,11 +212,17 @@ if [ -d "${WORKER_AGENT_SRC}" ] && mc alias ls hiclaw > /dev/null 2>&1; then
                 for _skill_dir in "${_worker_agent_src}/skills"/*/; do
                     [ ! -d "${_skill_dir}" ] && continue
                     _skill_name=$(basename "${_skill_dir}")
+                    if [ "${_worker_runtime}" = "copaw" ] && [ "${_skill_name}" = "alibabacloud-agent-fs" ]; then
+                        continue
+                    fi
                     mc mirror "${_skill_dir}" \
                         "${HICLAW_STORAGE_PREFIX}/agents/${_worker_name}/skills/${_skill_name}/" --overwrite 2>/dev/null \
                         && log "    Updated builtin skill: ${_skill_name}" \
                         || log "    WARNING: Failed to sync builtin skill ${_skill_name}"
                 done
+            fi
+            if [ "${_worker_runtime}" = "copaw" ]; then
+                _sync_optional_copaw_agentloop_fs_memory "${_worker_name}"
             fi
 
             # Push assigned worker-skills (on-demand skills from registry)
@@ -205,6 +251,7 @@ fi
 # Step 5: Write installed version
 # ============================================================
 echo "${IMAGE_VERSION}" > "${WORKSPACE}/.builtin-version"
+copaw_agentloop_fs_signature > "${WORKSPACE}/.copaw-agentloop-fs-memory-signature"
 log "Step 5: Installed version: ${IMAGE_VERSION}"
 
 # ============================================================

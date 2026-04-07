@@ -1,0 +1,7 @@
+## External Memory
+
+When you need long-term memory, use AgentLoop FS first.
+
+- Search first: `cat "${HICLAW_COPAW_AGENTLOOP_FS_MOUNT_RENDERED}/agentloop-memory/stores/${HICLAW_COPAW_AGENTLOOP_FS_STORE_RENDERED}/search/<query>.txt"`
+- Write durable facts: `echo "..." > "${HICLAW_COPAW_AGENTLOOP_FS_MOUNT_RENDERED}/agentloop-memory/stores/${HICLAW_COPAW_AGENTLOOP_FS_STORE_RENDERED}/_add.txt"`
+- Use local `MEMORY.md` and `memory/*.md` only when `${HICLAW_COPAW_AGENTLOOP_FS_MOUNT_RENDERED}` is unavailable or you are recording short-term local notes

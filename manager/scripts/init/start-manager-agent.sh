@@ -5,6 +5,7 @@
 # In cloud mode (HICLAW_RUNTIME=aliyun) this is the container entrypoint.
 
 source /opt/hiclaw/scripts/lib/hiclaw-env.sh
+source /opt/hiclaw/scripts/lib/copaw-agentloop-fs.sh
 
 # ============================================================
 # Set timezone from TZ env var
@@ -133,12 +134,18 @@ mkdir -p /root/manager-workspace
 
 IMAGE_VERSION=$(cat /opt/hiclaw/agent/.builtin-version 2>/dev/null || echo "unknown")
 INSTALLED_VERSION=$(cat /root/manager-workspace/.builtin-version 2>/dev/null || echo "")
+CURRENT_AGENTLOOP_FS_SIGNATURE="$(copaw_agentloop_fs_signature)"
+INSTALLED_AGENTLOOP_FS_SIGNATURE="$(cat /root/manager-workspace/.copaw-agentloop-fs-memory-signature 2>/dev/null || echo "")"
 
 if [ ! -f /root/manager-workspace/.initialized ]; then
     log "First boot: initializing manager workspace..."
     bash /opt/hiclaw/scripts/init/upgrade-builtins.sh
     touch /root/manager-workspace/.initialized
     log "Manager workspace initialized (version: ${IMAGE_VERSION})"
+elif [ "${CURRENT_AGENTLOOP_FS_SIGNATURE}" != "${INSTALLED_AGENTLOOP_FS_SIGNATURE}" ]; then
+    log "CoPaw AgentLoop FS builtin refresh detected"
+    bash /opt/hiclaw/scripts/init/upgrade-builtins.sh
+    log "Manager workspace refreshed for CoPaw AgentLoop FS settings"
 elif [ "${IMAGE_VERSION}" != "${INSTALLED_VERSION}" ] || [ "${IMAGE_VERSION}" = "latest" ]; then
     log "Upgrade detected: ${INSTALLED_VERSION} -> ${IMAGE_VERSION}${IMAGE_VERSION:+ (latest: always upgrade)}"
     bash /opt/hiclaw/scripts/init/upgrade-builtins.sh

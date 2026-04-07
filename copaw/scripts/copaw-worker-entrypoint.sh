@@ -24,6 +24,8 @@ source /opt/hiclaw/scripts/lib/hiclaw-env.sh 2>/dev/null || true
 WORKER_NAME="${HICLAW_WORKER_NAME:?HICLAW_WORKER_NAME is required}"
 INSTALL_DIR="/root/.copaw-worker"
 CONSOLE_PORT="${HICLAW_CONSOLE_PORT:-}"
+AGENTLOOP_FS_MOUNT="${HICLAW_COPAW_AGENTLOOP_FS_MOUNT:-/tmp/alibabacloud}"
+AGENTLOOP_FS_STORE="${HICLAW_COPAW_AGENTLOOP_FS_STORE:-}"
 
 log() {
     echo "[hiclaw-copaw-worker $(date '+%Y-%m-%d %H:%M:%S')] $1"
@@ -35,6 +37,69 @@ if [ -n "${TZ}" ] && [ -f "/usr/share/zoneinfo/${TZ}" ]; then
     echo "${TZ}" > /etc/timezone
     log "Timezone set to ${TZ}"
 fi
+
+_agentloop_fs_enabled() {
+    local value
+    value="$(echo "${HICLAW_COPAW_AGENTLOOP_FS_MEMORY_ENABLED:-false}" | tr '[:upper:]' '[:lower:]')"
+    { [ "${value}" = "1" ] || [ "${value}" = "true" ] || [ "${value}" = "yes" ]; } \
+        && [ -n "${AGENTLOOP_FS_STORE}" ]
+}
+
+_export_if_unset() {
+    local target="$1"
+    local value="$2"
+    if [ -n "${value}" ] && [ -z "${!target:-}" ]; then
+        export "${target}=${value}"
+    fi
+}
+
+_export_agentloop_fs_credentials() {
+    _export_if_unset "ALIBABA_CLOUD_ACCESS_KEY_ID" "${HICLAW_COPAW_AGENTLOOP_FS_ACCESS_KEY_ID:-}"
+    _export_if_unset "ALIBABA_CLOUD_ACCESS_KEY_SECRET" "${HICLAW_COPAW_AGENTLOOP_FS_ACCESS_KEY_SECRET:-}"
+    _export_if_unset "ALIBABA_CLOUD_SECURITY_TOKEN" "${HICLAW_COPAW_AGENTLOOP_FS_SECURITY_TOKEN:-}"
+    _export_if_unset "ALIBABA_CLOUD_ROLE_ARN" "${HICLAW_COPAW_AGENTLOOP_FS_ROLE_ARN:-}"
+    _export_if_unset "ALIBABA_CLOUD_OIDC_PROVIDER_ARN" "${HICLAW_COPAW_AGENTLOOP_FS_OIDC_PROVIDER_ARN:-}"
+    _export_if_unset "ALIBABA_CLOUD_OIDC_TOKEN_FILE" "${HICLAW_COPAW_AGENTLOOP_FS_OIDC_TOKEN_FILE:-}"
+    _export_if_unset "ALIBABA_CLOUD_ROLE_SESSION_NAME" "${HICLAW_COPAW_AGENTLOOP_FS_ROLE_SESSION_NAME:-}"
+    _export_if_unset "ALIBABA_CLOUD_REGION_ID" "${HICLAW_COPAW_AGENTLOOP_FS_REGION_ID:-${HICLAW_REGION:-}}"
+    _export_if_unset "CMS_WORKSPACE" "${HICLAW_COPAW_AGENTLOOP_FS_CMS_WORKSPACE:-}"
+    _export_if_unset "CMS_ENDPOINT" "${HICLAW_COPAW_AGENTLOOP_FS_CMS_ENDPOINT:-}"
+}
+
+_start_agentloop_fs() {
+    _agentloop_fs_enabled || return 0
+
+    if ! command -v alibabacloud-agent-fs >/dev/null 2>&1; then
+        log "WARNING: AgentLoop FS enabled but alibabacloud-agent-fs is not installed"
+        return 0
+    fi
+
+    _export_agentloop_fs_credentials
+
+    mkdir -p "${AGENTLOOP_FS_MOUNT}"
+    log "Starting AgentLoop FS at ${AGENTLOOP_FS_MOUNT} (store: ${AGENTLOOP_FS_STORE})"
+
+    local log_file="/tmp/${WORKER_NAME}-agentloop-fs.log"
+    alibabacloud-agent-fs "${AGENTLOOP_FS_MOUNT}" >"${log_file}" 2>&1 &
+    local fs_pid=$!
+
+    for _ in $(seq 1 10); do
+        if [ -f "${AGENTLOOP_FS_MOUNT}/_help.txt" ]; then
+            log "AgentLoop FS is ready (PID: ${fs_pid})"
+            return 0
+        fi
+        if ! kill -0 "${fs_pid}" 2>/dev/null; then
+            break
+        fi
+        sleep 1
+    done
+
+    log "WARNING: AgentLoop FS mount did not become ready; CoPaw will continue with local memory fallback"
+    if [ -f "${log_file}" ]; then
+        tail -n 20 "${log_file}" 2>/dev/null | sed 's/^/[agentloop-fs] /'
+    fi
+    return 0
+}
 
 # ── Credential setup ─────────────────────────────────────────────────────────
 # Cloud mode: RRSA/STS credentials via MC_HOST_hiclaw (set by ensure_mc_credentials).
@@ -62,6 +127,8 @@ WORKER_SKILLS_DIR="${INSTALL_DIR}/${WORKER_NAME}/skills"
 mkdir -p "${WORKER_SKILLS_DIR}"
 mkdir -p "${HOME}/.agents"
 ln -sfn "${WORKER_SKILLS_DIR}" "${HOME}/.agents/skills"
+
+_start_agentloop_fs
 
 if [ -n "${CONSOLE_PORT}" ]; then
     # ---------- Standard mode: copaw-worker (PyPI CoPaw venv, with console) ----------

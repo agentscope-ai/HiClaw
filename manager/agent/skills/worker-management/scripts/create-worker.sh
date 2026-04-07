@@ -18,6 +18,8 @@ set -e
 source /opt/hiclaw/scripts/lib/hiclaw-env.sh
 source /opt/hiclaw/scripts/lib/container-api.sh
 source /opt/hiclaw/scripts/lib/gateway-api.sh
+source /opt/hiclaw/scripts/lib/builtin-merge.sh
+source /opt/hiclaw/scripts/lib/copaw-agentloop-fs.sh
 
 # Override log() to also write to container's main stdout (/proc/1/fd/1)
 # so that logs are visible in `docker logs` / SAE log viewer even when
@@ -128,6 +130,48 @@ fi
 _fail() {
     echo '{"error": "'"$1"'"}'
     exit 1
+}
+
+_sync_optional_copaw_agentloop_fs_memory() {
+    local worker="$1"
+    local agents_remote="${HICLAW_STORAGE_PREFIX}/agents/${worker}/AGENTS.md"
+    local skill_remote="${HICLAW_STORAGE_PREFIX}/agents/${worker}/skills/alibabacloud-agent-fs/"
+    local section_key="copaw-agentloop-fs-memory"
+    local tmp_dir
+    tmp_dir=$(mktemp -d /tmp/copaw-agentloop-fs-XXXXXX) || {
+        log "  WARNING: mktemp failed, skipping optional AgentLoop FS sync"
+        return 0
+    }
+
+    if copaw_agentloop_fs_enabled; then
+        if [ "${HICLAW_RUNTIME:-}" != "aliyun" ] \
+            && ! copaw_agentloop_fs_static_credentials_configured \
+            && ! copaw_agentloop_fs_oidc_overrides_configured; then
+            log "  WARNING: AgentLoop FS memory enabled for CoPaw, but no dedicated static or OIDC override credentials were configured; local self-mount may fail."
+        fi
+
+        copaw_agentloop_fs_render_skill_dir "${tmp_dir}/skill" || {
+            log "  WARNING: Failed to render AgentLoop FS skill"
+            rm -rf "${tmp_dir}"
+            return 0
+        }
+        copaw_agentloop_fs_render_agents_section "${tmp_dir}/section.md" || {
+            log "  WARNING: Failed to render AgentLoop FS AGENTS section"
+            rm -rf "${tmp_dir}"
+            return 0
+        }
+
+        mc mirror "${tmp_dir}/skill/" "${skill_remote}" --overwrite \
+            || log "  WARNING: Failed to push alibabacloud-agent-fs skill"
+        update_managed_section_minio "${agents_remote}" "${tmp_dir}/section.md" "${section_key}" \
+            || log "  WARNING: Failed to update optional AgentLoop FS AGENTS section"
+    else
+        mc rm --recursive --force "${skill_remote}" 2>/dev/null || true
+        update_managed_section_minio "${agents_remote}" "" "${section_key}" \
+            || log "  WARNING: Failed to remove optional AgentLoop FS AGENTS section"
+    fi
+
+    rm -rf "${tmp_dir}"
 }
 
 # ============================================================
@@ -434,11 +478,17 @@ if [ -d "${WORKER_AGENT_SRC}" ]; then
         for _skill_dir in "${WORKER_AGENT_SRC}/skills"/*/; do
             [ ! -d "${_skill_dir}" ] && continue
             _skill_name=$(basename "${_skill_dir}")
+            if [ "${WORKER_RUNTIME}" = "copaw" ] && [ "${_skill_name}" = "alibabacloud-agent-fs" ]; then
+                continue
+            fi
             log "  Pushing ${_skill_name} skill (${WORKER_RUNTIME}) to worker MinIO..."
             mc mirror "${_skill_dir}" \
                 "${HICLAW_STORAGE_PREFIX}/agents/${WORKER_NAME}/skills/${_skill_name}/" --overwrite \
                 || log "  WARNING: Failed to push ${_skill_name} skill"
         done
+    fi
+    if [ "${WORKER_RUNTIME}" = "copaw" ]; then
+        _sync_optional_copaw_agentloop_fs_memory "${WORKER_NAME}"
     fi
     log "  Worker agent files pushed"
 else
@@ -524,16 +574,44 @@ _build_install_cmd() {
     local fs_external_endpoint="http://${fs_domain}:${fs_external_port}"
     local fs_access_key="${WORKER_NAME}"
     local fs_secret_key="${WORKER_MINIO_PASSWORD}"
+    local console_port="${CONSOLE_PORT:-8088}"
+
+    _shell_quote() {
+        printf '%q' "$1"
+    }
+
+    _export_env_assignment() {
+        local item="$1"
+        local key="${item%%=*}"
+        local value="${item#*=}"
+        printf 'export %s=%q; ' "${key}" "${value}"
+    }
 
     if [ "${WORKER_RUNTIME}" = "copaw" ]; then
         # copaw-worker is a pip package running on the host; use external port.
         # Use Alibaba Cloud PyPI mirror for faster downloads in China.
-        local cmd="pip install -i https://mirrors.aliyun.com/pypi/simple/ copaw-worker && copaw-worker"
+        local cmd="pip install -i https://mirrors.aliyun.com/pypi/simple/ copaw-worker"
+        if copaw_agentloop_fs_enabled; then
+            local agentloop_mount
+            agentloop_mount="$(copaw_agentloop_fs_mount_path)"
+            local env_exports=""
+            while IFS= read -r item; do
+                [ -z "${item}" ] && continue
+                env_exports="${env_exports}$(_export_env_assignment "${item}")"
+            done < <(copaw_agentloop_fs_env_lines)
+            cmd="pip install -i https://mirrors.aliyun.com/pypi/simple/ copaw-worker alibabacloud-agent-fs"
+            cmd="${env_exports}${cmd}"
+            cmd="${cmd} && mkdir -p $(_shell_quote "${agentloop_mount}")"
+            cmd="${cmd} && (alibabacloud-agent-fs $(_shell_quote "${agentloop_mount}") >/tmp/${WORKER_NAME}-agentloop-fs.log 2>&1 &)"
+            cmd="${cmd} && copaw-worker"
+        else
+            cmd="${cmd} && copaw-worker"
+        fi
         cmd="${cmd} --name ${WORKER_NAME}"
         cmd="${cmd} --fs ${fs_external_endpoint}"
         cmd="${cmd} --fs-key ${fs_access_key}"
         cmd="${cmd} --fs-secret ${fs_secret_key}"
-        cmd="${cmd} --console-port ${CONSOLE_PORT:-8088}"
+        cmd="${cmd} --console-port ${console_port}"
         echo "${cmd}"
         return
     fi
@@ -556,11 +634,29 @@ _build_extra_env() {
     if [ -n "${CONSOLE_PORT}" ]; then
         items+=("HICLAW_CONSOLE_PORT=${CONSOLE_PORT}")
     fi
+    if [ "${WORKER_RUNTIME}" = "copaw" ]; then
+        while IFS= read -r item; do
+            [ -z "${item}" ] && continue
+            items+=("${item}")
+        done < <(copaw_agentloop_fs_env_lines)
+    fi
     if [ ${#items[@]} -eq 0 ]; then
         echo "[]"
     else
         printf '%s\n' "${items[@]}" | jq -R . | jq -s .
     fi
+}
+
+_env_lines_to_json_object() {
+    local obj='{}'
+    local item key value
+    while IFS= read -r item; do
+        [ -z "${item}" ] && continue
+        key="${item%%=*}"
+        value="${item#*=}"
+        obj=$(printf '%s' "${obj}" | jq --arg k "${key}" --arg v "${value}" '. + {($k): $v}')
+    done
+    printf '%s\n' "${obj}"
 }
 
 if [ "${REMOTE_MODE}" = true ]; then
@@ -608,6 +704,13 @@ elif [ "${HICLAW_RUNTIME}" = "aliyun" ]; then
                 "OPENCLAW_MDNS_HOSTNAME": ("hiclaw-w-" + $worker_name)
             }
           end')
+    if [ "${WORKER_RUNTIME}" = "copaw" ] && copaw_agentloop_fs_enabled; then
+        agentloop_fs_env_json="$(copaw_agentloop_fs_env_lines | _env_lines_to_json_object)"
+        SAE_ENVS=$(jq -cn \
+            --argjson base "${SAE_ENVS}" \
+            --argjson extra "${agentloop_fs_env_json}" \
+            '$base + $extra')
+    fi
     log "  SAE_ENVS: ${SAE_ENVS:0:200}..."
 
     CREATE_OUTPUT=$(sae_create_worker "${WORKER_NAME}" "${SAE_ENVS}" "${SAE_IMAGE}" 2>/dev/null) || true
