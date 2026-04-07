@@ -807,17 +807,16 @@ description: Use when you need to generate debug logs, export Matrix messages,
 ### Export Matrix Messages
 Export recent Matrix room messages for a specific worker or the team room.
 
-```bash
+
 bash ./skills/debug-analysis/scripts/export-matrix-messages.sh \
   --worker alpha-dev \
   --hours 24 \
   --output /root/debug/matrix-export/alpha-dev-room.json
-```
+
 
 ### Generate Debug Log
 Aggregate session logs, Matrix messages, and state files into a structured debug report.
 
-```bash
 bash ./skills/debug-analysis/scripts/generate-debug-log.sh \
   --worker alpha-dev \
   --hours 24 \
@@ -825,7 +824,6 @@ bash ./skills/debug-analysis/scripts/generate-debug-log.sh \
   --include-matrix \
   --include-state \
   --output /root/debug/output/debug-report.md
-```
 
 ### Analyze with Source Code
 The hiclaw source code is available at `/root/debug/hiclaw-source/`.

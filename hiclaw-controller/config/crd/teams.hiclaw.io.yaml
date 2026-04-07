@@ -169,6 +169,7 @@ spec:
                   type: object
                   description: Exposed ports per worker name
                   x-kubernetes-preserve-unknown-fields: true
+      subresources:
         status: {}
       additionalPrinterColumns:
         - name: Leader
