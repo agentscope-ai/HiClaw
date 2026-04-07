@@ -142,7 +142,62 @@ copaw_agentloop_fs_render_skill_dir() {
     HICLAW_COPAW_AGENTLOOP_FS_MOUNT_RENDERED="$(copaw_agentloop_fs_mount_path)"
     HICLAW_COPAW_AGENTLOOP_FS_STORE_RENDERED="$(copaw_agentloop_fs_store)"
     export HICLAW_COPAW_AGENTLOOP_FS_MOUNT_RENDERED HICLAW_COPAW_AGENTLOOP_FS_STORE_RENDERED
-    envsubst < "${template}" > "${target_dir}/SKILL.md"
+    envsubst '${HICLAW_COPAW_AGENTLOOP_FS_MOUNT_RENDERED} ${HICLAW_COPAW_AGENTLOOP_FS_STORE_RENDERED}' \
+        < "${template}" > "${target_dir}/SKILL.md"
+}
+
+# copaw_agentloop_fs_sync_to_minio <worker_name> [--warn-credentials]
+#
+# Syncs the optional AgentLoop FS skill and AGENTS section to MinIO for a
+# given CoPaw worker. When disabled, removes any previously synced artifacts.
+# Pass --warn-credentials to emit a warning when no credentials are configured
+# (used during worker creation but not during bulk upgrades).
+#
+# Requires: HICLAW_STORAGE_PREFIX, mc, update_managed_section_minio (builtin-merge.sh)
+copaw_agentloop_fs_sync_to_minio() {
+    local worker="$1"
+    local warn_credentials=false
+    [ "${2:-}" = "--warn-credentials" ] && warn_credentials=true
+
+    local agents_remote="${HICLAW_STORAGE_PREFIX}/agents/${worker}/AGENTS.md"
+    local skill_remote="${HICLAW_STORAGE_PREFIX}/agents/${worker}/skills/alibabacloud-agent-fs/"
+    local section_key="copaw-agentloop-fs-memory"
+    local tmp_dir
+    tmp_dir=$(mktemp -d /tmp/copaw-agentloop-fs-XXXXXX) || {
+        log "  WARNING: mktemp failed, skipping optional AgentLoop FS sync"
+        return 0
+    }
+
+    if copaw_agentloop_fs_enabled; then
+        if [ "${warn_credentials}" = true ] \
+            && [ "${HICLAW_RUNTIME:-}" != "aliyun" ] \
+            && ! copaw_agentloop_fs_static_credentials_configured \
+            && ! copaw_agentloop_fs_oidc_overrides_configured; then
+            log "  WARNING: AgentLoop FS memory enabled for CoPaw, but no dedicated static or OIDC override credentials were configured; local self-mount may fail."
+        fi
+
+        copaw_agentloop_fs_render_skill_dir "${tmp_dir}/skill" || {
+            log "  WARNING: Failed to render AgentLoop FS skill"
+            rm -rf "${tmp_dir}"
+            return 0
+        }
+        copaw_agentloop_fs_render_agents_section "${tmp_dir}/section.md" || {
+            log "  WARNING: Failed to render AgentLoop FS AGENTS section"
+            rm -rf "${tmp_dir}"
+            return 0
+        }
+
+        mc mirror "${tmp_dir}/skill/" "${skill_remote}" --overwrite 2>/dev/null \
+            || log "  WARNING: Failed to push alibabacloud-agent-fs skill"
+        update_managed_section_minio "${agents_remote}" "${tmp_dir}/section.md" "${section_key}" \
+            || log "  WARNING: Failed to update optional AgentLoop FS AGENTS section"
+    else
+        mc rm --recursive --force "${skill_remote}" 2>/dev/null || true
+        update_managed_section_minio "${agents_remote}" "" "${section_key}" \
+            || log "  WARNING: Failed to remove optional AgentLoop FS AGENTS section"
+    fi
+
+    rm -rf "${tmp_dir}"
 }
 
 copaw_agentloop_fs_render_agents_section() {
@@ -151,5 +206,6 @@ copaw_agentloop_fs_render_agents_section() {
     HICLAW_COPAW_AGENTLOOP_FS_MOUNT_RENDERED="$(copaw_agentloop_fs_mount_path)"
     HICLAW_COPAW_AGENTLOOP_FS_STORE_RENDERED="$(copaw_agentloop_fs_store)"
     export HICLAW_COPAW_AGENTLOOP_FS_MOUNT_RENDERED HICLAW_COPAW_AGENTLOOP_FS_STORE_RENDERED
-    envsubst < "${template}" > "${target_file}"
+    envsubst '${HICLAW_COPAW_AGENTLOOP_FS_MOUNT_RENDERED} ${HICLAW_COPAW_AGENTLOOP_FS_STORE_RENDERED}' \
+        < "${template}" > "${target_file}"
 }
