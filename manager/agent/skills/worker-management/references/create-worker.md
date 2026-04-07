@@ -1,5 +1,7 @@
 # Create a Worker
 
+If the admin asks you to import an existing Worker template, search a registry for a matching template, or install a direct package URI such as `nacos://...`, stop here and use the `hiclaw-find-worker` skill. This document is only for hand-authored Workers.
+
 ## Step 0: Determine runtime
 
 | Admin says | Runtime | Flags |
@@ -71,6 +73,10 @@ bash /opt/hiclaw/agent/skills/worker-management/scripts/create-worker.sh \
   [--remote] [--runtime openclaw|copaw] [--console-port <PORT>]
 ```
 
+| Flag | Description |
+|------|-------------|
+| `--model` | Model ID. If not specified, uses the default from `HICLAW_DEFAULT_MODEL` environment variable. |
+
 The script handles everything: Matrix registration, room creation, Higress consumer, AI/MCP authorization, config generation, MinIO sync, skills push, and container startup.
 
 ### MCP server short-circuit
@@ -98,18 +104,18 @@ Only use `--remote` when admin **explicitly** requests deploying on a separate m
    bash -c 'source /opt/hiclaw/scripts/lib/container-api.sh && worker_backend_status "<NAME>"'
    ```
 
-2. Send greeting in Worker's Room:
+2. Immediately reply to admin in the DM (do NOT wait for Worker to greet first):
    ```
-   @<NAME>:${HICLAW_MATRIX_DOMAIN} You're all set! Please introduce yourself to everyone in this room.
-   ```
-
-3. After Worker greets, notify admin:
-   ```
-   @${HICLAW_ADMIN_USER}:${HICLAW_MATRIX_DOMAIN} <NAME> is ready. Remember to @mention them when giving tasks.
+   <NAME> is ready. Remember to @mention them when giving tasks.
 
    Note: By default, Workers only accept @mentions from Manager and admin — not from each other. Peer mentions can be enabled explicitly per-project.
    ```
 
+3. Send greeting in Worker's Room:
+   ```
+   @<NAME>:${HICLAW_MATRIX_DOMAIN} You're all set! Please introduce yourself to everyone in this room.
+   ```
+
 ## Imported Worker Pull-Up
 
-When `hiclaw-import.sh` sends a message to start an imported Worker, all config is already in place. **Do NOT run `create-worker.sh`** — just start the container following the message instructions.
+When a template import finishes and sends a message to start an imported Worker, all config is already in place. **Do NOT run `create-worker.sh`** — just start the container following the message instructions.

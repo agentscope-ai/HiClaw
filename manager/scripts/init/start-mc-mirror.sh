@@ -38,10 +38,16 @@ for dir in shared/knowledge shared/tasks workers; do
     echo "" | mc pipe "${HICLAW_STORAGE_PREFIX}/${dir}/.gitkeep" 2>/dev/null || true
 done
 
+# Initialize hiclaw-config directory for declarative CRD-style resources
+for dir in hiclaw-config/workers hiclaw-config/teams hiclaw-config/humans; do
+    echo "" | mc pipe "${HICLAW_STORAGE_PREFIX}/${dir}/.gitkeep" 2>/dev/null || true
+done
+
 # Create local mirror directory (for shared + worker data only)
 # Use absolute path because HOME may point to manager-workspace
 HICLAW_FS_ROOT="/root/hiclaw-fs"
 mkdir -p "${HICLAW_FS_ROOT}"
+mkdir -p "${HICLAW_FS_ROOT}/hiclaw-config"
 
 # Initial full sync to local (workers + shared)
 mc mirror "${HICLAW_STORAGE_PREFIX}/" "${HICLAW_FS_ROOT}/" --overwrite
@@ -50,6 +56,15 @@ mc mirror "${HICLAW_STORAGE_PREFIX}/" "${HICLAW_FS_ROOT}/" --overwrite
 touch "${HICLAW_FS_ROOT}/.initialized"
 
 log "MinIO storage initialized and synced to ${HICLAW_FS_ROOT}/"
+
+# hiclaw-config mirror: 10-second interval for control plane config (CRD YAML files).
+# hiclaw-controller watches this directory via fsnotify to trigger reconcile.
+(
+    while true; do
+        sleep 10
+        mc mirror "${HICLAW_STORAGE_PREFIX}/hiclaw-config/" "${HICLAW_FS_ROOT}/hiclaw-config/" --overwrite --remove --newer-than "15s" 2>/dev/null || true
+    done
+) &
 
 # Fallback: periodic Remote->Local pull every 5 minutes.
 # Normal operation relies on on-demand pulls triggered by Matrix notifications.

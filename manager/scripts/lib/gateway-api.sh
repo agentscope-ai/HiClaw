@@ -165,6 +165,7 @@ _gateway_cloud_authorize_routes() {
 
 _gateway_higress_authorize_routes() {
     local consumer_name="$1"
+    local max_retries=5
 
     local ai_routes
     ai_routes=$(curl -sf http://127.0.0.1:8001/v1/ai/routes \
@@ -175,24 +176,45 @@ _gateway_higress_authorize_routes() {
     route_names=$(echo "${ai_routes}" | jq -r '.data[]?.name // empty' 2>/dev/null || true)
     for route_name in ${route_names}; do
         [ -z "${route_name}" ] && continue
-        local route_resp route
-        route_resp=$(curl -sf "http://127.0.0.1:8001/v1/ai/routes/${route_name}" \
-            -b "${HIGRESS_COOKIE_FILE}" 2>/dev/null) || continue
-        route=$(echo "${route_resp}" | jq '.data // .' 2>/dev/null)
 
-        local already
-        already=$(echo "${route}" | jq -r '.authConfig.allowedConsumers[]? // empty' 2>/dev/null | grep -c "^${consumer_name}$" || true)
-        if [ "${already}" -gt 0 ]; then
-            continue
+        local attempt=0
+        while [ "${attempt}" -lt "${max_retries}" ]; do
+            local route_resp route
+            route_resp=$(curl -sf "http://127.0.0.1:8001/v1/ai/routes/${route_name}" \
+                -b "${HIGRESS_COOKIE_FILE}" 2>/dev/null) || break
+            route=$(echo "${route_resp}" | jq '.data // .' 2>/dev/null)
+
+            local already
+            already=$(echo "${route}" | jq -r '.authConfig.allowedConsumers[]? // empty' 2>/dev/null | grep -c "^${consumer_name}$" || true)
+            if [ "${already}" -gt 0 ]; then
+                break
+            fi
+
+            local updated
+            updated=$(echo "${route}" | jq --arg c "${consumer_name}" '.authConfig.allowedConsumers += [$c]')
+
+            local http_code
+            http_code=$(curl -s -o /dev/null -w '%{http_code}' -X PUT \
+                "http://127.0.0.1:8001/v1/ai/routes/${route_name}" \
+                -b "${HIGRESS_COOKIE_FILE}" \
+                -H 'Content-Type: application/json' \
+                -d "${updated}")
+
+            if [ "${http_code}" = "200" ]; then
+                break
+            elif [ "${http_code}" = "409" ]; then
+                attempt=$((attempt + 1))
+                echo "[gateway-api] Conflict updating route ${route_name}, retrying (${attempt}/${max_retries})..." >&2
+                sleep "$((RANDOM % 3 + 1))"
+            else
+                echo "[gateway-api] WARNING: Failed to update route ${route_name} (HTTP ${http_code})" >&2
+                break
+            fi
+        done
+
+        if [ "${attempt}" -ge "${max_retries}" ]; then
+            echo "[gateway-api] ERROR: Failed to update route ${route_name} after ${max_retries} retries" >&2
         fi
-
-        local updated
-        updated=$(echo "${route}" | jq --arg c "${consumer_name}" '.authConfig.allowedConsumers += [$c]')
-        curl -sf -X PUT "http://127.0.0.1:8001/v1/ai/routes/${route_name}" \
-            -b "${HIGRESS_COOKIE_FILE}" \
-            -H 'Content-Type: application/json' \
-            -d "${updated}" > /dev/null 2>&1 \
-            || echo "[gateway-api] WARNING: Failed to update route ${route_name}" >&2
     done
 }
 
@@ -257,8 +279,16 @@ _gateway_higress_authorize_mcp() {
             continue
         fi
 
+        # NOTE: The mcpServer/consumers API does not support optimistic locking (no version field).
+        # Re-fetch the latest state right before each update to minimize the race window.
+        # TODO: Add version-based conflict detection to the Higress mcpServer/consumers API.
+        local fresh_mcp_raw fresh_mcp
+        fresh_mcp_raw=$(curl -sf http://127.0.0.1:8001/v1/mcpServer \
+            -b "${HIGRESS_COOKIE_FILE}" 2>/dev/null) || true
+        fresh_mcp=$(echo "${fresh_mcp_raw}" | jq '.data // .' 2>/dev/null || echo "${fresh_mcp_raw}")
+
         local existing_consumers consumer_list ec
-        existing_consumers=$(echo "${all_mcp}" | jq -r --arg n "${mcp_name}" \
+        existing_consumers=$(echo "${fresh_mcp}" | jq -r --arg n "${mcp_name}" \
             '.[] | select(.name == $n) | .consumerAuthInfo.allowedConsumers // [] | .[]' 2>/dev/null || true)
         consumer_list="[\"manager\""
         for ec in ${existing_consumers}; do

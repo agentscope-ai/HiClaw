@@ -71,18 +71,9 @@ EOF
 }
 EOF
     else
-        # Sync idle_timeout_minutes from env var — env file is the authority
-        local env_timeout="${HICLAW_WORKER_IDLE_TIMEOUT:-}"
-        if [ -n "$env_timeout" ]; then
-            local file_timeout
-            file_timeout=$(jq -r '.idle_timeout_minutes' "$LIFECYCLE_FILE" 2>/dev/null)
-            if [ "$file_timeout" != "$env_timeout" ]; then
-                _log "Updating idle_timeout_minutes: $file_timeout -> $env_timeout (from HICLAW_WORKER_IDLE_TIMEOUT)"
-                local tmp
-                tmp=$(mktemp)
-                jq --argjson t "$env_timeout" '.idle_timeout_minutes = $t' "$LIFECYCLE_FILE" > "$tmp" && mv "$tmp" "$LIFECYCLE_FILE"
-            fi
-        fi
+        # File already exists — respect any manual edits.
+        # HICLAW_WORKER_IDLE_TIMEOUT is only used for initial creation (above).
+        true
     fi
 
     if [ ! -f "$STATE_FILE" ]; then
@@ -149,6 +140,20 @@ _worker_has_any_tasks() {
     count=$(jq -r --arg w "$worker" \
         '[.active_tasks[] | select(.assigned_to == $w)] | length' \
         "$STATE_FILE" 2>/dev/null || echo "0")
+    [ "$count" -gt 0 ]
+}
+
+# Check if a worker has enabled cron jobs in its .openclaw/cron/jobs.json
+# Returns 0 if worker has enabled cron jobs, 1 otherwise
+_worker_has_cron_jobs() {
+    local worker="$1"
+    local cron_file="/root/hiclaw-fs/agents/${worker}/.openclaw/cron/jobs.json"
+    if [ ! -f "$cron_file" ]; then
+        return 1
+    fi
+    local count
+    # Handle both {"jobs":[...]} and bare array [...] formats
+    count=$(jq '(if type == "object" then .jobs // [] else . end) | [.[] | select(.state.enabled == true)] | length' "$cron_file" 2>/dev/null || echo "0")
     [ "$count" -gt 0 ]
 }
 
@@ -221,6 +226,13 @@ action_check_idle() {
             continue
         fi
 
+        # Skip team workers — they must stay running for team coordination
+        local _team_id
+        _team_id=$(jq -r --arg w "$worker" '.workers[$w].team_id // empty' "$REGISTRY_FILE" 2>/dev/null)
+        if [ -n "$_team_id" ]; then
+            continue
+        fi
+
         if _worker_has_any_tasks "$worker"; then
             # Worker is active (finite or infinite task) — clear idle_since
             local current_idle
@@ -233,10 +245,38 @@ action_check_idle() {
                     '.workers[$w].idle_since = null | .updated_at = $ts' \
                     "$LIFECYCLE_FILE" > "$tmp" && mv "$tmp" "$LIFECYCLE_FILE"
             fi
+        elif _worker_has_cron_jobs "$worker"; then
+            # Worker has enabled cron jobs — never idle-stop
+            local current_idle
+            current_idle=$(_get_worker_field "$worker" "idle_since")
+            if [ -n "$current_idle" ] && [ "$current_idle" != "null" ]; then
+                _log "Worker $worker has cron jobs — clearing idle_since (idle-stop disabled)"
+                local tmp
+                tmp=$(mktemp)
+                jq --arg w "$worker" --arg ts "$(_ts)" \
+                    '.workers[$w].idle_since = null | .updated_at = $ts' \
+                    "$LIFECYCLE_FILE" > "$tmp" && mv "$tmp" "$LIFECYCLE_FILE"
+            fi
         else
             # Worker has no active tasks (neither finite nor infinite)
             if [ "$container_status" != "running" ]; then
                 continue
+            fi
+
+            # Safety net: if worker was recently started, don't mark idle yet.
+            # This protects against races where the Manager hasn't registered
+            # the task in state.json yet.
+            local last_started
+            last_started=$(_get_worker_field "$worker" "last_started_at")
+            if [ -n "$last_started" ] && [ "$last_started" != "null" ]; then
+                local started_epoch
+                started_epoch=$(date -u -d "$last_started" +%s 2>/dev/null || date -u -j -f '%Y-%m-%dT%H:%M:%SZ' "$last_started" +%s 2>/dev/null)
+                local since_start=$(( now_epoch - started_epoch ))
+                local grace_seconds=$(( idle_timeout * 60 ))
+                if [ "$since_start" -lt "$grace_seconds" ]; then
+                    _log "Worker $worker has no tasks but was started ${since_start}s ago (grace: ${grace_seconds}s) — skipping idle check"
+                    continue
+                fi
             fi
 
             local idle_since
@@ -293,6 +333,40 @@ action_stop() {
         _log "ERROR: Failed to stop worker $worker"
         return 1
     fi
+}
+
+# Delete a worker: stop container, remove it, and clean up lifecycle state
+action_delete() {
+    local worker="$1"
+    _init_lifecycle_file
+    _ensure_worker_entry "$worker"
+
+    local backend
+    backend=$(_detect_worker_backend)
+    if [ "$backend" = "none" ]; then
+        _log "ERROR: No worker backend available"
+        return 1
+    fi
+
+    # Stop first (ignore errors — may already be stopped)
+    _log "Stopping worker $worker before delete (backend=$backend)"
+    worker_backend_stop "$worker" 2>/dev/null || true
+
+    # Delete container
+    _log "Deleting worker $worker container (backend=$backend)"
+    if worker_backend_delete "$worker"; then
+        _log "Worker $worker container deleted"
+    else
+        _log "WARN: Failed to delete worker $worker container (may already be removed)"
+    fi
+
+    # Clean up lifecycle state
+    local tmp
+    tmp=$(mktemp)
+    jq --arg w "$worker" --arg ts "$(_ts)" \
+        'del(.workers[$w]) | .updated_at = $ts' \
+        "$LIFECYCLE_FILE" > "$tmp" && mv "$tmp" "$LIFECYCLE_FILE"
+    _log "Worker $worker removed from lifecycle file"
 }
 
 # Start (wake up) a stopped worker, or recreate if it no longer exists
@@ -443,7 +517,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [ -z "$ACTION" ]; then
-    echo "Usage: $0 --action <sync-status|check-idle|stop|start> [--worker <name>]" >&2
+    echo "Usage: $0 --action <sync-status|check-idle|stop|start|delete> [--worker <name>]" >&2
     exit 1
 fi
 
@@ -461,6 +535,13 @@ case "$ACTION" in
         fi
         action_stop "$WORKER"
         ;;
+    delete)
+        if [ -z "$WORKER" ]; then
+            echo "ERROR: --worker required for action 'delete'" >&2
+            exit 1
+        fi
+        action_delete "$WORKER"
+        ;;
     start)
         if [ -z "$WORKER" ]; then
             echo "ERROR: --worker required for action 'start'" >&2
@@ -476,7 +557,7 @@ case "$ACTION" in
         action_ensure_ready "$WORKER"
         ;;
     *)
-        echo "ERROR: Unknown action '$ACTION'. Use: sync-status, check-idle, stop, start, ensure-ready" >&2
+        echo "ERROR: Unknown action '$ACTION'. Use: sync-status, check-idle, stop, delete, start, ensure-ready" >&2
         exit 1
         ;;
 esac

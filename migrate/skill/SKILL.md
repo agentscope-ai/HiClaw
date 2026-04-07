@@ -55,7 +55,7 @@ These tools are pre-installed — do NOT include them in the Dockerfile:
 | Self-managed API keys | HiClaw AI Gateway with per-worker credentials |
 | Self-managed cron jobs | Manager-coordinated scheduled tasks |
 | Full system access | Scoped MinIO permissions, sandboxed container |
-| Self-managed skills | Manager-controlled builtin skills + your custom-skills |
+| Self-managed skills | Manager-controlled builtin skills + your custom skills in `skills/` |
 
 ## Migration Workflow
 
@@ -85,7 +85,7 @@ Read your current AGENTS.md (at `~/.openclaw/workspace/AGENTS.md` or your config
 2. **REMOVE or DO NOT DUPLICATE**: The following topics are already covered in HiClaw's builtin section (injected automatically by the import script). If your AGENTS.md has similar content, **remove it** to avoid conflicts and redundancy:
    - **Every Session** — session startup routine (read SOUL.md, read memory)
    - **Memory** — daily notes (`memory/YYYY-MM-DD.md`), long-term memory (`MEMORY.md`), "write it down" rules
-   - **Skills** — builtin skills (`skills/`) vs custom skills (`custom-skills/`), MCP tools via mcporter
+   - **Skills** — builtin skills and custom skills coexist in `skills/`, MCP tools via mcporter
    - **Communication** — Matrix room structure, @mention protocol, when to speak, NO_REPLY usage, file sync via `hiclaw-sync`
    - **Task Execution** — task workflow (sync → read spec → create plan → execute → write results → push to MinIO → @mention Manager)
    - **Task Directory Rules** — `spec.md`, `plan.md`, `result.md`, intermediate artifacts, `base/` directory
@@ -179,10 +179,25 @@ Verify:
 - `config/AGENTS.md` contains only your custom content (no Discord/Slack references, no communication protocol rules)
 - `config/SOUL.md` has the AI Identity section
 
-Tell the user the ZIP path. They will transfer it to the HiClaw host and run:
+Tell the user the ZIP path. They will download the import script on the HiClaw host and run:
 
+**Linux/macOS:**
 ```bash
-bash hiclaw-import.sh --zip <path-to-zip>
+# Download the import script
+curl -sSL https://higress.ai/hiclaw/import.sh -o hiclaw-import.sh
+chmod +x hiclaw-import.sh
+
+# Import the worker
+./hiclaw-import.sh worker --name <worker-name> --zip <path-to-zip>
+```
+
+**Windows (PowerShell):**
+```powershell
+# Download the import script
+Invoke-WebRequest -Uri https://higress.ai/hiclaw/import.ps1 -OutFile hiclaw-import.ps1
+
+# Import the worker
+.\hiclaw-import.ps1 worker --name <worker-name> --zip <path-to-zip>
 ```
 
 ## Script Reference

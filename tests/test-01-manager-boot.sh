@@ -100,6 +100,47 @@ else
     log_fail "Manager HEARTBEAT.md exists in workspace"
 fi
 
+# ---- Runtime Detection ----
+log_section "Manager Runtime"
+
+MANAGER_RUNTIME=$(docker exec "${_MGMT_CTR}" printenv HICLAW_MANAGER_RUNTIME 2>/dev/null || echo "openclaw")
+log_pass "Manager runtime: ${MANAGER_RUNTIME}"
+
+# Runtime-specific config verification
+case "${MANAGER_RUNTIME}" in
+    copaw)
+        # CoPaw: config.json in ~/manager-workspace/.copaw/ (HOME=/root/manager-workspace)
+        COPAW_DIR="/root/manager-workspace/.copaw"
+        if docker exec "${_MGMT_CTR}" jq -e '.channels.matrix.enabled' "${COPAW_DIR}/config.json" >/dev/null 2>&1; then
+            log_pass "CoPaw config.json valid"
+        else
+            log_fail "CoPaw config.json valid"
+        fi
+
+        # Matrix channel with mentions support (built into copaw package)
+        if docker exec "${_MGMT_CTR}" grep -q "_was_mentioned" /opt/copaw-venv/lib/python3.10/site-packages/copaw/app/channels/matrix/channel.py 2>/dev/null; then
+            log_pass "Matrix channel with mentions support"
+        else
+            log_fail "Matrix channel with mentions support"
+        fi
+
+        # CoPaw process running
+        if docker exec "${_MGMT_CTR}" pgrep -f "copaw app" >/dev/null 2>&1; then
+            log_pass "CoPaw process running"
+        else
+            log_fail "CoPaw process running"
+        fi
+        ;;
+    *)
+        # OpenClaw: openclaw.json in ~/manager-workspace/
+        if docker exec "${_MGMT_CTR}" jq -e '.channels.matrix.accessToken' /root/manager-workspace/openclaw.json >/dev/null 2>&1; then
+            log_pass "OpenClaw config (openclaw.json) valid"
+        else
+            log_fail "OpenClaw config (openclaw.json) valid"
+        fi
+        ;;
+esac
+
 # ---- Manager Agent Responds ----
 log_section "Manager Agent Communication"
 

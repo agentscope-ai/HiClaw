@@ -42,8 +42,9 @@ matrix_send_message "${ADMIN_TOKEN}" "${DM_ROOM}" \
     "Create a new Worker for backend development. The worker's name (username) must be exactly 'bob'. He should have access to GitHub MCP."
 
 log_info "Waiting for Manager to create Worker Bob..."
-REPLY=$(matrix_wait_for_reply "${ADMIN_TOKEN}" "${DM_ROOM}" "@manager" 180 \
-    "${ADMIN_TOKEN}" "${DM_ROOM}" "Please check if the request has been processed.")
+REPLY=$(matrix_wait_for_message_containing "${ADMIN_TOKEN}" "${DM_ROOM}" "@manager" \
+    "bob" 300 \
+    "${ADMIN_TOKEN}" "${DM_ROOM}" "Please check if the request to create worker bob has been processed.")
 
 assert_not_empty "${REPLY}" "Manager replied to create bob request"
 assert_contains_i "${REPLY}" "bob" "Reply mentions worker name 'bob'"

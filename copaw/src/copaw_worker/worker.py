@@ -573,5 +573,21 @@ class Worker:
 
             bridge_openclaw_to_copaw(openclaw_cfg, self._copaw_working_dir)
             console.print("[green]Config re-bridged.[/green]")
+
+            # Hot-update MatrixChannel's allowlist config without restarting
+            # (restarting cancels in-progress LLM requests with "Task has been cancelled!")
+            if self._channel_manager is not None:
+                for ch in self._channel_manager._channels:
+                    if hasattr(ch, '_cfg') and hasattr(ch._cfg, 'group_allow_from'):
+                        from copaw.config.utils import load_config
+                        new_config = load_config()
+                        matrix_cfg = (new_config.get("channels") or {}).get("matrix") or {}
+                        new_group_allow = matrix_cfg.get("group_allow_from", [])
+                        new_dm_allow = matrix_cfg.get("allow_from", [])
+                        if new_group_allow != ch._cfg.group_allow_from or new_dm_allow != ch._cfg.allow_from:
+                            ch._cfg.group_allow_from = new_group_allow
+                            ch._cfg.allow_from = new_dm_allow
+                            console.print("[green]MatrixChannel allowlist hot-updated.[/green]")
+                        break
         except Exception as exc:
             console.print(f"[red]Re-bridge failed: {exc}[/red]")

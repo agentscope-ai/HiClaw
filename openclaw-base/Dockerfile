@@ -79,13 +79,11 @@ RUN git clone --depth 1 --single-branch -b hiclaw-v1 \
         vitest*.config.ts tsdown.config.ts fly*.toml render.yaml && \
     rm -rf /root/.local/share/pnpm /root/.npm
 
-# Install mcporter
-RUN npm install -g mcporter && \
-    rm -rf /root/.npm
-
-# Install skills CLI for agent skills ecosystem (skills.sh)
-# This enables workers to discover and install skills from the open agent skills ecosystem
-RUN npm install -g skills && \
+# Install shared CLIs for Worker runtimes:
+# - mcporter: MCP tool invocation
+# - skills: skills.sh ecosystem
+# - @nacos-group/cli: enterprise Nacos skill/agentspec discovery
+RUN npm install -g mcporter skills @nacos-group/cli && \
     rm -rf /root/.npm
 
 # Clear proxy env vars (they're only needed during build, not at runtime)

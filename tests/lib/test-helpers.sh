@@ -166,8 +166,8 @@ wait_for_manager() {
         "curl -sf http://${TEST_MANAGER_HOST}:${TEST_GATEWAY_PORT}/ > /dev/null 2>&1"
 }
 
-# Wait for Manager Agent (OpenClaw) to be fully ready
-# Phase 1: OpenClaw gateway health check (inside container)
+# Wait for Manager Agent (OpenClaw or CoPaw) to be fully ready
+# Phase 1: Runtime health check (OpenClaw gateway or CoPaw process)
 # Phase 2: Manager has joined the specified DM room
 # Usage: wait_for_manager_agent_ready [timeout] [room_id] [access_token]
 wait_for_manager_agent_ready() {
@@ -180,24 +180,43 @@ wait_for_manager_agent_ready() {
 
     local elapsed=0
 
-    # Phase 1: Wait for OpenClaw gateway to be healthy
-    log_info "Waiting for Manager OpenClaw gateway to be healthy..."
-    local gateway_ready=false
+    # Detect Manager runtime
+    local manager_runtime
+    manager_runtime=$(docker exec "${manager_container}" printenv HICLAW_MANAGER_RUNTIME 2>/dev/null || echo "openclaw")
+
+    # Phase 1: Wait for Manager to be healthy (runtime-specific)
+    log_info "Waiting for Manager ${manager_runtime} runtime to be healthy..."
+    local runtime_ready=false
+
     while [ "${elapsed}" -lt "${timeout}" ]; do
-        if docker exec "${manager_container}" openclaw gateway health --json 2>/dev/null | grep -q '"ok"'; then
-            gateway_ready=true
-            log_info "OpenClaw gateway is healthy (took ${elapsed}s)"
-            break
-        fi
+        case "${manager_runtime}" in
+            copaw)
+                # CoPaw: check port 18799 or process
+                if docker exec "${manager_container}" pgrep -f "copaw app" >/dev/null 2>&1 && \
+                   docker exec "${manager_container}" curl -sf http://127.0.0.1:18799/ >/dev/null 2>&1; then
+                    runtime_ready=true
+                    break
+                fi
+                ;;
+            *)
+                # OpenClaw: check gateway health
+                if docker exec "${manager_container}" openclaw gateway health --json 2>/dev/null | grep -q '"ok"'; then
+                    runtime_ready=true
+                    break
+                fi
+                ;;
+        esac
         sleep 5
         elapsed=$((elapsed + 5))
-        printf "\r\033[36m[TEST INFO]\033[0m Waiting for OpenClaw gateway... (%ds/%ds)" "${elapsed}" "${timeout}"
+        printf "\r\033[36m[TEST INFO]\033[0m Waiting for %s runtime... (%ds/%ds)" "${manager_runtime}" "${elapsed}" "${timeout}"
     done
 
-    if [ "${gateway_ready}" != "true" ]; then
-        log_fail "OpenClaw gateway did not become healthy within ${timeout}s"
+    if [ "${runtime_ready}" != "true" ]; then
+        log_fail "${manager_runtime} runtime did not become healthy within ${timeout}s"
         return 1
     fi
+
+    log_info "${manager_runtime} runtime is healthy (took ${elapsed}s)"
 
     # Phase 2: Wait for Manager to join the DM room (if room_id and token provided)
     if [ -n "${room_id}" ] && [ -n "${access_token}" ]; then

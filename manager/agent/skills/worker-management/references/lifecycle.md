@@ -17,6 +17,9 @@ bash /opt/hiclaw/agent/skills/worker-management/scripts/lifecycle-worker.sh --ac
 # Manually stop/start
 bash /opt/hiclaw/agent/skills/worker-management/scripts/lifecycle-worker.sh --action stop --worker <name>
 bash /opt/hiclaw/agent/skills/worker-management/scripts/lifecycle-worker.sh --action start --worker <name>
+
+# Delete a worker (stop + remove container + clean up lifecycle state)
+bash /opt/hiclaw/agent/skills/worker-management/scripts/lifecycle-worker.sh --action delete --worker <name>
 ```
 
 ## start vs create
@@ -26,6 +29,7 @@ bash /opt/hiclaw/agent/skills/worker-management/scripts/lifecycle-worker.sh --ac
 | Container stopped | `lifecycle-worker.sh --action start` — restarts existing container |
 | Container not found | `create-worker.sh` — full registration flow |
 | Worker needs reset | `create-worker.sh` — removes old, rebuilds |
+| Worker permanently removed | `lifecycle-worker.sh --action delete` — stops, removes container, cleans lifecycle state |
 | Remote worker | Admin runs install command on target machine |
 
 ## Changing Idle Timeout

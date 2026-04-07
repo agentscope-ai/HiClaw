@@ -60,6 +60,29 @@ Iterate over entries in `active_tasks` with `"type": "finite"`:
 
 ---
 
+### 2b. Check Team-Delegated Tasks
+
+Iterate over entries in `active_tasks` that have a `delegated_to_team` field:
+
+- These tasks are managed by Team Leaders, NOT individual workers
+- Read `assigned_to` (the Team Leader name) and `room_id` (the Leader Room)
+- **Ensure the Team Leader's container is running**:
+  ```bash
+  bash /opt/hiclaw/agent/skills/worker-management/scripts/lifecycle-worker.sh \
+    --action ensure-ready --worker {leader}
+  ```
+- **Use the `message` tool** to ask the Team Leader for a status update:
+  ```
+  room_id: <room_id from state.json>
+  user_id: @{leader}:${HICLAW_MATRIX_DOMAIN}
+  message: @{leader}:{domain} How is task {task-id} progressing? Any blockers from your team?
+  ```
+- **Do NOT contact team workers directly** — the Team Leader handles internal coordination
+- If the Team Leader reports completion, process it the same as a regular worker completion
+- If the Team Leader reports a blocker, escalate to admin (Step 7)
+
+---
+
 ### 3. Check Infinite Task Timeouts
 
 Iterate over entries in `active_tasks` with `"type": "infinite"`. For each entry:

@@ -6,10 +6,13 @@ picks up the right workspace.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import shutil
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 def _port_remap(url: str, is_container: bool) -> str:
@@ -101,6 +104,53 @@ def bridge_openclaw_to_copaw(
     providers_src = working_dir / "providers.json"
     if providers_src.exists():
         shutil.copy2(providers_src, secret_dir / "providers.json")
+
+
+def _resolve_embedding_config(
+    cfg: dict[str, Any],
+    in_container: bool,
+) -> dict[str, Any] | None:
+    """Extract embedding config from openclaw's agents.defaults.memorySearch.
+
+    Maps openclaw memorySearch fields to copaw's EmbeddingConfig format.
+    Returns None if memorySearch is not configured or missing required fields.
+    """
+    memory_search = (
+        cfg.get("agents", {})
+        .get("defaults", {})
+        .get("memorySearch", {})
+    )
+    if not memory_search:
+        return None
+
+    remote = memory_search.get("remote", {})
+    base_url = _port_remap(remote.get("baseUrl", ""), in_container)
+    api_key = remote.get("apiKey", "")
+    model = memory_search.get("model", "")
+
+    if not base_url or not model:
+        return None
+
+    if not api_key:
+        logger.warning(
+            "memorySearch.remote.apiKey is empty; embedding requests will likely fail",
+        )
+
+    dimensions = (
+        memory_search.get("outputDimensionality")
+        or int(os.environ.get("HICLAW_EMBEDDING_DIMENSIONS", "0"))
+        or 1024
+    )
+
+    return {
+        "backend": "openai",
+        "api_key": api_key,
+        "base_url": base_url,
+        "model_name": model,
+        "dimensions": dimensions,
+        "enable_cache": True,
+        "use_dimensions": False,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -233,6 +283,14 @@ def _write_config_json(
         existing.setdefault("agents", {}).setdefault("running", {})[
             "max_input_length"
         ] = context_window
+
+    # Bridge memorySearch → agents.running.embedding_config so that
+    # CoPaw's MemoryManager can use vector search for memory retrieval.
+    embedding_config = _resolve_embedding_config(cfg, in_container)
+    if embedding_config is not None:
+        existing.setdefault("agents", {}).setdefault("running", {})[
+            "embedding_config"
+        ] = embedding_config
 
     with open(config_path, "w") as f:
         json.dump(existing, f, indent=2, ensure_ascii=False)

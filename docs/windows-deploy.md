@@ -54,9 +54,9 @@ This guide explains how to deploy HiClaw multi-agent collaboration platform on W
 | Software | Requirement | Download |
 |----------|-------------|----------|
 | Docker Desktop | 4.20+ | https://www.docker.com/products/docker-desktop/ |
-| PowerShell | 5.1+ (included with Windows) | Built-in, no installation needed |
+| PowerShell | 7.0+ (recommended) | https://learn.microsoft.com/en-us/powershell/scripting/install/installing-powershell-on-windows |
 
-> **Note**: Windows comes with PowerShell 5.1 pre-installed. If you have PowerShell 7.x installed, it's fully compatible.
+> **Note**: Windows comes with PowerShell 5.1 pre-installed, but we recommend upgrading to PowerShell 7.0+ for better compatibility and features.
 
 ### Getting an API Key
 

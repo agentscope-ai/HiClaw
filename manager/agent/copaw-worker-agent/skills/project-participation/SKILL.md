@@ -9,7 +9,7 @@ description: Use when you are invited to a Project Room or assigned a task withi
 
 - **Project plan is auto-synced** — read directly from `~/.copaw-worker/<your-name>/shared/projects/{project-id}/plan.md`
 - **Git author must be your worker name** — set `git config user.name` and `user.email` before any commits
-- **Report completion via @mention to Manager** — this is what advances the project to the next task
+- **Report completion via @mention to your coordinator** — this is what advances the project to the next task
 
 ## Project Context
 
@@ -28,7 +28,7 @@ The plan.md shows:
 
 1. When assigned a task in the project room, mark it as started in your memory
 2. Execute the task following normal task execution flow
-3. Report completion via @mention to Manager so the project can advance
+3. Report completion via @mention to your coordinator so the project can advance
 
 ## Git Config for Projects
 

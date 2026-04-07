@@ -61,7 +61,7 @@ Rules:
 
 ## Resume Flow
 
-When Manager or admin asks you to resume a task after session reset:
+When your coordinator or admin asks you to resume a task after session reset:
 
 1. Read `task-history.json`; if not there, check `history-tasks/{task-id}.json`
 2. Get `task_dir` from the entry

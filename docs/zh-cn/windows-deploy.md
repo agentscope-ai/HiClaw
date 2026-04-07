@@ -54,9 +54,9 @@
 | 软件 | 要求 | 下载地址 |
 |------|-----|---------|
 | Docker Desktop | 4.20+ | https://www.docker.com/products/docker-desktop/ |
-| PowerShell | 5.1+（Windows 自带） | 系统自带，无需额外安装 |
+| PowerShell | 7.0+（推荐） | https://learn.microsoft.com/zh-cn/powershell/scripting/install/installing-powershell-on-windows |
 
-> **说明**：Windows 系统自带 PowerShell 5.1，可直接使用，无需额外安装。如果你已安装 PowerShell 7.x 也完全兼容。
+> **说明**：Windows 系统自带 PowerShell 5.1，但我们建议升级到 PowerShell 7.0+ 以获得更好的兼容性和功能支持。
 
 ### 获取 API Key
 

@@ -18,6 +18,10 @@ MATRIX_CLIENT_DOMAIN="${HICLAW_MATRIX_CLIENT_DOMAIN:-matrix-client-local.hiclaw.
 AI_GATEWAY_DOMAIN="${HICLAW_AI_GATEWAY_DOMAIN:-aigw-local.hiclaw.io}"
 FS_DOMAIN="${HICLAW_FS_DOMAIN:-fs-local.hiclaw.io}"
 CONSOLE_DOMAIN="${HICLAW_CONSOLE_DOMAIN:-console-local.hiclaw.io}"
+# Fixed internal domains used by workers inside hiclaw-net, regardless of user-configured domains.
+# Higress routes always include these so workers can reach manager services reliably.
+AI_GATEWAY_LOCAL_DOMAIN="aigw-local.hiclaw.io"
+FS_LOCAL_DOMAIN="fs-local.hiclaw.io"
 
 LLM_PROVIDER="${HICLAW_LLM_PROVIDER:-qwen}"
 LLM_API_URL="${HICLAW_LLM_API_URL:-}"
@@ -111,6 +115,11 @@ if [ ! -f "${SETUP_MARKER}" ]; then
         '{"name":"'"${MATRIX_CLIENT_DOMAIN}"'","enableHttps":"off"}'
     higress_api POST /v1/domains "Creating File System domain" \
         '{"name":"'"${FS_DOMAIN}"'","enableHttps":"off"}'
+    # Always register the fixed internal FS domain so workers on hiclaw-net can reach MinIO
+    if [ "${FS_DOMAIN}" != "${FS_LOCAL_DOMAIN}" ]; then
+        higress_api POST /v1/domains "Creating internal File System domain" \
+            '{"name":"'"${FS_LOCAL_DOMAIN}"'","enableHttps":"off"}'
+    fi
     higress_api POST /v1/domains "Creating OpenClaw Console domain" \
         '{"name":"'"${CONSOLE_DOMAIN}"'","enableHttps":"off"}'
 
@@ -126,9 +135,13 @@ if [ ! -f "${SETUP_MARKER}" ]; then
     higress_api POST /v1/routes "Creating Element Web route" \
         '{"name":"matrix-web-client","domains":["'"${MATRIX_CLIENT_DOMAIN}"'"],"path":{"matchType":"PRE","matchValue":"/"},"services":[{"name":"element-web.static","port":8088,"weight":100}]}'
 
-    # 5. HTTP File System Route
+    # 5. HTTP File System Route — always include internal domain for worker access
+    FS_ROUTE_DOMAINS='["'"${FS_DOMAIN}"'"]'
+    if [ "${FS_DOMAIN}" != "${FS_LOCAL_DOMAIN}" ]; then
+        FS_ROUTE_DOMAINS='["'"${FS_DOMAIN}"'","'"${FS_LOCAL_DOMAIN}"'"]'
+    fi
     higress_api POST /v1/routes "Creating HTTP file system route" \
-        '{"name":"http-filesystem","domains":["'"${FS_DOMAIN}"'"],"path":{"matchType":"PRE","matchValue":"/"},"services":[{"name":"minio.static","port":9000,"weight":100}]}'
+        '{"name":"http-filesystem","domains":'"${FS_ROUTE_DOMAINS}"',"path":{"matchType":"PRE","matchValue":"/"},"services":[{"name":"minio.static","port":9000,"weight":100}]}'
 
     # 6. OpenClaw Console Route (reverse-proxied via nginx with auto-token injection)
     higress_api POST /v1/routes "Creating OpenClaw Console route" \
@@ -154,6 +167,17 @@ fi
 # ============================================================
 higress_api POST /v1/domains "Creating AI Gateway domain" \
     '{"name":"'"${AI_GATEWAY_DOMAIN}"'","enableHttps":"off"}'
+# Always register the fixed internal AI Gateway domain for worker access
+if [ "${AI_GATEWAY_DOMAIN}" != "${AI_GATEWAY_LOCAL_DOMAIN}" ]; then
+    higress_api POST /v1/domains "Creating internal AI Gateway domain" \
+        '{"name":"'"${AI_GATEWAY_LOCAL_DOMAIN}"'","enableHttps":"off"}'
+fi
+
+# Build AI Gateway route domains: always include internal domain for worker access
+AI_ROUTE_DOMAINS='["'"${AI_GATEWAY_DOMAIN}"'"]'
+if [ "${AI_GATEWAY_DOMAIN}" != "${AI_GATEWAY_LOCAL_DOMAIN}" ]; then
+    AI_ROUTE_DOMAINS='["'"${AI_GATEWAY_DOMAIN}"'","'"${AI_GATEWAY_LOCAL_DOMAIN}"'"]'
+fi
 
 # ============================================================
 # LLM Provider + AI Gateway Route
@@ -221,7 +245,7 @@ if [ -n "${HICLAW_LLM_API_KEY}" ]; then
     esac
 
     # 5b. Create or update AI Gateway Route (GET → PUT if exists, POST if not)
-    AI_ROUTE_BODY='{"name":"default-ai-route","domains":["'"${AI_GATEWAY_DOMAIN}"'"],"pathPredicate":{"matchType":"PRE","matchValue":"/","caseSensitive":false},"upstreams":[{"provider":"'"${LLM_PROVIDER}"'","weight":100,"modelMapping":{}}],"authConfig":{"enabled":true,"allowedCredentialTypes":["key-auth"],"allowedConsumers":["manager"]}}'
+    AI_ROUTE_BODY='{"name":"default-ai-route","domains":'"${AI_ROUTE_DOMAINS}"',"pathPredicate":{"matchType":"PRE","matchValue":"/","caseSensitive":false},"upstreams":[{"provider":"'"${LLM_PROVIDER}"'","weight":100,"modelMapping":{}}],"authConfig":{"enabled":true,"allowedCredentialTypes":["key-auth"],"allowedConsumers":["manager"]}}'
 
     HICLAW_VERSION=$(cat /opt/hiclaw/agent/.builtin-version 2>/dev/null | tr -d '[:space:]')
     HICLAW_VERSION="${HICLAW_VERSION:-latest}"
@@ -230,11 +254,13 @@ if [ -n "${HICLAW_LLM_API_KEY}" ]; then
     if [ -n "${existing_route_resp}" ]; then
         # Extract the AiRoute object from the response wrapper (.data), then patch:
         #   - upstreams[0].provider: reflect current LLM provider
+        #   - domains: ensure internal local domain is always present
         #   - headerControl.request.add: inject User-Agent header (add = set if absent, don't overwrite)
         # Preserve all other fields (especially authConfig.allowedConsumers and version).
-        patched=$(echo "${existing_route_resp}" | jq '
+        patched=$(echo "${existing_route_resp}" | jq --argjson domains "${AI_ROUTE_DOMAINS}" '
             .data
             | .upstreams[0].provider = "'"${LLM_PROVIDER}"'"
+            | .domains = $domains
             | .headerControl.enabled = true
             | .headerControl.request.add = [{"key":"user-agent","value":"HiClaw/'"${HICLAW_VERSION}"'"}]
             | .headerControl.request.set  //= []

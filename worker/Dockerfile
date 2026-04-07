@@ -11,7 +11,7 @@
 # ============================================================
 
 ARG HIGRESS_REGISTRY=higress-registry.cn-hangzhou.cr.aliyuncs.com
-ARG OPENCLAW_BASE_IMAGE=hiclaw/openclaw-base:20260314-be855ee
+ARG OPENCLAW_BASE_IMAGE=hiclaw/openclaw-base:20260327-74de2f2
 
 # ============ Stage 1: mc (MinIO Client) ============
 FROM ${HIGRESS_REGISTRY}/higress/mc:20260216 AS mc
@@ -25,7 +25,7 @@ COPY --from=mc /usr/bin/mc /usr/local/bin/mc.bin
 
 # ---- Built-in observability plugin (bundled unconditionally, enabled at runtime) ----
 # Placed before scripts/lib COPY so that code changes do not invalidate this layer.
-ARG OPENCLAW_CMS_PLUGIN_URL=https://arms-apm-cn-hangzhou-pre.oss-cn-hangzhou.aliyuncs.com/openclaw-cms-plugin/0.1.1/openclaw-cms-plugin.tar.gz
+ARG OPENCLAW_CMS_PLUGIN_URL=https://arms-apm-cn-hangzhou-pre.oss-cn-hangzhou.aliyuncs.com/openclaw-cms-plugin/0.1.2/openclaw-cms-plugin.tar.gz
 ENV OPENCLAW_CMS_PLUGIN_DIR="/opt/openclaw/extensions/openclaw-cms-plugin"
 RUN tmp_dir="$(mktemp -d)" && \
     curl -fsSL "${OPENCLAW_CMS_PLUGIN_URL}" -o "${tmp_dir}/plugin.tar.gz" && \

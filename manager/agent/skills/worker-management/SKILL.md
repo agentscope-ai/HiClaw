@@ -1,6 +1,6 @@
 ---
 name: worker-management
-description: Use when admin requests creating/resetting a worker, starting/stopping a worker, managing worker skills, enabling peer mentions, or opening a CoPaw console.
+description: Use when admin requests hand-creating or resetting a Worker, starting/stopping a Worker, managing Worker skills, enabling peer mentions, or opening a CoPaw console. Use hiclaw-find-worker only as a helper for Nacos-backed market import or when task assignment needs you to discover a suitable Worker.
 ---
 
 # Worker Management
@@ -26,7 +26,7 @@ bash /opt/hiclaw/agent/skills/worker-management/scripts/create-worker.sh \
 - **Worker name must be lowercase and > 3 characters** — Tuwunel stores usernames in lowercase; short names cause registration failures
 - **`--remote` means "remote from Manager"** — which is actually LOCAL from the admin's perspective. Use it when admin says "local mode" / "run on my machine"
 - **`file-sync`, `task-progress`, `project-participation` are default skills** — always included, cannot be removed
-- **Never run `create-worker.sh` for imported workers** — `hiclaw-import.sh` already sets up everything, just start the container
+- **Use `hiclaw-find-worker` only for Nacos-backed market imports or Worker discovery during task assignment** — generic Worker creation and lifecycle changes stay in this skill
 - **Peer mentions cause loops if not briefed** — after enabling, explicitly tell Workers to only @mention peers for blocking info, never for acknowledgments
 - **Always notify Workers to `file-sync` after writing files they need** — the 5-minute periodic sync is fallback only
 - **Workers are stateless** — all state is in centralized storage. Reset = recreate config files
@@ -45,3 +45,4 @@ Read the relevant doc **before** executing. Do not load all of them.
 | Enable direct @mentions between workers | `references/peer-mentions.md` | `scripts/enable-peer-mentions.sh` |
 | Get remote worker install command | `references/lifecycle.md` | `scripts/get-worker-install-cmd.sh` |
 | Reset a worker | `references/create-worker.md` | `rm -rf` config dir + re-run `create-worker.sh` |
+| Delete a worker (remove container) | `references/lifecycle.md` | `scripts/lifecycle-worker.sh` |

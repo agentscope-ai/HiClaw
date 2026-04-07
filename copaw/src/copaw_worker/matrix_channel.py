@@ -757,6 +757,18 @@ class MatrixChannel(BaseChannel):
                         })
         elif isinstance(event, RoomMessageFile):
             body_desc = f"[sent a file: {body}]" if body else "[sent a file]"
+            mxc_url = getattr(event, "url", "") or ""
+            if mxc_url:
+                eid = event.event_id[:8].lstrip("$")
+                filename = body or f"matrix_media_{eid}"
+                filename = f"{eid}_{filename}"
+                local_path = await self._download_mxc(mxc_url, filename)
+                if local_path:
+                    media_parts.append({
+                        "type": "file",
+                        "file_url": Path(local_path).as_uri(),
+                        "filename": body or filename,
+                    })
         elif isinstance(event, RoomMessageAudio):
             body_desc = f"[sent audio: {body}]" if body else "[sent audio]"
         elif isinstance(event, RoomMessageVideo):
@@ -1340,30 +1352,27 @@ class MatrixChannel(BaseChannel):
     # Mention helper — build spec-compliant Matrix mention
     # ------------------------------------------------------------------
 
+    # Regex to match Matrix user IDs: @localpart:domain (with optional port)
+    _MATRIX_USER_ID_RE = re.compile(r'@[a-zA-Z0-9._=+/\-]+:[a-zA-Z0-9.\-]+(?::\d+)?')
+
+    def _extract_mentions_from_text(self, text: str) -> list[str]:
+        """Extract all @user:domain Matrix IDs from message text."""
+        matches = self._MATRIX_USER_ID_RE.findall(text)
+        return list(dict.fromkeys(matches))  # dedupe, preserve order
+
     def _apply_mention(
         self, content: dict[str, Any], user_id: str, room_id: str
     ) -> None:
-        """Add a full Matrix mention to an outgoing event content dict.
+        """Add Matrix mentions to an outgoing event content dict.
 
-        Sets ``m.mentions`` (for push notifications) and adds a
-        ``formatted_body`` with an HTML pill so clients render the
-        mention visually.
+        Scans the message body for @user:domain patterns and populates
+        ``m.mentions.user_ids`` (MSC3952). Only includes user IDs that
+        actually appear in the text. Does NOT modify the body text.
         """
-        content["m.mentions"] = {"user_ids": [user_id]}
-
-        display_name = self._resolve_display_name(user_id, room_id)
-        pill = (
-            f'<a href="https://matrix.to/#/{user_id}">'
-            f"{display_name}</a>"
-        )
-
         body = content.get("body", "")
-        # Reuse already-converted formatted_body (set by send()) or convert now
-        html_body = content.get("formatted_body") or _md_to_html(body)
-        content["format"] = "org.matrix.custom.html"
-        content["formatted_body"] = f"{pill} {html_body}" if html_body else pill
-        # Prepend plain-text fallback so non-HTML clients also see the mention
-        content["body"] = f"{display_name} {body}" if body else display_name
+        mentioned_ids = self._extract_mentions_from_text(body)
+        if mentioned_ids:
+            content["m.mentions"] = {"user_ids": mentioned_ids}
 
     def _resolve_display_name(self, user_id: str, room_id: str) -> str:
         """Best-effort display name for *user_id* in *room_id*."""

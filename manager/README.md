@@ -6,8 +6,16 @@ All-in-one Manager Agent container. Includes:
 - **Tuwunel Matrix Server** (port 6167): Agent IM communication
 - **MinIO** (port 9000 API, 9001 console): Centralized HTTP file system
 - **Element Web** (via Nginx on port 8088, proxied through Higress): Browser-based IM client
-- **Manager Agent** (OpenClaw): Coordinates Workers, manages credentials, assigns tasks
+- **Manager Agent** (OpenClaw or CoPaw): Coordinates Workers, manages credentials, assigns tasks
 - **mc mirror**: Bidirectional file sync between MinIO and local filesystem
+
+## Runtime Selection
+
+Manager Agent supports two runtime modes via `HICLAW_MANAGER_RUNTIME`:
+- `openclaw` (default): Node.js gateway mode
+- `copaw`: Python workspace mode
+
+Both runtimes share the same skills and workspace structure.
 
 ## Build
 
@@ -64,6 +72,7 @@ manager/
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
+| `HICLAW_MANAGER_RUNTIME` | No | `openclaw` | Manager runtime: `openclaw` or `copaw` |
 | `HICLAW_ADMIN_USER` | Yes | - | Human admin Matrix username |
 | `HICLAW_ADMIN_PASSWORD` | Yes | - | Human admin password |
 | `HICLAW_MANAGER_PASSWORD` | Yes | - | Manager Agent Matrix password |
@@ -79,3 +88,6 @@ manager/
 | `HICLAW_MINIO_PASSWORD` | Yes | - | MinIO root password |
 | `HICLAW_MANAGER_GATEWAY_KEY` | Yes | - | Manager's Higress consumer key |
 | `HICLAW_GITHUB_TOKEN` | No | - | GitHub PAT for MCP Server |
+| `HICLAW_NACOS_REGISTRY_URI` | No | `nacos://market.hiclaw.io:80/public` | Default Nacos registry URI for Worker template search/import, format `nacos://host[:port]/namespace` |
+| `HICLAW_NACOS_USERNAME` | No | - | Default Nacos username for template search and `nacos://` package imports when URI omits `user:pass@` |
+| `HICLAW_NACOS_PASSWORD` | No | - | Default Nacos password for template search and `nacos://` package imports when URI omits `user:pass@` |

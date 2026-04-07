@@ -1,6 +1,6 @@
 #!/usr/bin/env powershell
 # hiclaw-install.ps1 - One-click installation for HiClaw Manager and Worker on Windows
-# Compatible with PowerShell 5.1+ and PowerShell 7.0+
+# Requires PowerShell 7.0+ (recommended)
 #
 # Usage:
 #   .\hiclaw-install.ps1                  # Interactive installation (choose Quick Start or Manual)
@@ -65,7 +65,7 @@ $script:HICLAW_ENV_FILE = if ($EnvFile) { $EnvFile } elseif ($env:HICLAW_ENV_FIL
 $script:StepResult = ""  # Used by state machine to signal "back" navigation
 $script:config = @{}     # Shared config hashtable for step functions
 
-# ANSI escape character for PowerShell 5.1+ compatibility
+# ANSI escape character for terminal colors
 $script:ESC = [char]0x1B
 
 # ============================================================
@@ -331,7 +331,7 @@ $script:Messages = @{
     "port.gateway_prompt" = @{ zh = "网关主机端口（容器内 8080）"; en = "Host port for gateway (8080 inside container)" }
     "port.console_prompt" = @{ zh = "Higress 控制台主机端口（容器内 8001）"; en = "Host port for Higress console (8001 inside container)" }
     "port.element_prompt" = @{ zh = "Element Web 直接访问主机端口（容器内 8088）"; en = "Host port for Element Web direct access (8088 inside container)" }
-    "port.openclaw_console_prompt" = @{ zh = "OpenClaw 控制台主机端口（容器内 18888）"; en = "Host port for OpenClaw console (18888 inside container)" }
+    "port.manager_console_prompt" = @{ zh = "Manager 控制台主机端口（容器内 18888）"; en = "Host port for Manager console (18888 inside container)" }
     "port.local_only.title" = @{ zh = "--- 网络访问模式 ---"; en = "--- Network Access Mode ---" }
     "port.local_only.hint_yes" = @{ zh = "  仅本机使用，无需开放外部端口（推荐）"; en = "  Local use only, no external port exposure (recommended)" }
     "port.local_only.hint_no" = @{ zh = "  允许外部访问（局域网 / 公网）"; en = "  Allow external access (LAN / public network)" }
@@ -348,15 +348,15 @@ $script:Messages = @{
     "domain.element_prompt" = @{ zh = "Element Web 域名"; en = "Element Web Domain" }
     "domain.gateway_prompt" = @{ zh = "AI 网关域名"; en = "AI Gateway Domain" }
     "domain.fs_prompt" = @{ zh = "文件系统域名"; en = "File System Domain" }
-    "domain.console_prompt" = @{ zh = "OpenClaw 控制台域名"; en = "OpenClaw Console Domain" }
+    "domain.console_prompt" = @{ zh = "Manager 控制台域名"; en = "Manager Console Domain" }
 
     # --- GitHub Integration ---
     "github.title" = @{ zh = "--- GitHub 集成（可选，按回车跳过）---"; en = "--- GitHub Integration (optional, press Enter to skip) ---" }
     "github.token_prompt" = @{ zh = "GitHub 个人访问令牌（可选）"; en = "GitHub Personal Access Token (optional)" }
 
     # --- Skills Registry ---
-    "skills.title" = @{ zh = "--- Skills 注册中心（可选，按回车使用默认 https://skills.sh）---"; en = "--- Skills Registry (optional, press Enter for default https://skills.sh) ---" }
-    "skills.url_prompt" = @{ zh = "Skills 注册中心 URL（留空使用默认 https://skills.sh）"; en = "Skills Registry URL (leave empty for default https://skills.sh)" }
+    "skills.title" = @{ zh = "--- Skills 注册中心（可选，按回车使用默认 nacos://market.hiclaw.io:80/public）---"; en = "--- Skills Registry (optional, press Enter for default nacos://market.hiclaw.io:80/public) ---" }
+    "skills.url_prompt" = @{ zh = "Skills 注册中心 URL（留空使用默认 nacos://market.hiclaw.io:80/public）"; en = "Skills Registry URL (leave empty for default nacos://market.hiclaw.io:80/public)" }
 
     # --- Data Persistence ---
     "data.title" = @{ zh = "--- 数据持久化 ---"; en = "--- Data Persistence ---" }
@@ -380,6 +380,14 @@ $script:Messages = @{
     "worker_runtime.choice" = @{ zh = "请选择 [1/2]"; en = "Enter choice [1/2]" }
     "worker_runtime.selected" = @{ zh = "默认 Worker 运行时: {0}"; en = "Default Worker runtime: {0}" }
     "worker_runtime.title_short" = @{ zh = "默认 Worker 运行时"; en = "Default Worker Runtime" }
+
+    # --- Manager runtime ---
+    "manager_runtime.title" = @{ zh = "--- Manager 运行时 ---"; en = "--- Manager Runtime ---" }
+    "manager_runtime.openclaw" = @{ zh = "OpenClaw（Node.js）"; en = "OpenClaw (Node.js)" }
+    "manager_runtime.copaw" = @{ zh = "CoPaw（Python，AgentScope 框架）"; en = "CoPaw (Python, AgentScope framework)" }
+    "manager_runtime.choice" = @{ zh = "请选择 [1/2]"; en = "Enter choice [1/2]" }
+    "manager_runtime.selected" = @{ zh = "Manager 运行时: {0}"; en = "Manager runtime: {0}" }
+    "manager_runtime.title_short" = @{ zh = "Manager 运行时"; en = "Manager Runtime" }
 
     # --- Matrix E2EE ---
     "matrix_e2ee.title" = @{ zh = "--- Matrix 端到端加密（E2EE）---"; en = "--- Matrix End-to-End Encryption (E2EE) ---" }
@@ -462,6 +470,18 @@ $script:Messages = @{
     "llm.openai.test.fail.codingplan" = @{ zh = "提示: 请确认您的 API Key 已开通阿里云百炼 CodingPlan 服务。开通地址: https://www.aliyun.com/benefit/scene/codingplan"; en = "Hint: Please verify that your API Key has CodingPlan service enabled. Enable at: https://www.alibabacloud.com/en/campaign/ai-scene-coding" }
     "llm.openai.test.confirm" = @{ zh = "是否仍要继续安装？[y/N/b]"; en = "Continue with installation anyway? [y/N/b]" }
     "llm.openai.test.aborted" = @{ zh = "安装已中止。"; en = "Installation aborted." }
+    "llm.embedding.title" = @{ zh = "📦 记忆搜索配置"; en = "📦 Memory Search Configuration" }
+    "llm.embedding.hint" = @{ zh = "  Embedding 模型可提升记忆搜索质量（语义匹配）。不启用也可正常使用记忆功能（关键词匹配）。"; en = "  Embedding model improves memory search quality (semantic matching). Memory still works without it (keyword matching)." }
+    "llm.embedding.option.default" = @{ zh = "  1) text-embedding-v4（推荐）"; en = "  1) text-embedding-v4 (Recommended)" }
+    "llm.embedding.option.custom" = @{ zh = "  2) 自定义 Embedding 模型"; en = "  2) Custom embedding model" }
+    "llm.embedding.option.disable" = @{ zh = "  3) 不启用"; en = "  3) Do not enable" }
+    "llm.embedding.select" = @{ zh = "选择"; en = "Select" }
+    "llm.embedding.custom_prompt" = @{ zh = "  Embedding 模型名称"; en = "  Embedding model name" }
+    "llm.embedding.test.testing" = @{ zh = "正在测试 Embedding API 联通性..."; en = "Testing Embedding API connectivity..." }
+    "llm.embedding.test.ok" = @{ zh = "✅ Embedding API 联通性测试通过"; en = "✅ Embedding API connectivity test passed" }
+    "llm.embedding.test.fail" = @{ zh = "⚠️  Embedding API 测试失败（HTTP {0}）。响应: {1}"; en = "⚠️  Embedding API test failed (HTTP {0}). Response: {1}" }
+    "llm.embedding.auto_disabled" = @{ zh = "⚠️  Embedding 已自动禁用，记忆搜索将使用关键词匹配。您可以稍后在 hiclaw-manager.env 中设置 HICLAW_EMBEDDING_MODEL 启用。"; en = "⚠️  Embedding auto-disabled. Memory search will use keyword matching. You can enable it later in hiclaw-manager.env by setting HICLAW_EMBEDDING_MODEL." }
+    "llm.embedding.disabled" = @{ zh = "ℹ️  Embedding 已禁用，记忆搜索将使用关键词匹配。"; en = "ℹ️  Embedding disabled. Memory search will use keyword matching." }
     "nav.back_hint" = @{ zh = "（输入 b 返回上一步）"; en = "(enter b to go back)" }
     # --- OpenAI-compatible provider creation ---
     "install.openai_compat.missing" = @{ zh = "警告: OpenAI Base URL 或 API Key 未设置，跳过提供商创建"; en = "WARNING: OpenAI Base URL or API Key not set, skipping provider creation" }
@@ -507,8 +527,9 @@ $script:Messages = @{
     # --- Other consoles and tips ---
     "success.other_consoles" = @{ zh = "--- 其他控制台 ---"; en = "--- Other Consoles ---" }
     "success.higress_console" = @{ zh = "  Higress 控制台: http://localhost:{0}（用户名: {1} / 密码: {2}）"; en = "  Higress Console: http://localhost:{0} (Username: {1} / Password: {2})" }
-    "success.openclaw_console" = @{ zh = "  OpenClaw 控制台（本地）: http://localhost:{0}（无需登录）"; en = "  OpenClaw Console (local): http://localhost:{0} (no login required)" }
-    "success.openclaw_console_gateway" = @{ zh = "  OpenClaw 控制台（网关）: http://console-local.hiclaw.io（用户名: {0} / 密码: {1}）"; en = "  OpenClaw Console (gateway): http://console-local.hiclaw.io (Username: {0} / Password: {1})" }
+    "success.manager_console" = @{ zh = "  Manager 控制台（本地）: http://localhost:{0}（无需登录）"; en = "  Manager Console (local): http://localhost:{0} (no login required)" }
+    "success.manager_console_gateway" = @{ zh = "  Manager 控制台（网关）: http://console-local.hiclaw.io（用户名: {0} / 密码: {1}）"; en = "  Manager Console (gateway): http://console-local.hiclaw.io (Username: {0} / Password: {1})" }
+    "success.copaw_console" = @{ zh = "  CoPaw 控制台（本地）: http://localhost:{0}（无需登录）"; en = "  CoPaw Console (local): http://localhost:{0} (no login required)" }
     "success.switch_llm.title" = @{ zh = "--- 切换 LLM 提供商 ---"; en = "--- Switch LLM Providers ---" }
     "success.switch_llm.hint" = @{ zh = "  您可以通过 Higress 控制台切换到其他 LLM 提供商（OpenAI、Anthropic 等）。"; en = "  You can switch to other LLM providers (OpenAI, Anthropic, etc.) via Higress Console." }
     "success.switch_llm.docs" = @{ zh = "  详细说明请参阅:"; en = "  For detailed instructions, see:" }
@@ -758,6 +779,9 @@ HICLAW_MODEL_MAX_TOKENS=$($Config.MODEL_MAX_TOKENS)
 HICLAW_MODEL_REASONING=$($Config.MODEL_REASONING)
 HICLAW_MODEL_VISION=$($Config.MODEL_VISION)
 
+# Embedding model (empty = disabled, default: text-embedding-v4)
+HICLAW_EMBEDDING_MODEL=$($Config.EMBEDDING_MODEL)
+
 # Admin
 HICLAW_ADMIN_USER=$($Config.ADMIN_USER)
 HICLAW_ADMIN_PASSWORD=$($Config.ADMIN_PASSWORD)
@@ -767,7 +791,7 @@ HICLAW_LOCAL_ONLY=$($Config.LOCAL_ONLY)
 HICLAW_PORT_GATEWAY=$($Config.PORT_GATEWAY)
 HICLAW_PORT_CONSOLE=$($Config.PORT_CONSOLE)
 HICLAW_PORT_ELEMENT_WEB=$($Config.PORT_ELEMENT_WEB)
-HICLAW_PORT_OPENCLAW_CONSOLE=$($Config.PORT_OPENCLAW_CONSOLE)
+HICLAW_PORT_MANAGER_CONSOLE=$($Config.PORT_MANAGER_CONSOLE)
 
 # Matrix
 HICLAW_MATRIX_DOMAIN=$($Config.MATRIX_DOMAIN)
@@ -790,8 +814,13 @@ HICLAW_REGISTRATION_TOKEN=$($Config.REGISTRATION_TOKEN)
 # GitHub (optional)
 HICLAW_GITHUB_TOKEN=$($Config.GITHUB_TOKEN)
 
-# Skills Registry (optional, default: https://skills.sh)
-HICLAW_SKILLS_API_URL=$($Config.SKILLS_API_URL)
+# Nacos defaults for Worker skill discovery / package import (optional)
+HICLAW_NACOS_USERNAME=$($env:HICLAW_NACOS_USERNAME)
+HICLAW_NACOS_PASSWORD=$($env:HICLAW_NACOS_PASSWORD)
+HICLAW_NACOS_TOKEN=$($env:HICLAW_NACOS_TOKEN)
+
+# Skills Registry (optional, default: nacos://market.hiclaw.io:80/public)
+HICLAW_SKILLS_API_URL=$(if ($Config.SKILLS_API_URL) { $Config.SKILLS_API_URL } else { "nacos://market.hiclaw.io:80/public" })
 
 # CoPaw AgentLoop FS memory (optional)
 HICLAW_COPAW_AGENTLOOP_FS_MEMORY_ENABLED=$($env:HICLAW_COPAW_AGENTLOOP_FS_MEMORY_ENABLED)
@@ -812,6 +841,9 @@ HICLAW_COPAW_AGENTLOOP_FS_DISABLE_MEMORY_MANAGER=$($env:HICLAW_COPAW_AGENTLOOP_F
 # Worker images (for direct container creation)
 HICLAW_WORKER_IMAGE=$($Config.WORKER_IMAGE)
 HICLAW_COPAW_WORKER_IMAGE=$($Config.COPAW_WORKER_IMAGE)
+
+# Manager runtime (openclaw | copaw)
+HICLAW_MANAGER_RUNTIME=$($Config.MANAGER_RUNTIME)
 
 # Default Worker runtime (openclaw | copaw)
 HICLAW_DEFAULT_WORKER_RUNTIME=$($Config.DEFAULT_WORKER_RUNTIME)
@@ -999,6 +1031,40 @@ function Test-LlmConnectivity {
     }
 }
 
+function Test-EmbeddingConnectivity {
+    param(
+        [string]$BaseUrl,
+        [string]$ApiKey,
+        [string]$Model
+    )
+    Write-Log (Get-Msg "llm.embedding.test.testing")
+    $uri = ($BaseUrl.TrimEnd('/')) + "/embeddings"
+    $bodyHash = @{
+        model = $Model
+        input = "test"
+    }
+    $body = $bodyHash | ConvertTo-Json -Compress
+    try {
+        $response = Invoke-WebRequest -Uri $uri -Method POST `
+            -Headers @{ "Authorization" = "Bearer $ApiKey"; "Content-Type" = "application/json"; "User-Agent" = "HiClaw/$($script:HICLAW_VERSION)" } `
+            -Body $body -TimeoutSec 30 -ErrorAction Stop -UseBasicParsing
+        Write-Log (Get-Msg "llm.embedding.test.ok")
+        return $true
+    } catch {
+        $statusCode = if ($_.Exception.Response) { [int]$_.Exception.Response.StatusCode } else { 0 }
+        $responseBody = ""
+        if ($_.Exception.Response) {
+            try {
+                $stream = $_.Exception.Response.GetResponseStream()
+                $reader = New-Object System.IO.StreamReader($stream)
+                $responseBody = $reader.ReadToEnd()
+            } catch {}
+        }
+        Write-Host (Get-Msg "llm.embedding.test.fail" -f $statusCode, $responseBody) -ForegroundColor Yellow
+        return $false
+    }
+}
+
 function New-OpenAICompatProvider {
     param(
         [string]$BaseUrl,
@@ -1137,7 +1203,7 @@ function Clear-StepVars {
             [Environment]::SetEnvironmentVariable("HICLAW_LOCAL_ONLY", $null, "Process")
         }
         "Step-Ports" {
-            foreach ($k in @("HICLAW_PORT_GATEWAY","HICLAW_PORT_CONSOLE","HICLAW_PORT_ELEMENT_WEB","HICLAW_PORT_OPENCLAW_CONSOLE")) {
+            foreach ($k in @("HICLAW_PORT_GATEWAY","HICLAW_PORT_CONSOLE","HICLAW_PORT_ELEMENT_WEB","HICLAW_PORT_MANAGER_CONSOLE")) {
                 [Environment]::SetEnvironmentVariable($k, $null, "Process")
             }
         }
@@ -1160,6 +1226,9 @@ function Clear-StepVars {
         }
         "Step-Runtime" {
             [Environment]::SetEnvironmentVariable("HICLAW_DEFAULT_WORKER_RUNTIME", $null, "Process")
+        }
+        "Step-ManagerRuntime" {
+            [Environment]::SetEnvironmentVariable("HICLAW_MANAGER_RUNTIME", $null, "Process")
         }
         "Step-E2ee" {
             [Environment]::SetEnvironmentVariable("HICLAW_MATRIX_E2EE", $null, "Process")
@@ -1354,6 +1423,7 @@ function Step-Llm {
         Write-Log (Get-Msg "llm.model.label" -f $script:config.DEFAULT_MODEL)
         Write-Log ""
         $script:config.LLM_API_KEY = Read-Prompt -VarName "HICLAW_LLM_API_KEY" -PromptText (Get-Msg "llm.apikey_prompt") -Secret
+        $script:config.EMBEDDING_MODEL = if ($null -ne $env:HICLAW_EMBEDDING_MODEL) { $env:HICLAW_EMBEDDING_MODEL } else { "text-embedding-v4" }
         return
     }
 
@@ -1490,6 +1560,55 @@ function Step-Llm {
         }
     }
 
+    # --- Embedding model (optional, auto-tested) ---
+    Write-Host ""
+    Write-Log (Get-Msg "llm.embedding.title")
+    Write-Log (Get-Msg "llm.embedding.hint")
+    Write-Host ""
+    Write-Host (Get-Msg "llm.embedding.option.default")
+    Write-Host (Get-Msg "llm.embedding.option.custom")
+    Write-Host (Get-Msg "llm.embedding.option.disable")
+    Write-Host ""
+    $embChoice = Read-Host "$(Get-Msg 'llm.embedding.select') [1]"
+    $embChoice = if ($embChoice) { $embChoice } else { "1" }
+    if ($embChoice -eq "b") { $script:StepResult = "back"; return }
+
+    switch ($embChoice) {
+        "1" {
+            $script:config.EMBEDDING_MODEL = "text-embedding-v4"
+        }
+        "2" {
+            $embCustom = Read-Host (Get-Msg "llm.embedding.custom_prompt")
+            if ($embCustom -eq "b") { $script:StepResult = "back"; return }
+            if ($embCustom) {
+                $script:config.EMBEDDING_MODEL = $embCustom
+            } else {
+                $script:config.EMBEDDING_MODEL = ""
+                Write-Log (Get-Msg "llm.embedding.disabled")
+            }
+        }
+        "3" {
+            $script:config.EMBEDDING_MODEL = ""
+            Write-Log (Get-Msg "llm.embedding.disabled")
+        }
+        default {
+            $script:config.EMBEDDING_MODEL = "text-embedding-v4"
+        }
+    }
+
+    if ($script:config.EMBEDDING_MODEL) {
+        # Qwen provider uses dashscope directly; others use OPENAI_BASE_URL
+        $embBaseUrl = $script:config.OPENAI_BASE_URL
+        if ($script:config.LLM_PROVIDER -eq "qwen") {
+            $embBaseUrl = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+        }
+        $embResult = Test-EmbeddingConnectivity -BaseUrl $embBaseUrl -ApiKey $script:config.LLM_API_KEY -Model $script:config.EMBEDDING_MODEL
+        if (-not $embResult) {
+            $script:config.EMBEDDING_MODEL = ""
+            Write-Log (Get-Msg "llm.embedding.auto_disabled")
+        }
+    }
+
     Write-Log ""
 }
 
@@ -1555,7 +1674,7 @@ function Step-Ports {
     if ($script:StepResult -eq "back") { return }
     $script:config.PORT_ELEMENT_WEB = Read-Prompt -VarName "HICLAW_PORT_ELEMENT_WEB" -PromptText (Get-Msg "port.element_prompt") -Default "18088"
     if ($script:StepResult -eq "back") { return }
-    $script:config.PORT_OPENCLAW_CONSOLE = Read-Prompt -VarName "HICLAW_PORT_OPENCLAW_CONSOLE" -PromptText (Get-Msg "port.openclaw_console_prompt") -Default "18888"
+    $script:config.PORT_MANAGER_CONSOLE = Read-Prompt -VarName "HICLAW_PORT_MANAGER_CONSOLE" -PromptText (Get-Msg "port.manager_console_prompt") -Default "18888"
     if ($script:StepResult -eq "back") { return }
     Write-Log ""
 }
@@ -1636,6 +1755,35 @@ function Step-Runtime {
         $script:config.DEFAULT_WORKER_RUNTIME = if ($rtChoice -eq "2") { "copaw" } else { "openclaw" }
     }
     Write-Log (Get-Msg "worker_runtime.selected" -f $script:config.DEFAULT_WORKER_RUNTIME)
+}
+
+function Step-ManagerRuntime {
+    Write-Log (Get-Msg "manager_runtime.title")
+    Write-Host ""
+    Write-Host "  1) $(Get-Msg 'manager_runtime.openclaw')"
+    Write-Host "  2) $(Get-Msg 'manager_runtime.copaw')"
+    Write-Host ""
+
+    if ($script:HICLAW_NON_INTERACTIVE) {
+        $script:config.MANAGER_RUNTIME = if ($env:HICLAW_MANAGER_RUNTIME) { $env:HICLAW_MANAGER_RUNTIME } else { "openclaw" }
+    } elseif ($script:HICLAW_UPGRADE -and $env:HICLAW_MANAGER_RUNTIME) {
+        Write-Log (Get-Msg "prompt.upgrade_keep" -f (Get-Msg "manager_runtime.title_short"), $env:HICLAW_MANAGER_RUNTIME)
+        $mrChoice = Read-Host (Get-Msg "manager_runtime.choice")
+        if ($mrChoice -eq "b") { $script:StepResult = "back"; return }
+        if ($mrChoice) {
+            $script:config.MANAGER_RUNTIME = if ($mrChoice -eq "2") { "copaw" } else { "openclaw" }
+        } else {
+            $script:config.MANAGER_RUNTIME = $env:HICLAW_MANAGER_RUNTIME
+        }
+    } elseif ($env:HICLAW_MANAGER_RUNTIME) {
+        $script:config.MANAGER_RUNTIME = $env:HICLAW_MANAGER_RUNTIME
+    } else {
+        $mrChoice = Read-Host (Get-Msg "manager_runtime.choice")
+        if ($mrChoice -eq "b") { $script:StepResult = "back"; return }
+        $mrChoice = if ($mrChoice) { $mrChoice } else { "1" }
+        $script:config.MANAGER_RUNTIME = if ($mrChoice -eq "2") { "copaw" } else { "openclaw" }
+    }
+    Write-Log (Get-Msg "manager_runtime.selected" -f $script:config.MANAGER_RUNTIME)
 }
 
 function Step-E2ee {
@@ -1813,6 +1961,12 @@ function Install-Manager {
         "$($script:HICLAW_REGISTRY)/higress/hiclaw-copaw-worker:$($script:HICLAW_VERSION)"
     }
 
+    $script:MANAGER_COPAW_IMAGE = if ($env:HICLAW_INSTALL_MANAGER_COPAW_IMAGE) {
+        $env:HICLAW_INSTALL_MANAGER_COPAW_IMAGE
+    } else {
+        "$($script:HICLAW_REGISTRY)/higress/hiclaw-manager-copaw:$($script:HICLAW_VERSION)"
+    }
+
     $script:DOCKER_PROXY_IMAGE = if ($env:HICLAW_INSTALL_DOCKER_PROXY_IMAGE) {
         $env:HICLAW_INSTALL_DOCKER_PROXY_IMAGE
     } else {
@@ -1892,7 +2046,7 @@ function Install-Manager {
     # ── State machine ─────────────────────────────────────────────────────────
     $_steps = @("Step-Lang", "Step-Mode", "Step-Existing", "Step-Llm", "Step-Admin",
                 "Step-Network", "Step-Ports", "Step-Domains", "Step-Github", "Step-Skills",
-                "Step-Volume", "Step-Workspace", "Step-Runtime", "Step-E2ee", "Step-DockerProxy", "Step-Idle",
+                "Step-Volume", "Step-Workspace", "Step-ManagerRuntime", "Step-Runtime", "Step-E2ee", "Step-DockerProxy", "Step-Idle",
                 "Step-Hostshare")
     $_stepHistory = [System.Collections.Generic.List[int]]::new()
     $_stepIdx = 0
@@ -1950,11 +2104,14 @@ function Install-Manager {
     if (-not $script:config.LOCAL_ONLY) {
         $script:config.LOCAL_ONLY = if ($env:HICLAW_LOCAL_ONLY) { $env:HICLAW_LOCAL_ONLY } else { "1" }
     }
+    if (-not $script:config.MANAGER_RUNTIME) {
+        $script:config.MANAGER_RUNTIME = if ($env:HICLAW_MANAGER_RUNTIME) { $env:HICLAW_MANAGER_RUNTIME } else { "openclaw" }
+    }
     if (-not $script:config.PORT_GATEWAY) {
         $script:config.PORT_GATEWAY = if ($env:HICLAW_PORT_GATEWAY) { $env:HICLAW_PORT_GATEWAY } else { "18080" }
         $script:config.PORT_CONSOLE = if ($env:HICLAW_PORT_CONSOLE) { $env:HICLAW_PORT_CONSOLE } else { "18001" }
         $script:config.PORT_ELEMENT_WEB = if ($env:HICLAW_PORT_ELEMENT_WEB) { $env:HICLAW_PORT_ELEMENT_WEB } else { "18088" }
-        $script:config.PORT_OPENCLAW_CONSOLE = if ($env:HICLAW_PORT_OPENCLAW_CONSOLE) { $env:HICLAW_PORT_OPENCLAW_CONSOLE } else { "18888" }
+        $script:config.PORT_MANAGER_CONSOLE = if ($env:HICLAW_PORT_MANAGER_CONSOLE) { $env:HICLAW_PORT_MANAGER_CONSOLE } else { "18888" }
     }
     if (-not $script:config.MATRIX_DOMAIN) {
         $script:config.MATRIX_DOMAIN = if ($env:HICLAW_MATRIX_DOMAIN) { $env:HICLAW_MATRIX_DOMAIN } else { "matrix-local.hiclaw.io:$($script:config.PORT_GATEWAY)" }
@@ -1979,6 +2136,7 @@ function Install-Manager {
     $config.REGISTRY = $script:HICLAW_REGISTRY
     $config.WORKER_IMAGE = $script:WORKER_IMAGE
     $config.COPAW_WORKER_IMAGE = $script:COPAW_WORKER_IMAGE
+    $config.MANAGER_COPAW_IMAGE = $script:MANAGER_COPAW_IMAGE
 
     # Write env file
     New-EnvFile -Config $config -Path $script:HICLAW_ENV_FILE
@@ -1990,7 +2148,8 @@ function Install-Manager {
         "--env-file", $script:HICLAW_ENV_FILE,
         "-e", "HOME=/root/manager-workspace",
         "-w", "/root/manager-workspace",
-        "-e", "HOST_ORIGINAL_HOME=$($config.HOST_SHARE_DIR)"
+        "-e", "HOST_ORIGINAL_HOME=$($config.HOST_SHARE_DIR)",
+        "-e", "HICLAW_MANAGER_RUNTIME=$($config.MANAGER_RUNTIME)"
     )
 
     # Timezone
@@ -2002,12 +2161,26 @@ function Install-Manager {
     if ($script:HICLAW_MOUNT_SOCKET) {
         $socketAvailable = Test-DockerRunning
         if ($socketAvailable) {
+            # Ensure hiclaw-net Docker network exists; Manager joins it with network aliases
+            # so workers can resolve *-local.hiclaw.io via Docker DNS without ExtraHosts.
+            docker network inspect hiclaw-net *>$null
+            if ($LASTEXITCODE -ne 0) { docker network create hiclaw-net *>$null }
+            $dockerArgs += @("--network", "hiclaw-net")
+            # Workers hardcode these three internal domains to reach manager services,
+            # so they must always be network aliases regardless of user domain config.
+            $dockerArgs += @("--network-alias", "matrix-local.hiclaw.io")
+            $dockerArgs += @("--network-alias", "aigw-local.hiclaw.io")
+            $dockerArgs += @("--network-alias", "fs-local.hiclaw.io")
+            # Also alias any *-local.hiclaw.io user-configured domains that differ from the fixed ones above.
+            foreach ($domain in @($config.MATRIX_CLIENT_DOMAIN, $config.CONSOLE_DOMAIN)) {
+                if ($domain -match '-local\.hiclaw\.io$') {
+                    $dockerArgs += @("--network-alias", $domain)
+                }
+            }
+
             # Start Docker API proxy if enabled
             if ($config.DOCKER_PROXY -eq "1") {
                 $proxyImage = $script:DOCKER_PROXY_IMAGE
-                # Ensure Docker network exists (reuse if already present)
-                docker network inspect hiclaw-net *>$null
-                if ($LASTEXITCODE -ne 0) { docker network create hiclaw-net *>$null }
                 Write-Log "Starting Docker API proxy..."
                 docker rm -f hiclaw-docker-proxy *>$null
                 docker run -d --name hiclaw-docker-proxy `
@@ -2018,7 +2191,6 @@ function Install-Manager {
                     --restart unless-stopped `
                     $proxyImage
                 $dockerArgs += @("-e", "HICLAW_CONTAINER_API=http://hiclaw-docker-proxy:2375")
-                $dockerArgs += @("--network", "hiclaw-net")
                 Write-Log (Get-Msg "docker_proxy.selected_enabled")
             } else {
                 $dockerArgs += @("-v", "//var/run/docker.sock:/var/run/docker.sock")
@@ -2047,7 +2219,7 @@ function Install-Manager {
     $dockerArgs += @("-p", "${portPrefix}$($config.PORT_GATEWAY):8080")
     $dockerArgs += @("-p", "${portPrefix}$($config.PORT_CONSOLE):8001")
     $dockerArgs += @("-p", "${portPrefix}$($config.PORT_ELEMENT_WEB):8088")
-    $dockerArgs += @("-p", "127.0.0.1:$($config.PORT_OPENCLAW_CONSOLE):18888")
+    $dockerArgs += @("-p", "127.0.0.1:$($config.PORT_MANAGER_CONSOLE):18888")
 
     # Data mount: Docker volume
     $dockerArgs += @("-v", "$($config.DATA_DIR):/data")
@@ -2070,8 +2242,9 @@ function Install-Manager {
     # Restart policy
     $dockerArgs += @("--restart", "unless-stopped")
 
-    # Image
-    $dockerArgs += $script:MANAGER_IMAGE
+    # Image (select based on Manager runtime)
+    $managerImage = if ($config.MANAGER_RUNTIME -eq "copaw") { $script:MANAGER_COPAW_IMAGE } else { $script:MANAGER_IMAGE }
+    $dockerArgs += $managerImage
 
     # Check if the Docker volume exists; create if not (reuse on reinstall)
     $volumeExists = docker volume ls -q 2>$null | Select-String "^$($config.DATA_DIR)$"
@@ -2083,20 +2256,20 @@ function Install-Manager {
     # For local images (prefix "hiclaw/"), skip pull if exists
     # For remote images, always pull to get updates
     $LocalImagePrefix = "hiclaw/"
-    if ($script:MANAGER_IMAGE.StartsWith($LocalImagePrefix)) {
-        $managerImageExists = docker image inspect $script:MANAGER_IMAGE 2>$null
+    if ($managerImage.StartsWith($LocalImagePrefix)) {
+        $managerImageExists = docker image inspect $managerImage 2>$null
         if ($LASTEXITCODE -eq 0) {
-            Write-Log (Get-Msg "install.image.exists" -f $script:MANAGER_IMAGE)
+            Write-Log (Get-Msg "install.image.exists" -f $managerImage)
         } else {
-            Write-Log (Get-Msg "install.image.pulling_manager" -f $script:MANAGER_IMAGE)
-            & docker pull $script:MANAGER_IMAGE
+            Write-Log (Get-Msg "install.image.pulling_manager" -f $managerImage)
+            & docker pull $managerImage
         }
     } else {
-        Write-Log (Get-Msg "install.image.pulling_manager" -f $script:MANAGER_IMAGE)
-        & docker pull $script:MANAGER_IMAGE
+        Write-Log (Get-Msg "install.image.pulling_manager" -f $managerImage)
+        & docker pull $managerImage
     }
 
-    # Pull the worker image matching the selected runtime (on upgrade, also pull the other if present locally)
+    # Pull the worker image matching the selected runtime
     $selectedWorkerImage = if ($config.DEFAULT_WORKER_RUNTIME -eq "copaw") { $script:COPAW_WORKER_IMAGE } else { $script:WORKER_IMAGE }
     if ($selectedWorkerImage.StartsWith($LocalImagePrefix)) {
         $workerImageExists = docker image inspect $selectedWorkerImage 2>$null
@@ -2111,16 +2284,32 @@ function Install-Manager {
         & docker pull $selectedWorkerImage
     }
 
-    # During upgrade, also pull the other worker image if it exists locally
-    if ($script:HICLAW_UPGRADE) {
-        $otherWorkerImage = if ($config.DEFAULT_WORKER_RUNTIME -eq "copaw") { $script:WORKER_IMAGE } else { $script:COPAW_WORKER_IMAGE }
-        $otherExists = docker image inspect $otherWorkerImage 2>$null
+    # Always pull copaw worker image — team workers require copaw runtime
+    if ($config.DEFAULT_WORKER_RUNTIME -ne "copaw") {
+        $copawExists = docker image inspect $script:COPAW_WORKER_IMAGE 2>$null
         if ($LASTEXITCODE -eq 0) {
-            if ($otherWorkerImage.StartsWith($LocalImagePrefix)) {
-                Write-Log (Get-Msg "install.image.worker_exists" -f $otherWorkerImage)
-            } else {
-                Write-Log (Get-Msg "install.image.pulling_worker" -f $otherWorkerImage)
-                & docker pull $otherWorkerImage
+            Write-Log (Get-Msg "install.image.worker_exists" -f $script:COPAW_WORKER_IMAGE)
+        } else {
+            try {
+                Write-Log (Get-Msg "install.image.pulling_worker" -f $script:COPAW_WORKER_IMAGE)
+                & docker pull $script:COPAW_WORKER_IMAGE
+            } catch {
+                Write-Log "Warning: copaw worker image not available, team features may not work"
+            }
+        }
+    }
+
+    # During upgrade, also pull openclaw worker image if it exists locally
+    if ($script:HICLAW_UPGRADE) {
+        if ($config.DEFAULT_WORKER_RUNTIME -eq "copaw") {
+            $otherExists = docker image inspect $script:WORKER_IMAGE 2>$null
+            if ($LASTEXITCODE -eq 0) {
+                if ($script:WORKER_IMAGE.StartsWith($LocalImagePrefix)) {
+                    Write-Log (Get-Msg "install.image.worker_exists" -f $script:WORKER_IMAGE)
+                } else {
+                    Write-Log (Get-Msg "install.image.pulling_worker" -f $script:WORKER_IMAGE)
+                    & docker pull $script:WORKER_IMAGE
+                }
             }
         }
     }
@@ -2211,8 +2400,8 @@ function Install-Manager {
     Write-Log ""
     Write-Log (Get-Msg "success.other_consoles")
     Write-Log (Get-Msg "success.higress_console" -f $config.PORT_CONSOLE, $config.ADMIN_USER, $config.ADMIN_PASSWORD)
-    Write-Log (Get-Msg "success.openclaw_console" -f $config.PORT_OPENCLAW_CONSOLE)
-    Write-Log (Get-Msg "success.openclaw_console_gateway" -f $config.ADMIN_USER, $config.ADMIN_PASSWORD)
+    Write-Log (Get-Msg "success.manager_console" -f $config.PORT_MANAGER_CONSOLE)
+    Write-Log (Get-Msg "success.manager_console_gateway" -f $config.ADMIN_USER, $config.ADMIN_PASSWORD)
     Write-Log ""
     Write-Log (Get-Msg "success.switch_llm.title")
     Write-Log (Get-Msg "success.switch_llm.hint")
@@ -2298,10 +2487,26 @@ function Install-Worker {
         "-e", "HICLAW_FS_SECRET_KEY=$FsSecret"
     )
 
-    # Add SKILLS_API_URL if find-skills is enabled and URL is specified
+    if (-not $SkillsApiUrl) {
+        if ($env:HICLAW_SKILLS_API_URL) {
+            $SkillsApiUrl = $env:HICLAW_SKILLS_API_URL
+        } else {
+            $SkillsApiUrl = "nacos://market.hiclaw.io:80/public"
+        }
+    }
+
     if ($FindSkills -and $SkillsApiUrl) {
         $dockerArgs += @("-e", "SKILLS_API_URL=$SkillsApiUrl")
         Write-Log (Get-Msg "worker.skills_url" -f $SkillsApiUrl)
+    }
+    if ($env:HICLAW_NACOS_USERNAME) {
+        $dockerArgs += @("-e", "HICLAW_NACOS_USERNAME=$($env:HICLAW_NACOS_USERNAME)")
+    }
+    if ($env:HICLAW_NACOS_PASSWORD) {
+        $dockerArgs += @("-e", "HICLAW_NACOS_PASSWORD=$($env:HICLAW_NACOS_PASSWORD)")
+    }
+    if ($env:HICLAW_NACOS_TOKEN) {
+        $dockerArgs += @("-e", "HICLAW_NACOS_TOKEN=$($env:HICLAW_NACOS_TOKEN)")
     }
 
     $dockerArgs += @("--restart", "unless-stopped", $workerImage)

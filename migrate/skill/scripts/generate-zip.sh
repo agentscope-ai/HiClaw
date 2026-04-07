@@ -75,9 +75,14 @@ WORKSPACE_DIR=""
 if command -v jq &>/dev/null; then
     WORKSPACE_DIR=$(jq -r '.agents.defaults.workspace // empty' "${CONFIG_FILE}" 2>/dev/null || true)
 fi
+# Fallback: try grep if jq failed (e.g. JSON parse errors)
+if [ -z "${WORKSPACE_DIR}" ]; then
+    WORKSPACE_DIR=$(grep -oP '"workspace"\s*:\s*"\K[^"]+' "${CONFIG_FILE}" 2>/dev/null || true)
+fi
 if [ -z "${WORKSPACE_DIR}" ]; then
     WORKSPACE_DIR="${STATE_DIR}/workspace"
 fi
+log "Workspace directory: ${WORKSPACE_DIR}"
 
 # ============================================================
 # Prepare staging directory
@@ -347,14 +352,30 @@ for skills_dir in "${WORKSPACE_DIR}/skills" "${STATE_DIR}/extensions/skills"; do
     if [ -d "${skills_dir}" ]; then
         for skill_dir in "${skills_dir}"/*/; do
             [ -d "${skill_dir}" ] || continue
-            skill_name=$(basename "${skill_dir}")
-            # Skip HiClaw built-in skills
-            case "${skill_name}" in
-                file-sync|mcporter|find-skills) continue ;;
-            esac
-            mkdir -p "${STAGING}/skills/${skill_name}"
-            cp -r "${skill_dir}"* "${STAGING}/skills/${skill_name}/" 2>/dev/null || true
-            SKILL_COUNT=$((SKILL_COUNT + 1))
+            # Check if this is a skill directory (has SKILL.md) or a sub-group (e.g. skills/public/)
+            if [ -f "${skill_dir}SKILL.md" ]; then
+                skill_name=$(basename "${skill_dir}")
+                # Skip HiClaw built-in skills
+                case "${skill_name}" in
+                    file-sync|mcporter|find-skills) continue ;;
+                esac
+                mkdir -p "${STAGING}/skills/${skill_name}"
+                cp -r "${skill_dir}"* "${STAGING}/skills/${skill_name}/" 2>/dev/null || true
+                SKILL_COUNT=$((SKILL_COUNT + 1))
+            else
+                # Nested skill group (e.g. skills/public/*/), recurse one level
+                for nested_dir in "${skill_dir}"*/; do
+                    [ -d "${nested_dir}" ] || continue
+                    [ -f "${nested_dir}SKILL.md" ] || continue
+                    skill_name=$(basename "${nested_dir}")
+                    case "${skill_name}" in
+                        file-sync|mcporter|find-skills) continue ;;
+                    esac
+                    mkdir -p "${STAGING}/skills/${skill_name}"
+                    cp -r "${nested_dir}"* "${STAGING}/skills/${skill_name}/" 2>/dev/null || true
+                    SKILL_COUNT=$((SKILL_COUNT + 1))
+                done
+            fi
         done
     fi
 done
@@ -367,22 +388,29 @@ log "Step 7: Adapting cron jobs..."
 
 CRON_FILE="${STATE_DIR}/cron/jobs.json"
 if [ -f "${CRON_FILE}" ] && command -v jq &>/dev/null; then
-    # Remove channel-specific delivery config (Discord/Slack), keep schedule and payload
-    jq '[.[] | {
-        id: .id,
-        name: .name,
-        description: .description,
-        schedule: .schedule,
-        payload: {
-            agentTurn: .payload.agentTurn
-        },
-        state: {
-            enabled: (if .state.enabled == false then false else true end)
-        }
-    } | del(.payload.agentTurn | nulls)]' "${CRON_FILE}" > "${STAGING}/crons/jobs.json" 2>/dev/null || echo "[]" > "${STAGING}/crons/jobs.json"
-
-    CRON_COUNT=$(jq 'length' "${STAGING}/crons/jobs.json" 2>/dev/null || echo "0")
-    log "  Adapted ${CRON_COUNT} cron jobs"
+    # The cron file is {"version":1,"jobs":[...]}, extract the jobs array
+    # Try .jobs[] first (new format), fallback to .[] (legacy format)
+    JOBS_COUNT=$(jq -r 'if .jobs then (.jobs | length) else length end' "${CRON_FILE}" 2>/dev/null || echo "0")
+    if [ "${JOBS_COUNT}" != "0" ] && [ -n "${JOBS_COUNT}" ]; then
+        # Remove channel-specific delivery config (Discord/Slack), keep schedule and payload
+        jq 'if .jobs then .jobs else . end | [.[] | {
+            id: .id,
+            name: .name,
+            description: .description,
+            schedule: .schedule,
+            payload: {
+                agentTurn: .payload.agentTurn
+            },
+            state: {
+                enabled: (if .state.enabled == false then false else true end)
+            }
+        } | del(.payload.agentTurn | nulls)]' "${CRON_FILE}" > "${STAGING}/crons/jobs.json" 2>/dev/null || echo "[]" > "${STAGING}/crons/jobs.json"
+        CRON_COUNT=$(jq 'length' "${STAGING}/crons/jobs.json" 2>/dev/null || echo "0")
+        log "  Adapted ${CRON_COUNT} cron jobs"
+    else
+        echo "[]" > "${STAGING}/crons/jobs.json"
+        log "  No cron jobs found"
+    fi
 else
     echo "[]" > "${STAGING}/crons/jobs.json"
     log "  No cron jobs found"
