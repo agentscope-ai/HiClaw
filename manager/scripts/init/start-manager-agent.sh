@@ -641,7 +641,7 @@ if [ "${HICLAW_MEM0_ENABLED:-false}" = "true" ]; then
             _mem0_user_id="${HICLAW_MEM0_USER_ID:-${HICLAW_ADMIN_USER:-admin}}"
             _mem0_org_id="${HICLAW_MEM0_ORG_ID:-}"
             _mem0_project_id="${HICLAW_MEM0_PROJECT_ID:-}"
-            _mem0_enable_graph="${HICLAW_MEM0_ENABLE_GRAPH:-false}"
+            _mem0_enable_graph="$(echo "${HICLAW_MEM0_ENABLE_GRAPH:-false}" | tr '[:upper:]' '[:lower:]')"
 
             # Build mem0 plugin config JSON
             _mem0_config=$(jq -n \
@@ -649,7 +649,7 @@ if [ "${HICLAW_MEM0_ENABLED:-false}" = "true" ]; then
                 --arg userId "${_mem0_user_id}" \
                 --arg orgId "${_mem0_org_id}" \
                 --arg projectId "${_mem0_project_id}" \
-                --argjson enableGraph "${_mem0_enable_graph}" \
+                --arg enableGraphRaw "${_mem0_enable_graph}" \
                 '{
                     "enabled": true,
                     "config": {
@@ -657,7 +657,7 @@ if [ "${HICLAW_MEM0_ENABLED:-false}" = "true" ]; then
                         "userId": $userId
                     } + (if $orgId != "" then {"orgId": $orgId} else {} end)
                       + (if $projectId != "" then {"projectId": $projectId} else {} end)
-                      + (if $enableGraph then {"enableGraph": $enableGraph} else {} end)
+                      + (if $enableGraphRaw == "true" then {"enableGraph": true} else {} end)
                 }')
 
             # Inject into openclaw.json (idempotent merge)

@@ -146,6 +146,54 @@ fi
 log "Generated ${OUTPUT_DIR}/openclaw.json (model=${MODEL_NAME}, ctx=${CTX}, max=${MAX})"
 
 # ============================================================
+# Optional: inject openclaw-mem0 long-term memory config
+#
+# Manager runtime config uses HICLAW_MEM0_* env vars; Workers receive a
+# per-worker entry in openclaw.json so they do not need mem0 runtime envs.
+# ============================================================
+_mem0_enabled_lc="$(echo "${HICLAW_MEM0_ENABLED:-false}" | tr '[:upper:]' '[:lower:]')"
+if [ "${_mem0_enabled_lc}" = "true" ]; then
+    _mem0_plugin_name="openclaw-mem0"
+    _mem0_plugin_dir="${OPENCLAW_MEM0_PLUGIN_DIR:-/opt/openclaw/extensions/${_mem0_plugin_name}}"
+    _mem0_enable_graph_lc="$(echo "${HICLAW_MEM0_ENABLE_GRAPH:-false}" | tr '[:upper:]' '[:lower:]')"
+
+    if [ -z "${HICLAW_MEM0_API_KEY:-}" ]; then
+        log "WARNING: HICLAW_MEM0_ENABLED=true but HICLAW_MEM0_API_KEY is not set; skipping mem0 config for worker ${WORKER_NAME}"
+    else
+        jq --arg pluginName "${_mem0_plugin_name}" \
+           --arg pluginDir "${_mem0_plugin_dir}" \
+           --arg apiKey "${HICLAW_MEM0_API_KEY}" \
+           --arg userId "${WORKER_NAME}" \
+           --arg orgId "${HICLAW_MEM0_ORG_ID:-}" \
+           --arg projectId "${HICLAW_MEM0_PROJECT_ID:-}" \
+           --arg enableGraphRaw "${_mem0_enable_graph_lc}" \
+           '
+            .plugins = (.plugins // {})
+            | .plugins.load = (.plugins.load // {})
+            | .plugins.entries = (.plugins.entries // {})
+            | if (.plugins.allow | type) != "array" then .plugins.allow = [] else . end
+            | if (.plugins.allow | index($pluginName)) == null then .plugins.allow += [$pluginName] else . end
+            | if (.plugins.load.paths | type) != "array" then .plugins.load.paths = [] else . end
+            | if (.plugins.load.paths | index($pluginDir)) == null then .plugins.load.paths += [$pluginDir] else . end
+            | .plugins.entries[$pluginName] = {
+                "enabled": true,
+                "config": (
+                    {
+                        "apiKey": $apiKey,
+                        "userId": $userId
+                    }
+                    + (if $orgId != "" then {"orgId": $orgId} else {} end)
+                    + (if $projectId != "" then {"projectId": $projectId} else {} end)
+                    + (if $enableGraphRaw == "true" then {"enableGraph": true} else {} end)
+                )
+            }
+           ' "${OUTPUT_DIR}/openclaw.json" > "${OUTPUT_DIR}/openclaw.json.mem0-tmp" && \
+            mv "${OUTPUT_DIR}/openclaw.json.mem0-tmp" "${OUTPUT_DIR}/openclaw.json"
+        log "mem0 config injected into Worker ${WORKER_NAME} openclaw.json (userId=${WORKER_NAME}, enableGraph=${_mem0_enable_graph_lc})"
+    fi
+fi
+
+# ============================================================
 # Optional: inject openclaw-cms-plugin observability config
 #
 # The HICLAW_CMS_TRACES_ENABLED / HICLAW_CMS_METRICS_ENABLED switches live on

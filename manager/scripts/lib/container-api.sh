@@ -205,32 +205,10 @@ container_create_worker() {
     # Build base environment variables
     local base_env='["HOME='"${worker_home}"'","HICLAW_WORKER_NAME='"${worker_name}"'","HICLAW_FS_ENDPOINT='"${fs_endpoint}"'","HICLAW_FS_ACCESS_KEY='"${fs_access_key}"'","HICLAW_FS_SECRET_KEY='"${fs_secret_key}"'"]'
 
-    # Add mem0 plugin environment variables if enabled
-    local mem0_env='[]'
-    if [ "${HICLAW_MEM0_ENABLED:-false}" = "true" ] && [ -n "${HICLAW_MEM0_API_KEY:-}" ]; then
-        mem0_env=$(jq -n \
-            --arg enabled "${HICLAW_MEM0_ENABLED}" \
-            --arg apiKey "${HICLAW_MEM0_API_KEY}" \
-            --arg userId "${HICLAW_MEM0_USER_ID:-}" \
-            --arg orgId "${HICLAW_MEM0_ORG_ID:-}" \
-            --arg projectId "${HICLAW_MEM0_PROJECT_ID:-}" \
-            --arg enableGraph "${HICLAW_MEM0_ENABLE_GRAPH:-false}" \
-            '[
-                "HICLAW_MEM0_ENABLED=\($enabled)",
-                "HICLAW_MEM0_API_KEY=\($apiKey)"
-            ] + (if $userId != "" then ["HICLAW_MEM0_USER_ID=\($userId)"] else [] end)
-              + (if $orgId != "" then ["HICLAW_MEM0_ORG_ID=\($orgId)"] else [] end)
-              + (if $projectId != "" then ["HICLAW_MEM0_PROJECT_ID=\($projectId)"] else [] end)
-              + (if $enableGraph == "true" then ["HICLAW_MEM0_ENABLE_GRAPH=true"] else [] end)')
-        _log "  mem0 plugin: enabled"
-    fi
-
     # Merge with extra environment variables if provided
     local all_env
     if [ "${extra_env}" != "[]" ] && [ -n "${extra_env}" ]; then
-        all_env=$(echo "${base_env} ${mem0_env} ${extra_env}" | jq -s 'add')
-    elif [ "${mem0_env}" != "[]" ]; then
-        all_env=$(echo "${base_env} ${mem0_env}" | jq -s 'add')
+        all_env=$(echo "${base_env} ${extra_env}" | jq -s 'add')
     else
         all_env="${base_env}"
     fi
@@ -442,33 +420,9 @@ container_create_copaw_worker() {
     # CoPaw uses /root/.copaw-worker as install dir (not /root/hiclaw-fs/agents/<name>)
     local base_env='["HICLAW_WORKER_NAME='"${worker_name}"'","HICLAW_FS_ENDPOINT='"${fs_endpoint}"'","HICLAW_FS_ACCESS_KEY='"${fs_access_key}"'","HICLAW_FS_SECRET_KEY='"${fs_secret_key}"'"]'
 
-    # Forward mem0 env vars for CoPaw containers too.
-    # CoPaw does not consume them yet; this keeps the container env aligned
-    # with OpenClaw workers until CoPaw-side support is added.
-    local mem0_env='[]'
-    if [ "${HICLAW_MEM0_ENABLED:-false}" = "true" ] && [ -n "${HICLAW_MEM0_API_KEY:-}" ]; then
-        mem0_env=$(jq -n \
-            --arg enabled "${HICLAW_MEM0_ENABLED}" \
-            --arg apiKey "${HICLAW_MEM0_API_KEY}" \
-            --arg userId "${HICLAW_MEM0_USER_ID:-}" \
-            --arg orgId "${HICLAW_MEM0_ORG_ID:-}" \
-            --arg projectId "${HICLAW_MEM0_PROJECT_ID:-}" \
-            --arg enableGraph "${HICLAW_MEM0_ENABLE_GRAPH:-false}" \
-            '[
-                "HICLAW_MEM0_ENABLED=\($enabled)",
-                "HICLAW_MEM0_API_KEY=\($apiKey)"
-            ] + (if $userId != "" then ["HICLAW_MEM0_USER_ID=\($userId)"] else [] end)
-              + (if $orgId != "" then ["HICLAW_MEM0_ORG_ID=\($orgId)"] else [] end)
-              + (if $projectId != "" then ["HICLAW_MEM0_PROJECT_ID=\($projectId)"] else [] end)
-              + (if $enableGraph == "true" then ["HICLAW_MEM0_ENABLE_GRAPH=true"] else [] end)')
-        _log "  mem0 plugin: enabled"
-    fi
-
     local all_env
     if [ "${extra_env}" != "[]" ] && [ -n "${extra_env}" ]; then
-        all_env=$(echo "${base_env} ${mem0_env} ${extra_env}" | jq -s 'add')
-    elif [ "${mem0_env}" != "[]" ]; then
-        all_env=$(echo "${base_env} ${mem0_env}" | jq -s 'add')
+        all_env=$(echo "${base_env} ${extra_env}" | jq -s 'add')
     else
         all_env="${base_env}"
     fi

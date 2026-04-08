@@ -9,7 +9,6 @@
 set -e
 source /opt/hiclaw/scripts/lib/hiclaw-env.sh
 source /opt/hiclaw/scripts/lib/merge-openclaw-config.sh
-source /opt/hiclaw/scripts/lib/openclaw-plugin-installer.sh
 
 WORKER_NAME="${HICLAW_WORKER_NAME:?HICLAW_WORKER_NAME is required}"
 FS_ENDPOINT="${HICLAW_FS_ENDPOINT:-}"
@@ -214,88 +213,7 @@ ln -sfn "${MCPORTER_DEFAULT}" "${MCPORTER_COMPAT}"
 export MCPORTER_CONFIG="${MCPORTER_DEFAULT}"
 
 # ============================================================
-# Step 5: mem0 Plugin Configuration (Platform mode only)
-# Injects openclaw-mem0 plugin config into openclaw.json when enabled.
-# Environment variables are passed from Manager via container creation.
-# ============================================================
-if [ "${HICLAW_MEM0_ENABLED:-false}" = "true" ]; then
-    MEM0_PLUGIN_NAME="openclaw-mem0"
-    MEM0_PLUGIN_DIR="${OPENCLAW_MEM0_PLUGIN_DIR:-/opt/openclaw/extensions/${MEM0_PLUGIN_NAME}}"
-    MEM0_PLUGIN_MANIFEST="${MEM0_PLUGIN_DIR}/openclaw.plugin.json"
-    if [ -z "${HICLAW_MEM0_API_KEY:-}" ]; then
-        log "WARNING: HICLAW_MEM0_ENABLED=true but HICLAW_MEM0_API_KEY is not set, skipping mem0 plugin"
-    else
-        _mem0_installed=false
-        if [ -f "${MEM0_PLUGIN_MANIFEST}" ]; then
-            if [ -d "${MEM0_PLUGIN_DIR}/node_modules" ]; then
-                _mem0_installed=true
-            else
-                log "mem0 plugin bundled but dependencies are missing, installing..."
-                if (cd "${MEM0_PLUGIN_DIR}" && npm install --omit=dev --ignore-scripts >/tmp/hiclaw-mem0-install.log 2>&1); then
-                    _mem0_installed=true
-                    log "mem0 plugin dependencies installed"
-                else
-                    log "WARNING: Failed to install mem0 plugin dependencies (see /tmp/hiclaw-mem0-install.log), skipping configuration"
-                fi
-            fi
-        else
-            log "mem0 plugin not found, installing via OpenClaw extensions model..."
-            if install_openclaw_npm_plugin_from_pack "@mem0/openclaw-mem0" "${MEM0_PLUGIN_DIR}" "hiclaw-mem0"; then
-                _mem0_installed=true
-                log "mem0 plugin installed successfully"
-            else
-                log "WARNING: Failed to install mem0 plugin via package tarball, skipping configuration"
-            fi
-        fi
-        
-        if [ "${_mem0_installed}" = "true" ]; then
-            log "Configuring mem0 plugin (Platform mode)..."
-            # Workers always use their own identity so long-term memory stays isolated.
-            _mem0_user_id="${WORKER_NAME}"
-            _mem0_org_id="${HICLAW_MEM0_ORG_ID:-}"
-            _mem0_project_id="${HICLAW_MEM0_PROJECT_ID:-}"
-            _mem0_enable_graph="${HICLAW_MEM0_ENABLE_GRAPH:-false}"
-            
-            # Build mem0 plugin config JSON
-            _mem0_config=$(jq -n \
-                --arg apiKey "${HICLAW_MEM0_API_KEY}" \
-                --arg userId "${_mem0_user_id}" \
-                --arg orgId "${_mem0_org_id}" \
-                --arg projectId "${_mem0_project_id}" \
-                --argjson enableGraph "${_mem0_enable_graph}" \
-                '{
-                    "enabled": true,
-                    "config": {
-                        "apiKey": $apiKey,
-                        "userId": $userId
-                    } + (if $orgId != "" then {"orgId": $orgId} else {} end)
-                      + (if $projectId != "" then {"projectId": $projectId} else {} end)
-                      + (if $enableGraph then {"enableGraph": $enableGraph} else {} end)
-                }')
-            
-            # Inject into openclaw.json (idempotent merge)
-            jq --arg pluginName "${MEM0_PLUGIN_NAME}" \
-               --arg pluginDir "${MEM0_PLUGIN_DIR}" \
-               --argjson mem0 "${_mem0_config}" '
-                .plugins = (.plugins // {})
-                | .plugins.load = (.plugins.load // {})
-                | .plugins.entries = (.plugins.entries // {})
-                | if (.plugins.allow | type) != "array" then .plugins.allow = [] else . end
-                | if (.plugins.allow | index($pluginName)) == null then .plugins.allow += [$pluginName] else . end
-                | if (.plugins.load.paths | type) != "array" then .plugins.load.paths = [] else . end
-                | if (.plugins.load.paths | index($pluginDir)) == null then .plugins.load.paths += [$pluginDir] else . end
-                | .plugins.entries[$pluginName] = $mem0
-            ' "${WORKSPACE}/openclaw.json" > /tmp/openclaw-mem0.json && \
-                mv /tmp/openclaw-mem0.json "${WORKSPACE}/openclaw.json"
-            
-            log "mem0 plugin configured (userId: ${_mem0_user_id})"
-        fi
-    fi
-fi
-unset MEM0_PLUGIN_NAME MEM0_PLUGIN_DIR MEM0_PLUGIN_MANIFEST
-
-# ============================================================
-# Step 6: Launch OpenClaw Worker Agent
+# Step 5: Launch OpenClaw Worker Agent
 # ============================================================
 log "Starting Worker Agent: ${WORKER_NAME}"
 export OPENCLAW_CONFIG_PATH="${WORKSPACE}/openclaw.json"
