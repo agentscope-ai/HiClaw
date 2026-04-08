@@ -17,6 +17,7 @@ Use this skill when the user:
 
 - Asks "how do I do X" where X might be a common task with an existing skill
 - Says "find a skill for X" or "is there a skill for X"
+- Says "import xxx skill from market", "install xxx skill from market", or otherwise explicitly asks you to import a skill from the market
 - Asks "can you do X" where X is a specialized capability
 - Expresses interest in extending agent capabilities
 - Wants to search for tools, templates, or workflows
@@ -28,10 +29,16 @@ The Skills CLI (`skills`) is the package manager for the open agent skills ecosy
 
 If `skills` command is not found, install it: `npm install -g skills`
 
+Always use this fixed script path for this skill. Do not rely on a relative `scripts/` path from your current directory:
+
+```bash
+FIND_SKILLS_SCRIPT="$HOME/.copaw-worker/${HICLAW_WORKER_NAME}/.copaw/active_skills/find-skills/scripts/hiclaw-find-skill.sh"
+```
+
 **Key commands:**
 
-- `scripts/hiclaw-find-skill.sh find [query]` - Search for relevant skills
-- `scripts/hiclaw-find-skill.sh install <skill>` - Install a skill
+- `"${FIND_SKILLS_SCRIPT}" find [query]` - Search for relevant skills
+- `"${FIND_SKILLS_SCRIPT}" install <skill>` - Install a skill
 - `skills check` - Check for skill updates
 - `skills update` - Update all installed skills
 
@@ -60,19 +67,19 @@ When a user asks for help with something, identify:
 Run the find command with a relevant query:
 
 ```bash
-scripts/hiclaw-find-skill.sh find [query]
+"${FIND_SKILLS_SCRIPT}" find [query]
 ```
 
 For example:
 
-- User asks "how do I make my React app faster?" → `scripts/hiclaw-find-skill.sh find react performance`
-- User asks "can you help me with PR reviews?" → `scripts/hiclaw-find-skill.sh find pr review`
-- User asks "I need to create a changelog" → `scripts/hiclaw-find-skill.sh find changelog`
+- User asks "how do I make my React app faster?" → `"${FIND_SKILLS_SCRIPT}" find react performance`
+- User asks "can you help me with PR reviews?" → `"${FIND_SKILLS_SCRIPT}" find pr review`
+- User asks "I need to create a changelog" → `"${FIND_SKILLS_SCRIPT}" find changelog`
 
 The command will return results like:
 
 ```
-Install with scripts/hiclaw-find-skill.sh install <skill>
+Install with /root/.copaw-worker/${HICLAW_WORKER_NAME}/.copaw/active_skills/find-skills/scripts/hiclaw-find-skill.sh install <skill>
 
 vercel-react-best-practices
 └ React and Next.js performance guidance
@@ -80,6 +87,21 @@ vercel-react-best-practices
 
 > **Critical**: Always use the exact install command shown in search results.
 > Never guess or shorten the package name or command, because that may fail.
+
+### Step 2A: Direct Market Import Requests
+
+If the user already gave you a concrete skill name and asked to import it from the market, you can install it directly with this skill instead of doing a separate search first:
+
+```bash
+"${FIND_SKILLS_SCRIPT}" install <skill>
+```
+
+For example:
+
+- User says "import remotion-best-practices skill from market" → `"${FIND_SKILLS_SCRIPT}" install remotion-best-practices`
+- User says "install github-operations from market" → `"${FIND_SKILLS_SCRIPT}" install github-operations`
+
+If the provided name looks ambiguous or you are not sure about the exact package name, search first and then copy the exact install command from the results.
 
 ### Step 3: Present Options to the User
 
@@ -96,7 +118,7 @@ I found a skill that might help! The "remotion-best-practices" skill provides
 best practices for Remotion video creation in React.
 
 To install it:
-scripts/hiclaw-find-skill.sh install remotion-best-practices
+"${FIND_SKILLS_SCRIPT}" install remotion-best-practices
 ```
 
 ### Step 4: Offer to Install
@@ -104,7 +126,7 @@ scripts/hiclaw-find-skill.sh install remotion-best-practices
 If the user wants to proceed, you can install the skill for them:
 
 ```bash
-scripts/hiclaw-find-skill.sh install <skill>
+"${FIND_SKILLS_SCRIPT}" install <skill>
 ```
 
 The default install location for `skills add -g` is `~/.agents/skills/`. In container mode this is symlinked to the worker's MinIO-synced skills directory. In host mode (non-container), you need to check `~/.agents/skills/` for installed skills and load them manually.
@@ -149,4 +171,4 @@ skills init my-xyz-skill
 
 ## Skill Resources
 
-`scripts/hiclaw-find-skill.sh` is a resource that belongs to this skill. Treat the `scripts/` path as relative to the current skill directory when you use it.
+`$HOME/.copaw-worker/${HICLAW_WORKER_NAME}/.copaw/active_skills/find-skills/scripts/hiclaw-find-skill.sh` is the resource that belongs to this skill. Always invoke that exact path (or the `FIND_SKILLS_SCRIPT` variable above) instead of `scripts/hiclaw-find-skill.sh`, so your command does not depend on the current directory.

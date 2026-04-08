@@ -13,12 +13,43 @@ RESET='[0m'
 DIM='[38;5;102m'
 TEXT='[38;5;145m'
 
+get_script_path() {
+    raw_path="${0:-hiclaw-find-skill.sh}"
+
+    case "${raw_path}" in
+        /*)
+            printf '%s\n' "${raw_path}"
+            ;;
+        */*)
+            dir_path="$(cd "$(dirname "${raw_path}")" && pwd -P)"
+            printf '%s/%s\n' "${dir_path}" "$(basename "${raw_path}")"
+            ;;
+        *)
+            resolved_path="$(command -v "${raw_path}" 2>/dev/null || true)"
+            if [ -n "${resolved_path}" ]; then
+                case "${resolved_path}" in
+                    /*)
+                        printf '%s\n' "${resolved_path}"
+                        ;;
+                    *)
+                        dir_path="$(cd "$(dirname "${resolved_path}")" && pwd -P)"
+                        printf '%s/%s\n' "${dir_path}" "$(basename "${resolved_path}")"
+                        ;;
+                esac
+            else
+                printf '%s\n' "${raw_path}"
+            fi
+            ;;
+    esac
+}
+
+SCRIPT_PATH="$(get_script_path)"
+
 usage() {
-    local cmd="${0:-scripts/hiclaw-find-skill.sh}"
     cat <<EOF
 Usage:
-  ${cmd} find <query>
-  ${cmd} install <skill>
+  ${SCRIPT_PATH} find <query>
+  ${SCRIPT_PATH} install <skill>
 
 Environment:
   SKILLS_API_URL=https://skills.sh            Use skills.sh backend
@@ -371,7 +402,7 @@ score_nacos_candidates() {
 
 run_nacos_find() {
     if [ $# -lt 1 ]; then
-        printf '%sTip:%s search with %s%s find <query>%s\n' "${DIM}" "${RESET}" "${TEXT}" "${0}" "${RESET}"
+        printf '%sTip:%s search with %s%s find <query>%s\n' "${DIM}" "${RESET}" "${TEXT}" "${SCRIPT_PATH}" "${RESET}"
         exit 0
     fi
 
@@ -405,7 +436,7 @@ run_nacos_find() {
 
     printf '%sRegistry:%s %s\n\n' "${DIM}" "${RESET}" "$(get_registry_label "nacos")"
     printf '%sInstall with%s %s%s install %s%s\n\n' \
-        "${DIM}" "${RESET}" "${TEXT}" "${0}" "${first_name}" "${RESET}"
+        "${DIM}" "${RESET}" "${TEXT}" "${SCRIPT_PATH}" "${first_name}" "${RESET}"
 
     sed -n "1,${MAX_RESULTS}p" "${sorted}" | while IFS="$(printf '\t')" read -r score name desc; do
         if [ -z "${desc}" ]; then
