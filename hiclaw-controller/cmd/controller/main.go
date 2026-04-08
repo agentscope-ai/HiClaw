@@ -24,7 +24,9 @@ import (
 	"github.com/hiclaw/hiclaw-controller/internal/store"
 	"github.com/hiclaw/hiclaw-controller/internal/watcher"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/kubernetes"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
@@ -53,21 +55,11 @@ func main() {
 	workerBackends, gatewayBackends := buildBackends(cfg, cloudCreds)
 	registry := backend.NewRegistry(workerBackends, gatewayBackends)
 
-	// --- Auth ---
-	var persister authpkg.KeyPersister
-	if cloudCreds != nil && cfg.OSSBucket != "" {
-		cred, err := cloudCreds.GetCredential()
-		if err != nil {
-			log.Printf("[WARN] Failed to get credentials for key persistence: %v", err)
-		} else {
-			persister = authpkg.NewOSSKeyPersister(cfg.Region, cfg.OSSBucket, cred)
-		}
-	}
-	keyStore := authpkg.NewKeyStore(cfg.ManagerAPIKey, persister)
-	if err := keyStore.Recover(context.Background()); err != nil {
-		log.Printf("[WARN] Failed to recover worker keys: %v", err)
-	}
-	authMw := authpkg.NewMiddleware(keyStore)
+	// --- Auth (K8s SA Token + TokenReview) ---
+	// k8sClient and authMw will be initialized after the REST config is available.
+	var k8sClient kubernetes.Interface
+	var authMw *authpkg.Middleware
+	var restCfgForAuth *rest.Config
 
 	// --- STS service ---
 	var stsService *credentials.STSService
@@ -106,7 +98,7 @@ func main() {
 		}
 		logger.Info("kine started", "endpoints", kineServer.ETCDConfig.Endpoints)
 
-		restCfg, err := apiserver.Start(ctx, apiserver.Config{
+		embeddedRestCfg, err := apiserver.Start(ctx, apiserver.Config{
 			DataDir:    cfg.DataDir,
 			EtcdURL:    "http://127.0.0.1:2379",
 			BindAddr:   "127.0.0.1",
@@ -118,8 +110,9 @@ func main() {
 			os.Exit(1)
 		}
 		logger.Info("embedded kube-apiserver ready")
+		restCfgForAuth = embeddedRestCfg
 
-		mgr, err = ctrl.NewManager(restCfg, ctrl.Options{
+		mgr, err = ctrl.NewManager(embeddedRestCfg, ctrl.Options{
 			Scheme: scheme,
 			Metrics: metricsserver.Options{
 				BindAddress: "0",
@@ -144,7 +137,8 @@ func main() {
 	} else {
 		logger.Info("starting in-cluster mode")
 
-		restCfg := ctrl.GetConfigOrDie()
+		inclusterRestCfg := ctrl.GetConfigOrDie()
+		restCfgForAuth = inclusterRestCfg
 		var mgrOpts ctrl.Options
 		mgrOpts.Scheme = scheme
 		if cfg.K8sNamespace != "" {
@@ -153,11 +147,34 @@ func main() {
 			}
 		}
 		var err error
-		mgr, err = ctrl.NewManager(restCfg, mgrOpts)
+		mgr, err = ctrl.NewManager(inclusterRestCfg, mgrOpts)
 		if err != nil {
 			logger.Error(err, "failed to create controller manager")
 			os.Exit(1)
 		}
+	}
+
+	// --- Build K8s clientset and auth components ---
+	namespace := cfg.K8sNamespace
+	if namespace == "" {
+		namespace = "default"
+	}
+
+	if restCfgForAuth != nil {
+		var err error
+		k8sClient, err = kubernetes.NewForConfig(restCfgForAuth)
+		if err != nil {
+			logger.Error(err, "failed to create kubernetes client for auth")
+			os.Exit(1)
+		}
+		authenticator := authpkg.NewTokenReviewAuthenticator(k8sClient, cfg.AuthAudience)
+		enricher := authpkg.NewCREnricher(mgr.GetClient(), namespace)
+		authorizer := authpkg.NewAuthorizer()
+		authMw = authpkg.NewMiddleware(authenticator, enricher, authorizer, mgr.GetClient(), namespace)
+		logger.Info("K8s SA token authentication enabled", "audience", cfg.AuthAudience)
+	} else {
+		authMw = authpkg.NewMiddleware(nil, nil, authpkg.NewAuthorizer(), nil, namespace)
+		logger.Info("authentication disabled (no REST config)")
 	}
 
 	// --- Register reconcilers ---
@@ -190,9 +207,12 @@ func main() {
 		AgentConfig:       sharedReconcilerFields.agentConfig,
 		Backend:           sharedReconcilerFields.backend,
 		Creds:             sharedReconcilerFields.creds,
+		K8sClient:         k8sClient,
 		Executor:          shell,
 		Packages:          packages,
 		KubeMode:          cfg.KubeMode,
+		Namespace:         namespace,
+		AuthAudience:      cfg.AuthAudience,
 		ManagerConfigPath: envOrDefault("HICLAW_MANAGER_CONFIG_PATH", "/root/openclaw.json"),
 		AgentFSDir:        envOrDefault("HICLAW_AGENT_FS_DIR", "/root/hiclaw-fs/agents"),
 		WorkerAgentDir:    envOrDefault("HICLAW_WORKER_AGENT_DIR", "/opt/hiclaw/agent/worker-agent"),
@@ -240,11 +260,6 @@ func main() {
 	}
 
 	// --- Unified HTTP API server ---
-	namespace := cfg.K8sNamespace
-	if namespace == "" {
-		namespace = "default"
-	}
-
 	httpServer := server.NewHTTPServer(cfg.HTTPAddr, server.ServerDeps{
 		Client:     mgr.GetClient(),
 		Backend:    registry,
@@ -269,7 +284,7 @@ func main() {
 		"backends", len(workerBackends),
 		"gateways", len(gatewayBackends),
 		"sts", stsService != nil,
-		"auth", keyStore.AuthEnabled(),
+		"auth", k8sClient != nil,
 	)
 	fmt.Println("hiclaw-controller is running. Press Ctrl+C to stop.")
 

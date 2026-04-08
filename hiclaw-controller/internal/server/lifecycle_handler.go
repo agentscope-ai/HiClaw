@@ -7,7 +7,6 @@ import (
 	"sync"
 
 	v1beta1 "github.com/hiclaw/hiclaw-controller/api/v1beta1"
-	"github.com/hiclaw/hiclaw-controller/internal/auth"
 	"github.com/hiclaw/hiclaw-controller/internal/backend"
 	"github.com/hiclaw/hiclaw-controller/internal/httputil"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -154,12 +153,7 @@ func (h *LifecycleHandler) Ready(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	caller := auth.CallerFromContext(r.Context())
-	if caller != nil && caller.WorkerName != "" && caller.WorkerName != name {
-		httputil.WriteError(w, http.StatusForbidden, "workers can only report their own readiness")
-		return
-	}
-
+	// Authorization (self-only for workers) is enforced by RequireAuthz middleware.
 	h.setReady(name, true)
 	log.Printf("[READY] Worker %s reported ready", name)
 	w.WriteHeader(http.StatusNoContent)

@@ -36,62 +36,61 @@ func NewHTTPServer(addr string, deps ServerDeps) *HTTPServer {
 
 	mw := deps.AuthMw
 
-	managerOrAdmin := []string{authpkg.RoleAdmin, authpkg.RoleManager}
-
 	// --- Status / health (no auth) ---
 	sh := NewStatusHandler(deps.Client, deps.Namespace, deps.KubeMode)
 	mux.HandleFunc("GET /healthz", sh.Healthz)
 
-	// --- Status endpoints (auth required) ---
-	mux.Handle("GET /api/v1/status", mw.RequireAny(http.HandlerFunc(sh.ClusterStatus)))
-	mux.Handle("GET /api/v1/version", mw.RequireAny(http.HandlerFunc(sh.Version)))
+	// --- Status endpoints (authenticated, any role) ---
+	mux.Handle("GET /api/v1/status", mw.RequireAuthz(authpkg.ActionGet, "status", nil)(http.HandlerFunc(sh.ClusterStatus)))
+	mux.Handle("GET /api/v1/version", mw.Authenticate(http.HandlerFunc(sh.Version)))
 
 	// --- Declarative resource CRUD ---
 	rh := NewResourceHandler(deps.Client, deps.Namespace)
+	nameFn := authpkg.NameFromPath
 
-	// Workers: manager and admin can create/update/delete
-	mux.Handle("POST /api/v1/workers", mw.RequireRoles(managerOrAdmin, http.HandlerFunc(rh.CreateWorker)))
-	mux.Handle("GET /api/v1/workers", mw.RequireAny(http.HandlerFunc(rh.ListWorkers)))
-	mux.Handle("GET /api/v1/workers/{name}", mw.RequireAny(http.HandlerFunc(rh.GetWorker)))
-	mux.Handle("PUT /api/v1/workers/{name}", mw.RequireRoles(managerOrAdmin, http.HandlerFunc(rh.UpdateWorker)))
-	mux.Handle("DELETE /api/v1/workers/{name}", mw.RequireRoles(managerOrAdmin, http.HandlerFunc(rh.DeleteWorker)))
+	// Workers
+	mux.Handle("POST /api/v1/workers", mw.RequireAuthz(authpkg.ActionCreate, "worker", nil)(http.HandlerFunc(rh.CreateWorker)))
+	mux.Handle("GET /api/v1/workers", mw.RequireAuthz(authpkg.ActionList, "worker", nil)(http.HandlerFunc(rh.ListWorkers)))
+	mux.Handle("GET /api/v1/workers/{name}", mw.RequireAuthz(authpkg.ActionGet, "worker", nameFn)(http.HandlerFunc(rh.GetWorker)))
+	mux.Handle("PUT /api/v1/workers/{name}", mw.RequireAuthz(authpkg.ActionUpdate, "worker", nameFn)(http.HandlerFunc(rh.UpdateWorker)))
+	mux.Handle("DELETE /api/v1/workers/{name}", mw.RequireAuthz(authpkg.ActionDelete, "worker", nameFn)(http.HandlerFunc(rh.DeleteWorker)))
 
 	// Teams
-	mux.Handle("POST /api/v1/teams", mw.RequireRoles(managerOrAdmin, http.HandlerFunc(rh.CreateTeam)))
-	mux.Handle("GET /api/v1/teams", mw.RequireAny(http.HandlerFunc(rh.ListTeams)))
-	mux.Handle("GET /api/v1/teams/{name}", mw.RequireAny(http.HandlerFunc(rh.GetTeam)))
-	mux.Handle("PUT /api/v1/teams/{name}", mw.RequireRoles(managerOrAdmin, http.HandlerFunc(rh.UpdateTeam)))
-	mux.Handle("DELETE /api/v1/teams/{name}", mw.RequireRoles(managerOrAdmin, http.HandlerFunc(rh.DeleteTeam)))
+	mux.Handle("POST /api/v1/teams", mw.RequireAuthz(authpkg.ActionCreate, "team", nil)(http.HandlerFunc(rh.CreateTeam)))
+	mux.Handle("GET /api/v1/teams", mw.RequireAuthz(authpkg.ActionList, "team", nil)(http.HandlerFunc(rh.ListTeams)))
+	mux.Handle("GET /api/v1/teams/{name}", mw.RequireAuthz(authpkg.ActionGet, "team", nameFn)(http.HandlerFunc(rh.GetTeam)))
+	mux.Handle("PUT /api/v1/teams/{name}", mw.RequireAuthz(authpkg.ActionUpdate, "team", nameFn)(http.HandlerFunc(rh.UpdateTeam)))
+	mux.Handle("DELETE /api/v1/teams/{name}", mw.RequireAuthz(authpkg.ActionDelete, "team", nameFn)(http.HandlerFunc(rh.DeleteTeam)))
 
 	// Humans
-	mux.Handle("POST /api/v1/humans", mw.RequireRoles(managerOrAdmin, http.HandlerFunc(rh.CreateHuman)))
-	mux.Handle("GET /api/v1/humans", mw.RequireAny(http.HandlerFunc(rh.ListHumans)))
-	mux.Handle("GET /api/v1/humans/{name}", mw.RequireAny(http.HandlerFunc(rh.GetHuman)))
-	mux.Handle("DELETE /api/v1/humans/{name}", mw.RequireRoles(managerOrAdmin, http.HandlerFunc(rh.DeleteHuman)))
+	mux.Handle("POST /api/v1/humans", mw.RequireAuthz(authpkg.ActionCreate, "human", nil)(http.HandlerFunc(rh.CreateHuman)))
+	mux.Handle("GET /api/v1/humans", mw.RequireAuthz(authpkg.ActionList, "human", nil)(http.HandlerFunc(rh.ListHumans)))
+	mux.Handle("GET /api/v1/humans/{name}", mw.RequireAuthz(authpkg.ActionGet, "human", nameFn)(http.HandlerFunc(rh.GetHuman)))
+	mux.Handle("DELETE /api/v1/humans/{name}", mw.RequireAuthz(authpkg.ActionDelete, "human", nameFn)(http.HandlerFunc(rh.DeleteHuman)))
 
 	// --- Imperative lifecycle ---
 	lh := NewLifecycleHandler(deps.Client, deps.Backend, deps.Namespace)
-	mux.Handle("POST /api/v1/workers/{name}/wake", mw.RequireRoles(managerOrAdmin, http.HandlerFunc(lh.Wake)))
-	mux.Handle("POST /api/v1/workers/{name}/sleep", mw.RequireRoles(managerOrAdmin, http.HandlerFunc(lh.Sleep)))
-	mux.Handle("POST /api/v1/workers/{name}/ensure-ready", mw.RequireRoles(managerOrAdmin, http.HandlerFunc(lh.EnsureReady)))
-	mux.Handle("POST /api/v1/workers/{name}/ready", mw.RequireWorker(http.HandlerFunc(lh.Ready)))
-	mux.Handle("GET /api/v1/workers/{name}/status", mw.RequireAny(http.HandlerFunc(lh.GetWorkerRuntimeStatus)))
+	mux.Handle("POST /api/v1/workers/{name}/wake", mw.RequireAuthz(authpkg.ActionWake, "worker", nameFn)(http.HandlerFunc(lh.Wake)))
+	mux.Handle("POST /api/v1/workers/{name}/sleep", mw.RequireAuthz(authpkg.ActionSleep, "worker", nameFn)(http.HandlerFunc(lh.Sleep)))
+	mux.Handle("POST /api/v1/workers/{name}/ensure-ready", mw.RequireAuthz(authpkg.ActionEnsureReady, "worker", nameFn)(http.HandlerFunc(lh.EnsureReady)))
+	mux.Handle("POST /api/v1/workers/{name}/ready", mw.RequireAuthz(authpkg.ActionReady, "worker", nameFn)(http.HandlerFunc(lh.Ready)))
+	mux.Handle("GET /api/v1/workers/{name}/status", mw.RequireAuthz(authpkg.ActionStatus, "worker", nameFn)(http.HandlerFunc(lh.GetWorkerRuntimeStatus)))
 
 	// --- Gateway ---
 	gh := NewGatewayHandler(deps.Gateway)
-	mux.Handle("POST /api/v1/gateway/consumers", mw.RequireRoles(managerOrAdmin, http.HandlerFunc(gh.CreateConsumer)))
-	mux.Handle("POST /api/v1/gateway/consumers/{id}/bind", mw.RequireRoles(managerOrAdmin, http.HandlerFunc(gh.BindConsumer)))
-	mux.Handle("DELETE /api/v1/gateway/consumers/{id}", mw.RequireRoles(managerOrAdmin, http.HandlerFunc(gh.DeleteConsumer)))
+	mux.Handle("POST /api/v1/gateway/consumers", mw.RequireAuthz(authpkg.ActionCreate, "gateway", nil)(http.HandlerFunc(gh.CreateConsumer)))
+	mux.Handle("POST /api/v1/gateway/consumers/{id}/bind", mw.RequireAuthz(authpkg.ActionUpdate, "gateway", nil)(http.HandlerFunc(gh.BindConsumer)))
+	mux.Handle("DELETE /api/v1/gateway/consumers/{id}", mw.RequireAuthz(authpkg.ActionDelete, "gateway", nil)(http.HandlerFunc(gh.DeleteConsumer)))
 
 	// --- Credentials ---
 	ch := NewCredentialsHandler(deps.STS)
-	mux.Handle("POST /api/v1/credentials/sts", mw.RequireWorker(http.HandlerFunc(ch.RefreshSTS)))
+	mux.Handle("POST /api/v1/credentials/sts", mw.RequireAuthz(authpkg.ActionSTS, "worker", nameFn)(http.HandlerFunc(ch.RefreshSTS)))
 
 	// --- Docker API passthrough (embedded mode only) ---
 	if deps.KubeMode == "embedded" && deps.SocketPath != "" {
 		validator := proxy.NewSecurityValidator()
 		proxyHandler := proxy.NewHandler(deps.SocketPath, validator)
-		mux.Handle("/docker/", mw.RequireManager(http.StripPrefix("/docker", proxyHandler)))
+		mux.Handle("/docker/", mw.RequireAuthz(authpkg.ActionGateway, "gateway", nil)(http.StripPrefix("/docker", proxyHandler)))
 	}
 
 	return s

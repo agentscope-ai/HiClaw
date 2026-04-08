@@ -115,12 +115,11 @@ func (k *K8sBackend) Create(ctx context.Context, req CreateRequest) (*WorkerResu
 	} else {
 		req.Env["HICLAW_RUNTIME"] = "k8s"
 	}
-	if req.WorkerAPIKey != "" {
-		req.Env["HICLAW_WORKER_API_KEY"] = req.WorkerAPIKey
-	}
 	if req.ControllerURL != "" {
 		req.Env["HICLAW_CONTROLLER_URL"] = req.ControllerURL
 	}
+	// SA token is mounted via projected volume; tell the worker where to read it.
+	req.Env["HICLAW_AUTH_TOKEN_FILE"] = "/var/run/secrets/hiclaw/token"
 
 	image := req.Image
 	if req.Runtime == RuntimeCopaw && k.config.CopawWorkerImage != "" {
@@ -161,10 +160,37 @@ func (k *K8sBackend) Create(ctx context.Context, req CreateRequest) (*WorkerResu
 		WorkingDir: req.WorkingDir,
 	}
 
+	tokenExpSeconds := int64(3600)
+	projectedVol := corev1.Volume{
+		Name: "hiclaw-token",
+		VolumeSource: corev1.VolumeSource{
+			Projected: &corev1.ProjectedVolumeSource{
+				Sources: []corev1.VolumeProjection{{
+					ServiceAccountToken: &corev1.ServiceAccountTokenProjection{
+						Audience:          "hiclaw-controller",
+						ExpirationSeconds: &tokenExpSeconds,
+						Path:              "token",
+					},
+				}},
+			},
+		},
+	}
+	container.VolumeMounts = append(container.VolumeMounts, corev1.VolumeMount{
+		Name:      "hiclaw-token",
+		MountPath: "/var/run/secrets/hiclaw",
+		ReadOnly:  true,
+	})
+
+	saName := req.ServiceAccountName
+	if saName == "" {
+		saName = "hiclaw-worker-" + req.Name
+	}
 	podSpec := corev1.PodSpec{
 		Containers:                   []corev1.Container{container},
 		RestartPolicy:                corev1.RestartPolicyAlways,
+		ServiceAccountName:           saName,
 		AutomountServiceAccountToken: boolPtr(false),
+		Volumes:                      []corev1.Volume{projectedVol},
 	}
 	if tolerations := k.getCurrentPodTolerations(ctx); len(tolerations) > 0 {
 		podSpec.Tolerations = tolerations

@@ -153,7 +153,7 @@ func TestSAECreateInjectsCredentials(t *testing.T) {
 		Name:            "cred-test",
 		Image:           "custom:v1",
 		Env:             map[string]string{"KEY": "VAL"},
-		WorkerAPIKey:    "test-key-123",
+		AuthToken:       "test-token-123",
 		ControllerURL:   "http://controller:8090",
 	})
 	if err != nil {
@@ -168,8 +168,8 @@ func TestSAECreateInjectsCredentials(t *testing.T) {
 	if !strings.Contains(envs, "HICLAW_RUNTIME") {
 		t.Error("expected HICLAW_RUNTIME in env")
 	}
-	if !strings.Contains(envs, "test-key-123") {
-		t.Error("expected HICLAW_WORKER_API_KEY value in env")
+	if !strings.Contains(envs, "test-token-123") {
+		t.Error("expected HICLAW_AUTH_TOKEN value in env")
 	}
 	if !strings.Contains(envs, "http://controller:8090") {
 		t.Error("expected HICLAW_CONTROLLER_URL value in env")

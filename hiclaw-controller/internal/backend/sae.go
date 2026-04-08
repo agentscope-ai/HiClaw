@@ -116,8 +116,8 @@ func (s *SAEBackend) Create(ctx context.Context, req CreateRequest) (*WorkerResu
 		req.Env = make(map[string]string)
 	}
 	req.Env["HICLAW_RUNTIME"] = "aliyun"
-	if req.WorkerAPIKey != "" {
-		req.Env["HICLAW_WORKER_API_KEY"] = req.WorkerAPIKey
+	if req.AuthToken != "" {
+		req.Env["HICLAW_AUTH_TOKEN"] = req.AuthToken
 	}
 	if req.ControllerURL != "" {
 		req.Env["HICLAW_CONTROLLER_URL"] = req.ControllerURL

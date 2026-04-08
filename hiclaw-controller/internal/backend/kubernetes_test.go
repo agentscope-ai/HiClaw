@@ -102,8 +102,8 @@ func TestK8sCreate(t *testing.T) {
 		Env: map[string]string{
 			"HICLAW_MATRIX_URL": "http://matrix:6167",
 		},
-		ControllerURL: "http://controller:8090",
-		WorkerAPIKey:    "worker-key",
+		ControllerURL:      "http://controller:8090",
+		ServiceAccountName: "hiclaw-worker-test1",
 	})
 	if err != nil {
 		t.Fatalf("Create failed: %v", err)
@@ -119,14 +119,14 @@ func TestK8sCreate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected worker pod to exist: %v", err)
 	}
-	if pod.Spec.ServiceAccountName != "" {
-		t.Fatalf("expected worker pod without service account, got %q", pod.Spec.ServiceAccountName)
+	if pod.Spec.ServiceAccountName != "hiclaw-worker-test1" {
+		t.Fatalf("expected SA hiclaw-worker-test1, got %q", pod.Spec.ServiceAccountName)
 	}
 	if pod.Spec.AutomountServiceAccountToken == nil || *pod.Spec.AutomountServiceAccountToken {
-		t.Fatalf("expected worker pod service account token automount disabled")
+		t.Fatalf("expected default automount disabled")
 	}
-	if len(pod.Spec.Volumes) != 0 {
-		t.Fatalf("expected no worker volumes, got %d", len(pod.Spec.Volumes))
+	if len(pod.Spec.Volumes) != 1 || pod.Spec.Volumes[0].Name != "hiclaw-token" {
+		t.Fatalf("expected projected volume hiclaw-token, got %+v", pod.Spec.Volumes)
 	}
 
 	envs := map[string]string{}
@@ -136,8 +136,8 @@ func TestK8sCreate(t *testing.T) {
 	if envs["HICLAW_RUNTIME"] != "k8s" {
 		t.Fatalf("expected HICLAW_RUNTIME=k8s, got %q", envs["HICLAW_RUNTIME"])
 	}
-	if envs["HICLAW_WORKER_API_KEY"] != "worker-key" {
-		t.Fatalf("expected injected worker api key, got %q", envs["HICLAW_WORKER_API_KEY"])
+	if envs["HICLAW_AUTH_TOKEN_FILE"] != "/var/run/secrets/hiclaw/token" {
+		t.Fatalf("expected HICLAW_AUTH_TOKEN_FILE, got %q", envs["HICLAW_AUTH_TOKEN_FILE"])
 	}
 	if envs["HICLAW_CONTROLLER_URL"] != "http://controller:8090" {
 		t.Fatalf("expected injected controller URL, got %q", envs["HICLAW_CONTROLLER_URL"])

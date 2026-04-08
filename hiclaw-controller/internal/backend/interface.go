@@ -45,9 +45,13 @@ type CreateRequest struct {
 	ExtraHosts []string          `json:"extra_hosts,omitempty"`
 	WorkingDir string            `json:"working_dir,omitempty"`
 
-	// Credential injection — set by handler, backends that need it will inject into env.
+	// Controller URL advertised to worker for callbacks.
 	ControllerURL string `json:"-"`
-	WorkerAPIKey    string `json:"-"`
+
+	// SA-based auth — ServiceAccountName is set on K8s Pods (projected token).
+	// AuthToken is the pre-issued SA token for Docker/SAE backends.
+	ServiceAccountName string `json:"-"`
+	AuthToken          string `json:"-"`
 }
 
 // Deployment modes returned by backends.

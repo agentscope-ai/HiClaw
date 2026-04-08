@@ -2,18 +2,13 @@ package auth
 
 import (
 	"context"
+	"log"
 	"net/http"
 	"strings"
 
+	v1beta1 "github.com/hiclaw/hiclaw-controller/api/v1beta1"
 	"github.com/hiclaw/hiclaw-controller/internal/httputil"
-)
-
-// Role constants.
-const (
-	RoleAdmin      = "admin"
-	RoleManager    = "manager"
-	RoleTeamLeader = "team-leader"
-	RoleWorker     = "worker"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 type contextKey string
@@ -33,129 +28,141 @@ func CallerKeyForTest() contextKey {
 	return callerKey
 }
 
-// IdentityEnricher resolves additional identity fields (role, team) from
-// the backing store (e.g. Worker CR annotations). Implementations live
-// outside the auth package to avoid a circular dependency on api/v1beta1.
-type IdentityEnricher interface {
-	EnrichIdentity(ctx context.Context, identity *CallerIdentity) error
-}
-
-// Middleware provides HTTP authentication middleware.
+// Middleware provides HTTP authentication and authorization middleware.
 type Middleware struct {
-	keyStore *KeyStore
-	enricher IdentityEnricher // optional; nil skips enrichment
+	authenticator Authenticator
+	enricher      IdentityEnricher
+	authorizer    *Authorizer
+	k8s           client.Client
+	namespace     string
 }
 
-// NewMiddleware creates an auth Middleware.
-func NewMiddleware(keyStore *KeyStore) *Middleware {
-	return &Middleware{keyStore: keyStore}
-}
-
-// SetEnricher attaches an identity enricher (called after key validation).
-func (m *Middleware) SetEnricher(e IdentityEnricher) {
-	m.enricher = e
-}
-
-// RequireManager returns middleware that only allows manager callers.
-func (m *Middleware) RequireManager(next http.Handler) http.Handler {
-	return m.requireRole(RoleManager, next)
-}
-
-// RequireWorker returns middleware that only allows worker callers.
-func (m *Middleware) RequireWorker(next http.Handler) http.Handler {
-	return m.requireRole(RoleWorker, next)
-}
-
-func (m *Middleware) requireRole(role string, next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !m.keyStore.AuthEnabled() {
-			next.ServeHTTP(w, r)
-			return
-		}
-
-		identity, ok := m.authenticateAndEnrich(r)
-		if !ok {
-			httputil.WriteError(w, http.StatusUnauthorized, "invalid or missing API key")
-			return
-		}
-		if identity.Role != role {
-			httputil.WriteError(w, http.StatusForbidden, role+" access required")
-			return
-		}
-
-		ctx := context.WithValue(r.Context(), callerKey, identity)
-		next.ServeHTTP(w, r.WithContext(ctx))
-	})
-}
-
-// RequireAny returns middleware that authenticates any valid caller (all roles).
-// The enriched CallerIdentity is placed in the request context.
-func (m *Middleware) RequireAny(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !m.keyStore.AuthEnabled() {
-			next.ServeHTTP(w, r)
-			return
-		}
-
-		identity, ok := m.authenticateAndEnrich(r)
-		if !ok {
-			httputil.WriteError(w, http.StatusUnauthorized, "invalid or missing API key")
-			return
-		}
-
-		ctx := context.WithValue(r.Context(), callerKey, identity)
-		next.ServeHTTP(w, r.WithContext(ctx))
-	})
-}
-
-// RequireRoles returns middleware that requires the caller to have one of the given roles.
-func (m *Middleware) RequireRoles(roles []string, next http.Handler) http.Handler {
-	roleSet := make(map[string]bool, len(roles))
-	for _, r := range roles {
-		roleSet[r] = true
+// NewMiddleware creates an auth Middleware with the full auth chain.
+func NewMiddleware(auth Authenticator, enricher IdentityEnricher, authz *Authorizer, k8s client.Client, namespace string) *Middleware {
+	return &Middleware{
+		authenticator: auth,
+		enricher:      enricher,
+		authorizer:    authz,
+		k8s:           k8s,
+		namespace:     namespace,
 	}
+}
+
+// Authenticate returns middleware that authenticates the caller and places
+// the CallerIdentity in the request context. No authorization is performed.
+func (m *Middleware) Authenticate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !m.keyStore.AuthEnabled() {
+		if m.authenticator == nil {
 			next.ServeHTTP(w, r)
 			return
 		}
 
 		identity, ok := m.authenticateAndEnrich(r)
 		if !ok {
-			httputil.WriteError(w, http.StatusUnauthorized, "invalid or missing API key")
-			return
-		}
-		if !roleSet[identity.Role] {
-			httputil.WriteError(w, http.StatusForbidden, "insufficient permissions")
+			httputil.WriteError(w, http.StatusUnauthorized, "invalid or missing bearer token")
 			return
 		}
 
 		ctx := context.WithValue(r.Context(), callerKey, identity)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
+}
+
+// ResourceNameFunc extracts the target resource name from an HTTP request.
+type ResourceNameFunc func(r *http.Request) string
+
+// NameFromPath returns a ResourceNameFunc that reads the "name" path parameter.
+func NameFromPath(r *http.Request) string {
+	return r.PathValue("name")
+}
+
+// RequireAuthz returns middleware that authenticates, enriches, resolves the
+// target resource's team, and checks authorization against the permission matrix.
+func (m *Middleware) RequireAuthz(action Action, kind string, nameFn ResourceNameFunc) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if m.authenticator == nil {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			identity, ok := m.authenticateAndEnrich(r)
+			if !ok {
+				httputil.WriteError(w, http.StatusUnauthorized, "invalid or missing bearer token")
+				return
+			}
+
+			resourceName := ""
+			if nameFn != nil {
+				resourceName = nameFn(r)
+			}
+
+			resourceTeam := m.resolveResourceTeam(r.Context(), kind, resourceName)
+
+			authzReq := AuthzRequest{
+				Action:       action,
+				ResourceKind: kind,
+				ResourceName: resourceName,
+				ResourceTeam: resourceTeam,
+			}
+
+			if err := m.authorizer.Authorize(identity, authzReq); err != nil {
+				httputil.WriteError(w, http.StatusForbidden, err.Error())
+				return
+			}
+
+			ctx := context.WithValue(r.Context(), callerKey, identity)
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
+}
+
+// resolveResourceTeam looks up the target resource's team annotation.
+func (m *Middleware) resolveResourceTeam(ctx context.Context, kind, name string) string {
+	if name == "" || m.k8s == nil {
+		return ""
+	}
+	if kind != "worker" {
+		return ""
+	}
+
+	var worker v1beta1.Worker
+	key := client.ObjectKey{Name: name, Namespace: m.namespace}
+	if err := m.k8s.Get(ctx, key, &worker); err != nil {
+		return ""
+	}
+	return worker.Annotations["hiclaw.io/team"]
 }
 
 func (m *Middleware) authenticateAndEnrich(r *http.Request) (*CallerIdentity, bool) {
-	identity, ok := m.authenticateFromHeader(r)
-	if !ok {
+	token := extractBearerToken(r)
+	if token == "" {
 		return nil, false
 	}
-	if m.enricher != nil {
-		_ = m.enricher.EnrichIdentity(r.Context(), identity)
+
+	identity, err := m.authenticator.Authenticate(r.Context(), token)
+	if err != nil {
+		log.Printf("[AUTH] authentication failed: %v", err)
+		return nil, false
 	}
+
+	if m.enricher != nil {
+		if err := m.enricher.EnrichIdentity(r.Context(), identity); err != nil {
+			log.Printf("[AUTH] identity enrichment failed for %s: %v", identity.Username, err)
+		}
+	}
+
 	return identity, true
 }
 
-func (m *Middleware) authenticateFromHeader(r *http.Request) (*CallerIdentity, bool) {
+func extractBearerToken(r *http.Request) string {
 	authHeader := r.Header.Get("Authorization")
 	if authHeader == "" {
-		return nil, false
+		return ""
 	}
-
-	key := strings.TrimPrefix(authHeader, "Bearer ")
-	if key == authHeader {
-		return nil, false
+	token := strings.TrimPrefix(authHeader, "Bearer ")
+	if token == authHeader {
+		return ""
 	}
-
-	return m.keyStore.ValidateKey(key)
+	return token
 }

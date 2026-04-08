@@ -27,7 +27,7 @@ type Config struct {
 	ContainerPrefix string
 
 	// Auth
-	ManagerAPIKey string // HICLAW_CONTROLLER_API_KEY
+	AuthAudience string // SA token audience for TokenReview
 
 	// Higress
 	HigressBaseURL      string
@@ -114,7 +114,7 @@ func LoadConfig() *Config {
 		SocketPath:      envOrDefault("HICLAW_PROXY_SOCKET", "/var/run/docker.sock"),
 		ContainerPrefix: envOrDefault("HICLAW_PROXY_CONTAINER_PREFIX", "hiclaw-worker-"),
 
-		ManagerAPIKey: os.Getenv("HICLAW_CONTROLLER_API_KEY"),
+		AuthAudience: envOrDefault("HICLAW_AUTH_AUDIENCE", "hiclaw-controller"),
 
 		HigressBaseURL:      envOrDefault("HIGRESS_BASE_URL", "http://127.0.0.1:8001"),
 		HigressCookieFile:   os.Getenv("HIGRESS_COOKIE_FILE"),

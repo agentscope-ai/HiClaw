@@ -92,6 +92,17 @@ func (d *DockerBackend) Create(ctx context.Context, req CreateRequest) (*WorkerR
 		req.Network = d.config.DefaultNetwork
 	}
 
+	// Inject SA token for worker-to-controller authentication (embedded mode).
+	if req.AuthToken != "" {
+		if req.Env == nil {
+			req.Env = make(map[string]string)
+		}
+		req.Env["HICLAW_AUTH_TOKEN"] = req.AuthToken
+	}
+	if req.ControllerURL != "" {
+		req.Env["HICLAW_CONTROLLER_URL"] = req.ControllerURL
+	}
+
 	// Infer WorkingDir from HOME env if not set
 	if req.WorkingDir == "" {
 		if home, ok := req.Env["HOME"]; ok {

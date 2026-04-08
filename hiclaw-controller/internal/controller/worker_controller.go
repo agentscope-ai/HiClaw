@@ -10,11 +10,18 @@ import (
 
 	v1beta1 "github.com/hiclaw/hiclaw-controller/api/v1beta1"
 	"github.com/hiclaw/hiclaw-controller/internal/agentconfig"
+	authpkg "github.com/hiclaw/hiclaw-controller/internal/auth"
 	"github.com/hiclaw/hiclaw-controller/internal/backend"
 	"github.com/hiclaw/hiclaw-controller/internal/executor"
 	"github.com/hiclaw/hiclaw-controller/internal/gateway"
 	"github.com/hiclaw/hiclaw-controller/internal/matrix"
 	"github.com/hiclaw/hiclaw-controller/internal/oss"
+	authenticationv1 "k8s.io/api/authentication/v1"
+	corev1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -39,12 +46,17 @@ type WorkerReconciler struct {
 	Backend     *backend.Registry
 	Creds       CredentialStore
 
+	// K8s client for SA lifecycle + TokenRequest
+	K8sClient kubernetes.Interface
+
 	// Legacy support (kept during migration, removed in Step 9)
 	Executor *executor.Shell
 	Packages *executor.PackageResolver
 
 	// Configuration
 	KubeMode          string // "embedded" or "incluster"
+	Namespace         string // K8s namespace for SAs and Pods
+	AuthAudience      string // SA token audience (default: "hiclaw-controller")
 	ManagerConfigPath string // embedded: ~/openclaw.json
 	AgentFSDir        string // embedded: /root/hiclaw-fs/agents
 	WorkerAgentDir    string // source for builtin agent files (AGENTS.md, skills/)
@@ -379,17 +391,35 @@ func (r *WorkerReconciler) handleCreate(ctx context.Context, w *v1beta1.Worker) 
 		}
 	}
 
+	// --- Step 8.7: Ensure ServiceAccount ---
+	logger.Info("ensuring service account", "name", workerName)
+	if err := r.ensureServiceAccount(ctx, workerName); err != nil {
+		return r.failCreate(ctx, w, fmt.Sprintf("ServiceAccount creation failed: %v", err))
+	}
+
 	// --- Step 9: Start Worker container ---
 	logger.Info("starting worker container", "name", workerName)
 	if r.Backend != nil {
 		if wb := r.Backend.DetectWorkerBackend(ctx); wb != nil {
 			workerEnv := r.buildWorkerEnv(workerName, creds, userCreds.AccessToken)
+			saName := authpkg.SAName(authpkg.RoleWorker, workerName)
 			createReq := backend.CreateRequest{
-				Name:    workerName,
-				Image:   w.Spec.Image,
-				Runtime: w.Spec.Runtime,
-				Env:     workerEnv,
+				Name:               workerName,
+				Image:              w.Spec.Image,
+				Runtime:            w.Spec.Runtime,
+				Env:                workerEnv,
+				ServiceAccountName: saName,
 			}
+
+			// Non-K8s backends need an explicit token (K8s uses projected volume).
+			if wb.Name() != "k8s" {
+				token, err := r.requestSAToken(ctx, workerName)
+				if err != nil {
+					logger.Error(err, "failed to request SA token (non-fatal, worker auth will fail)")
+				}
+				createReq.AuthToken = token
+			}
+
 			if _, err := wb.Create(ctx, createReq); err != nil {
 				logger.Error(err, "worker container creation failed (non-fatal, worker can be started manually)")
 			}
@@ -799,6 +829,11 @@ func (r *WorkerReconciler) handleDelete(ctx context.Context, w *v1beta1.Worker) 
 		logger.Error(err, "failed to delete credentials (non-fatal)")
 	}
 
+	// --- Delete ServiceAccount and RoleBinding ---
+	if err := r.deleteServiceAccount(ctx, workerName); err != nil {
+		logger.Error(err, "failed to delete ServiceAccount (non-fatal)")
+	}
+
 	logger.Info("worker deleted", "name", workerName)
 	return nil
 }
@@ -808,6 +843,113 @@ func nilIfEmpty(s string) *string {
 		return nil
 	}
 	return &s
+}
+
+// ensureServiceAccount creates a SA + RoleBinding for the worker if it doesn't exist.
+func (r *WorkerReconciler) ensureServiceAccount(ctx context.Context, workerName string) error {
+	if r.K8sClient == nil {
+		return nil
+	}
+	saName := authpkg.SAName(authpkg.RoleWorker, workerName)
+	ns := r.Namespace
+
+	_, err := r.K8sClient.CoreV1().ServiceAccounts(ns).Get(ctx, saName, metav1.GetOptions{})
+	if err == nil {
+		return nil // already exists
+	}
+	if !apierrors.IsNotFound(err) {
+		return fmt.Errorf("get SA %s: %w", saName, err)
+	}
+
+	sa := &corev1.ServiceAccount{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      saName,
+			Namespace: ns,
+			Labels: map[string]string{
+				"app":              "hiclaw-worker",
+				"hiclaw.io/worker": workerName,
+			},
+		},
+	}
+	if _, err := r.K8sClient.CoreV1().ServiceAccounts(ns).Create(ctx, sa, metav1.CreateOptions{}); err != nil {
+		if !apierrors.IsAlreadyExists(err) {
+			return fmt.Errorf("create SA %s: %w", saName, err)
+		}
+	}
+
+	rbName := saName + "-rb"
+	rb := &rbacv1.RoleBinding{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      rbName,
+			Namespace: ns,
+			Labels: map[string]string{
+				"app":              "hiclaw-worker",
+				"hiclaw.io/worker": workerName,
+			},
+		},
+		Subjects: []rbacv1.Subject{{
+			Kind:      "ServiceAccount",
+			Name:      saName,
+			Namespace: ns,
+		}},
+		RoleRef: rbacv1.RoleRef{
+			APIGroup: "rbac.authorization.k8s.io",
+			Kind:     "ClusterRole",
+			Name:     "hiclaw-worker",
+		},
+	}
+	if _, err := r.K8sClient.RbacV1().RoleBindings(ns).Create(ctx, rb, metav1.CreateOptions{}); err != nil {
+		if !apierrors.IsAlreadyExists(err) {
+			return fmt.Errorf("create RoleBinding %s: %w", rbName, err)
+		}
+	}
+
+	return nil
+}
+
+// deleteServiceAccount removes the SA + RoleBinding for the worker.
+func (r *WorkerReconciler) deleteServiceAccount(ctx context.Context, workerName string) error {
+	if r.K8sClient == nil {
+		return nil
+	}
+	saName := authpkg.SAName(authpkg.RoleWorker, workerName)
+	ns := r.Namespace
+
+	rbName := saName + "-rb"
+	_ = r.K8sClient.RbacV1().RoleBindings(ns).Delete(ctx, rbName, metav1.DeleteOptions{})
+	err := r.K8sClient.CoreV1().ServiceAccounts(ns).Delete(ctx, saName, metav1.DeleteOptions{})
+	if apierrors.IsNotFound(err) {
+		return nil
+	}
+	return err
+}
+
+// requestSAToken issues a short-lived SA token for non-K8s backends (Docker/SAE).
+func (r *WorkerReconciler) requestSAToken(ctx context.Context, workerName string) (string, error) {
+	if r.K8sClient == nil {
+		return "", nil
+	}
+	saName := authpkg.SAName(authpkg.RoleWorker, workerName)
+	audience := r.AuthAudience
+	if audience == "" {
+		audience = authpkg.DefaultAudience
+	}
+	expSeconds := int64(86400) // 24h; worker should refresh before expiry
+
+	tokenReq := &authenticationv1.TokenRequest{
+		Spec: authenticationv1.TokenRequestSpec{
+			Audiences:         []string{audience},
+			ExpirationSeconds: &expSeconds,
+		},
+	}
+
+	result, err := r.K8sClient.CoreV1().ServiceAccounts(r.Namespace).CreateToken(
+		ctx, saName, tokenReq, metav1.CreateOptions{},
+	)
+	if err != nil {
+		return "", fmt.Errorf("request SA token for %s: %w", workerName, err)
+	}
+	return result.Status.Token, nil
 }
 
 // SetupWithManager registers the WorkerReconciler with the controller manager.

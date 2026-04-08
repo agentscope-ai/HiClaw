@@ -1,258 +1,70 @@
 package auth
 
 import (
+	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 )
 
-func TestGenerateWorkerKey(t *testing.T) {
-	ks := NewKeyStore("manager-secret", nil)
-
-	k1 := ks.GenerateWorkerKey("alice")
-	k2 := ks.GenerateWorkerKey("bob")
-
-	if k1 == k2 {
-		t.Error("expected unique keys")
-	}
-	if len(k1) != 64 { // 32 bytes hex
-		t.Errorf("expected 64 char hex key, got %d", len(k1))
-	}
+// mockAuthenticator is a test authenticator that returns a fixed identity for a known token.
+type mockAuthenticator struct {
+	tokens map[string]*CallerIdentity
 }
 
-func TestGenerateWorkerKeyOverwrite(t *testing.T) {
-	ks := NewKeyStore("mgr", nil)
-
-	old := ks.GenerateWorkerKey("alice")
-	new := ks.GenerateWorkerKey("alice")
-
-	if old == new {
-		t.Error("regenerated key should differ")
+func (m *mockAuthenticator) Authenticate(_ context.Context, token string) (*CallerIdentity, error) {
+	if id, ok := m.tokens[token]; ok {
+		cp := *id
+		return &cp, nil
 	}
-
-	// Old key should no longer validate
-	if _, ok := ks.ValidateKey(old); ok {
-		t.Error("old key should be invalid after regeneration")
-	}
-	id, ok := ks.ValidateKey(new)
-	if !ok || id.WorkerName != "alice" {
-		t.Error("new key should validate as alice")
-	}
+	return nil, fmt.Errorf("invalid token")
 }
 
-func TestValidateManagerKey(t *testing.T) {
-	ks := NewKeyStore("mgr-key", nil)
+// noopEnricher does nothing — identity is already complete from the mock authenticator.
+type noopEnricher struct{}
 
-	id, ok := ks.ValidateKey("mgr-key")
-	if !ok || id.Role != "manager" {
-		t.Error("expected manager identity")
-	}
+func (n *noopEnricher) EnrichIdentity(_ context.Context, _ *CallerIdentity) error { return nil }
+
+func newTestMiddleware(tokens map[string]*CallerIdentity) *Middleware {
+	return NewMiddleware(
+		&mockAuthenticator{tokens: tokens},
+		&noopEnricher{},
+		NewAuthorizer(),
+		nil, "",
+	)
 }
 
-func TestValidateWorkerKey(t *testing.T) {
-	ks := NewKeyStore("mgr", nil)
-	key := ks.GenerateWorkerKey("bob")
+func TestAuthenticate_ValidToken(t *testing.T) {
+	mw := newTestMiddleware(map[string]*CallerIdentity{
+		"mgr-token": {Role: RoleManager, Username: "manager"},
+	})
 
-	id, ok := ks.ValidateKey(key)
-	if !ok || id.Role != "worker" || id.WorkerName != "bob" {
-		t.Errorf("expected worker bob, got %+v", id)
-	}
-}
-
-func TestValidateInvalidKey(t *testing.T) {
-	ks := NewKeyStore("mgr", nil)
-
-	if _, ok := ks.ValidateKey("bad-key"); ok {
-		t.Error("expected invalid key to fail")
-	}
-	if _, ok := ks.ValidateKey(""); ok {
-		t.Error("expected empty key to fail")
-	}
-}
-
-func TestRemoveWorkerKey(t *testing.T) {
-	ks := NewKeyStore("mgr", nil)
-	key := ks.GenerateWorkerKey("alice")
-
-	ks.RemoveWorkerKey("alice")
-
-	if _, ok := ks.ValidateKey(key); ok {
-		t.Error("removed key should be invalid")
-	}
-}
-
-func TestSetWorkerKey(t *testing.T) {
-	ks := NewKeyStore("mgr", nil)
-	ks.SetWorkerKey("carol", "known-key-123")
-
-	id, ok := ks.ValidateKey("known-key-123")
-	if !ok || id.WorkerName != "carol" {
-		t.Error("expected SetWorkerKey to work")
-	}
-}
-
-func TestAuthDisabled(t *testing.T) {
-	ks := NewKeyStore("", nil) // empty = auth disabled
-	if ks.AuthEnabled() {
-		t.Error("expected auth disabled with empty manager key")
-	}
-}
-
-func TestMiddlewareSkipsWhenDisabled(t *testing.T) {
-	ks := NewKeyStore("", nil)
-	mw := NewMiddleware(ks)
-
-	called := false
-	handler := mw.RequireManager(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		called = true
+	var gotIdentity *CallerIdentity
+	handler := mw.Authenticate(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotIdentity = CallerFromContext(r.Context())
 		w.WriteHeader(http.StatusOK)
 	}))
 
-	req := httptest.NewRequest(http.MethodGet, "/workers", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/workers", nil)
+	req.Header.Set("Authorization", "Bearer mgr-token")
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 
-	if !called {
-		t.Error("handler should be called when auth disabled")
-	}
-	if w.Code != http.StatusOK {
-		t.Errorf("expected 200, got %d", w.Code)
+	if gotIdentity == nil || gotIdentity.Role != RoleManager {
+		t.Errorf("expected manager identity, got %+v", gotIdentity)
 	}
 }
 
-func TestMiddlewareRequireManagerValid(t *testing.T) {
-	ks := NewKeyStore("mgr-secret", nil)
-	mw := NewMiddleware(ks)
+func TestAuthenticate_InvalidToken(t *testing.T) {
+	mw := newTestMiddleware(map[string]*CallerIdentity{})
 
-	called := false
-	handler := mw.RequireManager(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		called = true
-	}))
-
-	req := httptest.NewRequest(http.MethodGet, "/workers", nil)
-	req.Header.Set("Authorization", "Bearer mgr-secret")
-	w := httptest.NewRecorder()
-	handler.ServeHTTP(w, req)
-
-	if !called {
-		t.Error("handler should be called for valid manager key")
-	}
-}
-
-func TestMiddlewareRequireManagerRejectsWorker(t *testing.T) {
-	ks := NewKeyStore("mgr-secret", nil)
-	mw := NewMiddleware(ks)
-	workerKey := ks.GenerateWorkerKey("alice")
-
-	handler := mw.RequireManager(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		t.Error("handler should not be called")
-	}))
-
-	req := httptest.NewRequest(http.MethodGet, "/workers", nil)
-	req.Header.Set("Authorization", "Bearer "+workerKey)
-	w := httptest.NewRecorder()
-	handler.ServeHTTP(w, req)
-
-	if w.Code != http.StatusForbidden {
-		t.Errorf("expected 403, got %d", w.Code)
-	}
-}
-
-func TestMiddlewareRequireManagerRejectsNoAuth(t *testing.T) {
-	ks := NewKeyStore("mgr-secret", nil)
-	mw := NewMiddleware(ks)
-
-	handler := mw.RequireManager(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		t.Error("handler should not be called")
-	}))
-
-	req := httptest.NewRequest(http.MethodGet, "/workers", nil)
-	w := httptest.NewRecorder()
-	handler.ServeHTTP(w, req)
-
-	if w.Code != http.StatusUnauthorized {
-		t.Errorf("expected 401, got %d", w.Code)
-	}
-}
-
-func TestMiddlewareRequireWorkerValid(t *testing.T) {
-	ks := NewKeyStore("mgr", nil)
-	mw := NewMiddleware(ks)
-	key := ks.GenerateWorkerKey("bob")
-
-	var gotIdentity *CallerIdentity
-	handler := mw.RequireWorker(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotIdentity = CallerFromContext(r.Context())
-	}))
-
-	req := httptest.NewRequest(http.MethodPost, "/credentials/sts", nil)
-	req.Header.Set("Authorization", "Bearer "+key)
-	w := httptest.NewRecorder()
-	handler.ServeHTTP(w, req)
-
-	if gotIdentity == nil || gotIdentity.WorkerName != "bob" {
-		t.Errorf("expected worker bob in context, got %+v", gotIdentity)
-	}
-}
-
-func TestMiddlewareRequireWorkerRejectsManager(t *testing.T) {
-	ks := NewKeyStore("mgr-secret", nil)
-	mw := NewMiddleware(ks)
-
-	handler := mw.RequireWorker(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		t.Error("handler should not be called")
-	}))
-
-	req := httptest.NewRequest(http.MethodPost, "/credentials/sts", nil)
-	req.Header.Set("Authorization", "Bearer mgr-secret")
-	w := httptest.NewRecorder()
-	handler.ServeHTTP(w, req)
-
-	if w.Code != http.StatusForbidden {
-		t.Errorf("expected 403, got %d", w.Code)
-	}
-}
-
-func TestRequireAnyAllowsAllRoles(t *testing.T) {
-	ks := NewKeyStore("mgr-secret", nil)
-	workerKey := ks.GenerateWorkerKey("alice")
-	mw := NewMiddleware(ks)
-
-	for _, tc := range []struct {
-		label string
-		key   string
-	}{
-		{"manager", "mgr-secret"},
-		{"worker", workerKey},
-	} {
-		t.Run(tc.label, func(t *testing.T) {
-			var gotIdentity *CallerIdentity
-			handler := mw.RequireAny(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				gotIdentity = CallerFromContext(r.Context())
-			}))
-
-			req := httptest.NewRequest(http.MethodGet, "/api/v1/workers", nil)
-			req.Header.Set("Authorization", "Bearer "+tc.key)
-			w := httptest.NewRecorder()
-			handler.ServeHTTP(w, req)
-
-			if gotIdentity == nil {
-				t.Fatal("expected identity in context")
-			}
-		})
-	}
-}
-
-func TestRequireAnyRejectsInvalidKey(t *testing.T) {
-	ks := NewKeyStore("mgr-secret", nil)
-	mw := NewMiddleware(ks)
-
-	handler := mw.RequireAny(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := mw.Authenticate(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Error("handler should not be called")
 	}))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/workers", nil)
-	req.Header.Set("Authorization", "Bearer bad-key")
+	req.Header.Set("Authorization", "Bearer bad-token")
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 
@@ -261,36 +73,71 @@ func TestRequireAnyRejectsInvalidKey(t *testing.T) {
 	}
 }
 
-func TestRequireRolesAllowsMatchingRole(t *testing.T) {
-	ks := NewKeyStore("mgr-secret", nil)
-	mw := NewMiddleware(ks)
+func TestAuthenticate_MissingHeader(t *testing.T) {
+	mw := newTestMiddleware(map[string]*CallerIdentity{})
 
-	called := false
-	handler := mw.RequireRoles([]string{RoleManager, RoleAdmin}, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		called = true
+	handler := mw.Authenticate(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("handler should not be called")
 	}))
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/workers", nil)
-	req.Header.Set("Authorization", "Bearer mgr-secret")
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/workers", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401, got %d", w.Code)
+	}
+}
+
+func TestAuthenticate_NilAuthenticator(t *testing.T) {
+	mw := NewMiddleware(nil, nil, NewAuthorizer(), nil, "")
+
+	called := false
+	handler := mw.Authenticate(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/workers", nil)
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 
 	if !called {
-		t.Error("handler should be called for matching role")
+		t.Error("handler should be called when authenticator is nil (disabled)")
 	}
 }
 
-func TestRequireRolesRejectsNonMatchingRole(t *testing.T) {
-	ks := NewKeyStore("mgr-secret", nil)
-	workerKey := ks.GenerateWorkerKey("alice")
-	mw := NewMiddleware(ks)
+func TestRequireAuthz_ManagerAllowed(t *testing.T) {
+	mw := newTestMiddleware(map[string]*CallerIdentity{
+		"mgr-token": {Role: RoleManager, Username: "manager"},
+	})
 
-	handler := mw.RequireRoles([]string{RoleManager, RoleAdmin}, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	called := false
+	handler := mw.RequireAuthz(ActionCreate, "worker", nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+	}))
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/workers", nil)
+	req.Header.Set("Authorization", "Bearer mgr-token")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if !called {
+		t.Error("manager should be allowed to create worker")
+	}
+}
+
+func TestRequireAuthz_WorkerDeniedCreate(t *testing.T) {
+	mw := newTestMiddleware(map[string]*CallerIdentity{
+		"worker-token": {Role: RoleWorker, Username: "alice", WorkerName: "alice"},
+	})
+
+	handler := mw.RequireAuthz(ActionCreate, "worker", nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Error("handler should not be called")
 	}))
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/workers", nil)
-	req.Header.Set("Authorization", "Bearer "+workerKey)
+	req.Header.Set("Authorization", "Bearer worker-token")
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 
@@ -299,17 +146,50 @@ func TestRequireRolesRejectsNonMatchingRole(t *testing.T) {
 	}
 }
 
-func TestCallerIdentityUsernameField(t *testing.T) {
-	ks := NewKeyStore("mgr-key", nil)
+func TestRequireAuthz_WorkerSelfReady(t *testing.T) {
+	mw := newTestMiddleware(map[string]*CallerIdentity{
+		"worker-token": {Role: RoleWorker, Username: "alice", WorkerName: "alice"},
+	})
 
-	id, ok := ks.ValidateKey("mgr-key")
-	if !ok || id.Username != "manager" {
-		t.Errorf("expected manager username, got %q", id.Username)
+	called := false
+	nameFn := func(r *http.Request) string { return "alice" }
+	handler := mw.RequireAuthz(ActionReady, "worker", nameFn)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+	}))
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/workers/alice/ready", nil)
+	req.Header.Set("Authorization", "Bearer worker-token")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if !called {
+		t.Error("worker should be allowed to report own readiness")
 	}
+}
 
-	workerKey := ks.GenerateWorkerKey("alice")
-	wid, ok := ks.ValidateKey(workerKey)
-	if !ok || wid.Username != "alice" || wid.WorkerName != "alice" {
-		t.Errorf("expected alice username and workerName, got %+v", wid)
+func TestRequireAuthz_WorkerOtherReady(t *testing.T) {
+	mw := newTestMiddleware(map[string]*CallerIdentity{
+		"worker-token": {Role: RoleWorker, Username: "alice", WorkerName: "alice"},
+	})
+
+	nameFn := func(r *http.Request) string { return "bob" }
+	handler := mw.RequireAuthz(ActionReady, "worker", nameFn)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("handler should not be called")
+	}))
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/workers/bob/ready", nil)
+	req.Header.Set("Authorization", "Bearer worker-token")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Errorf("expected 403, got %d", w.Code)
+	}
+}
+
+func TestCallerFromContext_Empty(t *testing.T) {
+	ctx := context.Background()
+	if CallerFromContext(ctx) != nil {
+		t.Error("expected nil for empty context")
 	}
 }
