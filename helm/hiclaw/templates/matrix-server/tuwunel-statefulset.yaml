@@ -1,13 +1,14 @@
 {{- if eq .Values.matrixServer.type "tuwunel" }}
 {{- $comp := dict "root" . "component" "tuwunel" }}
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
   name: {{ include "hiclaw.tuwunel.fullname" . }}
   namespace: {{ include "hiclaw.namespace" . }}
   labels:
     {{- include "hiclaw.component.labels" $comp | nindent 4 }}
 spec:
+  serviceName: {{ include "hiclaw.tuwunel.fullname" . }}
   replicas: {{ .Values.matrixServer.tuwunel.replicaCount }}
   selector:
     matchLabels:
@@ -69,13 +70,23 @@ spec:
           volumeMounts:
             - name: data
               mountPath: {{ .Values.matrixServer.tuwunel.persistence.mountPath | quote }}
+      {{- if not .Values.matrixServer.tuwunel.persistence.enabled }}
       volumes:
-        {{- if .Values.matrixServer.tuwunel.persistence.enabled }}
-        - name: data
-          persistentVolumeClaim:
-            claimName: {{ include "hiclaw.tuwunel.fullname" . }}-data
-        {{- else }}
         - name: data
           emptyDir: {}
+      {{- end }}
+  {{- if .Values.matrixServer.tuwunel.persistence.enabled }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: {{ .Values.matrixServer.tuwunel.persistence.size | quote }}
+        {{- if .Values.matrixServer.tuwunel.persistence.storageClassName }}
+        storageClassName: {{ .Values.matrixServer.tuwunel.persistence.storageClassName | quote }}
         {{- end }}
+  {{- end }}
 {{- end }}

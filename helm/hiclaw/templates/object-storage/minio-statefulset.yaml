@@ -1,13 +1,14 @@
 {{- if eq .Values.objectStorage.type "minio" }}
 {{- $comp := dict "root" . "component" "minio" }}
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
   name: {{ include "hiclaw.minio.fullname" . }}
   namespace: {{ include "hiclaw.namespace" . }}
   labels:
     {{- include "hiclaw.component.labels" $comp | nindent 4 }}
 spec:
+  serviceName: {{ include "hiclaw.minio.fullname" . }}
   replicas: 1
   selector:
     matchLabels:
@@ -55,13 +56,23 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /data
+      {{- if not .Values.objectStorage.minio.persistence.enabled }}
       volumes:
-        {{- if .Values.objectStorage.minio.persistence.enabled }}
-        - name: data
-          persistentVolumeClaim:
-            claimName: {{ include "hiclaw.minio.fullname" . }}-data
-        {{- else }}
         - name: data
           emptyDir: {}
+      {{- end }}
+  {{- if .Values.objectStorage.minio.persistence.enabled }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: {{ .Values.objectStorage.minio.persistence.size | quote }}
+        {{- if .Values.objectStorage.minio.persistence.storageClassName }}
+        storageClassName: {{ .Values.objectStorage.minio.persistence.storageClassName | quote }}
         {{- end }}
+  {{- end }}
 {{- end }}

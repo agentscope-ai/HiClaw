@@ -8,7 +8,8 @@ metadata:
   labels:
     {{- include "hiclaw.component.labels" $comp | nindent 4 }}
 spec:
-  type: {{ .Values.matrixServer.tuwunel.service.type }}
+  type: ClusterIP
+  clusterIP: None
   selector:
     {{- include "hiclaw.component.selectorLabels" $comp | nindent 4 }}
   ports:

@@ -179,12 +179,12 @@ helm upgrade --install hiclaw "$CHART_DIR" \
 
 # ── Step 5: Wait for core infrastructure ──────────────────────────────────
 
-log "Waiting for Tuwunel..."
-kubectl wait --for=condition=available deployment -l app.kubernetes.io/component=tuwunel \
+log "Waiting for Tuwunel (StatefulSet)..."
+kubectl rollout status statefulset -l app.kubernetes.io/component=tuwunel \
     -n "$NAMESPACE" --timeout=120s 2>/dev/null || log "Tuwunel not ready yet (may still be pulling image)"
 
-log "Waiting for MinIO..."
-kubectl wait --for=condition=available deployment -l app.kubernetes.io/component=minio \
+log "Waiting for MinIO (StatefulSet)..."
+kubectl rollout status statefulset -l app.kubernetes.io/component=minio \
     -n "$NAMESPACE" --timeout=120s 2>/dev/null || log "MinIO not ready yet"
 
 log "Waiting for Controller..."
