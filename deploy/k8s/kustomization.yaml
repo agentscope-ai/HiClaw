@@ -1,0 +1,17 @@
+# HiClaw Kubernetes Deployment
+# 一键部署: kubectl apply -k .
+
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: hiclaw
+
+resources:
+  - namespace.yaml
+  - secrets.yaml
+  - minio.yaml
+  - matrix.yaml
+  - higress.yaml
+  - element.yaml
+  - manager.yaml
+  - ingress.yaml

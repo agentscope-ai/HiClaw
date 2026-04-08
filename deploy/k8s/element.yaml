@@ -1,0 +1,99 @@
+# Element Web - 前端客户端
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: element-config
+  namespace: hiclaw
+  labels:
+    app.kubernetes.io/name: element-web
+data:
+  config.json: |
+    {
+      "default_home_server": "matrix-local.hiclaw.io:8080",
+      "default_server_config": {
+        "m.homeserver": {
+          "base_url": "http://tuwunel.hiclaw.svc.cluster.local:8080"
+        },
+        "m.identity_server": {
+          "base_url": "https://vector.im"
+        }
+      },
+      "disable_custom_urls": false,
+      "disable_guests": true,
+      "disable_login_language_selector": false,
+      "disable_3pid_login": true,
+      "brand": "HiClaw",
+      "integrations_ui_url": "https://scalar.vector.im/",
+      "integrations_rest_url": "https://scalar.vector.im/api",
+      "show_labs_settings": true,
+      "room_directory": {
+        "servers": ["matrix-local.hiclaw.io:8080"]
+      }
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: element-web
+  namespace: hiclaw
+  labels:
+    app.kubernetes.io/name: element-web
+    app.kubernetes.io/component: frontend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: element-web
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: element-web
+    spec:
+      containers:
+      - name: element-web
+        image: vectorim/element-web:v1.11.58
+        ports:
+        - containerPort: 80
+          name: http
+        volumeMounts:
+        - name: config
+          mountPath: /app/config.json
+          subPath: config.json
+        resources:
+          limits:
+            cpu: "200m"
+            memory: "128Mi"
+          requests:
+            cpu: "50m"
+            memory: "32Mi"
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 5
+          periodSeconds: 5
+      volumes:
+      - name: config
+        configMap:
+          name: element-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: element-web
+  namespace: hiclaw
+  labels:
+    app.kubernetes.io/name: element-web
+spec:
+  ports:
+  - port: 80
+    targetPort: 80
+    name: http
+  selector:
+    app.kubernetes.io/name: element-web

@@ -1,0 +1,141 @@
+# HiClaw Manager - Agent 管理器
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: manager-pvc
+  namespace: hiclaw
+  labels:
+    app.kubernetes.io/name: hiclaw-manager
+    app.kubernetes.io/component: storage
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hiclaw-manager
+  namespace: hiclaw
+  labels:
+    app.kubernetes.io/name: hiclaw-manager
+    app.kubernetes.io/component: manager
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: hiclaw-manager
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: hiclaw-manager
+    spec:
+      containers:
+      - name: manager
+        image: higress-registry.cn-hangzhou.cr.aliyuncs.com/hiclaw/manager:latest
+        ports:
+        - containerPort: 8080
+          name: http
+        - containerPort: 18888
+          name: console
+        env:
+        # LLM 配置
+        - name: HICLAW_LLM_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: hiclaw-secrets
+              key: LLM_API_KEY
+        - name: HICLAW_LLM_PROVIDER
+          value: "qwen"
+        
+        # 管理员凭据
+        - name: HICLAW_ADMIN_USER
+          valueFrom:
+            secretKeyRef:
+              name: hiclaw-secrets
+              key: ADMIN_USER
+        - name: HICLAW_ADMIN_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: hiclaw-secrets
+              key: ADMIN_PASSWORD
+        
+        # Matrix 配置
+        - name: HICLAW_MATRIX_DOMAIN
+          value: "matrix-local.hiclaw.io:8080"
+        - name: HICLAW_MATRIX_CLIENT_DOMAIN
+          value: "matrix-client-local.hiclaw.io"
+        
+        # MinIO 配置
+        - name: HICLAW_MINIO_ENDPOINT
+          value: "minio.hiclaw.svc.cluster.local:9000"
+        - name: HICLAW_MINIO_USER
+          valueFrom:
+            secretKeyRef:
+              name: hiclaw-secrets
+              key: MINIO_USER
+        - name: HICLAW_MINIO_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: hiclaw-secrets
+              key: MINIO_PASSWORD
+        
+        # Gateway 配置
+        - name: HICLAW_MANAGER_GATEWAY_KEY
+          valueFrom:
+            secretKeyRef:
+              name: hiclaw-secrets
+              key: MANAGER_GATEWAY_KEY
+        
+        # 域名配置
+        - name: HICLAW_FS_DOMAIN
+          value: "fs-local.hiclaw.io"
+        - name: HICLAW_CONSOLE_DOMAIN
+          value: "console-local.hiclaw.io"
+        - name: HICLAW_AI_GATEWAY_DOMAIN
+          value: "aigw-local.hiclaw.io"
+        
+        resources:
+          limits:
+            cpu: "2"
+            memory: "4Gi"
+          requests:
+            cpu: "500m"
+            memory: "1Gi"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 60
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 5
+        volumeMounts:
+        - name: data
+          mountPath: /data
+      volumes:
+      - name: data
+        persistentVolumeClaim:
+          claimName: manager-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: hiclaw-manager
+  namespace: hiclaw
+  labels:
+    app.kubernetes.io/name: hiclaw-manager
+spec:
+  ports:
+  - port: 8080
+    name: http
+  - port: 18888
+    name: console
+  selector:
+    app.kubernetes.io/name: hiclaw-manager

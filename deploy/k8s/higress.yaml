@@ -1,0 +1,94 @@
+# Higress - AI Gateway
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: higress
+  namespace: hiclaw
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: higress
+  namespace: hiclaw
+  labels:
+    app.kubernetes.io/name: higress
+    app.kubernetes.io/component: gateway
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: higress
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: higress
+    spec:
+      serviceAccountName: higress
+      containers:
+      - name: higress-gateway
+        image: higress-registry.cn-hangzhou.cr.aliyuncs.com/higress/gateway:1.4.0
+        ports:
+        - containerPort: 8080
+          name: http
+        - containerPort: 8443
+          name: https
+        - containerPort: 15020
+          name: metrics
+        resources:
+          limits:
+            cpu: "1"
+            memory: "1Gi"
+          requests:
+            cpu: "200m"
+            memory: "256Mi"
+        livenessProbe:
+          httpGet:
+            path: /healthz/ready
+            port: 15020
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /healthz/ready
+            port: 15020
+          initialDelaySeconds: 10
+          periodSeconds: 5
+      - name: higress-controller
+        image: higress-registry.cn-hangzhou.cr.aliyuncs.com/higress/higress:1.4.0
+        ports:
+        - containerPort: 8001
+          name: console
+        env:
+        - name: LLM_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: hiclaw-secrets
+              key: LLM_API_KEY
+        resources:
+          limits:
+            cpu: "500m"
+            memory: "512Mi"
+          requests:
+            cpu: "100m"
+            memory: "128Mi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: higress
+  namespace: hiclaw
+  labels:
+    app.kubernetes.io/name: higress
+spec:
+  type: LoadBalancer
+  ports:
+  - port: 80
+    targetPort: 8080
+    name: http
+  - port: 443
+    targetPort: 8443
+    name: https
+  - port: 8001
+    name: console
+  selector:
+    app.kubernetes.io/name: higress

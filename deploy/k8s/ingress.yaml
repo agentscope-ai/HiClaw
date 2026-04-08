@@ -1,0 +1,105 @@
+# Ingress - 外部访问入口
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: hiclaw-ingress
+  namespace: hiclaw
+  labels:
+    app.kubernetes.io/name: hiclaw
+    app.kubernetes.io/component: ingress
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    nginx.ingress.kubernetes.io/proxy-body-size: "100m"
+spec:
+  ingressClassName: nginx
+  rules:
+  # Element Web 前端
+  - host: element.hiclaw.local
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: element-web
+            port:
+              number: 80
+  
+  # Matrix 服务器
+  - host: matrix.hiclaw.local
+    http:
+      paths:
+      - path: /_matrix
+        pathType: Prefix
+        backend:
+          service:
+            name: tuwunel
+            port:
+              number: 6167
+      - path: /.well-known
+        pathType: Prefix
+        backend:
+          service:
+            name: tuwunel
+            port:
+              number: 8080
+  
+  # AI Gateway
+  - host: gateway.hiclaw.local
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: higress
+            port:
+              number: 80
+  
+  # Higress 控制台
+  - host: higress-console.hiclaw.local
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: higress
+            port:
+              number: 8001
+  
+  # OpenClaw 控制台
+  - host: openclaw-console.hiclaw.local
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: hiclaw-manager
+            port:
+              number: 18888
+  
+  # MinIO 文件系统
+  - host: minio.hiclaw.local
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: minio
+            port:
+              number: 9000
+  
+  # MinIO 控制台
+  - host: minio-console.hiclaw.local
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: minio
+            port:
+              number: 9001

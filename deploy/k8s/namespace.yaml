@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: hiclaw
+  labels:
+    app.kubernetes.io/name: hiclaw
+    app.kubernetes.io/component: namespace
