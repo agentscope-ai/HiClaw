@@ -600,6 +600,63 @@ if [ "${HICLAW_RUNTIME}" = "aliyun" ]; then
     log "Cloud overlay applied"
 fi
 
+# mem0 Plugin Configuration (Platform mode only)
+# Injects openclaw-mem0 plugin config into openclaw.json when enabled.
+# Requires: HICLAW_MEM0_ENABLED=true, HICLAW_MEM0_API_KEY
+# Optional: HICLAW_MEM0_USER_ID, HICLAW_MEM0_ORG_ID, HICLAW_MEM0_PROJECT_ID, HICLAW_MEM0_ENABLE_GRAPH
+# ============================================================
+if [ "${HICLAW_MEM0_ENABLED:-false}" = "true" ]; then
+    MEM0_PLUGIN_NAME="openclaw-mem0"
+    MEM0_PLUGIN_DIR="${OPENCLAW_MEM0_PLUGIN_DIR:-/opt/openclaw/extensions/${MEM0_PLUGIN_NAME}}"
+    MEM0_PLUGIN_MANIFEST="${MEM0_PLUGIN_DIR}/openclaw.plugin.json"
+    if [ -z "${HICLAW_MEM0_API_KEY:-}" ]; then
+        log "WARNING: HICLAW_MEM0_ENABLED=true but HICLAW_MEM0_API_KEY is not set, skipping mem0 plugin"
+    elif [ ! -f "${MEM0_PLUGIN_MANIFEST}" ]; then
+        log "WARNING: mem0 plugin manifest not found at ${MEM0_PLUGIN_MANIFEST}, skipping mem0 config. Verify the image was built with MEM0_PLUGIN_ENABLED=1."
+    else
+        log "Configuring mem0 plugin (Platform mode)..."
+        _mem0_user_id="${HICLAW_MEM0_USER_ID:-${HICLAW_ADMIN_USER:-admin}}"
+        _mem0_org_id="${HICLAW_MEM0_ORG_ID:-}"
+        _mem0_project_id="${HICLAW_MEM0_PROJECT_ID:-}"
+        _mem0_enable_graph="$(echo "${HICLAW_MEM0_ENABLE_GRAPH:-false}" | tr '[:upper:]' '[:lower:]')"
+
+        # Build mem0 plugin config JSON
+        _mem0_config=$(jq -n \
+            --arg apiKey "${HICLAW_MEM0_API_KEY}" \
+            --arg userId "${_mem0_user_id}" \
+            --arg orgId "${_mem0_org_id}" \
+            --arg projectId "${_mem0_project_id}" \
+            --arg enableGraphRaw "${_mem0_enable_graph}" \
+            '{
+                "enabled": true,
+                "config": {
+                    "apiKey": $apiKey,
+                    "userId": $userId
+                } + (if $orgId != "" then {"orgId": $orgId} else {} end)
+                  + (if $projectId != "" then {"projectId": $projectId} else {} end)
+                  + (if $enableGraphRaw == "true" then {"enableGraph": true} else {} end)
+            }')
+
+        # Inject into openclaw.json (idempotent merge)
+        jq --arg pluginName "${MEM0_PLUGIN_NAME}" \
+           --arg pluginDir "${MEM0_PLUGIN_DIR}" \
+           --argjson mem0 "${_mem0_config}" '
+            .plugins = (.plugins // {})
+            | .plugins.load = (.plugins.load // {})
+            | .plugins.entries = (.plugins.entries // {})
+            | if (.plugins.allow | type) != "array" then .plugins.allow = [] else . end
+            | if (.plugins.allow | index($pluginName)) == null then .plugins.allow += [$pluginName] else . end
+            | if (.plugins.load.paths | type) != "array" then .plugins.load.paths = [] else . end
+            | if (.plugins.load.paths | index($pluginDir)) == null then .plugins.load.paths += [$pluginDir] else . end
+            | .plugins.entries[$pluginName] = $mem0
+        ' /root/manager-workspace/openclaw.json > /tmp/openclaw-mem0.json && \
+            mv /tmp/openclaw-mem0.json /root/manager-workspace/openclaw.json
+
+        log "mem0 plugin configured (userId: ${_mem0_user_id})"
+    fi
+fi
+unset MEM0_PLUGIN_NAME MEM0_PLUGIN_DIR MEM0_PLUGIN_MANIFEST
+
 # ============================================================
 # Optional: enable openclaw-cms-plugin observability
 # Config is applied at runtime so secrets stay out of image layers.

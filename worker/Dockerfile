@@ -8,6 +8,7 @@
 #   HIGRESS_REGISTRY           - base image registry (default: cn-hangzhou)
 #   OPENCLAW_BASE_IMAGE        - openclaw-base image (default: hiclaw/openclaw-base:latest)
 #   OPENCLAW_CMS_PLUGIN_URL    - observability plugin tarball URL (bundled unconditionally)
+#   MEM0_PLUGIN_ENABLED        - set to 1 to bundle @mem0/openclaw-mem0 at build time
 # ============================================================
 
 ARG HIGRESS_REGISTRY=higress-registry.cn-hangzhou.cr.aliyuncs.com
@@ -47,6 +48,27 @@ RUN tmp_dir="$(mktemp -d)" && \
 # - openclaw falls back to ~/.openclaw/openclaw.json when OPENCLAW_CONFIG_PATH is unset
 #   which correctly resolves to <workspace>/.openclaw/openclaw.json
 ENV PATH="/opt/openclaw/packages/clawdbot/node_modules/.bin:${PATH}"
+
+# ---- Optional: mem0 Plugin (long-term memory for agents) ----
+# Set MEM0_PLUGIN_ENABLED=1 at build time to bundle the plugin.
+# Runtime configuration is injected via HICLAW_MEM0_* env vars.
+ENV OPENCLAW_MEM0_PLUGIN_DIR="/opt/openclaw/extensions/openclaw-mem0"
+ARG MEM0_PLUGIN_ENABLED=0
+RUN if [ "${MEM0_PLUGIN_ENABLED}" = "1" ]; then \
+        echo "Installing @mem0/openclaw-mem0 plugin..." && \
+        tmp_dir="$(mktemp -d)" && \
+        cd "${tmp_dir}" && \
+        pack_name="$(npm pack @mem0/openclaw-mem0 --silent)" && \
+        rm -rf "${OPENCLAW_MEM0_PLUGIN_DIR}" && \
+        mkdir -p "${OPENCLAW_MEM0_PLUGIN_DIR}" && \
+        tar -xzf "${pack_name}" -C "${tmp_dir}" && \
+        cp -rf "${tmp_dir}/package/." "${OPENCLAW_MEM0_PLUGIN_DIR}/" && \
+        cd "${OPENCLAW_MEM0_PLUGIN_DIR}" && \
+        npm install --omit=dev --ignore-scripts && \
+        test -f "${OPENCLAW_MEM0_PLUGIN_DIR}/openclaw.plugin.json" && \
+        rm -rf "${tmp_dir}" && \
+        echo "mem0 plugin installed successfully"; \
+    fi
 
 # Shared environment bootstrap and credential management
 COPY --from=shared . /opt/hiclaw/scripts/lib/

@@ -103,6 +103,28 @@ RUN cp /opt/hiclaw/scripts/systemctl-shim.sh /usr/local/bin/systemctl
 COPY agent/ /opt/hiclaw/agent/
 
 ARG BUILTIN_VERSION=latest
+
+# ---- Optional: mem0 Plugin (long-term memory for agents) ----
+# Set MEM0_PLUGIN_ENABLED=1 at build time to bundle the plugin.
+# Runtime configuration is injected via HICLAW_MEM0_* env vars.
+ENV OPENCLAW_MEM0_PLUGIN_DIR="/opt/openclaw/extensions/openclaw-mem0"
+ARG MEM0_PLUGIN_ENABLED=0
+RUN if [ "${MEM0_PLUGIN_ENABLED}" = "1" ]; then \
+        echo "Installing @mem0/openclaw-mem0 plugin..." && \
+        tmp_dir="$(mktemp -d)" && \
+        cd "${tmp_dir}" && \
+        pack_name="$(npm pack @mem0/openclaw-mem0 --silent)" && \
+        rm -rf "${OPENCLAW_MEM0_PLUGIN_DIR}" && \
+        mkdir -p "${OPENCLAW_MEM0_PLUGIN_DIR}" && \
+        tar -xzf "${pack_name}" -C "${tmp_dir}" && \
+        cp -rf "${tmp_dir}/package/." "${OPENCLAW_MEM0_PLUGIN_DIR}/" && \
+        cd "${OPENCLAW_MEM0_PLUGIN_DIR}" && \
+        npm install --omit=dev --ignore-scripts && \
+        test -f "${OPENCLAW_MEM0_PLUGIN_DIR}/openclaw.plugin.json" && \
+        rm -rf "${tmp_dir}" && \
+        echo "mem0 plugin installed successfully"; \
+    fi
+
 RUN echo "${BUILTIN_VERSION}" > /opt/hiclaw/agent/.builtin-version \
     && find /opt/hiclaw/agent/skills/*/scripts -name '*.sh' -exec chmod +x {} + 2>/dev/null || true \
     && find /opt/hiclaw/agent/worker-skills/*/scripts -name '*.sh' -exec chmod +x {} + 2>/dev/null || true \
