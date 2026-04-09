@@ -131,13 +131,15 @@ func (r *TeamReconciler) handleCreate(ctx context.Context, t *v1beta1.Team) (rec
 		teamAdminID = t.Spec.Admin.MatrixUserID
 	}
 	if err := r.Deployer.InjectCoordinationContext(ctx, service.CoordinationDeployRequest{
-		LeaderName:     t.Spec.Leader.Name,
-		Role:           "team_leader",
-		TeamName:       t.Name,
-		TeamRoomID:     rooms.TeamRoomID,
-		LeaderDMRoomID: rooms.LeaderDMRoomID,
-		TeamWorkers:    workerNames,
-		TeamAdminID:    teamAdminID,
+		LeaderName:        t.Spec.Leader.Name,
+		Role:              "team_leader",
+		TeamName:          t.Name,
+		TeamRoomID:        rooms.TeamRoomID,
+		LeaderDMRoomID:    rooms.LeaderDMRoomID,
+		HeartbeatEvery:    leaderHeartbeatEvery(t),
+		WorkerIdleTimeout: t.Spec.Leader.WorkerIdleTimeout,
+		TeamWorkers:       workerNames,
+		TeamAdminID:       teamAdminID,
 	}); err != nil {
 		logger.Error(err, "leader coordination context injection failed (non-fatal)")
 	}
@@ -175,7 +177,79 @@ func (r *TeamReconciler) handleCreate(ctx context.Context, t *v1beta1.Team) (rec
 }
 
 func (r *TeamReconciler) handleUpdate(ctx context.Context, t *v1beta1.Team) (reconcile.Result, error) {
-	// TODO: detect worker list changes and reconcile Worker CRs
+	logger := log.FromContext(ctx)
+	logger.Info("updating team", "name", t.Name)
+
+	leaderCR := r.buildLeaderCR(t)
+	if err := r.createOrUpdateWorkerCR(ctx, leaderCR); err != nil {
+		return r.failTeam(ctx, t, fmt.Sprintf("update leader Worker CR failed: %v", err))
+	}
+
+	desiredWorkers := make(map[string]v1beta1.TeamWorkerSpec, len(t.Spec.Workers))
+	workerNames := make([]string, 0, len(t.Spec.Workers))
+	for _, workerSpec := range t.Spec.Workers {
+		desiredWorkers[workerSpec.Name] = workerSpec
+		workerNames = append(workerNames, workerSpec.Name)
+
+		workerCR := r.buildWorkerCR(t, workerSpec, "worker", t.Spec.Leader.Name, t.Name)
+		if err := r.createOrUpdateWorkerCR(ctx, workerCR); err != nil {
+			return r.failTeam(ctx, t, fmt.Sprintf("update team worker %s failed: %v", workerSpec.Name, err))
+		}
+	}
+
+	var existingWorkers v1beta1.WorkerList
+	if err := r.List(ctx, &existingWorkers, client.InNamespace(t.Namespace), client.MatchingLabels{"hiclaw.io/team": t.Name}); err != nil {
+		return reconcile.Result{}, err
+	}
+	for i := range existingWorkers.Items {
+		existing := &existingWorkers.Items[i]
+		if existing.Name == t.Spec.Leader.Name {
+			continue
+		}
+		if _, keep := desiredWorkers[existing.Name]; keep {
+			continue
+		}
+		if err := r.deleteWorkerAndExpose(ctx, t, existing); err != nil {
+			logger.Error(err, "failed to remove stale team worker", "worker", existing.Name)
+		}
+	}
+
+	var teamAdminID string
+	if t.Spec.Admin != nil {
+		teamAdminID = t.Spec.Admin.MatrixUserID
+	}
+	if err := r.Deployer.InjectCoordinationContext(ctx, service.CoordinationDeployRequest{
+		LeaderName:        t.Spec.Leader.Name,
+		Role:              "team_leader",
+		TeamName:          t.Name,
+		TeamRoomID:        t.Status.TeamRoomID,
+		LeaderDMRoomID:    t.Status.LeaderDMRoomID,
+		HeartbeatEvery:    leaderHeartbeatEvery(t),
+		WorkerIdleTimeout: t.Spec.Leader.WorkerIdleTimeout,
+		TeamWorkers:       workerNames,
+		TeamAdminID:       teamAdminID,
+	}); err != nil {
+		logger.Error(err, "leader coordination context refresh failed (non-fatal)")
+	}
+
+	_ = r.Get(ctx, client.ObjectKeyFromObject(t), t)
+	t.Status.TotalWorkers = len(t.Spec.Workers)
+	t.Status.ReadyWorkers, t.Status.LeaderReady = summarizeTeamWorkerReadiness(existingWorkers.Items, t.Spec.Leader.Name)
+	if t.Status.Phase == "" {
+		t.Status.Phase = "Active"
+	}
+	if t.Status.WorkerExposedPorts != nil {
+		for workerName := range t.Status.WorkerExposedPorts {
+			if _, keep := desiredWorkers[workerName]; !keep {
+				delete(t.Status.WorkerExposedPorts, workerName)
+			}
+		}
+	}
+	t.Status.Message = ""
+	if err := r.Status().Update(ctx, t); err != nil {
+		logger.Error(err, "failed to update team status after update (non-fatal)")
+	}
+
 	return reconcile.Result{}, nil
 }
 
@@ -317,6 +391,50 @@ func (r *TeamReconciler) failTeam(ctx context.Context, t *v1beta1.Team, msg stri
 	t.Status.Message = msg
 	r.Status().Update(ctx, t)
 	return reconcile.Result{RequeueAfter: time.Minute}, fmt.Errorf("%s", msg)
+}
+
+func (r *TeamReconciler) deleteWorkerAndExpose(ctx context.Context, team *v1beta1.Team, worker *v1beta1.Worker) error {
+	var currentExposed []v1beta1.ExposedPortStatus
+	if team.Status.WorkerExposedPorts != nil {
+		currentExposed = team.Status.WorkerExposedPorts[worker.Name]
+	}
+	if len(currentExposed) == 0 && len(worker.Spec.Expose) > 0 {
+		for _, ep := range worker.Spec.Expose {
+			currentExposed = append(currentExposed, v1beta1.ExposedPortStatus{
+				Port:   ep.Port,
+				Domain: service.ContainerDNSName(worker.Name),
+			})
+		}
+	}
+	if len(currentExposed) > 0 {
+		if _, err := r.Provisioner.ReconcileExpose(ctx, worker.Name, nil, currentExposed); err != nil {
+			return err
+		}
+	}
+	return r.Delete(ctx, worker)
+}
+
+func leaderHeartbeatEvery(team *v1beta1.Team) string {
+	if team.Spec.Leader.Heartbeat == nil {
+		return ""
+	}
+	return team.Spec.Leader.Heartbeat.Every
+}
+
+func summarizeTeamWorkerReadiness(workers []v1beta1.Worker, leaderName string) (int, bool) {
+	readyWorkers := 0
+	leaderReady := false
+	for _, worker := range workers {
+		isReady := worker.Status.Phase == "Running" || worker.Status.Phase == "Ready"
+		if worker.Name == leaderName {
+			leaderReady = isReady
+			continue
+		}
+		if isReady {
+			readyWorkers++
+		}
+	}
+	return readyWorkers, leaderReady
 }
 
 func (r *TeamReconciler) SetupWithManager(mgr ctrl.Manager) error {

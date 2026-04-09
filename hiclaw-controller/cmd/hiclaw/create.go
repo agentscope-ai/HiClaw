@@ -120,10 +120,12 @@ func createWorkerCmd() *cobra.Command {
 
 func createTeamCmd() *cobra.Command {
 	var (
-		name        string
-		leaderName  string
-		leaderModel string
-		description string
+		name                 string
+		leaderName           string
+		leaderModel          string
+		leaderHeartbeatEvery string
+		workerIdleTimeout    string
+		description          string
 	)
 
 	cmd := &cobra.Command{
@@ -132,7 +134,8 @@ func createTeamCmd() *cobra.Command {
 		Long: `Create a new Team resource with a leader.
 
   hiclaw create team --name alpha --leader-name alpha-lead
-  hiclaw create team --name alpha --leader-name alpha-lead --leader-model claude-sonnet-4-6 --description "Frontend team"`,
+  hiclaw create team --name alpha --leader-name alpha-lead --leader-model claude-sonnet-4-6 --description "Frontend team"
+  hiclaw create team --name alpha --leader-name alpha-lead --leader-heartbeat-every 30m --worker-idle-timeout 12h`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if name == "" {
 				return fmt.Errorf("--name is required")
@@ -147,6 +150,13 @@ func createTeamCmd() *cobra.Command {
 			if leaderModel != "" {
 				leader["model"] = leaderModel
 			}
+			if leaderHeartbeatEvery != "" {
+				leader["heartbeat"] = map[string]interface{}{
+					"enabled": true,
+					"every":   leaderHeartbeatEvery,
+				}
+			}
+			setIfNotEmpty(leader, "workerIdleTimeout", workerIdleTimeout)
 
 			req := map[string]interface{}{
 				"name":    name,
@@ -168,6 +178,8 @@ func createTeamCmd() *cobra.Command {
 	cmd.Flags().StringVar(&name, "name", "", "Team name (required)")
 	cmd.Flags().StringVar(&leaderName, "leader-name", "", "Leader worker name (required)")
 	cmd.Flags().StringVar(&leaderModel, "leader-model", "", "Leader LLM model")
+	cmd.Flags().StringVar(&leaderHeartbeatEvery, "leader-heartbeat-every", "", "Leader heartbeat interval (e.g. 30m)")
+	cmd.Flags().StringVar(&workerIdleTimeout, "worker-idle-timeout", "", "Idle timeout before the leader may sleep workers (e.g. 12h)")
 	cmd.Flags().StringVar(&description, "description", "", "Team description")
 	return cmd
 }

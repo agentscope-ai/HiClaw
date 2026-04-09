@@ -135,7 +135,7 @@ When the Controller receives a Worker resource, it executes:
 |-------|---------|
 | Pending | Resource created, waiting for Controller to process |
 | Running | Container running, Agent online |
-| Stopped | Container stopped |
+| Sleeping | Container intentionally stopped and can be resumed by a Team Leader or Manager |
 | Failed | Creation or runtime failure — check `status.message` |
 
 ## Team
@@ -154,6 +154,10 @@ spec:
   leader:
     name: alpha-lead
     model: claude-sonnet-4-6
+    heartbeat:
+      enabled: true
+      every: 30m
+    workerIdleTimeout: 12h
     soul: |
       # Alpha Lead - Team Leader
       ## Personality
@@ -209,6 +213,9 @@ spec:
 | `leader.soul` | string | No | Leader personality and values (generates SOUL.md) |
 | `leader.agents` | string | No | Custom behavior rules (appended after builtin AGENTS.md) |
 | `leader.package` | string | No | Custom package URI |
+| `leader.heartbeat.enabled` | bool | No | Whether the Team Leader should use heartbeat turns for periodic checks |
+| `leader.heartbeat.every` | string | No | Heartbeat interval hint injected into the Team Leader workspace |
+| `leader.workerIdleTimeout` | string | No | Idle timeout the Team Leader uses when deciding whether to sleep team workers |
 
 **Worker fields (same as standalone Worker spec):**
 
@@ -231,6 +238,7 @@ A Team Leader is essentially a Worker container, but with key differences:
 
 - Uses the `team-leader-agent` template (SOUL.md.tmpl + AGENTS.md + HEARTBEAT.md)
 - Has the `team-task-management` skill (manages team-state.json, finds available Workers)
+- Has the `worker-lifecycle` skill for `hiclaw worker status|wake|sleep|ensure-ready`
 - Does NOT have Manager-exclusive skills like `worker-management` or `mcp-server-management`
 - Marked as `role: "team_leader"` in `workers-registry.json`
 - Follows a delegation-first principle — always assigns tasks to team Workers, never executes domain tasks itself
@@ -256,7 +264,7 @@ The Team Leader's AGENTS.md is assembled in three layers, each managed independe
 ```
 
 - The builtin section is auto-managed by HiClaw and updated on upgrades
-- The team context is auto-injected with the team name, members, and coordinator info
+- The team context is auto-injected with the team name, members, coordinator info, heartbeat interval, and worker idle timeout
 - User-provided `spec.agents` content is placed after both sections and preserved across updates
 
 ### Room Topology

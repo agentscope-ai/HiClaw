@@ -67,6 +67,15 @@ spec:
                       type: string
                     package:
                       type: string
+                    heartbeat:
+                      type: object
+                      properties:
+                        enabled:
+                          type: boolean
+                        every:
+                          type: string
+                    workerIdleTimeout:
+                      type: string
                     channelPolicy:
                       type: object
                       properties:

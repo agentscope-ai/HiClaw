@@ -39,17 +39,18 @@ type UpdateWorkerRequest struct {
 }
 
 type WorkerResponse struct {
-	Name         string            `json:"name"`
-	Phase        string            `json:"phase"`
-	Model        string            `json:"model,omitempty"`
-	Runtime      string            `json:"runtime,omitempty"`
-	Image        string            `json:"image,omitempty"`
-	MatrixUserID string            `json:"matrixUserID,omitempty"`
-	RoomID       string            `json:"roomID,omitempty"`
-	Message      string            `json:"message,omitempty"`
-	ExposedPorts []ExposedPortInfo `json:"exposedPorts,omitempty"`
-	Team         string            `json:"team,omitempty"`
-	Role         string            `json:"role,omitempty"`
+	Name           string            `json:"name"`
+	Phase          string            `json:"phase"`
+	Model          string            `json:"model,omitempty"`
+	Runtime        string            `json:"runtime,omitempty"`
+	Image          string            `json:"image,omitempty"`
+	ContainerState string            `json:"containerState,omitempty"`
+	MatrixUserID   string            `json:"matrixUserID,omitempty"`
+	RoomID         string            `json:"roomID,omitempty"`
+	Message        string            `json:"message,omitempty"`
+	ExposedPorts   []ExposedPortInfo `json:"exposedPorts,omitempty"`
+	Team           string            `json:"team,omitempty"`
+	Role           string            `json:"role,omitempty"`
 }
 
 type ExposedPortInfo struct {
@@ -75,13 +76,20 @@ type CreateTeamRequest struct {
 }
 
 type TeamLeaderRequest struct {
-	Name          string                     `json:"name"`
-	Model         string                     `json:"model,omitempty"`
-	Identity      string                     `json:"identity,omitempty"`
-	Soul          string                     `json:"soul,omitempty"`
-	Agents        string                     `json:"agents,omitempty"`
-	Package       string                     `json:"package,omitempty"`
-	ChannelPolicy *v1beta1.ChannelPolicySpec `json:"channelPolicy,omitempty"`
+	Name              string                      `json:"name"`
+	Model             string                      `json:"model,omitempty"`
+	Identity          string                      `json:"identity,omitempty"`
+	Soul              string                      `json:"soul,omitempty"`
+	Agents            string                      `json:"agents,omitempty"`
+	Package           string                      `json:"package,omitempty"`
+	Heartbeat         *TeamLeaderHeartbeatRequest `json:"heartbeat,omitempty"`
+	WorkerIdleTimeout string                      `json:"workerIdleTimeout,omitempty"`
+	ChannelPolicy     *v1beta1.ChannelPolicySpec  `json:"channelPolicy,omitempty"`
+}
+
+type TeamLeaderHeartbeatRequest struct {
+	Enabled *bool  `json:"enabled,omitempty"`
+	Every   string `json:"every,omitempty"`
 }
 
 type TeamWorkerRequest struct {
@@ -109,17 +117,19 @@ type UpdateTeamRequest struct {
 }
 
 type TeamResponse struct {
-	Name               string                       `json:"name"`
-	Phase              string                       `json:"phase"`
-	Description        string                       `json:"description,omitempty"`
-	LeaderName         string                       `json:"leaderName"`
-	TeamRoomID         string                       `json:"teamRoomID,omitempty"`
-	LeaderReady        bool                         `json:"leaderReady"`
-	ReadyWorkers       int                          `json:"readyWorkers"`
-	TotalWorkers       int                          `json:"totalWorkers"`
-	Message            string                       `json:"message,omitempty"`
-	WorkerNames        []string                     `json:"workerNames,omitempty"`
-	WorkerExposedPorts map[string][]ExposedPortInfo `json:"workerExposedPorts,omitempty"`
+	Name               string                           `json:"name"`
+	Phase              string                           `json:"phase"`
+	Description        string                           `json:"description,omitempty"`
+	LeaderName         string                           `json:"leaderName"`
+	LeaderHeartbeat    *v1beta1.TeamLeaderHeartbeatSpec `json:"leaderHeartbeat,omitempty"`
+	WorkerIdleTimeout  string                           `json:"workerIdleTimeout,omitempty"`
+	TeamRoomID         string                           `json:"teamRoomID,omitempty"`
+	LeaderReady        bool                             `json:"leaderReady"`
+	ReadyWorkers       int                              `json:"readyWorkers"`
+	TotalWorkers       int                              `json:"totalWorkers"`
+	Message            string                           `json:"message,omitempty"`
+	WorkerNames        []string                         `json:"workerNames,omitempty"`
+	WorkerExposedPorts map[string][]ExposedPortInfo     `json:"workerExposedPorts,omitempty"`
 }
 
 type TeamListResponse struct {
@@ -157,28 +167,28 @@ type HumanListResponse struct {
 // --- Manager API types ---
 
 type CreateManagerRequest struct {
-	Name       string                  `json:"name"`
-	Model      string                  `json:"model"`
-	Runtime    string                  `json:"runtime,omitempty"`
-	Image      string                  `json:"image,omitempty"`
-	Soul       string                  `json:"soul,omitempty"`
-	Agents     string                  `json:"agents,omitempty"`
-	Skills     []string                `json:"skills,omitempty"`
-	McpServers []string                `json:"mcpServers,omitempty"`
-	Package    string                  `json:"package,omitempty"`
-	Config     *v1beta1.ManagerConfig  `json:"config,omitempty"`
+	Name       string                 `json:"name"`
+	Model      string                 `json:"model"`
+	Runtime    string                 `json:"runtime,omitempty"`
+	Image      string                 `json:"image,omitempty"`
+	Soul       string                 `json:"soul,omitempty"`
+	Agents     string                 `json:"agents,omitempty"`
+	Skills     []string               `json:"skills,omitempty"`
+	McpServers []string               `json:"mcpServers,omitempty"`
+	Package    string                 `json:"package,omitempty"`
+	Config     *v1beta1.ManagerConfig `json:"config,omitempty"`
 }
 
 type UpdateManagerRequest struct {
-	Model      string                  `json:"model,omitempty"`
-	Runtime    string                  `json:"runtime,omitempty"`
-	Image      string                  `json:"image,omitempty"`
-	Soul       string                  `json:"soul,omitempty"`
-	Agents     string                  `json:"agents,omitempty"`
-	Skills     []string                `json:"skills,omitempty"`
-	McpServers []string                `json:"mcpServers,omitempty"`
-	Package    string                  `json:"package,omitempty"`
-	Config     *v1beta1.ManagerConfig  `json:"config,omitempty"`
+	Model      string                 `json:"model,omitempty"`
+	Runtime    string                 `json:"runtime,omitempty"`
+	Image      string                 `json:"image,omitempty"`
+	Soul       string                 `json:"soul,omitempty"`
+	Agents     string                 `json:"agents,omitempty"`
+	Skills     []string               `json:"skills,omitempty"`
+	McpServers []string               `json:"mcpServers,omitempty"`
+	Package    string                 `json:"package,omitempty"`
+	Config     *v1beta1.ManagerConfig `json:"config,omitempty"`
 }
 
 type ManagerResponse struct {

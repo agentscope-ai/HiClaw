@@ -7,15 +7,17 @@ import (
 
 // CoordinationContext describes the team/coordination context to inject into AGENTS.md.
 type CoordinationContext struct {
-	WorkerName     string
-	Role           string // "worker", "team_leader", "standalone"
-	MatrixDomain   string
-	TeamName       string
-	TeamLeaderName string
-	TeamAdminID    string // full Matrix ID of team admin
-	TeamRoomID     string
-	LeaderDMRoomID string
-	TeamWorkers    []TeamWorkerInfo // for leaders: list of team workers
+	WorkerName        string
+	Role              string // "worker", "team_leader", "standalone"
+	MatrixDomain      string
+	TeamName          string
+	TeamLeaderName    string
+	TeamAdminID       string // full Matrix ID of team admin
+	TeamRoomID        string
+	LeaderDMRoomID    string
+	HeartbeatEvery    string
+	WorkerIdleTimeout string
+	TeamWorkers       []TeamWorkerInfo // for leaders: list of team workers
 }
 
 // TeamWorkerInfo describes a team worker for leader context injection.
@@ -64,6 +66,12 @@ func buildCoordinationBlock(ctx CoordinationContext) string {
 		if ctx.LeaderDMRoomID != "" {
 			fmt.Fprintf(&b, "- **Leader DM**: %s — Team Admin communicates with you here\n", ctx.LeaderDMRoomID)
 		}
+		if ctx.HeartbeatEvery != "" {
+			fmt.Fprintf(&b, "- **Heartbeat interval**: %s\n", ctx.HeartbeatEvery)
+		}
+		if ctx.WorkerIdleTimeout != "" {
+			fmt.Fprintf(&b, "- **Worker idle timeout**: %s\n", ctx.WorkerIdleTimeout)
+		}
 		if len(ctx.TeamWorkers) > 0 {
 			b.WriteString("- **Team Workers**:\n")
 			for _, w := range ctx.TeamWorkers {
@@ -76,6 +84,8 @@ func buildCoordinationBlock(ctx CoordinationContext) string {
 		}
 		b.WriteString("- You decompose tasks from Manager or Team Admin and assign sub-tasks to your team workers\n")
 		b.WriteString("- @mention workers in the Team Room for task assignment\n")
+		b.WriteString("- Use team-state.json as the source of truth for task activity before deciding whether a worker is idle\n")
+		b.WriteString("- You decide when to wake or sleep team workers; the controller only executes the lifecycle action you request\n")
 		b.WriteString("- Report results to Manager (in Leader Room) or Team Admin (in Leader DM) based on task source\n")
 		b.WriteString("- @mention Manager only for: task completion, blockers, escalations\n")
 

@@ -106,9 +106,11 @@ func updateWorkerCmd() *cobra.Command {
 
 func updateTeamCmd() *cobra.Command {
 	var (
-		name        string
-		description string
-		leaderModel string
+		name                 string
+		description          string
+		leaderModel          string
+		leaderHeartbeatEvery string
+		workerIdleTimeout    string
 	)
 
 	cmd := &cobra.Command{
@@ -117,7 +119,8 @@ func updateTeamCmd() *cobra.Command {
 		Long: `Update an existing Team resource. Only specified fields are changed.
 
   hiclaw update team --name alpha --description "Updated description"
-  hiclaw update team --name alpha --leader-model claude-sonnet-4-6`,
+  hiclaw update team --name alpha --leader-model claude-sonnet-4-6
+  hiclaw update team --name alpha --leader-heartbeat-every 30m --worker-idle-timeout 12h`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if name == "" {
 				return fmt.Errorf("--name is required")
@@ -125,10 +128,17 @@ func updateTeamCmd() *cobra.Command {
 
 			req := map[string]interface{}{}
 			setIfNotEmpty(req, "description", description)
-			if leaderModel != "" {
-				req["leader"] = map[string]interface{}{
-					"model": leaderModel,
+			leader := map[string]interface{}{}
+			setIfNotEmpty(leader, "model", leaderModel)
+			if leaderHeartbeatEvery != "" {
+				leader["heartbeat"] = map[string]interface{}{
+					"enabled": true,
+					"every":   leaderHeartbeatEvery,
 				}
+			}
+			setIfNotEmpty(leader, "workerIdleTimeout", workerIdleTimeout)
+			if len(leader) > 0 {
+				req["leader"] = leader
 			}
 
 			if len(req) == 0 {
@@ -148,6 +158,8 @@ func updateTeamCmd() *cobra.Command {
 	cmd.Flags().StringVar(&name, "name", "", "Team name (required)")
 	cmd.Flags().StringVar(&description, "description", "", "Team description")
 	cmd.Flags().StringVar(&leaderModel, "leader-model", "", "Leader LLM model")
+	cmd.Flags().StringVar(&leaderHeartbeatEvery, "leader-heartbeat-every", "", "Leader heartbeat interval (e.g. 30m)")
+	cmd.Flags().StringVar(&workerIdleTimeout, "worker-idle-timeout", "", "Idle timeout before the leader may sleep workers (e.g. 12h)")
 	return cmd
 }
 

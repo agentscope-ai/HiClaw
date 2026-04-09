@@ -135,7 +135,7 @@ spec:
 |-------|------|
 | Pending | 资源已创建，等待 Controller 处理 |
 | Running | 容器运行中，Agent 在线 |
-| Stopped | 容器已停止 |
+| Sleeping | 容器被有意休眠，可由 Team Leader 或 Manager 再次唤醒 |
 | Failed | 创建或运行失败，查看 `status.message` |
 
 ## Team
@@ -154,6 +154,10 @@ spec:
   leader:
     name: alpha-lead
     model: claude-sonnet-4-6
+    heartbeat:
+      enabled: true
+      every: 30m
+    workerIdleTimeout: 12h
     soul: |
       # Alpha Lead - Team Leader
       ## 人格
@@ -209,6 +213,9 @@ spec:
 | `leader.soul` | string | 否 | Leader 人格与价值观设定（生成 SOUL.md） |
 | `leader.agents` | string | 否 | 自定义行为规则（追加在内置 AGENTS.md 之后） |
 | `leader.package` | string | 否 | 自定义包 URI |
+| `leader.heartbeat.enabled` | bool | 否 | 是否让 Team Leader 利用 heartbeat 轮询做周期检查 |
+| `leader.heartbeat.every` | string | 否 | 注入到 Team Leader 工作空间中的 heartbeat 周期间隔提示 |
+| `leader.workerIdleTimeout` | string | 否 | Team Leader 判断 team 内 worker 是否可以休眠时使用的空闲超时 |
 
 **Worker 字段（与独立 Worker 的 spec 一致）：**
 
@@ -231,6 +238,7 @@ Team Leader 本质上是一个 Worker 容器，但有以下区别：
 
 - 使用 `team-leader-agent` 模板（SOUL.md.tmpl + AGENTS.md + HEARTBEAT.md）
 - 拥有 `team-task-management` skill（管理 team-state.json、查找可用 Worker）
+- 拥有 `worker-lifecycle` skill，用于执行 `hiclaw worker status|wake|sleep|ensure-ready`
 - 不拥有 `worker-management`、`mcp-server-management` 等 Manager 独占 skill
 - 在 `workers-registry.json` 中标记为 `role: "team_leader"`
 - 采用委派优先原则——始终将任务分配给团队 Worker，自己不执行领域任务
@@ -256,7 +264,7 @@ Team Leader 的 AGENTS.md 由三层内容组装而成，各自独立管理：
 ```
 
 - 内置段由 HiClaw 自动管理，升级时自动更新
-- 团队上下文段自动注入团队名称、成员列表和协调者信息
+- 团队上下文段自动注入团队名称、成员列表、协调者信息，以及 heartbeat 周期和 worker idle timeout
 - 用户通过 `spec.agents` 提供的内容放在两段之后，更新时不会被覆盖
 
 ### Room 拓扑

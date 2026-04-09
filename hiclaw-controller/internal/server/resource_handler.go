@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	v1beta1 "github.com/hiclaw/hiclaw-controller/api/v1beta1"
+	authpkg "github.com/hiclaw/hiclaw-controller/internal/auth"
 	"github.com/hiclaw/hiclaw-controller/internal/httputil"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -52,6 +53,13 @@ func (h *ResourceHandler) CreateWorker(w http.ResponseWriter, r *http.Request) {
 			Expose:        req.Expose,
 			ChannelPolicy: req.ChannelPolicy,
 		},
+	}
+
+	caller := authpkg.CallerFromContext(r.Context())
+	if caller != nil && caller.Role == authpkg.RoleTeamLeader {
+		req.Team = caller.Team
+		req.Role = "worker"
+		req.TeamLeader = caller.Username
 	}
 
 	if req.Team != "" || req.Role != "" || req.TeamLeader != "" {
@@ -227,13 +235,15 @@ func (h *ResourceHandler) CreateTeam(w http.ResponseWriter, r *http.Request) {
 			PeerMentions:  req.PeerMentions,
 			ChannelPolicy: req.ChannelPolicy,
 			Leader: v1beta1.LeaderSpec{
-				Name:          req.Leader.Name,
-				Model:         req.Leader.Model,
-				Identity:      req.Leader.Identity,
-				Soul:          req.Leader.Soul,
-				Agents:        req.Leader.Agents,
-				Package:       req.Leader.Package,
-				ChannelPolicy: req.Leader.ChannelPolicy,
+				Name:              req.Leader.Name,
+				Model:             req.Leader.Model,
+				Identity:          req.Leader.Identity,
+				Soul:              req.Leader.Soul,
+				Agents:            req.Leader.Agents,
+				Package:           req.Leader.Package,
+				Heartbeat:         toHeartbeatSpec(req.Leader.Heartbeat),
+				WorkerIdleTimeout: req.Leader.WorkerIdleTimeout,
+				ChannelPolicy:     req.Leader.ChannelPolicy,
 			},
 		},
 	}
@@ -340,6 +350,12 @@ func (h *ResourceHandler) UpdateTeam(w http.ResponseWriter, r *http.Request) {
 		}
 		if req.Leader.Package != "" {
 			team.Spec.Leader.Package = req.Leader.Package
+		}
+		if req.Leader.Heartbeat != nil {
+			team.Spec.Leader.Heartbeat = toHeartbeatSpec(req.Leader.Heartbeat)
+		}
+		if req.Leader.WorkerIdleTimeout != "" {
+			team.Spec.Leader.WorkerIdleTimeout = req.Leader.WorkerIdleTimeout
 		}
 		if req.Leader.ChannelPolicy != nil {
 			team.Spec.Leader.ChannelPolicy = req.Leader.ChannelPolicy
@@ -629,14 +645,15 @@ func (h *ResourceHandler) DeleteManager(w http.ResponseWriter, r *http.Request) 
 
 func workerToResponse(w *v1beta1.Worker) WorkerResponse {
 	resp := WorkerResponse{
-		Name:         w.Name,
-		Phase:        w.Status.Phase,
-		Model:        w.Spec.Model,
-		Runtime:      w.Spec.Runtime,
-		Image:        w.Spec.Image,
-		MatrixUserID: w.Status.MatrixUserID,
-		RoomID:       w.Status.RoomID,
-		Message:      w.Status.Message,
+		Name:           w.Name,
+		Phase:          w.Status.Phase,
+		Model:          w.Spec.Model,
+		Runtime:        w.Spec.Runtime,
+		Image:          w.Spec.Image,
+		ContainerState: w.Status.ContainerState,
+		MatrixUserID:   w.Status.MatrixUserID,
+		RoomID:         w.Status.RoomID,
+		Message:        w.Status.Message,
 	}
 	if resp.Phase == "" {
 		resp.Phase = "Pending"
@@ -653,15 +670,17 @@ func workerToResponse(w *v1beta1.Worker) WorkerResponse {
 
 func teamToResponse(t *v1beta1.Team) TeamResponse {
 	resp := TeamResponse{
-		Name:         t.Name,
-		Phase:        t.Status.Phase,
-		Description:  t.Spec.Description,
-		LeaderName:   t.Spec.Leader.Name,
-		TeamRoomID:   t.Status.TeamRoomID,
-		LeaderReady:  t.Status.LeaderReady,
-		ReadyWorkers: t.Status.ReadyWorkers,
-		TotalWorkers: t.Status.TotalWorkers,
-		Message:      t.Status.Message,
+		Name:              t.Name,
+		Phase:             t.Status.Phase,
+		Description:       t.Spec.Description,
+		LeaderName:        t.Spec.Leader.Name,
+		LeaderHeartbeat:   t.Spec.Leader.Heartbeat,
+		WorkerIdleTimeout: t.Spec.Leader.WorkerIdleTimeout,
+		TeamRoomID:        t.Status.TeamRoomID,
+		LeaderReady:       t.Status.LeaderReady,
+		ReadyWorkers:      t.Status.ReadyWorkers,
+		TotalWorkers:      t.Status.TotalWorkers,
+		Message:           t.Status.Message,
 	}
 	if resp.Phase == "" {
 		resp.Phase = "Pending"
@@ -678,6 +697,23 @@ func teamToResponse(t *v1beta1.Team) TeamResponse {
 		}
 	}
 	return resp
+}
+
+func toHeartbeatSpec(req *TeamLeaderHeartbeatRequest) *v1beta1.TeamLeaderHeartbeatSpec {
+	if req == nil {
+		return nil
+	}
+
+	spec := &v1beta1.TeamLeaderHeartbeatSpec{
+		Every: req.Every,
+	}
+	if req.Enabled != nil {
+		spec.Enabled = *req.Enabled
+	}
+	if !spec.Enabled && spec.Every == "" {
+		return nil
+	}
+	return spec
 }
 
 func managerToResponse(m *v1beta1.Manager) ManagerResponse {

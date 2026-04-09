@@ -490,18 +490,7 @@ spec:
     heartbeat:                           # 新增：Leader Heartbeat 配置
       enabled: true
       every: 30m                         # 检查间隔（默认 30 分钟）
-      activeHours:                       # 可选：活跃时间窗口
-        start: "08:00"
-        end: "22:00"
-    permissions:
-      canScaleWorkers: true
-      maxWorkers: 10
-      canSwitchModel: true
-      allowedModels:
-        - qwen3.5-plus
-        - claude-sonnet-4-6
-      maxConcurrentTasks: 20
-      workerIdleTimeout: 720m            # Worker 空闲超时（默认 12 小时）
+    workerIdleTimeout: 720m            # Worker 空闲超时（默认 12 小时）
   workers:
     - name: alpha-dev
       model: qwen3.5-plus

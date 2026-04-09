@@ -287,16 +287,17 @@ func getManagersCmd() *cobra.Command {
 // ---------------------------------------------------------------------------
 
 type workerResp struct {
-	Name         string `json:"name"`
-	Phase        string `json:"phase"`
-	Model        string `json:"model,omitempty"`
-	Runtime      string `json:"runtime,omitempty"`
-	Image        string `json:"image,omitempty"`
-	MatrixUserID string `json:"matrixUserID,omitempty"`
-	RoomID       string `json:"roomID,omitempty"`
-	Message      string `json:"message,omitempty"`
-	Team         string `json:"team,omitempty"`
-	Role         string `json:"role,omitempty"`
+	Name           string `json:"name"`
+	Phase          string `json:"phase"`
+	Model          string `json:"model,omitempty"`
+	Runtime        string `json:"runtime,omitempty"`
+	Image          string `json:"image,omitempty"`
+	ContainerState string `json:"containerState,omitempty"`
+	MatrixUserID   string `json:"matrixUserID,omitempty"`
+	RoomID         string `json:"roomID,omitempty"`
+	Message        string `json:"message,omitempty"`
+	Team           string `json:"team,omitempty"`
+	Role           string `json:"role,omitempty"`
 }
 
 type workerListResp struct {
@@ -305,16 +306,23 @@ type workerListResp struct {
 }
 
 type teamResp struct {
-	Name         string   `json:"name"`
-	Phase        string   `json:"phase"`
-	Description  string   `json:"description,omitempty"`
-	LeaderName   string   `json:"leaderName"`
-	TeamRoomID   string   `json:"teamRoomID,omitempty"`
-	LeaderReady  bool     `json:"leaderReady"`
-	ReadyWorkers int      `json:"readyWorkers"`
-	TotalWorkers int      `json:"totalWorkers"`
-	Message      string   `json:"message,omitempty"`
-	WorkerNames  []string `json:"workerNames,omitempty"`
+	Name              string             `json:"name"`
+	Phase             string             `json:"phase"`
+	Description       string             `json:"description,omitempty"`
+	LeaderName        string             `json:"leaderName"`
+	LeaderHeartbeat   *teamHeartbeatResp `json:"leaderHeartbeat,omitempty"`
+	WorkerIdleTimeout string             `json:"workerIdleTimeout,omitempty"`
+	TeamRoomID        string             `json:"teamRoomID,omitempty"`
+	LeaderReady       bool               `json:"leaderReady"`
+	ReadyWorkers      int                `json:"readyWorkers"`
+	TotalWorkers      int                `json:"totalWorkers"`
+	Message           string             `json:"message,omitempty"`
+	WorkerNames       []string           `json:"workerNames,omitempty"`
+}
+
+type teamHeartbeatResp struct {
+	Enabled bool   `json:"enabled,omitempty"`
+	Every   string `json:"every,omitempty"`
 }
 
 type teamListResp struct {
@@ -364,6 +372,7 @@ func workerDetail(w workerResp) []KeyValue {
 		{"Phase", or(w.Phase, "Pending")},
 		{"Model", w.Model},
 		{"Runtime", or(w.Runtime, "openclaw")},
+		{"ContainerState", w.ContainerState},
 		{"Image", w.Image},
 		{"Team", w.Team},
 		{"Role", w.Role},
@@ -379,12 +388,27 @@ func teamDetail(t teamResp) []KeyValue {
 		{"Phase", or(t.Phase, "Pending")},
 		{"Description", t.Description},
 		{"Leader", t.LeaderName},
+		{"LeaderHeartbeat", teamHeartbeatText(t.LeaderHeartbeat)},
+		{"WorkerIdleTimeout", t.WorkerIdleTimeout},
 		{"LeaderReady", strconv.FormatBool(t.LeaderReady)},
 		{"Workers", strings.Join(t.WorkerNames, ", ")},
 		{"ReadyWorkers", fmt.Sprintf("%d/%d", t.ReadyWorkers, t.TotalWorkers)},
 		{"TeamRoomID", t.TeamRoomID},
 		{"Message", t.Message},
 	}
+}
+
+func teamHeartbeatText(hb *teamHeartbeatResp) string {
+	if hb == nil {
+		return ""
+	}
+	if hb.Every != "" {
+		return hb.Every
+	}
+	if hb.Enabled {
+		return "enabled"
+	}
+	return "disabled"
 }
 
 func humanDetail(h humanResp) []KeyValue {

@@ -23,18 +23,23 @@ func workerCmd() *cobra.Command {
 // ---------------------------------------------------------------------------
 
 func workerWakeCmd() *cobra.Command {
-	var name string
+	var (
+		name string
+		team string
+	)
 
 	cmd := &cobra.Command{
 		Use:   "wake",
 		Short: "Wake a sleeping Worker",
 		Long: `Start a stopped/sleeping Worker container.
 
-  hiclaw worker wake --name alice`,
+  hiclaw worker wake --name alice
+  hiclaw worker wake --name alpha-dev --team alpha-team`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if name == "" {
 				return fmt.Errorf("--name is required")
 			}
+			_ = team
 			client := NewAPIClient()
 			var resp lifecycleResp
 			if err := client.DoJSON("POST", "/api/v1/workers/"+name+"/wake", nil, &resp); err != nil {
@@ -46,6 +51,7 @@ func workerWakeCmd() *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&name, "name", "", "Worker name (required)")
+	cmd.Flags().StringVar(&team, "team", "", "Team name context (optional)")
 	return cmd
 }
 
@@ -54,18 +60,23 @@ func workerWakeCmd() *cobra.Command {
 // ---------------------------------------------------------------------------
 
 func workerSleepCmd() *cobra.Command {
-	var name string
+	var (
+		name string
+		team string
+	)
 
 	cmd := &cobra.Command{
 		Use:   "sleep",
 		Short: "Put a Worker to sleep",
 		Long: `Stop a running Worker container (preserves state).
 
-  hiclaw worker sleep --name alice`,
+  hiclaw worker sleep --name alice
+  hiclaw worker sleep --name alpha-dev --team alpha-team`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if name == "" {
 				return fmt.Errorf("--name is required")
 			}
+			_ = team
 			client := NewAPIClient()
 			var resp lifecycleResp
 			if err := client.DoJSON("POST", "/api/v1/workers/"+name+"/sleep", nil, &resp); err != nil {
@@ -77,6 +88,7 @@ func workerSleepCmd() *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&name, "name", "", "Worker name (required)")
+	cmd.Flags().StringVar(&team, "team", "", "Team name context (optional)")
 	return cmd
 }
 
@@ -85,18 +97,23 @@ func workerSleepCmd() *cobra.Command {
 // ---------------------------------------------------------------------------
 
 func workerEnsureReadyCmd() *cobra.Command {
-	var name string
+	var (
+		name string
+		team string
+	)
 
 	cmd := &cobra.Command{
 		Use:   "ensure-ready",
 		Short: "Ensure a Worker is running and ready",
 		Long: `Start the Worker if sleeping, then report current phase.
 
-  hiclaw worker ensure-ready --name alice`,
+  hiclaw worker ensure-ready --name alice
+  hiclaw worker ensure-ready --name alpha-dev --team alpha-team`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if name == "" {
 				return fmt.Errorf("--name is required")
 			}
+			_ = team
 			client := NewAPIClient()
 			var resp lifecycleResp
 			if err := client.DoJSON("POST", "/api/v1/workers/"+name+"/ensure-ready", nil, &resp); err != nil {
@@ -108,6 +125,7 @@ func workerEnsureReadyCmd() *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&name, "name", "", "Worker name (required)")
+	cmd.Flags().StringVar(&team, "team", "", "Team name context (optional)")
 	return cmd
 }
 
@@ -149,7 +167,7 @@ func workerStatusCmd() *cobra.Command {
 				return nil
 			}
 
-			// --team: list all workers in team, show summary table
+			// --team: list all workers in team, show runtime summary table
 			var resp workerListResp
 			if err := client.DoJSON("GET", "/api/v1/workers?team="+team, nil, &resp); err != nil {
 				return fmt.Errorf("list team workers: %w", err)
@@ -162,14 +180,19 @@ func workerStatusCmd() *cobra.Command {
 				fmt.Printf("No workers found in team %s.\n", team)
 				return nil
 			}
-			headers := []string{"NAME", "PHASE", "MODEL", "RUNTIME"}
+			headers := []string{"NAME", "PHASE", "STATE", "MODEL", "RUNTIME"}
 			var rows [][]string
 			for _, w := range resp.Workers {
+				var detail workerResp
+				if err := client.DoJSON("GET", "/api/v1/workers/"+w.Name+"/status", nil, &detail); err != nil {
+					return fmt.Errorf("worker %s status: %w", w.Name, err)
+				}
 				rows = append(rows, []string{
-					w.Name,
-					or(w.Phase, "Pending"),
-					w.Model,
-					or(w.Runtime, "openclaw"),
+					detail.Name,
+					or(detail.Phase, "Pending"),
+					or(detail.ContainerState, "unknown"),
+					detail.Model,
+					or(detail.Runtime, "openclaw"),
 				})
 			}
 			printTable(headers, rows)
