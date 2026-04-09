@@ -47,9 +47,17 @@ if [ "${HICLAW_RUNTIME}" = "aliyun" ] || [ "${HICLAW_RUNTIME}" = "k8s" ]; then
         : "${HICLAW_MANAGER_GATEWAY_KEY:?HICLAW_MANAGER_GATEWAY_KEY is required}"
         : "${HICLAW_MANAGER_PASSWORD:?HICLAW_MANAGER_PASSWORD is required (cloud containers are stateless, password must be injected)}"
     fi
-    : "${HICLAW_REGISTRATION_TOKEN:?HICLAW_REGISTRATION_TOKEN is required}"
-    : "${HICLAW_ADMIN_USER:?HICLAW_ADMIN_USER is required}"
-    : "${HICLAW_ADMIN_PASSWORD:?HICLAW_ADMIN_PASSWORD is required}"
+    if [ "${HICLAW_RUNTIME}" = "k8s" ]; then
+        # K8s mode: controller handles initialization (admin registration, Higress setup).
+        # Manager only needs credentials injected by the ManagerReconciler.
+        : "${HICLAW_MANAGER_GATEWAY_KEY:?HICLAW_MANAGER_GATEWAY_KEY is required (injected by controller)}"
+        : "${HICLAW_MANAGER_PASSWORD:?HICLAW_MANAGER_PASSWORD is required (injected by controller)}"
+    else
+        # Cloud (aliyun) mode: Manager still does its own initialization
+        : "${HICLAW_REGISTRATION_TOKEN:?HICLAW_REGISTRATION_TOKEN is required}"
+        : "${HICLAW_ADMIN_USER:?HICLAW_ADMIN_USER is required}"
+        : "${HICLAW_ADMIN_PASSWORD:?HICLAW_ADMIN_PASSWORD is required}"
+    fi
     log "${HICLAW_RUNTIME} mode: validating environment... OK"
     log "  Matrix: ${HICLAW_MATRIX_SERVER}, AI Gateway: ${HICLAW_AI_GATEWAY_URL}, Storage: ${HICLAW_STORAGE_BUCKET}"
     if [ "${HICLAW_RUNTIME}" = "aliyun" ]; then
@@ -198,7 +206,27 @@ fi
 
 # ============================================================
 # Register Matrix users via Registration API (single-step, no UIAA)
+# K8s mode: skip — controller Initializer + ManagerReconciler already did this
 # ============================================================
+if [ "${HICLAW_RUNTIME}" = "k8s" ]; then
+    log "K8s mode: skipping Matrix registration (handled by controller)"
+    # Controller injects HICLAW_MANAGER_PASSWORD via env; login to get token
+    log "Obtaining Manager Matrix access token..."
+    _LOGIN_RESPONSE=$(curl -s -X POST ${HICLAW_MATRIX_SERVER}/_matrix/client/v3/login \
+        -H 'Content-Type: application/json' \
+        -d '{
+            "type": "m.login.password",
+            "identifier": {"type": "m.id.user", "user": "manager"},
+            "password": "'"${HICLAW_MANAGER_PASSWORD}"'"
+        }' 2>&1)
+    MANAGER_TOKEN=$(echo "${_LOGIN_RESPONSE}" | jq -r '.access_token' 2>/dev/null)
+    if [ -z "${MANAGER_TOKEN}" ] || [ "${MANAGER_TOKEN}" = "null" ]; then
+        log "ERROR: Failed to obtain Manager Matrix token"
+        log "ERROR: Login response was: ${_LOGIN_RESPONSE}"
+        exit 1
+    fi
+    log "Manager Matrix token obtained (token prefix: ${MANAGER_TOKEN:0:10}...)"
+else
 log "Registering human admin Matrix account..."
 curl -sf -X POST ${HICLAW_MATRIX_SERVER}/_matrix/client/v3/register \
     -H 'Content-Type: application/json' \
@@ -244,18 +272,19 @@ if [ -z "${MANAGER_TOKEN}" ] || [ "${MANAGER_TOKEN}" = "null" ]; then
     exit 1
 fi
 log "Manager Matrix token obtained (token prefix: ${MANAGER_TOKEN:0:10}...)"
+fi
 
 # ============================================================
 # Higress Console initialization
 # Docker mode: full setup-higress.sh (internal Higress at localhost:8001)
-# K8s mode: lightweight config — Manager Consumer + LLM Provider + AI Route
+# K8s mode: skip — controller Initializer handles Higress setup
 # Cloud (aliyun) mode: skip entirely (Higress managed externally)
 # ============================================================
 _HIGRESS_CONSOLE_URL=""
 _HIGRESS_USER="${HICLAW_HIGRESS_ADMIN_USER:-${HICLAW_ADMIN_USER}}"
 _HIGRESS_PASS="${HICLAW_HIGRESS_ADMIN_PASSWORD:-${HICLAW_ADMIN_PASSWORD}}"
 if [ "${HICLAW_RUNTIME}" = "k8s" ]; then
-    _HIGRESS_CONSOLE_URL="${HICLAW_HIGRESS_CONSOLE_URL:-}"
+    log "K8s mode: skipping Higress initialization (handled by controller)"
 elif [ "${HICLAW_RUNTIME}" != "aliyun" ]; then
     _HIGRESS_CONSOLE_URL="http://127.0.0.1:8001"
 fi
@@ -421,8 +450,12 @@ fi
 
 # ============================================================
 # Create admin DM room, persist to state.json, send welcome message
+# K8s mode: skip — controller ProvisionManager already creates the Admin DM room
 # Runs in both local and cloud modes (idempotent)
 # ============================================================
+if [ "${HICLAW_RUNTIME}" = "k8s" ]; then
+    log "K8s mode: skipping admin DM room creation (handled by controller)"
+else
 MANAGER_FULL_ID="@manager:${MATRIX_DOMAIN}"
 ADMIN_FULL_ID="@${HICLAW_ADMIN_USER}:${MATRIX_DOMAIN}"
 
@@ -559,6 +592,7 @@ The human admin will start chatting shortly."
         log "Welcome message background process started (PID: $!)"
     fi
 fi
+fi # end K8s mode skip for admin DM room
 
 # ============================================================
 # Generate Manager Agent openclaw.json from template

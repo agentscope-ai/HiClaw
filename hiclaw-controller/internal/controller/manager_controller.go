@@ -124,7 +124,7 @@ func (r *ManagerReconciler) handleCreate(ctx context.Context, m *v1beta1.Manager
 	logger.Info("starting manager container", "name", managerName)
 	if r.Backend != nil {
 		if wb := r.Backend.DetectWorkerBackend(ctx); wb != nil {
-			managerEnv := r.EnvBuilder.BuildManager(managerName, provResult, m.Spec.Config)
+			managerEnv := r.EnvBuilder.BuildManager(managerName, provResult, m.Spec)
 			saName := authpkg.SAName(authpkg.RoleManager, managerName)
 			createReq := backend.CreateRequest{
 				Name:               managerName,
@@ -133,6 +133,10 @@ func (r *ManagerReconciler) handleCreate(ctx context.Context, m *v1beta1.Manager
 				Env:                managerEnv,
 				ServiceAccountName: saName,
 				Resources:          r.ManagerResources,
+				Labels: map[string]string{
+					"app":               "hiclaw-manager",
+					"hiclaw.io/manager": managerName,
+				},
 			}
 			if wb.Name() != "k8s" {
 				token, err := r.Provisioner.RequestManagerSAToken(ctx, managerName)

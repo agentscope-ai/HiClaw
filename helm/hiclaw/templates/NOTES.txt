@@ -21,12 +21,16 @@ Namespace: {{ include "hiclaw.namespace" . }}
    Username: {{ .Values.credentials.adminUser }}
    Password: (the password you set in credentials.adminPassword)
 
-4. Manager Agent connects to:
+4. Manager Agent (created by controller via Manager CRD):
 
+   kubectl get managers -n {{ include "hiclaw.namespace" . }}
+
+   Infrastructure endpoints:
    Matrix:       {{ include "hiclaw.tuwunel.internalURL" . }}
    Controller:   {{ include "hiclaw.controller.internalURL" . }}
    AI Gateway:   {{ include "hiclaw.higress.gatewayURL" . }}
 
 5. View logs:
 
-   kubectl logs -f deployment/{{ include "hiclaw.manager.fullname" . }} -n {{ include "hiclaw.namespace" . }}
+   kubectl logs -f deployment/{{ include "hiclaw.controller.fullname" . }} -n {{ include "hiclaw.namespace" . }}
+   kubectl logs -f $(kubectl get pods -l hiclaw.io/manager -n {{ include "hiclaw.namespace" . }} -o name | head -1) -n {{ include "hiclaw.namespace" . }}

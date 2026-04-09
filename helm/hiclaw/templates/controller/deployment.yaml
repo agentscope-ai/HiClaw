@@ -110,6 +110,11 @@ spec:
               value: {{ .Values.manager.resources.limits.cpu | default "2" | quote }}
             - name: HICLAW_K8S_MANAGER_MEMORY
               value: {{ .Values.manager.resources.limits.memory | default "4Gi" | quote }}
+            {{- /* Element Web URL (for Gateway route initialization) */}}
+            {{- if .Values.elementWeb.enabled }}
+            - name: HICLAW_ELEMENT_WEB_URL
+              value: {{ printf "http://%s-element-web.%s.svc.cluster.local:%d" (include "hiclaw.fullname" .) (include "hiclaw.namespace" .) (.Values.elementWeb.service.port | int) | quote }}
+            {{- end }}
             {{- /* Credential persistence */}}
             - name: HICLAW_CREDS_DIR
               value: "/data/worker-creds"

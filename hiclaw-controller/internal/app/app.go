@@ -110,6 +110,7 @@ func (a *App) Start(ctx context.Context) error {
 		init := &initializer.Initializer{
 			OSS:     a.oss,
 			Matrix:  a.matrix,
+			Gateway: a.gateway,
 			RestCfg: a.restCfg,
 			Config: initializer.Config{
 				ManagerEnabled: a.cfg.ManagerEnabled,
@@ -119,6 +120,10 @@ func (a *App) Start(ctx context.Context) error {
 				AdminUser:      a.cfg.MatrixAdminUser,
 				AdminPassword:  a.cfg.MatrixAdminPassword,
 				Namespace:      a.namespace,
+				LLMProvider:    a.cfg.LLMProvider,
+				LLMAPIKey:      a.cfg.LLMAPIKey,
+				TuwunelURL:     a.cfg.WorkerEnv.MatrixURL,
+				ElementWebURL:  a.cfg.ElementWebURL,
 			},
 		}
 		if err := init.Run(ctx); err != nil {

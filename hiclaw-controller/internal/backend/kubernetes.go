@@ -227,15 +227,20 @@ func (k *K8sBackend) Create(ctx context.Context, req CreateRequest) (*WorkerResu
 		podSpec.HostAliases = hostAliases
 	}
 
+	podLabels := map[string]string{
+		"app":               "hiclaw-worker",
+		"hiclaw.io/worker":  req.Name,
+		"hiclaw.io/runtime": defaultRuntime(req.Runtime),
+	}
+	for k, v := range req.Labels {
+		podLabels[k] = v
+	}
+
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      podName,
 			Namespace: k.config.Namespace,
-			Labels: map[string]string{
-				"app":               "hiclaw-worker",
-				"hiclaw.io/worker":  req.Name,
-				"hiclaw.io/runtime": defaultRuntime(req.Runtime),
-			},
+			Labels:    podLabels,
 			Annotations: map[string]string{
 				"hiclaw.io/created-by": "controller",
 			},

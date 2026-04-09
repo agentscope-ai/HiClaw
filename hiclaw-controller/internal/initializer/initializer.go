@@ -3,9 +3,12 @@ package initializer
 import (
 	"context"
 	"fmt"
+	"net/url"
+	"strconv"
 	"time"
 
 	v1beta1 "github.com/hiclaw/hiclaw-controller/api/v1beta1"
+	"github.com/hiclaw/hiclaw-controller/internal/gateway"
 	"github.com/hiclaw/hiclaw-controller/internal/matrix"
 	"github.com/hiclaw/hiclaw-controller/internal/oss"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -25,14 +28,22 @@ type Config struct {
 	AdminUser      string
 	AdminPassword  string
 	Namespace      string
+
+	// Gateway initialization
+	LLMProvider   string // e.g. "qwen", "openai"
+	LLMAPIKey     string
+	LLMApiURL     string // provider-specific base URL (optional)
+	TuwunelURL    string // internal Tuwunel URL, e.g. http://tuwunel:6167
+	ElementWebURL string // internal Element Web URL (optional)
 }
 
 // Initializer performs one-time cluster bootstrap: waits for infrastructure,
-// initializes storage structure, registers the admin account, and optionally
-// creates the Manager CR.
+// initializes storage structure, registers the admin account, sets up gateway
+// routes, and optionally creates the Manager CR.
 type Initializer struct {
 	OSS     oss.StorageClient
 	Matrix  matrix.Client
+	Gateway gateway.Client
 	RestCfg *rest.Config
 	Config  Config
 }
@@ -60,6 +71,18 @@ func (i *Initializer) Run(ctx context.Context) error {
 		return fmt.Errorf("admin registration failed: %w", err)
 	}
 	logger.Info("admin account ready", "user", i.Config.AdminUser)
+
+	if i.Gateway != nil {
+		if err := i.waitForGateway(ctx); err != nil {
+			return fmt.Errorf("Gateway not ready: %w", err)
+		}
+		logger.Info("Gateway is ready")
+
+		if err := i.initGatewayRoutes(ctx); err != nil {
+			return fmt.Errorf("Gateway route init failed: %w", err)
+		}
+		logger.Info("Gateway routes initialized")
+	}
 
 	if i.Config.ManagerEnabled {
 		if err := i.ensureManagerCR(ctx); err != nil {
@@ -121,6 +144,117 @@ func (i *Initializer) registerAdmin(ctx context.Context) error {
 		Password: i.Config.AdminPassword,
 	})
 	return err
+}
+
+// waitForGateway polls the Higress Console until it responds.
+func (i *Initializer) waitForGateway(ctx context.Context) error {
+	return retry(ctx, 3*time.Second, 120*time.Second, func() error {
+		return i.Gateway.Healthy(ctx)
+	})
+}
+
+// initGatewayRoutes registers service sources, LLM provider, AI route, and
+// infrastructure routes (Matrix, Element Web) in Higress. All calls are
+// idempotent — safe to re-run on controller restart.
+func (i *Initializer) initGatewayRoutes(ctx context.Context) error {
+	logger := ctrl.Log.WithName("initializer")
+	cfg := i.Config
+
+	// 1. Tuwunel service source
+	if cfg.TuwunelURL != "" {
+		host, port, err := parseHostPort(cfg.TuwunelURL)
+		if err != nil {
+			return fmt.Errorf("parse Tuwunel URL: %w", err)
+		}
+		if err := i.Gateway.EnsureServiceSource(ctx, "tuwunel", host, port); err != nil {
+			logger.Error(err, "failed to register Tuwunel service source (non-fatal)")
+		}
+
+		// Matrix Homeserver route (/_matrix/* → Tuwunel)
+		if err := i.Gateway.EnsureRoute(ctx, "matrix-homeserver", nil, "tuwunel.dns", port); err != nil {
+			logger.Error(err, "failed to create Matrix route (non-fatal)")
+		}
+	}
+
+	// 2. Element Web service source + route
+	if cfg.ElementWebURL != "" {
+		host, port, err := parseHostPort(cfg.ElementWebURL)
+		if err != nil {
+			logger.Error(err, "failed to parse Element Web URL (non-fatal)")
+		} else {
+			if err := i.Gateway.EnsureServiceSource(ctx, "element-web", host, port); err != nil {
+				logger.Error(err, "failed to register Element Web service source (non-fatal)")
+			}
+			if err := i.Gateway.EnsureRoute(ctx, "element-web", nil, "element-web.dns", port); err != nil {
+				logger.Error(err, "failed to create Element Web route (non-fatal)")
+			}
+		}
+	}
+
+	// 3. LLM Provider
+	if cfg.LLMAPIKey != "" {
+		provider := cfg.LLMProvider
+		if provider == "" {
+			provider = "qwen"
+		}
+		providerType := provider
+		raw := map[string]interface{}{"hiclawMode": true}
+		if provider == "qwen" {
+			raw["qwenEnableSearch"] = false
+			raw["qwenEnableCompatible"] = true
+			raw["qwenFileIds"] = []interface{}{}
+		} else {
+			providerType = "openai"
+		}
+
+		if err := i.Gateway.EnsureAIProvider(ctx, gateway.AIProviderRequest{
+			Name:     provider,
+			Type:     providerType,
+			Tokens:   []string{cfg.LLMAPIKey},
+			Protocol: "openai/v1",
+			Raw:      raw,
+		}); err != nil {
+			logger.Error(err, "failed to create LLM provider (non-fatal)")
+		}
+
+		// 4. AI Route
+		if err := i.Gateway.EnsureAIRoute(ctx, gateway.AIRouteRequest{
+			Name:             "default-ai-route",
+			PathPrefix:       "/v1",
+			Provider:         provider,
+			AllowedConsumers: []string{"manager"},
+		}); err != nil {
+			logger.Error(err, "failed to create AI route (non-fatal)")
+		}
+	}
+
+	// 5. Remove Higress default landing page
+	if err := i.Gateway.DeleteRoute(ctx, "default"); err != nil {
+		logger.Error(err, "failed to remove default route (non-fatal)")
+	}
+
+	return nil
+}
+
+// parseHostPort extracts host and port from a URL like "http://host:port".
+func parseHostPort(rawURL string) (string, int, error) {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return "", 0, err
+	}
+	host := u.Hostname()
+	portStr := u.Port()
+	if portStr == "" {
+		if u.Scheme == "https" {
+			return host, 443, nil
+		}
+		return host, 80, nil
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		return "", 0, fmt.Errorf("invalid port %q: %w", portStr, err)
+	}
+	return host, port, nil
 }
 
 func (i *Initializer) ensureManagerCR(ctx context.Context) error {

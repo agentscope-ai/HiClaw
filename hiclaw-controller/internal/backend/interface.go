@@ -67,6 +67,11 @@ type CreateRequest struct {
 	// Resources overrides default resource limits for this container.
 	// nil = use backend defaults (e.g. K8sConfig.WorkerCPU/WorkerMemory).
 	Resources *ResourceRequirements `json:"-"`
+
+	// Labels are additional K8s labels merged into the Pod metadata.
+	// Backend-specific defaults (app, hiclaw.io/worker, hiclaw.io/runtime)
+	// are always set; these labels are additive.
+	Labels map[string]string `json:"-"`
 }
 
 // Deployment modes returned by backends.

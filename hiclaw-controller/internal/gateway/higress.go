@@ -332,6 +332,82 @@ func (c *HigressClient) UnexposePort(ctx context.Context, req PortExposeRequest)
 	return nil
 }
 
+// --- Public infrastructure init methods (used by Initializer) ---
+
+func (c *HigressClient) EnsureServiceSource(ctx context.Context, name, domain string, port int) error {
+	return c.ensureServiceSource(ctx, name, domain, port)
+}
+
+func (c *HigressClient) EnsureRoute(ctx context.Context, name string, domains []string, serviceName string, port int) error {
+	return c.ensureRoute(ctx, name, domains, serviceName, port)
+}
+
+func (c *HigressClient) DeleteRoute(ctx context.Context, name string) error {
+	c.deleteRoute(ctx, name)
+	return nil
+}
+
+func (c *HigressClient) EnsureAIProvider(ctx context.Context, req AIProviderRequest) error {
+	body := map[string]interface{}{
+		"name":     req.Name,
+		"type":     req.Type,
+		"tokens":   req.Tokens,
+		"protocol": req.Protocol,
+	}
+	if req.Raw != nil {
+		body["rawConfigs"] = req.Raw
+	}
+	_, sc, err := c.doJSON(ctx, http.MethodPost, "/v1/ai/providers", body)
+	if err != nil {
+		return fmt.Errorf("ensure AI provider %s: %w", req.Name, err)
+	}
+	if sc == 200 || sc == 201 || sc == 409 {
+		return nil
+	}
+	return fmt.Errorf("ensure AI provider %s: HTTP %d", req.Name, sc)
+}
+
+func (c *HigressClient) EnsureAIRoute(ctx context.Context, req AIRouteRequest) error {
+	body := map[string]interface{}{
+		"name":    req.Name,
+		"domains": []string{},
+		"pathPredicate": map[string]interface{}{
+			"matchType":     "PRE",
+			"matchValue":    req.PathPrefix,
+			"caseSensitive": false,
+		},
+		"upstreams": []map[string]interface{}{
+			{"provider": req.Provider, "weight": 100, "modelMapping": map[string]interface{}{}},
+		},
+	}
+	if len(req.AllowedConsumers) > 0 {
+		body["authConfig"] = map[string]interface{}{
+			"enabled":                true,
+			"allowedCredentialTypes": []string{"key-auth"},
+			"allowedConsumers":       req.AllowedConsumers,
+		}
+	}
+	_, sc, err := c.doJSON(ctx, http.MethodPost, "/v1/ai/routes", body)
+	if err != nil {
+		return fmt.Errorf("ensure AI route %s: %w", req.Name, err)
+	}
+	if sc == 200 || sc == 201 || sc == 409 {
+		return nil
+	}
+	return fmt.Errorf("ensure AI route %s: HTTP %d", req.Name, sc)
+}
+
+func (c *HigressClient) Healthy(ctx context.Context) error {
+	_, sc, err := c.doJSON(ctx, http.MethodGet, "/v1/consumers", nil)
+	if err != nil {
+		return err
+	}
+	if sc != http.StatusOK {
+		return fmt.Errorf("higress health check: HTTP %d", sc)
+	}
+	return nil
+}
+
 // ── Higress Console primitives (migrated from controller/higress_client.go) ──
 
 func (c *HigressClient) ensureDomain(ctx context.Context, name string) error {

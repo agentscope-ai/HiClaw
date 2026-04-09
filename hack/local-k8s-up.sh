@@ -63,19 +63,9 @@ fi
 
 # Controller & Manager secrets: must be stable across pod restarts (injected via Helm Secret)
 CONTROLLER_API_KEY="${HICLAW_CONTROLLER_API_KEY:-}"
-MANAGER_GATEWAY_KEY="${HICLAW_MANAGER_GATEWAY_KEY:-}"
-MANAGER_PASSWORD="${HICLAW_MANAGER_PASSWORD:-}"
 if [ -z "$CONTROLLER_API_KEY" ]; then
     CONTROLLER_API_KEY=$(openssl rand -hex 16)
     log "Auto-generated controller API key"
-fi
-if [ -z "$MANAGER_GATEWAY_KEY" ]; then
-    MANAGER_GATEWAY_KEY=$(openssl rand -hex 16)
-    log "Auto-generated manager gateway key"
-fi
-if [ -z "$MANAGER_PASSWORD" ]; then
-    MANAGER_PASSWORD=$(openssl rand -base64 12 | tr -d '/+=' | head -c 16)
-    log "Auto-generated manager password"
 fi
 
 # ── Step 1: Create kind cluster ───────────────────────────────────────────
@@ -171,8 +161,6 @@ helm upgrade --install hiclaw "$CHART_DIR" \
     --set credentials.adminPassword="$ADMIN_PASSWORD" \
     --set credentials.llmApiKey="$LLM_API_KEY" \
     --set credentials.controllerApiKey="$CONTROLLER_API_KEY" \
-    --set credentials.managerGatewayKey="$MANAGER_GATEWAY_KEY" \
-    --set credentials.managerPassword="$MANAGER_PASSWORD" \
     ${HELM_IMAGE_OVERRIDES} \
     --timeout 10m \
     --wait=false
@@ -214,8 +202,9 @@ echo ""
 log "View Controller logs:"
 log "  kubectl logs -f deployment/hiclaw-controller -n ${NAMESPACE}"
 echo ""
-log "View Manager logs:"
-log "  kubectl logs -f deployment/hiclaw-manager -n ${NAMESPACE}"
+log "View Manager logs (created by controller via Manager CRD):"
+log "  kubectl get managers -n ${NAMESPACE}"
+log "  kubectl logs -f \$(kubectl get pods -l hiclaw.io/manager -n ${NAMESPACE} -o name | head -1) -n ${NAMESPACE}"
 echo ""
 log "View all pods:"
 log "  kubectl get pods -n ${NAMESPACE}"

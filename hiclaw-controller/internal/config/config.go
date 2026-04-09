@@ -66,10 +66,10 @@ type Config struct {
 	K8sWorkerMemory string
 
 	// Manager deployment (Initializer creates the Manager CR if enabled)
-	ManagerEnabled  bool
-	ManagerModel    string
-	ManagerRuntime  string
-	ManagerImage    string
+	ManagerEnabled   bool
+	ManagerModel     string
+	ManagerRuntime   string
+	ManagerImage     string
 	K8sManagerCPU    string
 	K8sManagerMemory string
 
@@ -94,6 +94,13 @@ type Config struct {
 	ModelContextWindow int
 	ModelMaxTokens     int
 
+	// LLM provider (for Gateway initialization)
+	LLMProvider string
+	LLMAPIKey   string
+
+	// Element Web URL (for Gateway route initialization)
+	ElementWebURL string
+
 	// CMS observability
 	CMSTracesEnabled  bool
 	CMSMetricsEnabled bool
@@ -117,6 +124,7 @@ type WorkerEnvDefaults struct {
 	ControllerURL string
 	AIGatewayURL  string
 	MatrixURL     string
+	AdminUser     string
 }
 
 func LoadConfig() *Config {
@@ -200,6 +208,10 @@ func LoadConfig() *Config {
 		ModelContextWindow: envOrDefaultInt("HICLAW_MODEL_CONTEXT_WINDOW", 0),
 		ModelMaxTokens:     envOrDefaultInt("HICLAW_MODEL_MAX_TOKENS", 0),
 
+		LLMProvider:   envOrDefault("HICLAW_LLM_PROVIDER", "qwen"),
+		LLMAPIKey:     os.Getenv("HICLAW_LLM_API_KEY"),
+		ElementWebURL: os.Getenv("HICLAW_ELEMENT_WEB_URL"),
+
 		CMSTracesEnabled:  envBool("HICLAW_CMS_TRACES_ENABLED"),
 		CMSMetricsEnabled: envBool("HICLAW_CMS_METRICS_ENABLED"),
 		CMSEndpoint:       os.Getenv("HICLAW_CMS_ENDPOINT"),
@@ -216,6 +228,7 @@ func LoadConfig() *Config {
 			ControllerURL: firstNonEmpty(os.Getenv("HICLAW_CONTROLLER_URL"), os.Getenv("HICLAW_ORCHESTRATOR_URL")),
 			AIGatewayURL:  envOrDefault("HICLAW_AI_GATEWAY_URL", "http://aigw-local.hiclaw.io:8080"),
 			MatrixURL:     envOrDefault("HICLAW_MATRIX_URL", "http://matrix-local.hiclaw.io:8080"),
+			AdminUser:     envOrDefault("HICLAW_ADMIN_USER", "admin"),
 		},
 	}
 }

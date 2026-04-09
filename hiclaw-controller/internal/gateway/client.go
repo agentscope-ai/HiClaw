@@ -32,4 +32,24 @@ type Client interface {
 
 	// UnexposePort removes gateway resources for a worker port.
 	UnexposePort(ctx context.Context, req PortExposeRequest) error
+
+	// --- Infrastructure initialization (used by Initializer) ---
+
+	// EnsureServiceSource registers a DNS-type service source.
+	EnsureServiceSource(ctx context.Context, name, domain string, port int) error
+
+	// EnsureRoute creates a route mapping domains to a backend service.
+	EnsureRoute(ctx context.Context, name string, domains []string, serviceName string, port int) error
+
+	// DeleteRoute removes a route by name. No-op if not found.
+	DeleteRoute(ctx context.Context, name string) error
+
+	// EnsureAIProvider creates an LLM provider configuration.
+	EnsureAIProvider(ctx context.Context, req AIProviderRequest) error
+
+	// EnsureAIRoute creates an AI route with consumer auth.
+	EnsureAIRoute(ctx context.Context, req AIRouteRequest) error
+
+	// Healthy returns nil if the gateway console is reachable and authenticated.
+	Healthy(ctx context.Context) error
 }
