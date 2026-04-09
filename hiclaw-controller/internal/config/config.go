@@ -76,6 +76,10 @@ type Config struct {
 	// Controller URL (advertised to workers for STS refresh etc.)
 	ControllerURL string
 
+	// Embedded-mode Manager Agent container mounts (host paths, read from env)
+	ManagerWorkspaceDir string // e.g. ~/hiclaw-manager — mounted as /root/manager-workspace
+	HostShareDir        string // e.g. ~/ — mounted as /host-share
+
 	// Matrix server
 	MatrixServerURL         string
 	MatrixDomain            string
@@ -192,6 +196,9 @@ func LoadConfig() *Config {
 			os.Getenv("HICLAW_CONTROLLER_URL"),
 			os.Getenv("HICLAW_ORCHESTRATOR_URL"), // legacy fallback
 		),
+
+		ManagerWorkspaceDir: os.Getenv("HICLAW_WORKSPACE_DIR"),
+		HostShareDir:        os.Getenv("HICLAW_HOST_SHARE_DIR"),
 
 		MatrixServerURL:         envOrDefault("HICLAW_MATRIX_URL", "http://matrix-local.hiclaw.io:8080"),
 		MatrixDomain:            envOrDefault("HICLAW_MATRIX_DOMAIN", "matrix-local.hiclaw.io:8080"),
@@ -390,6 +397,46 @@ func (c *Config) OSSConfig() oss.Config {
 		AccessKey:     os.Getenv("HICLAW_MINIO_ACCESS_KEY"),
 		SecretKey:     os.Getenv("HICLAW_MINIO_SECRET_KEY"),
 	}
+}
+
+// ManagerAgentEnv returns environment variables that a standalone Manager Agent
+// container needs to connect to the infrastructure services in the embedded
+// controller container. These are passed via DockerBackend.Create.
+func (c *Config) ManagerAgentEnv() map[string]string {
+	env := map[string]string{}
+	setIfNonEmpty := func(k, v string) {
+		if v != "" {
+			env[k] = v
+		}
+	}
+	setIfNonEmpty("HICLAW_MINIO_USER", os.Getenv("HICLAW_MINIO_USER"))
+	setIfNonEmpty("HICLAW_MINIO_PASSWORD", os.Getenv("HICLAW_MINIO_PASSWORD"))
+	setIfNonEmpty("HICLAW_ADMIN_USER", c.MatrixAdminUser)
+	setIfNonEmpty("HICLAW_ADMIN_PASSWORD", c.MatrixAdminPassword)
+	setIfNonEmpty("HICLAW_REGISTRATION_TOKEN", c.MatrixRegistrationToken)
+	setIfNonEmpty("HICLAW_HIGRESS_ADMIN_USER", c.HigressAdminUser)
+	setIfNonEmpty("HICLAW_HIGRESS_ADMIN_PASSWORD", c.HigressAdminPassword)
+	setIfNonEmpty("HICLAW_STORAGE_PREFIX", c.OSSStoragePrefix)
+	setIfNonEmpty("HICLAW_MATRIX_DOMAIN", c.MatrixDomain)
+	setIfNonEmpty("HICLAW_DEFAULT_MODEL", c.DefaultModel)
+	setIfNonEmpty("HICLAW_EMBEDDING_MODEL", c.EmbeddingModel)
+	setIfNonEmpty("HICLAW_LLM_PROVIDER", c.LLMProvider)
+	setIfNonEmpty("HICLAW_LLM_API_KEY", c.LLMAPIKey)
+	setIfNonEmpty("HICLAW_ELEMENT_WEB_URL", c.ElementWebURL)
+	if c.MatrixE2EE {
+		env["HICLAW_MATRIX_E2EE"] = "1"
+	}
+	if c.CMSTracesEnabled {
+		env["HICLAW_CMS_TRACES_ENABLED"] = "1"
+	}
+	if c.CMSMetricsEnabled {
+		env["HICLAW_CMS_METRICS_ENABLED"] = "1"
+	}
+	setIfNonEmpty("HICLAW_CMS_ENDPOINT", c.CMSEndpoint)
+	setIfNonEmpty("HICLAW_CMS_LICENSE_KEY", c.CMSLicenseKey)
+	setIfNonEmpty("HICLAW_CMS_PROJECT", c.CMSProject)
+	setIfNonEmpty("HICLAW_CMS_WORKSPACE", c.CMSWorkspace)
+	return env
 }
 
 func (c *Config) AgentConfig() agentconfig.Config {

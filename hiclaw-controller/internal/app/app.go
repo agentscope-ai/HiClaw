@@ -287,14 +287,22 @@ func (a *App) initReconcilers(_ context.Context) error {
 		return fmt.Errorf("setup HumanReconciler: %w", err)
 	}
 
-	if err := (&controller.ManagerReconciler{
+	mgrReconciler := &controller.ManagerReconciler{
 		Client:           a.mgr.GetClient(),
 		Provisioner:      a.provisioner,
 		Deployer:         a.deployer,
 		Backend:          a.registry,
 		EnvBuilder:       a.envBuilder,
 		ManagerResources: a.cfg.ManagerResources(),
-	}).SetupWithManager(a.mgr); err != nil {
+	}
+	if a.cfg.KubeMode == "embedded" {
+		mgrReconciler.EmbeddedConfig = &controller.ManagerEmbeddedConfig{
+			WorkspaceDir: a.cfg.ManagerWorkspaceDir,
+			HostShareDir: a.cfg.HostShareDir,
+			ExtraEnv:     a.cfg.ManagerAgentEnv(),
+		}
+	}
+	if err := mgrReconciler.SetupWithManager(a.mgr); err != nil {
 		return fmt.Errorf("setup ManagerReconciler: %w", err)
 	}
 

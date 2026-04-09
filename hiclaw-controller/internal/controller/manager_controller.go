@@ -20,6 +20,14 @@ import (
 
 const managerPodPrefix = "hiclaw-manager-"
 
+// ManagerEmbeddedConfig holds embedded-mode settings for the Manager Agent
+// container (workspace mount, host share, extra env from the controller's env).
+type ManagerEmbeddedConfig struct {
+	WorkspaceDir string            // host path for /root/manager-workspace
+	HostShareDir string            // host path for /host-share
+	ExtraEnv     map[string]string // infrastructure env vars forwarded to agent
+}
+
 // ManagerReconciler reconciles Manager resources.
 type ManagerReconciler struct {
 	client.Client
@@ -29,6 +37,7 @@ type ManagerReconciler struct {
 	Backend          *backend.Registry
 	EnvBuilder       *service.WorkerEnvBuilder
 	ManagerResources *backend.ResourceRequirements
+	EmbeddedConfig   *ManagerEmbeddedConfig // non-nil in embedded mode only
 }
 
 func (r *ManagerReconciler) Reconcile(ctx context.Context, req reconcile.Request) (reconcile.Result, error) {
@@ -150,6 +159,29 @@ func (r *ManagerReconciler) handleCreate(ctx context.Context, m *v1beta1.Manager
 				}
 				createReq.AuthToken = token
 			}
+
+			// Embedded (Docker) mode: inject host volume mounts and extra env
+			if wb.Name() == "docker" && r.EmbeddedConfig != nil {
+				if r.EmbeddedConfig.WorkspaceDir != "" {
+					createReq.Volumes = append(createReq.Volumes, backend.VolumeMount{
+						HostPath:      r.EmbeddedConfig.WorkspaceDir,
+						ContainerPath: "/root/manager-workspace",
+					})
+				}
+				if r.EmbeddedConfig.HostShareDir != "" {
+					createReq.Volumes = append(createReq.Volumes, backend.VolumeMount{
+						HostPath:      r.EmbeddedConfig.HostShareDir,
+						ContainerPath: "/host-share",
+					})
+				}
+				createReq.RestartPolicy = "unless-stopped"
+				for k, v := range r.EmbeddedConfig.ExtraEnv {
+					if _, exists := createReq.Env[k]; !exists {
+						createReq.Env[k] = v
+					}
+				}
+			}
+
 			if _, err := wb.Create(ctx, createReq); err != nil {
 				logger.Error(err, "manager container creation failed (non-fatal, can be started manually)")
 			}

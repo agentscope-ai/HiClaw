@@ -44,6 +44,22 @@ type ResourceRequirements struct {
 	MemoryLimit   string
 }
 
+// VolumeMount describes a host-to-container bind mount (Docker backend only;
+// K8s backend ignores this — use standard Pod volume specs instead).
+type VolumeMount struct {
+	HostPath      string
+	ContainerPath string
+	ReadOnly      bool
+}
+
+// PortMapping describes a host-to-container port binding (Docker backend only).
+type PortMapping struct {
+	HostIP        string // e.g. "127.0.0.1"; empty = all interfaces
+	HostPort      string
+	ContainerPort string
+	Protocol      string // "tcp" (default) or "udp"
+}
+
 // CreateRequest holds parameters for creating a worker container/instance.
 type CreateRequest struct {
 	Name       string            `json:"name"`
@@ -77,6 +93,19 @@ type CreateRequest struct {
 	// If "hiclaw.io/worker" should be omitted (e.g. for Manager pods),
 	// set an alternative identity label (e.g. "hiclaw.io/manager").
 	Labels map[string]string `json:"-"`
+
+	// Volumes are host bind mounts (Docker backend only; ignored by K8s).
+	Volumes []VolumeMount `json:"-"`
+
+	// NetworkAliases are DNS names added to the container within the Docker network.
+	NetworkAliases []string `json:"-"`
+
+	// Ports are additional host-to-container port mappings (Docker backend only).
+	Ports []PortMapping `json:"-"`
+
+	// RestartPolicy for Docker containers (e.g. "unless-stopped", "always").
+	// Empty means backend default (no restart).
+	RestartPolicy string `json:"-"`
 }
 
 // Deployment modes returned by backends.

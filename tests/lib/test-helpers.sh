@@ -10,10 +10,16 @@
 # Configuration
 # ============================================================
 
-# Auto-detect Manager container name if not set
+# Auto-detect infrastructure container (embedded controller or legacy manager)
 if [ -z "${TEST_MANAGER_CONTAINER}" ]; then
-    export TEST_MANAGER_CONTAINER="$(docker ps --format '{{.Names}}' 2>/dev/null | grep -E '^hiclaw-manager' | head -1)"
+    export TEST_MANAGER_CONTAINER="$(docker ps --format '{{.Names}}' 2>/dev/null | grep -E '^hiclaw-manager$' | head -1)"
     export TEST_MANAGER_CONTAINER="${TEST_MANAGER_CONTAINER:-hiclaw-manager}"
+fi
+
+# Auto-detect Manager Agent container (separate container in embedded-controller mode)
+if [ -z "${TEST_AGENT_CONTAINER}" ]; then
+    export TEST_AGENT_CONTAINER="$(docker ps --format '{{.Names}}' 2>/dev/null | grep -E '^hiclaw-manager-' | head -1)"
+    export TEST_AGENT_CONTAINER="${TEST_AGENT_CONTAINER:-${TEST_MANAGER_CONTAINER}}"
 fi
 
 # Host where the Manager container's exposed ports are reachable
@@ -383,10 +389,17 @@ require_llm_key() {
 # Docker helpers
 # ============================================================
 
-# Run a command inside the Manager container.
+# Run a command inside the infrastructure container (Matrix, MinIO, Higress, controller).
 # Used by matrix-client.sh and minio-client.sh to avoid exposing Matrix/MinIO ports to host.
 exec_in_manager() {
     docker exec "${TEST_MANAGER_CONTAINER:-hiclaw-manager}" "$@"
+}
+
+# Run a command inside the Manager Agent container.
+# In legacy mode (all-in-one manager), this falls back to the same container.
+# In embedded-controller mode, this targets the separate agent container.
+exec_in_agent() {
+    docker exec "${TEST_AGENT_CONTAINER:-${TEST_MANAGER_CONTAINER:-hiclaw-manager}}" "$@"
 }
 
 start_worker_container() {

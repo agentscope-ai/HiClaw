@@ -466,20 +466,37 @@ func (d *DockerBackend) startContainer(ctx context.Context, nameOrID string) err
 
 // dockerCreatePayload is the Docker Engine API container create body.
 type dockerCreatePayload struct {
-	Image        string                              `json:"Image"`
-	Env          []string                            `json:"Env,omitempty"`
-	WorkingDir   string                              `json:"WorkingDir,omitempty"`
-	ExposedPorts map[string]struct{}                  `json:"ExposedPorts,omitempty"`
-	HostConfig   *dockerHostConfig                    `json:"HostConfig,omitempty"`
+	Image            string                              `json:"Image"`
+	Env              []string                            `json:"Env,omitempty"`
+	WorkingDir       string                              `json:"WorkingDir,omitempty"`
+	ExposedPorts     map[string]struct{}                  `json:"ExposedPorts,omitempty"`
+	HostConfig       *dockerHostConfig                    `json:"HostConfig,omitempty"`
+	NetworkingConfig *dockerNetworkingConfig               `json:"NetworkingConfig,omitempty"`
 }
 
 type dockerHostConfig struct {
-	NetworkMode  string                               `json:"NetworkMode,omitempty"`
-	ExtraHosts   []string                             `json:"ExtraHosts,omitempty"`
-	PortBindings map[string][]dockerPortBinding        `json:"PortBindings,omitempty"`
+	NetworkMode   string                               `json:"NetworkMode,omitempty"`
+	ExtraHosts    []string                             `json:"ExtraHosts,omitempty"`
+	Binds         []string                             `json:"Binds,omitempty"`
+	PortBindings  map[string][]dockerPortBinding        `json:"PortBindings,omitempty"`
+	RestartPolicy *dockerRestartPolicy                  `json:"RestartPolicy,omitempty"`
+	SecurityOpt   []string                             `json:"SecurityOpt,omitempty"`
+}
+
+type dockerRestartPolicy struct {
+	Name string `json:"Name"`
+}
+
+type dockerNetworkingConfig struct {
+	EndpointsConfig map[string]*dockerEndpointSettings `json:"EndpointsConfig,omitempty"`
+}
+
+type dockerEndpointSettings struct {
+	Aliases []string `json:"Aliases,omitempty"`
 }
 
 type dockerPortBinding struct {
+	HostIP   string `json:"HostIp,omitempty"`
 	HostPort string `json:"HostPort"`
 }
 
@@ -507,6 +524,20 @@ func (d *DockerBackend) buildCreatePayload(req CreateRequest, consolePort string
 		ExtraHosts:  req.ExtraHosts,
 	}
 
+	// Bind mounts
+	for _, v := range req.Volumes {
+		bind := v.HostPath + ":" + v.ContainerPath
+		if v.ReadOnly {
+			bind += ":ro"
+		}
+		hc.Binds = append(hc.Binds, bind)
+	}
+
+	// Restart policy
+	if req.RestartPolicy != "" {
+		hc.RestartPolicy = &dockerRestartPolicy{Name: req.RestartPolicy}
+	}
+
 	// Console port binding (CoPaw workers)
 	if consolePort != "" && hostPort > 0 {
 		portKey := consolePort + "/tcp"
@@ -516,8 +547,38 @@ func (d *DockerBackend) buildCreatePayload(req CreateRequest, consolePort string
 		}
 	}
 
-	if hc.NetworkMode != "" || len(hc.ExtraHosts) > 0 || len(hc.PortBindings) > 0 {
+	// Additional port mappings
+	for _, pm := range req.Ports {
+		proto := pm.Protocol
+		if proto == "" {
+			proto = "tcp"
+		}
+		portKey := pm.ContainerPort + "/" + proto
+		if p.ExposedPorts == nil {
+			p.ExposedPorts = make(map[string]struct{})
+		}
+		p.ExposedPorts[portKey] = struct{}{}
+		if hc.PortBindings == nil {
+			hc.PortBindings = make(map[string][]dockerPortBinding)
+		}
+		hc.PortBindings[portKey] = append(hc.PortBindings[portKey], dockerPortBinding{
+			HostIP:   pm.HostIP,
+			HostPort: pm.HostPort,
+		})
+	}
+
+	if hc.NetworkMode != "" || len(hc.ExtraHosts) > 0 || len(hc.PortBindings) > 0 ||
+		len(hc.Binds) > 0 || hc.RestartPolicy != nil {
 		p.HostConfig = hc
+	}
+
+	// Network aliases
+	if len(req.NetworkAliases) > 0 && req.Network != "" {
+		p.NetworkingConfig = &dockerNetworkingConfig{
+			EndpointsConfig: map[string]*dockerEndpointSettings{
+				req.Network: {Aliases: req.NetworkAliases},
+			},
+		}
 	}
 
 	return p

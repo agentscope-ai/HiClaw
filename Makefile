@@ -48,6 +48,7 @@ LOCAL_WORKER         = hiclaw/worker-agent:$(VERSION)
 LOCAL_COPAW_WORKER   = hiclaw/copaw-worker:$(VERSION)
 LOCAL_OPENCLAW_BASE  = hiclaw/openclaw-base:$(VERSION)
 LOCAL_CONTROLLER     = hiclaw/hiclaw-controller:$(VERSION)
+LOCAL_EMBEDDED       = hiclaw/hiclaw-embedded:$(VERSION)
 
 # Higress base image registry (regional mirrors auto-synced from cn-hangzhou primary)
 #   China (default): higress-registry.cn-hangzhou.cr.aliyuncs.com
@@ -98,7 +99,7 @@ LINES          ?= 50
 
 # ---------- Phony targets ----------
 
-.PHONY: all build build-openclaw-base build-hiclaw-controller build-manager build-manager-aliyun build-manager-copaw build-worker build-copaw-worker \
+.PHONY: all build build-openclaw-base build-hiclaw-controller build-embedded build-manager build-manager-aliyun build-manager-copaw build-worker build-copaw-worker \
         tag push push-openclaw-base push-hiclaw-controller push-manager push-manager-aliyun push-manager-copaw push-worker push-copaw-worker \
         push-native push-native-manager push-native-manager-copaw push-native-worker push-native-copaw-worker \
         buildx-setup \
@@ -156,6 +157,14 @@ build-manager-copaw: build-hiclaw-controller ## Build Manager CoPaw image (Pytho
 		-f manager/Dockerfile.copaw \
 		-t $(LOCAL_MANAGER_COPAW) \
 		./manager/
+
+build-embedded: build-hiclaw-controller ## Build embedded all-in-one controller image (infra + controller, no agent)
+	@echo "==> Building embedded image: $(LOCAL_EMBEDDED) (registry: $(HIGRESS_REGISTRY))"
+	docker build $(PLATFORM_FLAG) $(REGISTRY_ARG) $(DOCKER_BUILD_ARGS) \
+		--build-arg HICLAW_CONTROLLER_IMAGE=$(LOCAL_CONTROLLER) \
+		-f hiclaw-controller/Dockerfile.embedded \
+		-t $(LOCAL_EMBEDDED) \
+		.
 
 build-worker: ## Build Worker image
 	@echo "==> Building Worker image: $(LOCAL_WORKER) (registry: $(HIGRESS_REGISTRY))"
