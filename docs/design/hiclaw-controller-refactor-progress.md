@@ -2,14 +2,14 @@
 
 > 基于 `hiclaw-controller-refactor.md` 设计文档，对照 `hiclaw-controller-refactor` 分支实际实现情况。
 >
-> 更新时间：2026-04-08
+> 更新时间：2026-04-09
 
 ## 总览
 
 | Phase | 目标 | 完成度 | 状态 |
 |-------|------|--------|------|
 | Phase 1 | Controller 核心重构（去脚本化） | ~85% | 进行中 |
-| Phase 2 | incluster 模式 & Helm | ~60% | 进行中 |
+| Phase 2 | incluster 模式 & Helm | ~75% | 进行中 |
 | Phase 3 | Manager Agent 改造 & Team Leader 增强 | 0% | 未开始 |
 | Phase 4 | Debug 能力 & 平滑升级 | 0% | 未开始 |
 
@@ -63,7 +63,7 @@
 
 | 项目 | 设计路径 | 实际路径 | 状态 |
 |------|---------|---------|------|
-| Initializer | `internal/orchestrator/initializer.go`  | ❌ 未实现 |
+| Initializer | `internal/orchestrator/initializer.go` | `internal/initializer/initializer.go` | ✅ 完成（路径有调整） |
 
 ### 1.5 配置版本管理
 
@@ -115,16 +115,26 @@
 | Pod 健康检查 & 就绪探针 | ⚠️ 需确认 | 就绪检测在早期 commit 中实现 |
 | Service 创建（端口暴露） | ✅ 完成 | `internal/service/provisioner_expose.go` |
 
-### 2.2 hiclaw CLI incluster 模式
+### 2.2 hiclaw CLI REST API 客户端改造
+
+CLI 已完全重写为 REST API 客户端，不再直接操作 MinIO。所有命令通过 `HICLAW_CONTROLLER_URL`（默认 `http://localhost:8090`）调用 controller REST API，Token 通过 `HICLAW_AUTH_TOKEN` 或 SA token 文件自动发现。
 
 | 项目 | 状态 | 说明 |
 |------|------|------|
-| CLI 入口 | ✅ 完成 | `cmd/hiclaw/main.go` |
-| 自动检测运行环境 | ⚠️ 需确认 | — |
-| worker lifecycle 命令 | ⚠️ 部分 | API 层已有 lifecycle_handler.go，CLI 侧需确认 |
+| CLI 重写为 REST API 客户端 | ✅ 完成 | `cmd/hiclaw/client.go` — HTTP client + token/URL 发现 |
+| create worker/team/human/manager | ✅ 完成 | `cmd/hiclaw/create.go` — POST /api/v1/{resource}s |
+| get workers/teams/humans/managers | ✅ 完成 | `cmd/hiclaw/get.go` — GET (list/detail/--team 过滤/-o json) |
+| update worker/team/manager | ✅ 完成 | `cmd/hiclaw/update.go` — PUT /api/v1/{resource}s/{name} |
+| delete worker/team/human/manager | ✅ 完成 | `cmd/hiclaw/delete.go` — DELETE /api/v1/{resource}s/{name} |
+| worker wake/sleep/ensure-ready | ✅ 完成 | `cmd/hiclaw/worker_cmd.go` — POST lifecycle endpoints |
+| worker status (--name / --team) | ✅ 完成 | `cmd/hiclaw/worker_cmd.go` — GET status endpoint |
+| status / version | ✅ 完成 | `cmd/hiclaw/status_cmd.go` |
+| 表格/详情/JSON 输出格式化 | ✅ 完成 | `cmd/hiclaw/output.go` |
+| apply -f resource.yaml | ❌ TODO | Phase 3: 声明式 YAML apply（解析 YAML → REST API） |
+| apply --prune | ❌ TODO | Phase 3: 全量同步（LIST + DELETE 多余资源） |
+| apply worker --zip | ❌ TODO | Phase 3: ZIP 包导入 |
 | config push 命令 | ❌ 未实现 | — |
 | debug 命令 | ❌ 未实现 | — |
-| status 命令 | ✅ 完成 | status_handler.go |
 
 ### 2.3 Helm Chart
 
@@ -205,6 +215,8 @@
 | `2b0bb85` ~ `f535136` | HTTP Server 重构、API 错误处理、RBAC |
 | `f30e870` ~ `fd1b9b3` | K8s ServiceAccount 认证鉴权 |
 | `bbb4ae3` | Tuwunel/MinIO 改为 StatefulSet |
-| `53a28ad` | 最新：local-k8s-up.sh 更新 + Worker 管理增强 |
+| `53a28ad` | local-k8s-up.sh 更新 + Worker 管理增强 |
+| `3c17fe1` ~ `9a0bf49` | Manager CRD + ManagerReconciler + Initializer（Go） |
+| (pending) | hiclaw CLI 重写为 REST API 客户端（去 mcExec，纯 HTTP client） |
 
 ---
