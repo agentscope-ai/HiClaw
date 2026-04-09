@@ -64,45 +64,45 @@ Quick lookup:
 | Data / Analysis | _(default)_ |
 | General Purpose | _(default)_ |
 
-## Step 2: Run create-worker.sh
+## Step 2: Create worker via hiclaw CLI
 
 ```bash
-bash /opt/hiclaw/agent/skills/worker-management/scripts/create-worker.sh \
-  --name <NAME> [--model <MODEL_ID>] [--mcp-servers s1,s2] \
-  [--skills s1,s2] [--skills-api-url <URL>] \
-  [--remote] [--runtime openclaw|copaw] [--console-port <PORT>]
+hiclaw create worker \
+  --name <NAME> \
+  --soul-file /root/hiclaw-fs/agents/<NAME>/SOUL.md \
+  [--model <MODEL_ID>] \
+  [--mcp-servers s1,s2] \
+  [--skills s1,s2] \
+  [--runtime openclaw|copaw] \
+  -o json
 ```
 
 | Flag | Description |
 |------|-------------|
-| `--model` | Model ID. If not specified, uses the default from `HICLAW_DEFAULT_MODEL` environment variable. |
+| `--name` | Worker name (required, lowercase, >3 chars) |
+| `--soul-file` | Path to the SOUL.md file written in Step 1 (reads content and sends to controller) |
+| `--model` | Model ID. If not specified, defaults to `qwen3.5-plus` |
+| `--skills` | Comma-separated built-in skills to assign |
+| `--mcp-servers` | Comma-separated MCP servers to authorize |
+| `--runtime` | Agent runtime: `openclaw` (default) or `copaw` |
+| `-o json` | Output full JSON response from controller |
 
-The script handles everything: Matrix registration, room creation, Higress consumer, AI/MCP authorization, config generation, MinIO sync, skills push, and container startup.
+The controller handles everything: Matrix registration, room creation, Higress consumer, AI/MCP authorization, config generation, MinIO sync, skills push, and container startup.
 
 ### MCP server short-circuit
 
-`create-worker.sh` authorizes the Worker on **existing** MCP servers only. If the admin requested MCP access (e.g. "GitHub MCP") but the server doesn't exist yet, **do NOT attempt to create it during worker creation**. Just note in your reply that the MCP server needs to be set up separately (via `mcp-server-management` skill) and proceed to Post-creation. This avoids wasting LLM rounds discovering there is no PAT/token configured.
+The controller authorizes the Worker on **existing** MCP servers only. If the admin requested MCP access (e.g. "GitHub MCP") but the server doesn't exist yet, **do NOT attempt to create it during worker creation**. Just note in your reply that the MCP server needs to be set up separately (via `mcp-server-management` skill) and proceed to Post-creation.
 
-### Deployment behavior (without `--remote`)
+### Result JSON (`-o json` output)
 
-- Local (`HICLAW_CONTAINER_RUNTIME=socket`): starts container via Docker
-- Cloud (`HICLAW_CONTAINER_RUNTIME=cloud`): creates SAE application automatically
-- Neither available (`none`): falls back to outputting install command
-
-Only use `--remote` when admin **explicitly** requests deploying on a separate machine.
-
-### Result JSON (after `---RESULT---`)
-
-- `"ready"` — container running, gateway healthy. Report success.
-- `"starting"` — container running but health check timed out (120s). Suggest admin check logs after a minute.
-- `"pending_install"` — no container runtime. Provide `install_cmd` **verbatim in a code block** (do NOT redact `--fs-secret`). Remind admin the target machine must resolve: `${HICLAW_MATRIX_DOMAIN}`, `${HICLAW_AI_GATEWAY_DOMAIN}`, `${HICLAW_FS_DOMAIN}`.
+The JSON response contains the worker status. Key fields:
+- `"status"` — `"ready"` (container running), `"starting"` (health check pending), or `"pending_install"` (no container runtime)
+- `"room_id"` — Worker's Matrix room ID
+- `"install_cmd"` — (when status is `pending_install`) Provide this **verbatim in a code block** (do NOT redact `--fs-secret`)
 
 ## Post-creation
 
-1. Verify (non-remote only):
-   ```bash
-   bash -c 'source /opt/hiclaw/scripts/lib/container-api.sh && worker_backend_status "<NAME>"'
-   ```
+1. Verify: check the JSON output from `hiclaw create worker -o json` for the `"status"` field.
 
 2. Immediately reply to admin in the DM (do NOT wait for Worker to greet first):
    ```
@@ -118,4 +118,4 @@ Only use `--remote` when admin **explicitly** requests deploying on a separate m
 
 ## Imported Worker Pull-Up
 
-When a template import finishes and sends a message to start an imported Worker, all config is already in place. **Do NOT run `create-worker.sh`** — just start the container following the message instructions.
+When a template import finishes and sends a message to start an imported Worker, all config is already in place. **Do NOT run `hiclaw create worker`** — just start the container following the message instructions.

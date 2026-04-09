@@ -75,7 +75,7 @@ assert_contains_i "${REPLY}" "alice" "Reply mentions worker name 'alice'"
 # Show error logs on failure for debugging
 if ! echo "${REPLY}" | grep -qi "alice" 2>/dev/null; then
     log_info "--- Manager Agent Error Log ---"
-    docker exec hiclaw-manager-test tail -10 /var/log/hiclaw/manager-agent-error.log 2>/dev/null || true
+    exec_in_agent tail -10 /var/log/hiclaw/manager-agent-error.log 2>/dev/null || true
 fi
 
 log_section "Verify Infrastructure"

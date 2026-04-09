@@ -85,11 +85,11 @@ else
 fi
 
 # Extract room IDs from registry
-LEADER_ROOM=$(exec_in_manager jq -r --arg w "${TEST_LEADER}" '.workers[$w].room_id // empty' /root/manager-workspace/workers-registry.json 2>/dev/null)
-LEADER_DM=$(exec_in_manager jq -r --arg t "${TEST_TEAM}" '.teams[$t].leader_dm_room_id // empty' /root/manager-workspace/teams-registry.json 2>/dev/null)
-TEAM_ROOM=$(exec_in_manager jq -r --arg t "${TEST_TEAM}" '.teams[$t].team_room_id // empty' /root/manager-workspace/teams-registry.json 2>/dev/null)
-W1_ROOM=$(exec_in_manager jq -r --arg w "${TEST_W1}" '.workers[$w].room_id // empty' /root/manager-workspace/workers-registry.json 2>/dev/null)
-W2_ROOM=$(exec_in_manager jq -r --arg w "${TEST_W2}" '.workers[$w].room_id // empty' /root/manager-workspace/workers-registry.json 2>/dev/null)
+LEADER_ROOM=$(exec_in_agent jq -r --arg w "${TEST_LEADER}" '.workers[$w].room_id // empty' /root/manager-workspace/workers-registry.json 2>/dev/null)
+LEADER_DM=$(exec_in_agent jq -r --arg t "${TEST_TEAM}" '.teams[$t].leader_dm_room_id // empty' /root/manager-workspace/teams-registry.json 2>/dev/null)
+TEAM_ROOM=$(exec_in_agent jq -r --arg t "${TEST_TEAM}" '.teams[$t].team_room_id // empty' /root/manager-workspace/teams-registry.json 2>/dev/null)
+W1_ROOM=$(exec_in_agent jq -r --arg w "${TEST_W1}" '.workers[$w].room_id // empty' /root/manager-workspace/workers-registry.json 2>/dev/null)
+W2_ROOM=$(exec_in_agent jq -r --arg w "${TEST_W2}" '.workers[$w].room_id // empty' /root/manager-workspace/workers-registry.json 2>/dev/null)
 
 log_info "Leader Room: ${LEADER_ROOM}"
 log_info "Leader DM: ${LEADER_DM}"

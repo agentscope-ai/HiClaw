@@ -13,15 +13,22 @@
 
 ARG HIGRESS_REGISTRY=higress-registry.cn-hangzhou.cr.aliyuncs.com
 ARG OPENCLAW_BASE_IMAGE=hiclaw/openclaw-base:latest
+ARG HICLAW_CONTROLLER_IMAGE=hiclaw/hiclaw-controller:latest
 
 # ============ Stage 1: MinIO Client (mc) ============
 FROM ${HIGRESS_REGISTRY}/higress/mc:20260216 AS mc
+
+# ============ Stage 2: hiclaw CLI (from controller image) ============
+FROM ${HICLAW_CONTROLLER_IMAGE} AS hiclaw-controller
 
 # ============ Final Image ============
 FROM ${OPENCLAW_BASE_IMAGE}
 
 # mc (MinIO Client) — direct binary, no STS wrapper needed in K8s mode
 COPY --from=mc /usr/bin/mc /usr/local/bin/mc
+
+# hiclaw CLI — for worker/team/human management via controller REST API
+COPY --from=hiclaw-controller /usr/local/bin/hiclaw /usr/local/bin/hiclaw
 
 # ---- Built-in observability plugin (bundled unconditionally, enabled at runtime) ----
 # Placed before agent/configs COPY so that code changes do not invalidate this layer.

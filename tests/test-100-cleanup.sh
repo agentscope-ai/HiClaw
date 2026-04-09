@@ -22,10 +22,10 @@ STORAGE_PREFIX="hiclaw/hiclaw-storage"
 log_section "Discover Test Resources"
 
 # Find all test-* workers in workers-registry.json
-TEST_WORKERS=$(exec_in_manager jq -r '.workers | keys[] | select(startswith("test-"))' /root/manager-workspace/workers-registry.json 2>/dev/null || echo "")
+TEST_WORKERS=$(exec_in_agent jq -r '.workers | keys[] | select(startswith("test-"))' /root/manager-workspace/workers-registry.json 2>/dev/null || echo "")
 
 # Find all test-* teams in teams-registry.json
-TEST_TEAMS=$(exec_in_manager jq -r '.teams | keys[] | select(startswith("test-"))' /root/manager-workspace/teams-registry.json 2>/dev/null || echo "")
+TEST_TEAMS=$(exec_in_agent jq -r '.teams | keys[] | select(startswith("test-"))' /root/manager-workspace/teams-registry.json 2>/dev/null || echo "")
 
 WORKER_COUNT=$(echo "${TEST_WORKERS}" | grep -c . 2>/dev/null || echo "0")
 TEAM_COUNT=$(echo "${TEST_TEAMS}" | grep -c . 2>/dev/null || echo "0")
@@ -58,7 +58,7 @@ PRE_CONTAINER_COUNT=$(echo "${PRE_CONTAINERS}" | grep -c . 2>/dev/null || echo "
 log_info "${PRE_CONTAINER_COUNT} test worker container(s) present before cleanup"
 
 # Snapshot lifecycle entries
-PRE_LIFECYCLE_WORKERS=$(exec_in_manager jq -r '.workers | keys[] | select(startswith("test-"))' ~/worker-lifecycle.json 2>/dev/null || echo "")
+PRE_LIFECYCLE_WORKERS=$(exec_in_agent jq -r '.workers | keys[] | select(startswith("test-"))' ~/worker-lifecycle.json 2>/dev/null || echo "")
 PRE_LIFECYCLE_COUNT=$(echo "${PRE_LIFECYCLE_WORKERS}" | grep -c . 2>/dev/null || echo "0")
 log_info "${PRE_LIFECYCLE_COUNT} test worker(s) in worker-lifecycle.json before cleanup"
 
@@ -89,7 +89,7 @@ if [ -n "${TEST_WORKERS}" ]; then
     # Collect team member names to skip (already handled by team delete)
     TEAM_MEMBERS=""
     for team in ${TEST_TEAMS}; do
-        MEMBERS=$(exec_in_manager jq -r --arg t "${team}" \
+        MEMBERS=$(exec_in_agent jq -r --arg t "${team}" \
             '(.teams[$t].leader // empty), (.teams[$t].workers[]? // empty)' \
             /root/manager-workspace/teams-registry.json 2>/dev/null || echo "")
         TEAM_MEMBERS="${TEAM_MEMBERS} ${MEMBERS}"
@@ -111,7 +111,7 @@ if [ -n "${TEST_WORKERS}" ]; then
             # Fall back to direct container + lifecycle cleanup.
             log_info "hiclaw delete worker ${worker} skipped (YAML likely already removed by prior test)"
             docker rm -f "hiclaw-worker-${worker}" 2>/dev/null || true
-            exec_in_manager bash /opt/hiclaw/agent/skills/worker-management/scripts/lifecycle-worker.sh \
+            exec_in_agent bash /opt/hiclaw/agent/skills/worker-management/scripts/lifecycle-worker.sh \
                 --action delete --worker "${worker}" 2>/dev/null || true
         fi
     done
@@ -175,7 +175,7 @@ fi
 # ============================================================
 log_section "Verify Lifecycle State Cleanup"
 
-POST_LIFECYCLE_WORKERS=$(exec_in_manager jq -r '.workers | keys[] | select(startswith("test-"))' ~/worker-lifecycle.json 2>/dev/null || echo "")
+POST_LIFECYCLE_WORKERS=$(exec_in_agent jq -r '.workers | keys[] | select(startswith("test-"))' ~/worker-lifecycle.json 2>/dev/null || echo "")
 if [ -z "${POST_LIFECYCLE_WORKERS}" ]; then
     log_pass "No test workers remain in worker-lifecycle.json"
 else
@@ -213,7 +213,7 @@ done
 log_section "Verify Registry Cleanup"
 
 for w in ${TEST_WORKERS}; do
-    REG_ENTRY=$(exec_in_manager jq -r --arg w "${w}" '.workers[$w] // empty' /root/manager-workspace/workers-registry.json 2>/dev/null)
+    REG_ENTRY=$(exec_in_agent jq -r --arg w "${w}" '.workers[$w] // empty' /root/manager-workspace/workers-registry.json 2>/dev/null)
     if [ -z "${REG_ENTRY}" ]; then
         log_pass "Worker removed from workers-registry.json: ${w}"
     else
@@ -225,7 +225,7 @@ for w in ${TEST_WORKERS}; do
 done
 
 for t in ${TEST_TEAMS}; do
-    REG_ENTRY=$(exec_in_manager jq -r --arg t "${t}" '.teams[$t] // empty' /root/manager-workspace/teams-registry.json 2>/dev/null)
+    REG_ENTRY=$(exec_in_agent jq -r --arg t "${t}" '.teams[$t] // empty' /root/manager-workspace/teams-registry.json 2>/dev/null)
     if [ -z "${REG_ENTRY}" ]; then
         log_pass "Team removed from teams-registry.json: ${t}"
     else

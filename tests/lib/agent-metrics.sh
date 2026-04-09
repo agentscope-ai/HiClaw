@@ -200,7 +200,7 @@ wait_for_worker_session_stable() {
 wait_for_session_stable() {
     local stable_seconds="${1:-5}"
     local max_wait="${2:-60}"
-    local manager_container="${TEST_MANAGER_CONTAINER:-hiclaw-manager}"
+    local manager_container="${TEST_AGENT_CONTAINER:-${TEST_MANAGER_CONTAINER:-hiclaw-manager}}"
     local manager_session_dir="/root/manager-workspace/.openclaw/agents/main/sessions"
 
     log_info "Waiting for Manager session to stabilize (up to ${max_wait}s)..." >&2
@@ -246,7 +246,7 @@ wait_for_session_stable() {
 snapshot_baseline() {
     local workers=("$@")
 
-    local manager_container="${TEST_MANAGER_CONTAINER:-hiclaw-manager}"
+    local manager_container="${TEST_AGENT_CONTAINER:-${TEST_MANAGER_CONTAINER:-hiclaw-manager}}"
     local manager_session_dir="/root/manager-workspace/.openclaw/agents/main/sessions"
 
     local snapshot_result='{"offsets": {}}'
@@ -381,7 +381,7 @@ collect_delta_metrics() {
     shift 2
     local workers=("$@")
 
-    local manager_container="${TEST_MANAGER_CONTAINER:-hiclaw-manager}"
+    local manager_container="${TEST_AGENT_CONTAINER:-${TEST_MANAGER_CONTAINER:-hiclaw-manager}}"
     local manager_session_dir="/root/manager-workspace/.openclaw/agents/main/sessions"
 
     # Initialize result structure
@@ -448,7 +448,7 @@ collect_test_metrics() {
     shift
     local workers=("$@")
     
-    local manager_container="${TEST_MANAGER_CONTAINER:-hiclaw-manager}"
+    local manager_container="${TEST_AGENT_CONTAINER:-${TEST_MANAGER_CONTAINER:-hiclaw-manager}}"
     local manager_session_dir="/root/manager-workspace/.openclaw/agents/main/sessions"
     
     # Initialize result structure

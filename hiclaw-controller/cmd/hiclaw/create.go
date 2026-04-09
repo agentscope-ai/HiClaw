@@ -34,12 +34,14 @@ func createWorkerCmd() *cobra.Command {
 		image      string
 		identity   string
 		soul       string
+		soulFile   string
 		skills     string
 		mcpServers string
 		packageURI string
 		expose     string
 		team       string
 		role       string
+		outputFmt  string
 	)
 
 	cmd := &cobra.Command{
@@ -48,7 +50,8 @@ func createWorkerCmd() *cobra.Command {
 		Long: `Create a new Worker resource via the controller REST API.
 
   hiclaw create worker --name alice --model qwen3.5-plus
-  hiclaw create worker --name bob --model claude-sonnet-4-6 --skills github-operations --mcp-servers github
+  hiclaw create worker --name alice --soul-file /path/to/SOUL.md --skills github-operations
+  hiclaw create worker --name bob --model claude-sonnet-4-6 --mcp-servers github -o json
   hiclaw create worker --name charlie --runtime copaw --expose 8080,3000`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if name == "" {
@@ -59,6 +62,13 @@ func createWorkerCmd() *cobra.Command {
 			}
 			if model == "" {
 				model = "qwen3.5-plus"
+			}
+			if soulFile != "" {
+				data, err := os.ReadFile(soulFile)
+				if err != nil {
+					return fmt.Errorf("read --soul-file %q: %w", soulFile, err)
+				}
+				soul = string(data)
 			}
 			if packageURI != "" {
 				var err error
@@ -94,7 +104,11 @@ func createWorkerCmd() *cobra.Command {
 			if err := client.DoJSON("POST", "/api/v1/workers", req, &resp); err != nil {
 				return fmt.Errorf("create worker: %w", err)
 			}
-			fmt.Printf("worker/%s created\n", name)
+			if outputFmt == "json" {
+				printJSON(resp)
+			} else {
+				fmt.Printf("worker/%s created\n", name)
+			}
 			return nil
 		},
 	}
@@ -104,13 +118,15 @@ func createWorkerCmd() *cobra.Command {
 	cmd.Flags().StringVar(&runtime, "runtime", "", "Agent runtime (openclaw|copaw)")
 	cmd.Flags().StringVar(&image, "image", "", "Container image override")
 	cmd.Flags().StringVar(&identity, "identity", "", "Worker identity description")
-	cmd.Flags().StringVar(&soul, "soul", "", "Worker SOUL.md content")
+	cmd.Flags().StringVar(&soul, "soul", "", "Worker SOUL.md content (inline)")
+	cmd.Flags().StringVar(&soulFile, "soul-file", "", "Path to SOUL.md file (overrides --soul)")
 	cmd.Flags().StringVar(&skills, "skills", "", "Comma-separated built-in skills")
 	cmd.Flags().StringVar(&mcpServers, "mcp-servers", "", "Comma-separated MCP servers")
 	cmd.Flags().StringVar(&packageURI, "package", "", "Package URI (nacos://, http://, oss://) or shorthand")
 	cmd.Flags().StringVar(&expose, "expose", "", "Comma-separated ports to expose (e.g. 8080,3000)")
 	cmd.Flags().StringVar(&team, "team", "", "Team name (assigns worker to a team)")
 	cmd.Flags().StringVar(&role, "role", "", "Role within team (team_leader|worker)")
+	cmd.Flags().StringVarP(&outputFmt, "output", "o", "", "Output format (json)")
 	return cmd
 }
 

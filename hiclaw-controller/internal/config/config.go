@@ -1,6 +1,7 @@
 package config
 
 import (
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -139,7 +140,7 @@ func LoadConfig() *Config {
 		}
 	}
 
-	return &Config{
+	cfg := &Config{
 		KubeMode:  envOrDefault("HICLAW_KUBE_MODE", "embedded"),
 		DataDir:   dataDir,
 		HTTPAddr:  envOrDefault("HICLAW_HTTP_ADDR", ":8090"),
@@ -154,8 +155,8 @@ func LoadConfig() *Config {
 
 		HigressBaseURL:       envOrDefault("HIGRESS_BASE_URL", "http://127.0.0.1:8001"),
 		HigressCookieFile:    os.Getenv("HIGRESS_COOKIE_FILE"),
-		HigressAdminUser:     envOrDefault("HICLAW_HIGRESS_ADMIN_USER", "admin"),
-		HigressAdminPassword: envOrDefault("HICLAW_HIGRESS_ADMIN_PASSWORD", "admin"),
+		HigressAdminUser:     firstNonEmpty(os.Getenv("HICLAW_HIGRESS_ADMIN_USER"), envOrDefault("HICLAW_ADMIN_USER", "admin")),
+		HigressAdminPassword: firstNonEmpty(os.Getenv("HICLAW_HIGRESS_ADMIN_PASSWORD"), envOrDefault("HICLAW_ADMIN_PASSWORD", "admin")),
 
 		WorkerBackend: firstNonEmpty(
 			os.Getenv("HICLAW_WORKER_BACKEND"),
@@ -202,12 +203,12 @@ func LoadConfig() *Config {
 
 		MatrixServerURL:         envOrDefault("HICLAW_MATRIX_URL", "http://matrix-local.hiclaw.io:8080"),
 		MatrixDomain:            envOrDefault("HICLAW_MATRIX_DOMAIN", "matrix-local.hiclaw.io:8080"),
-		MatrixRegistrationToken: os.Getenv("HICLAW_MATRIX_REGISTRATION_TOKEN"),
+		MatrixRegistrationToken: envOrDefault("HICLAW_MATRIX_REGISTRATION_TOKEN", os.Getenv("HICLAW_REGISTRATION_TOKEN")),
 		MatrixAdminUser:         envOrDefault("HICLAW_ADMIN_USER", "admin"),
 		MatrixAdminPassword:     envOrDefault("HICLAW_ADMIN_PASSWORD", "admin"),
 		MatrixE2EE:              os.Getenv("HICLAW_MATRIX_E2EE") == "1" || os.Getenv("HICLAW_MATRIX_E2EE") == "true",
 
-		OSSStoragePrefix: envOrDefault("HICLAW_STORAGE_PREFIX", "hiclaw/hiclaw"),
+		OSSStoragePrefix: envOrDefault("HICLAW_STORAGE_PREFIX", "hiclaw/hiclaw-storage"),
 
 		DefaultModel:       envOrDefault("HICLAW_DEFAULT_MODEL", "qwen3.5-plus"),
 		EmbeddingModel:     os.Getenv("HICLAW_EMBEDDING_MODEL"),
@@ -231,13 +232,26 @@ func LoadConfig() *Config {
 			FSEndpoint:    firstNonEmpty(os.Getenv("HICLAW_FS_ENDPOINT"), os.Getenv("HICLAW_MINIO_ENDPOINT")),
 			MinIOEndpoint: os.Getenv("HICLAW_MINIO_ENDPOINT"),
 			MinIOBucket:   os.Getenv("HICLAW_MINIO_BUCKET"),
-			StoragePrefix: envOrDefault("HICLAW_STORAGE_PREFIX", "hiclaw/hiclaw"),
+			StoragePrefix: envOrDefault("HICLAW_STORAGE_PREFIX", "hiclaw/hiclaw-storage"),
 			ControllerURL: firstNonEmpty(os.Getenv("HICLAW_CONTROLLER_URL"), os.Getenv("HICLAW_ORCHESTRATOR_URL")),
 			AIGatewayURL:  envOrDefault("HICLAW_AI_GATEWAY_URL", "http://aigw-local.hiclaw.io:8080"),
 			MatrixURL:     envOrDefault("HICLAW_MATRIX_URL", "http://matrix-local.hiclaw.io:8080"),
 			AdminUser:     envOrDefault("HICLAW_ADMIN_USER", "admin"),
 		},
 	}
+
+	// In embedded mode, services (Tuwunel, MinIO) run inside the controller container.
+	// The controller itself uses 127.0.0.1, but child containers (Manager, Workers) must
+	// reach them via the controller's Docker network hostname.
+	if cfg.KubeMode == "embedded" {
+		if ctrlHost := extractHost(cfg.WorkerEnv.ControllerURL); ctrlHost != "" {
+			cfg.WorkerEnv.MatrixURL = replaceHost(cfg.WorkerEnv.MatrixURL, ctrlHost)
+			cfg.WorkerEnv.MinIOEndpoint = replaceHost(cfg.WorkerEnv.MinIOEndpoint, ctrlHost)
+			cfg.WorkerEnv.FSEndpoint = replaceHost(cfg.WorkerEnv.FSEndpoint, ctrlHost)
+		}
+	}
+
+	return cfg
 }
 
 // Namespace returns the effective K8s namespace, defaulting to "default".
@@ -370,6 +384,32 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
+// extractHost returns the hostname from a URL (e.g. "http://hiclaw-controller:8090" → "hiclaw-controller").
+func extractHost(rawURL string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return ""
+	}
+	return u.Hostname()
+}
+
+// replaceHost replaces the hostname in a URL while preserving scheme, port, and path.
+func replaceHost(rawURL, newHost string) string {
+	if rawURL == "" || newHost == "" {
+		return rawURL
+	}
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return rawURL
+	}
+	if u.Port() != "" {
+		u.Host = newHost + ":" + u.Port()
+	} else {
+		u.Host = newHost
+	}
+	return u.String()
+}
+
 func (c *Config) MatrixConfig() matrix.Config {
 	return matrix.Config{
 		ServerURL:         c.MatrixServerURL,
@@ -390,12 +430,20 @@ func (c *Config) GatewayConfig() gateway.Config {
 }
 
 func (c *Config) OSSConfig() oss.Config {
+	accessKey := os.Getenv("HICLAW_MINIO_ACCESS_KEY")
+	if accessKey == "" {
+		accessKey = os.Getenv("HICLAW_MINIO_USER")
+	}
+	secretKey := os.Getenv("HICLAW_MINIO_SECRET_KEY")
+	if secretKey == "" {
+		secretKey = os.Getenv("HICLAW_MINIO_PASSWORD")
+	}
 	return oss.Config{
 		StoragePrefix: c.OSSStoragePrefix,
 		Bucket:        c.OSSBucket,
 		Endpoint:      os.Getenv("HICLAW_MINIO_ENDPOINT"),
-		AccessKey:     os.Getenv("HICLAW_MINIO_ACCESS_KEY"),
-		SecretKey:     os.Getenv("HICLAW_MINIO_SECRET_KEY"),
+		AccessKey:     accessKey,
+		SecretKey:     secretKey,
 	}
 }
 
@@ -440,10 +488,22 @@ func (c *Config) ManagerAgentEnv() map[string]string {
 }
 
 func (c *Config) AgentConfig() agentconfig.Config {
+	// Use WorkerEnv URLs (host-replaced in embedded mode) since openclaw.json
+	// is consumed by worker containers, not the controller itself.
+	matrixURL := c.MatrixServerURL
+	aiGatewayURL := envOrDefault("HICLAW_AI_GATEWAY_URL", "http://aigw-local.hiclaw.io:8080")
+	if c.KubeMode == "embedded" {
+		if c.WorkerEnv.MatrixURL != "" {
+			matrixURL = c.WorkerEnv.MatrixURL
+		}
+		if c.WorkerEnv.AIGatewayURL != "" {
+			aiGatewayURL = c.WorkerEnv.AIGatewayURL
+		}
+	}
 	return agentconfig.Config{
 		MatrixDomain:       c.MatrixDomain,
-		MatrixServerURL:    c.MatrixServerURL,
-		AIGatewayURL:       envOrDefault("HICLAW_AI_GATEWAY_URL", "http://aigw-local.hiclaw.io:8080"),
+		MatrixServerURL:    matrixURL,
+		AIGatewayURL:       aiGatewayURL,
 		AdminUser:          c.MatrixAdminUser,
 		DefaultModel:       c.DefaultModel,
 		EmbeddingModel:     c.EmbeddingModel,

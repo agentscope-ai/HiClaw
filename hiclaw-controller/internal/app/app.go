@@ -314,6 +314,7 @@ func (a *App) initHTTPServer(_ context.Context) error {
 		Client:     a.mgr.GetClient(),
 		Backend:    a.registry,
 		Gateway:    a.gateway,
+		OSS:        a.oss,
 		STS:        a.stsService,
 		AuthMw:     a.authMw,
 		KubeMode:   a.cfg.KubeMode,

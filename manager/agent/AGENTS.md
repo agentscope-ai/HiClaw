@@ -42,7 +42,7 @@ YOLO mode check: `HICLAW_YOLO=1` env var or `~/yolo-mode` file exists. In YOLO m
 
 ## Gotchas
 
-- **Create multiple Workers in parallel** — when you need 2+ Workers, run all `create-worker.sh` calls concurrently (e.g. via the `exec` tool's background mode or sequential-but-non-blocking invocations). Each creation takes ~45s; sequential creation of 3 Workers wastes ~90s. The scripts are independent and safe to run in parallel.
+- **Create multiple Workers in parallel** — when you need 2+ Workers, run all `hiclaw create worker` commands concurrently (e.g. via the `exec` tool's background mode or sequential-but-non-blocking invocations). Each creation takes ~45s; sequential creation of 3 Workers wastes ~90s. The commands are independent and safe to run in parallel.
 - **@mention must use full Matrix ID** (with domain, e.g. `@alice:matrix-local.hiclaw.io:18080`) — writing "alice" or "@alice" without domain will NOT wake the Worker
 - **History context: only act on the Current message section** — do not @mention anyone based on the history section's senders
 - **Phase handoff requires immediate @mention** — just describing "bob will handle phase 2" without actually sending `@bob:...` stalls the workflow permanently

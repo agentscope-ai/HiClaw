@@ -194,7 +194,7 @@ assert_contains "${AGENTS_IN_MINIO}" "hiclaw-builtin-end" "AGENTS.md has builtin
 log_section "Verify Worker Infrastructure"
 
 # workers-registry.json
-REGISTRY_ENTRY=$(exec_in_manager jq -r --arg w "${TEST_WORKER}" '.workers[$w] // empty' /root/manager-workspace/workers-registry.json 2>/dev/null)
+REGISTRY_ENTRY=$(exec_in_agent jq -r --arg w "${TEST_WORKER}" '.workers[$w] // empty' /root/manager-workspace/workers-registry.json 2>/dev/null)
 assert_not_empty "${REGISTRY_ENTRY}" "Worker registered in workers-registry.json"
 
 # Matrix Room

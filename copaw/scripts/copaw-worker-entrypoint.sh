@@ -72,9 +72,13 @@ _start_readiness_reporter() {
     [ -z "${HICLAW_CONTROLLER_URL:-${HICLAW_ORCHESTRATOR_URL:-}}" ] && return 0
     local _controller_url="${HICLAW_CONTROLLER_URL:-${HICLAW_ORCHESTRATOR_URL:-}}"
 
-    # Build auth header if API key is available (cloud mode)
+    # Build auth header (SA token for embedded mode, API key for cloud mode)
     local auth_header=""
-    [ -n "${HICLAW_WORKER_API_KEY:-}" ] && auth_header="Authorization: Bearer ${HICLAW_WORKER_API_KEY}"
+    if [ -n "${HICLAW_AUTH_TOKEN:-}" ]; then
+        auth_header="Authorization: Bearer ${HICLAW_AUTH_TOKEN}"
+    elif [ -n "${HICLAW_WORKER_API_KEY:-}" ]; then
+        auth_header="Authorization: Bearer ${HICLAW_WORKER_API_KEY}"
+    fi
 
     (
         # Phase 1: Wait for initial readiness (with timeout)
@@ -83,7 +87,7 @@ _start_readiness_reporter() {
         while [ "${ELAPSED}" -lt "${TIMEOUT}" ]; do
             if [ -f "${CONFIG_FILE}" ] && grep -q '"channels"' "${CONFIG_FILE}" 2>/dev/null; then
                 for _attempt in 1 2 3; do
-                    if curl -sf -X POST "${_controller_url}/workers/${WORKER_NAME}/ready" \
+                    if curl -sf -X POST "${_controller_url}/api/v1/workers/${WORKER_NAME}/ready" \
                         ${auth_header:+-H "${auth_header}"} 2>/dev/null; then
                         log "Reported ready to controller"
                         break 2
@@ -104,7 +108,7 @@ _start_readiness_reporter() {
         while true; do
             sleep 60
             if [ -f "${CONFIG_FILE}" ] && grep -q '"channels"' "${CONFIG_FILE}" 2>/dev/null; then
-                curl -sf -X POST "${_controller_url}/workers/${WORKER_NAME}/ready" \
+                curl -sf -X POST "${_controller_url}/api/v1/workers/${WORKER_NAME}/ready" \
                     ${auth_header:+-H "${auth_header}"} 2>/dev/null || true
             fi
         done

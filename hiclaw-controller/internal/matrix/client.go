@@ -172,10 +172,11 @@ func (c *TuwunelClient) CreateRoom(ctx context.Context, req CreateRoomRequest) (
 	}
 
 	body := map[string]interface{}{
-		"name":   req.Name,
-		"topic":  req.Topic,
-		"invite": req.Invite,
-		"preset": "trusted_private_chat",
+		"name":      req.Name,
+		"topic":     req.Topic,
+		"invite":    req.Invite,
+		"preset":    "trusted_private_chat",
+		"is_direct": req.IsDirect,
 	}
 
 	if len(req.PowerLevels) > 0 {

@@ -12,8 +12,12 @@
 
 # Auto-detect infrastructure container (embedded controller or legacy manager)
 if [ -z "${TEST_MANAGER_CONTAINER}" ]; then
-    export TEST_MANAGER_CONTAINER="$(docker ps --format '{{.Names}}' 2>/dev/null | grep -E '^hiclaw-manager$' | head -1)"
-    export TEST_MANAGER_CONTAINER="${TEST_MANAGER_CONTAINER:-hiclaw-manager}"
+    export TEST_MANAGER_CONTAINER="$(docker ps --format '{{.Names}}' 2>/dev/null | grep -E '^hiclaw-controller$' | head -1)"
+    # Fallback: legacy container name
+    if [ -z "${TEST_MANAGER_CONTAINER}" ]; then
+        export TEST_MANAGER_CONTAINER="$(docker ps --format '{{.Names}}' 2>/dev/null | grep -E '^hiclaw-manager$' | head -1)"
+    fi
+    export TEST_MANAGER_CONTAINER="${TEST_MANAGER_CONTAINER:-hiclaw-controller}"
 fi
 
 # Auto-detect Manager Agent container (separate container in embedded-controller mode)
@@ -180,33 +184,33 @@ wait_for_manager_agent_ready() {
     local timeout="${1:-300}"
     local room_id="${2:-}"
     local access_token="${3:-}"
-    local manager_container="${TEST_MANAGER_CONTAINER:-hiclaw-manager-test}"
+    local infra_container="${TEST_MANAGER_CONTAINER:-hiclaw-manager}"
+    local agent_container="${TEST_AGENT_CONTAINER:-${infra_container}}"
     local manager_user="manager"
     local matrix_domain="${TEST_MATRIX_DOMAIN:-matrix-local.hiclaw.io:${TEST_GATEWAY_PORT}}"
 
     local elapsed=0
 
-    # Detect Manager runtime
+    # Detect Manager runtime (check agent container first, then infra)
     local manager_runtime
-    manager_runtime=$(docker exec "${manager_container}" printenv HICLAW_MANAGER_RUNTIME 2>/dev/null || echo "openclaw")
+    manager_runtime=$(docker exec "${agent_container}" printenv HICLAW_MANAGER_RUNTIME 2>/dev/null || \
+                      docker exec "${infra_container}" printenv HICLAW_MANAGER_RUNTIME 2>/dev/null || echo "openclaw")
 
-    # Phase 1: Wait for Manager to be healthy (runtime-specific)
-    log_info "Waiting for Manager ${manager_runtime} runtime to be healthy..."
+    # Phase 1: Wait for Manager Agent to be healthy (runtime-specific, on agent container)
+    log_info "Waiting for Manager ${manager_runtime} runtime to be healthy (container: ${agent_container})..."
     local runtime_ready=false
 
     while [ "${elapsed}" -lt "${timeout}" ]; do
         case "${manager_runtime}" in
             copaw)
-                # CoPaw: check port 18799 or process
-                if docker exec "${manager_container}" pgrep -f "copaw app" >/dev/null 2>&1 && \
-                   docker exec "${manager_container}" curl -sf http://127.0.0.1:18799/ >/dev/null 2>&1; then
+                if docker exec "${agent_container}" pgrep -f "copaw app" >/dev/null 2>&1 && \
+                   docker exec "${agent_container}" curl -sf http://127.0.0.1:18799/ >/dev/null 2>&1; then
                     runtime_ready=true
                     break
                 fi
                 ;;
             *)
-                # OpenClaw: check gateway health
-                if docker exec "${manager_container}" openclaw gateway health --json 2>/dev/null | grep -q '"ok"'; then
+                if docker exec "${agent_container}" openclaw gateway health --json 2>/dev/null | grep -q '"ok"'; then
                     runtime_ready=true
                     break
                 fi
@@ -225,6 +229,7 @@ wait_for_manager_agent_ready() {
     log_info "${manager_runtime} runtime is healthy (took ${elapsed}s)"
 
     # Phase 2: Wait for Manager to join the DM room (if room_id and token provided)
+    # Matrix API calls go via infrastructure container (where Tuwunel runs)
     if [ -n "${room_id}" ] && [ -n "${access_token}" ]; then
         log_info "Waiting for Manager to join DM room..."
         local manager_full_id="@${manager_user}:${matrix_domain}"
@@ -233,7 +238,7 @@ wait_for_manager_agent_ready() {
         local room_enc="${room_id//!/%21}"
         while [ "${elapsed}" -lt "${timeout}" ]; do
             local members
-            members=$(docker exec "${manager_container}" curl -sf -X GET \
+            members=$(docker exec "${infra_container}" curl -sf -X GET \
                 -H "Authorization: Bearer ${access_token}" \
                 "http://127.0.0.1:6167/_matrix/client/v3/rooms/${room_enc}/members" 2>/dev/null | \
                 jq -r '.chunk[].state_key' 2>/dev/null) || true

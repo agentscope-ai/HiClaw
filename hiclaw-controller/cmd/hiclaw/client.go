@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"os"
 	"strings"
@@ -128,4 +129,85 @@ func (c *APIClient) DoJSON(method, path string, body, result interface{}) error 
 		}
 	}
 	return nil
+}
+
+// DoMultipart uploads a file via multipart/form-data.
+// fieldName is the form field name for the file (e.g. "file").
+// Extra string key-value pairs are sent as form fields.
+func (c *APIClient) DoMultipart(path, fieldName, fileName string, fileData []byte, fields map[string]string, result interface{}) error {
+	var buf bytes.Buffer
+	writer := multipart.NewWriter(&buf)
+
+	for k, v := range fields {
+		if err := writer.WriteField(k, v); err != nil {
+			return fmt.Errorf("write field %s: %w", k, err)
+		}
+	}
+
+	part, err := writer.CreateFormFile(fieldName, fileName)
+	if err != nil {
+		return fmt.Errorf("create form file: %w", err)
+	}
+	if _, err := part.Write(fileData); err != nil {
+		return fmt.Errorf("write file data: %w", err)
+	}
+	if err := writer.Close(); err != nil {
+		return fmt.Errorf("close multipart writer: %w", err)
+	}
+
+	url := c.BaseURL + path
+	req, err := http.NewRequest("POST", url, &buf)
+	if err != nil {
+		return fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	if c.Token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.Token)
+	}
+
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("read response: %w", err)
+	}
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		msg := strings.TrimSpace(string(respBody))
+		var errResp struct {
+			Error string `json:"error"`
+		}
+		if json.Unmarshal(respBody, &errResp) == nil && errResp.Error != "" {
+			msg = errResp.Error
+		}
+		return &APIError{StatusCode: resp.StatusCode, Message: msg}
+	}
+
+	if result != nil && len(respBody) > 0 {
+		if err := json.Unmarshal(respBody, result); err != nil {
+			return fmt.Errorf("decode response: %w", err)
+		}
+	}
+	return nil
+}
+
+// ResourceExists checks whether a resource exists by issuing a GET request.
+// Returns true on 2xx, false on 404, and an error for other status codes.
+func (c *APIClient) ResourceExists(path string) (bool, error) {
+	resp, err := c.Do("GET", path, nil)
+	if err != nil {
+		return false, err
+	}
+	resp.Body.Close()
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		return true, nil
+	}
+	if resp.StatusCode == http.StatusNotFound {
+		return false, nil
+	}
+	return false, &APIError{StatusCode: resp.StatusCode, Message: "unexpected status checking resource"}
 }

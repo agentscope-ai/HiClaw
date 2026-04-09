@@ -8,6 +8,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/hex"
 	"encoding/pem"
 	"fmt"
 	"math/big"
@@ -16,6 +17,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
@@ -80,9 +82,13 @@ func Start(ctx context.Context, cfg Config) (*rest.Config, error) {
 		}
 	}
 
-	// Create static token file for authentication
+	// Create static token file for authentication.
+	// Token is randomly generated on first start and persisted to dataDir for reuse across restarts.
 	tokenFile := filepath.Join(certDir, "token.csv")
-	const adminToken = "hiclaw-admin-token"
+	adminToken, err := generateOrLoadAdminToken(cfg.DataDir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate admin token: %w", err)
+	}
 	if _, err := os.Stat(tokenFile); os.IsNotExist(err) {
 		// Format: token,user,uid,"group1,group2"
 		if err := os.WriteFile(tokenFile, []byte(adminToken+",admin,admin,\"system:masters\"\n"), 0600); err != nil {
@@ -237,6 +243,7 @@ func registerCRDs(ctx context.Context, cfg *rest.Config, crdDir string) error {
 		"workers.hiclaw.io",
 		"teams.hiclaw.io",
 		"humans.hiclaw.io",
+		"managers.hiclaw.io",
 	})
 }
 
@@ -370,4 +377,30 @@ func writeECPubKey(path string, key *ecdsa.PublicKey) error {
 		return err
 	}
 	return writePEM(path, "PUBLIC KEY", data)
+}
+
+// generateOrLoadAdminToken returns a per-instance admin token.
+// On first invocation it generates a cryptographically random 64-char hex token
+// and persists it to dataDir/admin-token. Subsequent calls (including after
+// container restart) reuse the persisted value.
+func generateOrLoadAdminToken(dataDir string) (string, error) {
+	tokenPath := filepath.Join(dataDir, "admin-token")
+	if data, err := os.ReadFile(tokenPath); err == nil {
+		token := strings.TrimSpace(string(data))
+		if len(token) > 0 {
+			return token, nil
+		}
+	}
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("crypto/rand: %w", err)
+	}
+	token := hex.EncodeToString(b)
+	if err := os.MkdirAll(dataDir, 0700); err != nil {
+		return "", fmt.Errorf("mkdir %s: %w", dataDir, err)
+	}
+	if err := os.WriteFile(tokenPath, []byte(token+"\n"), 0600); err != nil {
+		return "", fmt.Errorf("write %s: %w", tokenPath, err)
+	}
+	return token, nil
 }

@@ -285,16 +285,20 @@ export OPENCLAW_NO_RESPAWN=1
 if [ -n "${HICLAW_CONTROLLER_URL:-}${HICLAW_ORCHESTRATOR_URL:-}" ]; then
     _CONTROLLER_URL="${HICLAW_CONTROLLER_URL:-${HICLAW_ORCHESTRATOR_URL:-}}"
 (
-        # Build auth header if API key is available (cloud mode)
+        # Build auth header (SA token for embedded mode, API key for cloud mode)
         AUTH_HEADER=""
-        [ -n "${HICLAW_WORKER_API_KEY:-}" ] && AUTH_HEADER="Authorization: Bearer ${HICLAW_WORKER_API_KEY}"
+        if [ -n "${HICLAW_AUTH_TOKEN:-}" ]; then
+            AUTH_HEADER="Authorization: Bearer ${HICLAW_AUTH_TOKEN}"
+        elif [ -n "${HICLAW_WORKER_API_KEY:-}" ]; then
+            AUTH_HEADER="Authorization: Bearer ${HICLAW_WORKER_API_KEY}"
+        fi
 
         # Phase 1: Wait for initial readiness (with timeout)
         TIMEOUT=120; ELAPSED=0
         while [ "${ELAPSED}" -lt "${TIMEOUT}" ]; do
             if openclaw gateway health --json 2>/dev/null | grep -q '"ok"' 2>/dev/null; then
                 for _attempt in 1 2 3; do
-                    if curl -sf -X POST "${_CONTROLLER_URL}/workers/${WORKER_NAME}/ready" \
+                    if curl -sf -X POST "${_CONTROLLER_URL}/api/v1/workers/${WORKER_NAME}/ready" \
                         ${AUTH_HEADER:+-H "${AUTH_HEADER}"} 2>/dev/null; then
                         log "Reported ready to controller"
                         break 2
@@ -315,7 +319,7 @@ if [ -n "${HICLAW_CONTROLLER_URL:-}${HICLAW_ORCHESTRATOR_URL:-}" ]; then
         while true; do
             sleep 60
             if openclaw gateway health --json 2>/dev/null | grep -q '"ok"' 2>/dev/null; then
-                curl -sf -X POST "${_CONTROLLER_URL}/workers/${WORKER_NAME}/ready" \
+                curl -sf -X POST "${_CONTROLLER_URL}/api/v1/workers/${WORKER_NAME}/ready" \
                     ${AUTH_HEADER:+-H "${AUTH_HEADER}"} 2>/dev/null || true
             fi
         done

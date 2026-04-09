@@ -45,27 +45,56 @@ func (c *HigressClient) ensureSession(ctx context.Context) error {
 		return nil
 	}
 
-	body := fmt.Sprintf(`{"username":%q,"password":%q}`, c.config.AdminUser, c.config.AdminPassword)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		c.config.ConsoleURL+"/session/login",
-		strings.NewReader(body))
+	// Initialize admin account on first boot (idempotent — succeeds if already initialized).
+	// Higress Console requires /system/init before login works.
+	// Race note: the Higress all-in-one base image may auto-initialize with admin/admin
+	// before we get here. We retry init to win the race when possible.
+	initBody := fmt.Sprintf(`{"adminUser":{"name":%q,"password":%q,"displayName":%q}}`,
+		c.config.AdminUser, c.config.AdminPassword, c.config.AdminUser)
+	initReq, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		c.config.ConsoleURL+"/system/init",
+		strings.NewReader(initBody))
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.http.Do(req)
+	initReq.Header.Set("Content-Type", "application/json")
+	initResp, err := c.http.Do(initReq)
 	if err != nil {
-		return fmt.Errorf("higress login: %w", err)
+		return fmt.Errorf("higress init: %w", err)
 	}
-	defer resp.Body.Close()
+	initResp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		return fmt.Errorf("higress login: HTTP %d", resp.StatusCode)
+	// Try login with configured password first, then fallback to default admin/admin
+	// (Higress all-in-one may have auto-initialized with default credentials).
+	passwords := []string{c.config.AdminPassword}
+	if c.config.AdminPassword != "admin" {
+		passwords = append(passwords, "admin")
 	}
 
-	c.cookies = resp.Cookies()
-	return nil
+	for _, pw := range passwords {
+		body := fmt.Sprintf(`{"username":%q,"password":%q}`, c.config.AdminUser, pw)
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+			c.config.ConsoleURL+"/session/login",
+			strings.NewReader(body))
+		if err != nil {
+			return err
+		}
+		req.Header.Set("Content-Type", "application/json")
+
+		resp, err := c.http.Do(req)
+		if err != nil {
+			return fmt.Errorf("higress login: %w", err)
+		}
+
+		if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusCreated {
+			c.cookies = resp.Cookies()
+			resp.Body.Close()
+			return nil
+		}
+		resp.Body.Close()
+	}
+
+	return fmt.Errorf("higress login: all credential attempts failed")
 }
 
 func (c *HigressClient) EnsureConsumer(ctx context.Context, req ConsumerRequest) (*ConsumerResult, error) {

@@ -28,10 +28,11 @@ assert_http_code "http://${TEST_MANAGER_HOST}:${TEST_CONSOLE_PORT}/" "200" \
 assert_http_code "http://${TEST_MANAGER_HOST}:${TEST_ELEMENT_PORT}/" "200" \
     "Element Web port 8088 is accessible"
 
-# Matrix and MinIO are not exposed to host; verify via docker exec into Manager container
-_MGMT_CTR="${TEST_MANAGER_CONTAINER:-hiclaw-manager-test}"
+# Infrastructure checks go to the infra container; workspace checks go to the agent container
+_INFRA_CTR="${TEST_MANAGER_CONTAINER:-hiclaw-manager}"
+_AGENT_CTR="${TEST_AGENT_CONTAINER:-${_INFRA_CTR}}"
 
-MATRIX_CODE=$(docker exec "${_MGMT_CTR}" curl -s -o /dev/null -w '%{http_code}' \
+MATRIX_CODE=$(docker exec "${_INFRA_CTR}" curl -s -o /dev/null -w '%{http_code}' \
     "http://127.0.0.1:6167/_matrix/client/versions" 2>/dev/null || echo "000")
 if [ "${MATRIX_CODE}" = "200" ]; then
     log_pass "Tuwunel Matrix is healthy (internal port 6167)"
@@ -39,7 +40,7 @@ else
     log_fail "Tuwunel Matrix is healthy (internal port 6167, got HTTP ${MATRIX_CODE})"
 fi
 
-MINIO_CODE=$(docker exec "${_MGMT_CTR}" curl -s -o /dev/null -w '%{http_code}' \
+MINIO_CODE=$(docker exec "${_INFRA_CTR}" curl -s -o /dev/null -w '%{http_code}' \
     "http://127.0.0.1:9000/minio/health/live" 2>/dev/null || echo "000")
 if [ "${MINIO_CODE}" = "200" ]; then
     log_pass "MinIO API is healthy (internal port 9000)"
@@ -80,21 +81,21 @@ else
     log_fail "MinIO mc alias configured"
 fi
 
-# Manager workspace files are stored locally in the container (not in MinIO)
-# since commit 4e91c2d. Check them via docker exec using TEST_MANAGER_CONTAINER.
-if docker exec "${_MGMT_CTR}" test -f /root/manager-workspace/SOUL.md 2>/dev/null; then
+# Manager workspace files are stored locally in the agent container (not in MinIO).
+# In embedded-controller mode, the agent container is separate from the infra container.
+if docker exec "${_AGENT_CTR}" test -f /root/manager-workspace/SOUL.md 2>/dev/null; then
     log_pass "Manager SOUL.md exists in workspace"
 else
     log_fail "Manager SOUL.md exists in workspace"
 fi
 
-if docker exec "${_MGMT_CTR}" test -f /root/manager-workspace/AGENTS.md 2>/dev/null; then
+if docker exec "${_AGENT_CTR}" test -f /root/manager-workspace/AGENTS.md 2>/dev/null; then
     log_pass "Manager AGENTS.md exists in workspace"
 else
     log_fail "Manager AGENTS.md exists in workspace"
 fi
 
-if docker exec "${_MGMT_CTR}" test -f /root/manager-workspace/HEARTBEAT.md 2>/dev/null; then
+if docker exec "${_AGENT_CTR}" test -f /root/manager-workspace/HEARTBEAT.md 2>/dev/null; then
     log_pass "Manager HEARTBEAT.md exists in workspace"
 else
     log_fail "Manager HEARTBEAT.md exists in workspace"
@@ -103,37 +104,34 @@ fi
 # ---- Runtime Detection ----
 log_section "Manager Runtime"
 
-MANAGER_RUNTIME=$(docker exec "${_MGMT_CTR}" printenv HICLAW_MANAGER_RUNTIME 2>/dev/null || echo "openclaw")
+MANAGER_RUNTIME=$(docker exec "${_AGENT_CTR}" printenv HICLAW_MANAGER_RUNTIME 2>/dev/null || \
+                   docker exec "${_INFRA_CTR}" printenv HICLAW_MANAGER_RUNTIME 2>/dev/null || echo "openclaw")
 log_pass "Manager runtime: ${MANAGER_RUNTIME}"
 
-# Runtime-specific config verification
+# Runtime-specific config verification (agent container)
 case "${MANAGER_RUNTIME}" in
     copaw)
-        # CoPaw: config.json in ~/manager-workspace/.copaw/ (HOME=/root/manager-workspace)
         COPAW_DIR="/root/manager-workspace/.copaw"
-        if docker exec "${_MGMT_CTR}" jq -e '.channels.matrix.enabled' "${COPAW_DIR}/config.json" >/dev/null 2>&1; then
+        if docker exec "${_AGENT_CTR}" jq -e '.channels.matrix.enabled' "${COPAW_DIR}/config.json" >/dev/null 2>&1; then
             log_pass "CoPaw config.json valid"
         else
             log_fail "CoPaw config.json valid"
         fi
 
-        # Matrix channel with mentions support (built into copaw package)
-        if docker exec "${_MGMT_CTR}" grep -q "_was_mentioned" /opt/copaw-venv/lib/python3.10/site-packages/copaw/app/channels/matrix/channel.py 2>/dev/null; then
+        if docker exec "${_AGENT_CTR}" grep -q "_was_mentioned" /opt/copaw-venv/lib/python3.10/site-packages/copaw/app/channels/matrix/channel.py 2>/dev/null; then
             log_pass "Matrix channel with mentions support"
         else
             log_fail "Matrix channel with mentions support"
         fi
 
-        # CoPaw process running
-        if docker exec "${_MGMT_CTR}" pgrep -f "copaw app" >/dev/null 2>&1; then
+        if docker exec "${_AGENT_CTR}" pgrep -f "copaw app" >/dev/null 2>&1; then
             log_pass "CoPaw process running"
         else
             log_fail "CoPaw process running"
         fi
         ;;
     *)
-        # OpenClaw: openclaw.json in ~/manager-workspace/
-        if docker exec "${_MGMT_CTR}" jq -e '.channels.matrix.accessToken' /root/manager-workspace/openclaw.json >/dev/null 2>&1; then
+        if docker exec "${_AGENT_CTR}" jq -e '.channels.matrix.accessToken' /root/manager-workspace/openclaw.json >/dev/null 2>&1; then
             log_pass "OpenClaw config (openclaw.json) valid"
         else
             log_fail "OpenClaw config (openclaw.json) valid"

@@ -35,6 +35,9 @@ type CreateRoomRequest struct {
 	CreatorToken string         // access token of the room creator
 	E2EE         bool           // add m.room.encryption to initial_state
 
+	// IsDirect marks the room as a direct message (1:1) room.
+	IsDirect bool
+
 	// ExistingRoomID skips creation and returns this room ID directly.
 	// Used for idempotent retries when a room was already created.
 	ExistingRoomID string

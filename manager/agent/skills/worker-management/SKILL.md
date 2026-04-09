@@ -12,11 +12,10 @@ description: Use when admin requests hand-creating or resetting a Worker, starti
 mkdir -p /root/hiclaw-fs/agents/<NAME>
 # Write SOUL.md with AI Identity + Role + Security sections (see references/create-worker.md)
 
-# 2. Run create script
-bash /opt/hiclaw/agent/skills/worker-management/scripts/create-worker.sh \
-  --name <NAME> --skills <skill1>,<skill2>
+# 2. Create worker via CLI
+hiclaw create worker --name <NAME> --soul-file /root/hiclaw-fs/agents/<NAME>/SOUL.md \
+  --skills <skill1>,<skill2> -o json
 # Add --runtime copaw for Python workers
-# Add --remote for admin-managed deployment
 ```
 
 > Full creation workflow (runtime selection, SOUL.md template, skill matching, post-creation greeting): read `references/create-worker.md`
@@ -36,13 +35,13 @@ bash /opt/hiclaw/agent/skills/worker-management/scripts/create-worker.sh \
 
 Read the relevant doc **before** executing. Do not load all of them.
 
-| Admin wants to... | Read | Key script |
+| Admin wants to... | Read | Key command / script |
 |---|---|---|
-| Create a new worker | `references/create-worker.md` | `scripts/create-worker.sh` |
+| Create a new worker | `references/create-worker.md` | `hiclaw create worker` |
 | Start/stop/check idle workers | `references/lifecycle.md` | `scripts/lifecycle-worker.sh` |
 | Push/add/remove skills | `references/skills-management.md` | `scripts/push-worker-skills.sh` |
 | Open/close CoPaw console | `references/console.md` | `scripts/enable-worker-console.sh` |
 | Enable direct @mentions between workers | `references/peer-mentions.md` | `scripts/enable-peer-mentions.sh` |
 | Get remote worker install command | `references/lifecycle.md` | `scripts/get-worker-install-cmd.sh` |
-| Reset a worker | `references/create-worker.md` | `rm -rf` config dir + re-run `create-worker.sh` |
+| Reset a worker | `references/create-worker.md` | `hiclaw delete worker` + `hiclaw create worker` |
 | Delete a worker (remove container) | `references/lifecycle.md` | `scripts/lifecycle-worker.sh` |

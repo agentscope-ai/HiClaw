@@ -18,6 +18,7 @@ Environment variables:
   HICLAW_AUTH_TOKEN        Bearer token for authentication`,
 	}
 
+	rootCmd.AddCommand(applyCmd())
 	rootCmd.AddCommand(createCmd())
 	rootCmd.AddCommand(getCmd())
 	rootCmd.AddCommand(updateCmd())
@@ -25,8 +26,6 @@ Environment variables:
 	rootCmd.AddCommand(workerCmd())
 	rootCmd.AddCommand(statusCmd())
 	rootCmd.AddCommand(versionCmd())
-
-	// TODO: rootCmd.AddCommand(applyCmd())  — declarative apply -f <yaml> (Phase 3)
 
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)

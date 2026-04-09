@@ -41,7 +41,7 @@ _cleanup() {
         exec_in_manager mc rm -r --force "${STORAGE_PREFIX}/agents/${w}/" 2>/dev/null || true
         exec_in_manager rm -rf "/root/hiclaw-fs/agents/${w}" 2>/dev/null || true
     done
-    exec_in_manager bash -c "
+    exec_in_agent bash -c "
         jq 'del(.workers[\"${TEST_LEADER}\"], .workers[\"${TEST_W1}\"])' \
             /root/manager-workspace/workers-registry.json > /tmp/wr-clean.json 2>/dev/null && \
             mv /tmp/wr-clean.json /root/manager-workspace/workers-registry.json
@@ -113,7 +113,7 @@ fi
 # ============================================================
 log_section "Verify Human Registration"
 
-HUMAN_ENTRY=$(exec_in_manager jq -r --arg h "${TEST_HUMAN}" '.humans[$h] // empty' /root/manager-workspace/humans-registry.json 2>/dev/null)
+HUMAN_ENTRY=$(exec_in_agent jq -r --arg h "${TEST_HUMAN}" '.humans[$h] // empty' /root/manager-workspace/humans-registry.json 2>/dev/null)
 assert_not_empty "${HUMAN_ENTRY}" "Human registered in humans-registry.json"
 
 HUMAN_LEVEL=$(echo "${HUMAN_ENTRY}" | jq -r '.permission_level // empty')
@@ -172,7 +172,7 @@ fi
 # ============================================================
 log_section "Verify Team Admin in Registry"
 
-TEAM_ENTRY=$(exec_in_manager jq -r --arg t "${TEST_TEAM}" '.teams[$t] // empty' /root/manager-workspace/teams-registry.json 2>/dev/null)
+TEAM_ENTRY=$(exec_in_agent jq -r --arg t "${TEST_TEAM}" '.teams[$t] // empty' /root/manager-workspace/teams-registry.json 2>/dev/null)
 assert_not_empty "${TEAM_ENTRY}" "Team registered in teams-registry.json"
 
 TEAM_ADMIN_NAME=$(echo "${TEAM_ENTRY}" | jq -r '.admin.name // empty')
@@ -242,7 +242,7 @@ ADMIN_TOKEN=$(echo "${ADMIN_LOGIN}" | jq -r '.access_token // empty')
 if [ -n "${ADMIN_TOKEN}" ] && [ "${ADMIN_TOKEN}" != "null" ]; then
     ADMIN_MATRIX_ID="@${TEST_ADMIN_USER}:${TEST_MATRIX_DOMAIN}"
     for w in "${TEST_LEADER}" "${TEST_W1}"; do
-        W_ROOM=$(exec_in_manager jq -r --arg w "${w}" '.workers[$w].room_id // empty' /root/manager-workspace/workers-registry.json 2>/dev/null)
+        W_ROOM=$(exec_in_agent jq -r --arg w "${w}" '.workers[$w].room_id // empty' /root/manager-workspace/workers-registry.json 2>/dev/null)
         if [ -n "${W_ROOM}" ] && [ "${W_ROOM}" != "null" ]; then
             W_ROOM_ENC=$(echo "${W_ROOM}" | sed 's/!/%21/g')
             W_MEMBERS=$(exec_in_manager curl -sf \
@@ -272,7 +272,7 @@ for w in "${TEST_LEADER}" "${TEST_W1}"; do
     if [ -n "${RUNNING}" ]; then
         log_pass "Container running: hiclaw-worker-${w}"
     else
-        DEPLOY=$(exec_in_manager jq -r --arg w "${w}" '.workers[$w].deployment // empty' /root/manager-workspace/workers-registry.json 2>/dev/null)
+        DEPLOY=$(exec_in_agent jq -r --arg w "${w}" '.workers[$w].deployment // empty' /root/manager-workspace/workers-registry.json 2>/dev/null)
         if [ "${DEPLOY}" = "remote" ]; then
             log_pass "Agent ${w} registered in remote mode"
         else

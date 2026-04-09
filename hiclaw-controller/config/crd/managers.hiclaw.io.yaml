@@ -1,0 +1,99 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: managers.hiclaw.io
+spec:
+  group: hiclaw.io
+  versions:
+    - name: v1beta1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              required: [model]
+              properties:
+                model:
+                  type: string
+                  description: LLM model ID (e.g. qwen3.5-plus, claude-sonnet-4-6)
+                runtime:
+                  type: string
+                  enum: [openclaw, copaw]
+                  default: openclaw
+                image:
+                  type: string
+                  description: Custom Docker image for the Manager Agent
+                soul:
+                  type: string
+                  description: Custom SOUL.md content
+                agents:
+                  type: string
+                  description: Custom AGENTS.md content
+                skills:
+                  type: array
+                  items:
+                    type: string
+                  description: On-demand skills to enable
+                mcpServers:
+                  type: array
+                  items:
+                    type: string
+                  description: MCP servers to authorize via Gateway
+                package:
+                  type: string
+                  description: "Package URI: file://, http(s)://, or nacos://"
+                config:
+                  type: object
+                  properties:
+                    heartbeatInterval:
+                      type: string
+                      description: "Heartbeat check interval (default: 15m)"
+                    workerIdleTimeout:
+                      type: string
+                      description: "Worker idle timeout before auto-sleep (default: 720m)"
+                    notifyChannel:
+                      type: string
+                      description: "Notification channel (default: admin-dm)"
+            status:
+              type: object
+              properties:
+                observedGeneration:
+                  type: integer
+                  format: int64
+                phase:
+                  type: string
+                  enum: [Pending, Running, Updating, Failed]
+                matrixUserID:
+                  type: string
+                roomID:
+                  type: string
+                containerState:
+                  type: string
+                version:
+                  type: string
+                message:
+                  type: string
+      subresources:
+        status: {}
+      additionalPrinterColumns:
+        - name: Model
+          type: string
+          jsonPath: .spec.model
+        - name: Phase
+          type: string
+          jsonPath: .status.phase
+        - name: Runtime
+          type: string
+          jsonPath: .spec.runtime
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp
+  scope: Namespaced
+  names:
+    plural: managers
+    singular: manager
+    kind: Manager
+    shortNames: [mgr]

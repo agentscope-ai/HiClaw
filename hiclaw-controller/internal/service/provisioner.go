@@ -467,6 +467,7 @@ func (p *Provisioner) ProvisionManager(ctx context.Context, req ManagerProvision
 		Topic:          fmt.Sprintf("Admin DM channel for Manager %s", managerName),
 		Invite:         []string{adminMatrixID, managerMatrixID},
 		PowerLevels:    powerLevels,
+		IsDirect:       true,
 		ExistingRoomID: creds.RoomID,
 	})
 	if err != nil {
