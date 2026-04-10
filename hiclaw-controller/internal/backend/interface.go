@@ -88,6 +88,10 @@ type CreateRequest struct {
 	// When set, pod name = NamePrefix + Name instead of containerPrefix + Name.
 	NamePrefix string `json:"-"`
 
+	// ContainerName overrides the computed container/pod name entirely.
+	// When set, NamePrefix and containerPrefix are ignored for naming.
+	ContainerName string `json:"-"`
+
 	// Labels are additional K8s labels merged into the Pod metadata.
 	// If "app" is present, it overrides the default "hiclaw-worker".
 	// If "hiclaw.io/worker" should be omitted (e.g. for Manager pods),

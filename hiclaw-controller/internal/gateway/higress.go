@@ -338,7 +338,7 @@ func (c *HigressClient) ExposePort(ctx context.Context, req PortExposeRequest) e
 	if err := c.ensureDomain(ctx, domain); err != nil {
 		return fmt.Errorf("expose port %d: %w", req.Port, err)
 	}
-	if err := c.ensureServiceSource(ctx, svcSrc, dnsHost, req.Port); err != nil {
+	if err := c.ensureServiceSource(ctx, svcSrc, dnsHost, req.Port, "http"); err != nil {
 		return fmt.Errorf("expose port %d: %w", req.Port, err)
 	}
 	if err := c.ensureRoute(ctx, routeN, []string{domain}, svcSrc+".dns", req.Port, "/"); err != nil {
@@ -363,8 +363,12 @@ func (c *HigressClient) UnexposePort(ctx context.Context, req PortExposeRequest)
 
 // --- Public infrastructure init methods (used by Initializer) ---
 
-func (c *HigressClient) EnsureServiceSource(ctx context.Context, name, domain string, port int) error {
-	return c.ensureServiceSource(ctx, name, domain, port)
+func (c *HigressClient) EnsureServiceSource(ctx context.Context, name, domain string, port int, protocol string) error {
+	return c.ensureServiceSource(ctx, name, domain, port, protocol)
+}
+
+func (c *HigressClient) EnsureStaticServiceSource(ctx context.Context, name, address string, port int) error {
+	return c.ensureStaticServiceSource(ctx, name, address, port)
 }
 
 func (c *HigressClient) EnsureRoute(ctx context.Context, name string, domains []string, serviceName string, port int, pathPrefix string) error {
@@ -451,10 +455,13 @@ func (c *HigressClient) ensureDomain(ctx context.Context, name string) error {
 	return nil
 }
 
-func (c *HigressClient) ensureServiceSource(ctx context.Context, name, dnsDomain string, port int) error {
+func (c *HigressClient) ensureServiceSource(ctx context.Context, name, dnsDomain string, port int, protocol string) error {
+	if protocol == "" {
+		protocol = "http"
+	}
 	body := map[string]interface{}{
 		"type": "dns", "name": name, "domain": dnsDomain,
-		"port": port, "protocol": "http",
+		"port": port, "protocol": protocol,
 		"properties": map[string]interface{}{},
 		"authN":      map[string]interface{}{"enabled": false},
 	}
@@ -464,6 +471,23 @@ func (c *HigressClient) ensureServiceSource(ctx context.Context, name, dnsDomain
 	}
 	if sc != 200 && sc != 201 && sc != 409 {
 		return fmt.Errorf("ensure service source %s: HTTP %d", name, sc)
+	}
+	return nil
+}
+
+func (c *HigressClient) ensureStaticServiceSource(ctx context.Context, name, address string, port int) error {
+	body := map[string]interface{}{
+		"type": "static", "name": name, "domain": fmt.Sprintf("%s:%d", address, port),
+		"port": port, "protocol": "http",
+		"properties": map[string]interface{}{},
+		"authN":      map[string]interface{}{"enabled": false},
+	}
+	_, sc, err := c.doJSON(ctx, http.MethodPost, "/v1/service-sources", body)
+	if err != nil {
+		return fmt.Errorf("ensure static service source %s: %w", name, err)
+	}
+	if sc != 200 && sc != 201 && sc != 409 {
+		return fmt.Errorf("ensure static service source %s: HTTP %d", name, sc)
 	}
 	return nil
 }

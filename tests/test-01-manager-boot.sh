@@ -29,7 +29,7 @@ assert_http_code "http://${TEST_MANAGER_HOST}:${TEST_ELEMENT_PORT}/" "200" \
     "Element Web port 8088 is accessible"
 
 # Infrastructure checks go to the infra container; workspace checks go to the agent container
-_INFRA_CTR="${TEST_MANAGER_CONTAINER:-hiclaw-manager}"
+_INFRA_CTR="${TEST_CONTROLLER_CONTAINER:-hiclaw-manager}"
 _AGENT_CTR="${TEST_AGENT_CONTAINER:-${_INFRA_CTR}}"
 
 MATRIX_CODE=$(docker exec "${_INFRA_CTR}" curl -s -o /dev/null -w '%{http_code}' \

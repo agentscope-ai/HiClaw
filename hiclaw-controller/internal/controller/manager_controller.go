@@ -20,6 +20,16 @@ import (
 
 const managerPodPrefix = "hiclaw-manager-"
 
+// managerContainerName returns the container/pod name for a Manager.
+// The "default" manager uses "hiclaw-manager" (no suffix) for compatibility
+// with install/uninstall scripts; other managers use "hiclaw-manager-{name}".
+func managerContainerName(name string) string {
+	if name == "default" {
+		return "hiclaw-manager"
+	}
+	return managerPodPrefix + name
+}
+
 // ManagerEmbeddedConfig holds embedded-mode settings for the Manager Agent
 // container (workspace mount, host share, extra env from the controller's env).
 type ManagerEmbeddedConfig struct {
@@ -141,7 +151,7 @@ func (r *ManagerReconciler) handleCreate(ctx context.Context, m *v1beta1.Manager
 			saName := authpkg.SAName(authpkg.RoleManager, managerName)
 			createReq := backend.CreateRequest{
 				Name:               managerName,
-				NamePrefix:         managerPodPrefix,
+				ContainerName:      managerContainerName(managerName),
 				Image:              m.Spec.Image,
 				Runtime:            m.Spec.Runtime,
 				Env:                managerEnv,
@@ -282,7 +292,7 @@ func (r *ManagerReconciler) handleDelete(ctx context.Context, m *v1beta1.Manager
 
 	// Delete manager pod by exact name (bypasses backend's default worker prefix)
 	managerPod := &corev1.Pod{}
-	managerPod.Name = managerPodPrefix + managerName
+	managerPod.Name = managerContainerName(managerName)
 	managerPod.Namespace = m.Namespace
 	if err := r.Delete(ctx, managerPod); err != nil && !apierrors.IsNotFound(err) {
 		logger.Error(err, "failed to delete manager pod (may already be removed)")

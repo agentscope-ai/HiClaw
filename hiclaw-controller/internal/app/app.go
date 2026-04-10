@@ -121,9 +121,11 @@ func (a *App) Start(ctx context.Context) error {
 				AdminUser:      a.cfg.MatrixAdminUser,
 				AdminPassword:  a.cfg.MatrixAdminPassword,
 				Namespace:      a.namespace,
+				IsEmbedded:     a.cfg.KubeMode == "embedded",
 				LLMProvider:    a.cfg.LLMProvider,
 				LLMAPIKey:      a.cfg.LLMAPIKey,
-				TuwunelURL:     a.cfg.WorkerEnv.MatrixURL,
+				OpenAIBaseURL:  a.cfg.OpenAIBaseURL,
+				TuwunelURL:     a.cfg.MatrixServerURL,
 				ElementWebURL:  a.cfg.ElementWebURL,
 			},
 		}
@@ -233,16 +235,6 @@ func (a *App) initServiceLayer(_ context.Context) error {
 		AdminUser:    cfg.MatrixAdminUser,
 	})
 
-	a.deployer = service.NewDeployer(service.DeployerConfig{
-		AgentConfig:    a.agentGen,
-		OSS:            a.oss,
-		Executor:       a.shell,
-		Packages:       a.packages,
-		AgentFSDir:     cfg.AgentFSDir(),
-		WorkerAgentDir: cfg.WorkerAgentDir(),
-		MatrixDomain:   cfg.MatrixDomain,
-	})
-
 	a.envBuilder = service.NewWorkerEnvBuilder(cfg.WorkerEnv)
 
 	if cfg.KubeMode == "embedded" {
@@ -251,6 +243,17 @@ func (a *App) initServiceLayer(_ context.Context) error {
 			MatrixDomain: cfg.MatrixDomain,
 		})
 	}
+
+	a.deployer = service.NewDeployer(service.DeployerConfig{
+		AgentConfig:    a.agentGen,
+		OSS:            a.oss,
+		Executor:       a.shell,
+		Packages:       a.packages,
+		Legacy:         a.legacy,
+		AgentFSDir:     cfg.AgentFSDir(),
+		WorkerAgentDir: cfg.WorkerAgentDir(),
+		MatrixDomain:   cfg.MatrixDomain,
+	})
 
 	return nil
 }

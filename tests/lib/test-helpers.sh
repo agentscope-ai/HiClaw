@@ -11,19 +11,19 @@
 # ============================================================
 
 # Auto-detect infrastructure container (embedded controller or legacy manager)
-if [ -z "${TEST_MANAGER_CONTAINER}" ]; then
-    export TEST_MANAGER_CONTAINER="$(docker ps --format '{{.Names}}' 2>/dev/null | grep -E '^hiclaw-controller$' | head -1)"
+if [ -z "${TEST_CONTROLLER_CONTAINER}" ]; then
+    export TEST_CONTROLLER_CONTAINER="$(docker ps --format '{{.Names}}' 2>/dev/null | grep -E '^hiclaw-controller$' | head -1)"
     # Fallback: legacy container name
-    if [ -z "${TEST_MANAGER_CONTAINER}" ]; then
-        export TEST_MANAGER_CONTAINER="$(docker ps --format '{{.Names}}' 2>/dev/null | grep -E '^hiclaw-manager$' | head -1)"
+    if [ -z "${TEST_CONTROLLER_CONTAINER}" ]; then
+        export TEST_CONTROLLER_CONTAINER="$(docker ps --format '{{.Names}}' 2>/dev/null | grep -E '^hiclaw-manager$' | head -1)"
     fi
-    export TEST_MANAGER_CONTAINER="${TEST_MANAGER_CONTAINER:-hiclaw-controller}"
+    export TEST_CONTROLLER_CONTAINER="${TEST_CONTROLLER_CONTAINER:-hiclaw-controller}"
 fi
 
 # Auto-detect Manager Agent container (separate container in embedded-controller mode)
 if [ -z "${TEST_AGENT_CONTAINER}" ]; then
-    export TEST_AGENT_CONTAINER="$(docker ps --format '{{.Names}}' 2>/dev/null | grep -E '^hiclaw-manager-' | head -1)"
-    export TEST_AGENT_CONTAINER="${TEST_AGENT_CONTAINER:-${TEST_MANAGER_CONTAINER}}"
+    export TEST_AGENT_CONTAINER="$(docker ps --format '{{.Names}}' 2>/dev/null | grep -E '^hiclaw-manager(-|$)' | head -1)"
+    export TEST_AGENT_CONTAINER="${TEST_AGENT_CONTAINER:-${TEST_CONTROLLER_CONTAINER}}"
 fi
 
 # Host where the Manager container's exposed ports are reachable
@@ -184,7 +184,7 @@ wait_for_manager_agent_ready() {
     local timeout="${1:-300}"
     local room_id="${2:-}"
     local access_token="${3:-}"
-    local infra_container="${TEST_MANAGER_CONTAINER:-hiclaw-manager}"
+    local infra_container="${TEST_CONTROLLER_CONTAINER:-hiclaw-manager}"
     local agent_container="${TEST_AGENT_CONTAINER:-${infra_container}}"
     local manager_user="manager"
     local matrix_domain="${TEST_MATRIX_DOMAIN:-matrix-local.hiclaw.io:${TEST_GATEWAY_PORT}}"
@@ -294,7 +294,7 @@ wait_for_worker_container() {
 # This reads HICLAW_* environment variables from the container and sets
 # TEST_* variables accordingly. Call this after the container is running.
 detect_manager_config() {
-    local container="${TEST_MANAGER_CONTAINER:-hiclaw-manager}"
+    local container="${TEST_CONTROLLER_CONTAINER:-hiclaw-manager}"
     
     # Skip if container is not running
     if ! docker ps --format '{{.Names}}' | grep -q "^${container}$"; then
@@ -397,14 +397,28 @@ require_llm_key() {
 # Run a command inside the infrastructure container (Matrix, MinIO, Higress, controller).
 # Used by matrix-client.sh and minio-client.sh to avoid exposing Matrix/MinIO ports to host.
 exec_in_manager() {
-    docker exec "${TEST_MANAGER_CONTAINER:-hiclaw-manager}" "$@"
+    docker exec "${TEST_CONTROLLER_CONTAINER:-hiclaw-manager}" "$@"
 }
 
 # Run a command inside the Manager Agent container.
 # In legacy mode (all-in-one manager), this falls back to the same container.
 # In embedded-controller mode, this targets the separate agent container.
 exec_in_agent() {
-    docker exec "${TEST_AGENT_CONTAINER:-${TEST_MANAGER_CONTAINER:-hiclaw-manager}}" "$@"
+    docker exec "${TEST_AGENT_CONTAINER:-${TEST_CONTROLLER_CONTAINER:-hiclaw-manager}}" "$@"
+}
+
+# Copy a file between containers via tar pipe (avoids host filesystem symlink issues on macOS).
+# Usage: copy_to_agent <src_path_in_controller> <dst_path_in_agent>
+copy_to_agent() {
+    local src_path="$1"
+    local dst_path="$2"
+    local src_dir dst_dir src_file
+    src_dir=$(dirname "${src_path}")
+    src_file=$(basename "${src_path}")
+    dst_dir=$(dirname "${dst_path}")
+    exec_in_agent mkdir -p "${dst_dir}" 2>/dev/null
+    docker exec "${TEST_CONTROLLER_CONTAINER}" tar -cf - -C "${src_dir}" "${src_file}" | \
+        docker exec -i "${TEST_AGENT_CONTAINER}" tar -xf - -C "${dst_dir}"
 }
 
 start_worker_container() {

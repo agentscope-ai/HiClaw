@@ -2,6 +2,8 @@
 # start-element-web.sh - Generate Element Web config and start Nginx
 
 MATRIX_DOMAIN="${HICLAW_MATRIX_DOMAIN:-matrix-local.hiclaw.io:8080}"
+# Browser-facing homeserver URL (may differ from internal domain in embedded mode)
+ELEMENT_HOMESERVER_URL="${HICLAW_ELEMENT_HOMESERVER_URL:-http://${MATRIX_DOMAIN}}"
 # Brand name for Element Web (defaults to "Element" if not set)
 ELEMENT_BRAND="${HICLAW_ELEMENT_BRAND:-Element}"
 
@@ -10,7 +12,7 @@ cat > /opt/element-web/config.json << EOF
 {
     "default_server_config": {
         "m.homeserver": {
-            "base_url": "http://${MATRIX_DOMAIN}"
+            "base_url": "${ELEMENT_HOMESERVER_URL}"
         }
     },
     "brand": "${ELEMENT_BRAND}",

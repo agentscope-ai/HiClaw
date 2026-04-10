@@ -577,7 +577,7 @@ wait-ready-embedded: ## Wait for embedded-mode services to be ready
 		MATRIX=$$(echo "$$RESULT" | tr -d '\n' | cut -d' ' -f1); \
 		MINIO=$$(echo "$$RESULT" | tr -d '\n' | cut -d' ' -f2); \
 		CONSOLE=$$(echo "$$RESULT" | tr -d '\n' | cut -d' ' -f3); \
-		AGENT=$$(docker ps --format '{{.Names}}' 2>/dev/null | grep -c '^hiclaw-manager-default$$' || echo 0); \
+		AGENT=$$(docker ps --format '{{.Names}}' 2>/dev/null | grep -c '^hiclaw-manager$$' || echo 0); \
 		if [ "$$MATRIX" = "200" ] && [ "$$MINIO" = "200" ] && [ "$$CONSOLE" = "200" ] && [ "$$AGENT" -ge 1 ]; then \
 			echo "==> All services ready (took $${ELAPSED}s)"; \
 			echo "==> Waiting 60s for Manager Agent initialization..."; \
@@ -595,7 +595,7 @@ wait-ready-embedded: ## Wait for embedded-mode services to be ready
 test-embedded: ## Run integration tests in embedded mode
 ifdef SKIP_INSTALL
 	@echo "==> Running tests against existing embedded installation"
-	@docker exec hiclaw-manager-default touch /root/manager-workspace/yolo-mode 2>/dev/null || true
+	@docker exec hiclaw-manager touch /root/manager-workspace/yolo-mode 2>/dev/null || true
 	./tests/run-all-tests.sh --skip-build --use-existing $(if $(TEST_FILTER),--test-filter "$(TEST_FILTER)")
 else
 	@echo "==> Installing embedded mode and running tests"
@@ -607,7 +607,7 @@ endif
 
 uninstall-embedded: ## Stop and remove embedded containers
 	@echo "==> Uninstalling HiClaw (embedded mode)..."
-	-docker stop hiclaw-manager-default 2>/dev/null && docker rm hiclaw-manager-default 2>/dev/null || true
+	-docker stop hiclaw-manager 2>/dev/null && docker rm hiclaw-manager 2>/dev/null || true
 	-docker stop hiclaw-controller 2>/dev/null && docker rm hiclaw-controller 2>/dev/null || true
 	-docker stop hiclaw-manager 2>/dev/null && docker rm hiclaw-manager 2>/dev/null || true
 	@for c in $$(docker ps -a --filter "name=hiclaw-worker-" --format '{{.Names}}' 2>/dev/null); do \

@@ -70,7 +70,7 @@ REPLY=$(matrix_wait_for_reply "${ADMIN_TOKEN}" "${DM_ROOM}" "@manager" 300)
 
 if [ -z "${REPLY}" ]; then
     log_info "No DM reply yet, checking if Manager created a Project Room instead..."
-    MANAGER_TOKEN=$(docker exec "${TEST_MANAGER_CONTAINER}" \
+    MANAGER_TOKEN=$(docker exec "${TEST_AGENT_CONTAINER}" \
         jq -r '.channels.matrix.accessToken // empty' /root/manager-workspace/openclaw.json 2>/dev/null || true)
     if [ -n "${MANAGER_TOKEN}" ]; then
         PROJECT_ROOM=$(matrix_find_room_by_name "${MANAGER_TOKEN}" "Project:" 2>/dev/null || true)
@@ -92,7 +92,7 @@ if [ -z "${MANAGER_TOKEN:-}" ]; then
     log_info "Waiting for Manager token (timeout: 120s)..."
     DEADLINE=$(( $(date +%s) + 120 ))
     while [ "$(date +%s)" -lt "${DEADLINE}" ]; do
-        MANAGER_TOKEN=$(docker exec "${TEST_MANAGER_CONTAINER}" \
+        MANAGER_TOKEN=$(docker exec "${TEST_AGENT_CONTAINER}" \
             jq -r '.channels.matrix.accessToken // empty' /root/manager-workspace/openclaw.json 2>/dev/null || true)
         [ -n "${MANAGER_TOKEN}" ] && break
         sleep 5

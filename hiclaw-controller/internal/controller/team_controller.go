@@ -408,7 +408,7 @@ func (r *TeamReconciler) buildWorkerCR(t *v1beta1.Team, w v1beta1.TeamWorkerSpec
 		},
 		Spec: v1beta1.WorkerSpec{
 			Model:         w.Model,
-			Runtime:       w.Runtime,
+			Runtime:       "copaw", // Team mode requires copaw runtime
 			Image:         w.Image,
 			Identity:      w.Identity,
 			Soul:          w.Soul,

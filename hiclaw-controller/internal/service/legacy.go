@@ -63,6 +63,70 @@ func (l *LegacyCompat) managerAgentPrefix() string {
 
 // --- Manager Config ---
 
+// PutManagerConfig writes the Manager's openclaw.json to OSS, merging the
+// new config with any existing groupAllowFrom entries to avoid overwriting
+// additions made by UpdateManagerGroupAllowFrom (e.g. team leader IDs).
+func (l *LegacyCompat) PutManagerConfig(configJSON []byte) error {
+	if !l.Enabled() {
+		return nil
+	}
+
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	ctx := context.Background()
+	key := l.managerAgentPrefix() + "/openclaw.json"
+
+	// Read existing config to preserve groupAllowFrom additions
+	existingData, err := l.OSS.GetObject(ctx, key)
+	if err == nil && len(existingData) > 0 {
+		var existingCfg map[string]interface{}
+		var newCfg map[string]interface{}
+		if json.Unmarshal(existingData, &existingCfg) == nil && json.Unmarshal(configJSON, &newCfg) == nil {
+			mergeGroupAllowFrom(existingCfg, newCfg)
+			merged, err := json.MarshalIndent(newCfg, "", "  ")
+			if err == nil {
+				configJSON = merged
+			}
+		}
+	}
+
+	return l.OSS.PutObject(ctx, key, configJSON)
+}
+
+// mergeGroupAllowFrom copies any extra groupAllowFrom entries from old config
+// into new config, preserving IDs added by UpdateManagerGroupAllowFrom.
+func mergeGroupAllowFrom(oldCfg, newCfg map[string]interface{}) {
+	oldChannels, _ := oldCfg["channels"].(map[string]interface{})
+	newChannels, _ := newCfg["channels"].(map[string]interface{})
+	if oldChannels == nil || newChannels == nil {
+		return
+	}
+	oldMatrix, _ := oldChannels["matrix"].(map[string]interface{})
+	newMatrix, _ := newChannels["matrix"].(map[string]interface{})
+	if oldMatrix == nil || newMatrix == nil {
+		return
+	}
+
+	oldAllow := extractStringSlice(oldMatrix["groupAllowFrom"])
+	newAllow := extractStringSlice(newMatrix["groupAllowFrom"])
+
+	// Add any entries from old that are missing in new
+	for _, id := range oldAllow {
+		found := false
+		for _, nid := range newAllow {
+			if nid == id {
+				found = true
+				break
+			}
+		}
+		if !found {
+			newAllow = append(newAllow, id)
+		}
+	}
+	newMatrix["groupAllowFrom"] = newAllow
+}
+
 // UpdateManagerGroupAllowFrom adds or removes a worker Matrix ID from the
 // Manager's openclaw.json groupAllowFrom list via OSS.
 func (l *LegacyCompat) UpdateManagerGroupAllowFrom(workerMatrixID string, add bool) error {

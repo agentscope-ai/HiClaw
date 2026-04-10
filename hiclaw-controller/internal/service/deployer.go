@@ -55,6 +55,7 @@ type DeployerConfig struct {
 	OSS            oss.StorageClient
 	Executor       *executor.Shell
 	Packages       *executor.PackageResolver
+	Legacy         *LegacyCompat
 	AgentFSDir     string // embedded: /root/hiclaw-fs/agents
 	WorkerAgentDir string // source for builtin agent files
 	MatrixDomain   string
@@ -68,6 +69,7 @@ type Deployer struct {
 	oss            oss.StorageClient
 	executor       *executor.Shell
 	packages       *executor.PackageResolver
+	legacy         *LegacyCompat
 	agentFSDir     string
 	workerAgentDir string
 	matrixDomain   string
@@ -79,6 +81,7 @@ func NewDeployer(cfg DeployerConfig) *Deployer {
 		oss:            cfg.OSS,
 		executor:       cfg.Executor,
 		packages:       cfg.Packages,
+		legacy:         cfg.Legacy,
 		agentFSDir:     cfg.AgentFSDir,
 		workerAgentDir: cfg.WorkerAgentDir,
 		matrixDomain:   cfg.MatrixDomain,
@@ -295,8 +298,16 @@ func (d *Deployer) DeployManagerConfig(ctx context.Context, req ManagerDeployReq
 	if err != nil {
 		return fmt.Errorf("config generation failed: %w", err)
 	}
-	if err := d.oss.PutObject(ctx, agentPrefix+"/openclaw.json", configJSON); err != nil {
-		return fmt.Errorf("config push to storage failed: %w", err)
+	// Use LegacyCompat to write Manager config with mutex protection,
+	// merging groupAllowFrom to avoid overwriting team leader additions.
+	if d.legacy != nil && d.legacy.Enabled() {
+		if err := d.legacy.PutManagerConfig(configJSON); err != nil {
+			return fmt.Errorf("config push to storage failed: %w", err)
+		}
+	} else {
+		if err := d.oss.PutObject(ctx, agentPrefix+"/openclaw.json", configJSON); err != nil {
+			return fmt.Errorf("config push to storage failed: %w", err)
+		}
 	}
 
 	// --- SOUL.md (only if explicitly set in CRD spec) ---

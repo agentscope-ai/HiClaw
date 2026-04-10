@@ -33,7 +33,7 @@ TEST_BRANCH="verify/proposal-${TEST_RUN_ID}"
 
 log_section "Setup: Initialize Bare Git Repo"
 
-docker exec "${TEST_MANAGER_CONTAINER}" bash -c "
+docker exec "${TEST_CONTROLLER_CONTAINER}" bash -c "
     set -e
     mkdir -p '${REPO_PATH}.git'
     git init --bare '${REPO_PATH}.git'
@@ -72,7 +72,7 @@ assert_not_empty "${DM_ROOM}" "DM room with Manager exists"
 
 wait_for_manager_agent_ready 300 "${DM_ROOM}" "${ADMIN_TOKEN}" || {
     log_fail "Manager Agent not ready in time"
-    docker exec "${TEST_MANAGER_CONTAINER}" rm -rf "${REPO_PATH}.git" 2>/dev/null || true
+    docker exec "${TEST_CONTROLLER_CONTAINER}" rm -rf "${REPO_PATH}.git" 2>/dev/null || true
     test_teardown "14-git-collab"
     test_summary
     exit 1
@@ -166,7 +166,7 @@ log_info "Waiting for Manager token (timeout: 120s)..."
 MANAGER_TOKEN=""
 DEADLINE=$(( $(date +%s) + 120 ))
 while [ "$(date +%s)" -lt "${DEADLINE}" ]; do
-    MANAGER_TOKEN=$(docker exec "${TEST_MANAGER_CONTAINER}" \
+    MANAGER_TOKEN=$(docker exec "${TEST_AGENT_CONTAINER}" \
         jq -r '.channels.matrix.accessToken // empty' /root/manager-workspace/openclaw.json 2>/dev/null || true)
     [ -n "${MANAGER_TOKEN}" ] && break
     sleep 5
@@ -214,7 +214,7 @@ save_metrics_file "$METRICS" "14-git-collab"
 
 log_section "Cleanup"
 
-docker exec "${TEST_MANAGER_CONTAINER}" rm -rf "${REPO_PATH}.git" 2>/dev/null || true
+docker exec "${TEST_CONTROLLER_CONTAINER}" rm -rf "${REPO_PATH}.git" 2>/dev/null || true
 log_info "Removed bare git repo"
 
 test_teardown "14-git-collab"
