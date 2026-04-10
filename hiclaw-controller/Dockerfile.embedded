@@ -56,7 +56,12 @@ COPY --from=hiclaw-controller /usr/local/bin/kube-apiserver /usr/local/bin/kube-
 COPY --from=hiclaw-controller /opt/hiclaw/config/crd/ /opt/hiclaw/config/crd/
 
 # nginx (for Element Web serving) + jq + curl + zip/unzip
-RUN apt-get update -qq && \
+ARG APT_MIRROR=mirrors.aliyun.com
+RUN if [ -n "${APT_MIRROR}" ]; then \
+        sed -i "s|ports.ubuntu.com|${APT_MIRROR}|g; s|archive.ubuntu.com|${APT_MIRROR}|g; s|security.ubuntu.com|${APT_MIRROR}|g" \
+            /etc/apt/sources.list 2>/dev/null || true; \
+    fi && \
+    apt-get update -qq && \
     apt-get install -y -qq nginx jq curl zip unzip > /dev/null 2>&1 && \
     rm -rf /var/lib/apt/lists/*
 

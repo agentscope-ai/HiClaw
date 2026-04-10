@@ -36,7 +36,10 @@ type Client interface {
 	// --- Infrastructure initialization (used by Initializer) ---
 
 	// EnsureServiceSource registers a DNS-type service source.
-	EnsureServiceSource(ctx context.Context, name, domain string, port int) error
+	EnsureServiceSource(ctx context.Context, name, domain string, port int, protocol string) error
+
+	// EnsureStaticServiceSource registers a static (fixed IP:port) service source.
+	EnsureStaticServiceSource(ctx context.Context, name, address string, port int) error
 
 	// EnsureRoute creates a route mapping domains to a backend service.
 	// pathPrefix is the URL prefix to match (e.g. "/" or "/_matrix").

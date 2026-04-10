@@ -121,9 +121,11 @@ func (a *App) Start(ctx context.Context) error {
 				AdminUser:      a.cfg.MatrixAdminUser,
 				AdminPassword:  a.cfg.MatrixAdminPassword,
 				Namespace:      a.namespace,
+				IsEmbedded:     a.cfg.KubeMode == "embedded",
 				LLMProvider:    a.cfg.LLMProvider,
 				LLMAPIKey:      a.cfg.LLMAPIKey,
-				TuwunelURL:     a.cfg.WorkerEnv.MatrixURL,
+				OpenAIBaseURL:  a.cfg.OpenAIBaseURL,
+				TuwunelURL:     a.cfg.MatrixServerURL,
 				ElementWebURL:  a.cfg.ElementWebURL,
 			},
 		}

@@ -74,11 +74,16 @@ func (d *DockerBackend) Available(ctx context.Context) bool {
 }
 
 func (d *DockerBackend) Create(ctx context.Context, req CreateRequest) (*WorkerResult, error) {
-	prefix := d.containerPrefix
-	if req.NamePrefix != "" {
-		prefix = req.NamePrefix
+	var containerName string
+	if req.ContainerName != "" {
+		containerName = req.ContainerName
+	} else {
+		prefix := d.containerPrefix
+		if req.NamePrefix != "" {
+			prefix = req.NamePrefix
+		}
+		containerName = prefix + req.Name
 	}
-	containerName := prefix + req.Name
 
 	// Default image fallback
 	image := req.Image

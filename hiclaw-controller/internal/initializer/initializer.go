@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	v1beta1 "github.com/hiclaw/hiclaw-controller/api/v1beta1"
@@ -28,11 +29,13 @@ type Config struct {
 	AdminUser      string
 	AdminPassword  string
 	Namespace      string
+	IsEmbedded     bool // embedded mode: use static service sources for local services
 
 	// Gateway initialization
 	LLMProvider   string // e.g. "qwen", "openai"
 	LLMAPIKey     string
 	LLMApiURL     string // provider-specific base URL (optional)
+	OpenAIBaseURL string // custom base URL for openai-compat providers
 	TuwunelURL    string // internal Tuwunel URL, e.g. http://tuwunel:6167
 	ElementWebURL string // internal Element Web URL (optional)
 }
@@ -166,12 +169,22 @@ func (i *Initializer) initGatewayRoutes(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("parse Tuwunel URL: %w", err)
 		}
-		if err := i.Gateway.EnsureServiceSource(ctx, "tuwunel", host, port); err != nil {
-			logger.Error(err, "failed to register Tuwunel service source (non-fatal)")
+
+		var svcSuffix string
+		if cfg.IsEmbedded {
+			if err := i.Gateway.EnsureStaticServiceSource(ctx, "tuwunel", host, port); err != nil {
+				logger.Error(err, "failed to register Tuwunel static service source (non-fatal)")
+			}
+			svcSuffix = "static"
+		} else {
+			if err := i.Gateway.EnsureServiceSource(ctx, "tuwunel", host, port, "http"); err != nil {
+				logger.Error(err, "failed to register Tuwunel service source (non-fatal)")
+			}
+			svcSuffix = "dns"
 		}
 
 		// Matrix Homeserver routes (/_matrix/*, /_tuwunel/* → Tuwunel)
-		if err := i.Gateway.EnsureRoute(ctx, "matrix-homeserver", nil, "tuwunel.dns", port, "/_matrix"); err != nil {
+		if err := i.Gateway.EnsureRoute(ctx, "matrix-homeserver", nil, "tuwunel."+svcSuffix, port, "/_matrix"); err != nil {
 			logger.Error(err, "failed to create Matrix route (non-fatal)")
 		}
 	}
@@ -182,10 +195,19 @@ func (i *Initializer) initGatewayRoutes(ctx context.Context) error {
 		if err != nil {
 			logger.Error(err, "failed to parse Element Web URL (non-fatal)")
 		} else {
-			if err := i.Gateway.EnsureServiceSource(ctx, "element-web", host, port); err != nil {
-				logger.Error(err, "failed to register Element Web service source (non-fatal)")
+			var svcSuffix string
+			if cfg.IsEmbedded {
+				if err := i.Gateway.EnsureStaticServiceSource(ctx, "element-web", host, port); err != nil {
+					logger.Error(err, "failed to register Element Web static service source (non-fatal)")
+				}
+				svcSuffix = "static"
+			} else {
+				if err := i.Gateway.EnsureServiceSource(ctx, "element-web", host, port, "http"); err != nil {
+					logger.Error(err, "failed to register Element Web service source (non-fatal)")
+				}
+				svcSuffix = "dns"
 			}
-			if err := i.Gateway.EnsureRoute(ctx, "element-web", nil, "element-web.dns", port, "/"); err != nil {
+			if err := i.Gateway.EnsureRoute(ctx, "element-web", nil, "element-web."+svcSuffix, port, "/"); err != nil {
 				logger.Error(err, "failed to create Element Web route (non-fatal)")
 			}
 		}
@@ -197,24 +219,70 @@ func (i *Initializer) initGatewayRoutes(ctx context.Context) error {
 		if provider == "" {
 			provider = "qwen"
 		}
-		providerType := provider
-		raw := map[string]interface{}{"hiclawMode": true}
-		if provider == "qwen" {
-			raw["qwenEnableSearch"] = false
-			raw["qwenEnableCompatible"] = true
-			raw["qwenFileIds"] = []interface{}{}
-		} else {
-			providerType = "openai"
-		}
 
-		if err := i.Gateway.EnsureAIProvider(ctx, gateway.AIProviderRequest{
-			Name:     provider,
-			Type:     providerType,
-			Tokens:   []string{cfg.LLMAPIKey},
-			Protocol: "openai/v1",
-			Raw:      raw,
-		}); err != nil {
-			logger.Error(err, "failed to create LLM provider (non-fatal)")
+		switch provider {
+		case "qwen":
+			raw := map[string]interface{}{
+				"hiclawMode":           true,
+				"qwenEnableSearch":     false,
+				"qwenEnableCompatible": true,
+				"qwenFileIds":          []interface{}{},
+			}
+			if err := i.Gateway.EnsureAIProvider(ctx, gateway.AIProviderRequest{
+				Name:     "qwen",
+				Type:     "qwen",
+				Tokens:   []string{cfg.LLMAPIKey},
+				Protocol: "openai/v1",
+				Raw:      raw,
+			}); err != nil {
+				logger.Error(err, "failed to create LLM provider (non-fatal)")
+			}
+
+		case "openai-compat":
+			if cfg.OpenAIBaseURL == "" {
+				logger.Info("HICLAW_OPENAI_BASE_URL not set, skipping openai-compat provider setup")
+			} else {
+				// Parse URL to create DNS service source
+				host, port, err := parseHostPort(cfg.OpenAIBaseURL)
+				if err != nil {
+					logger.Error(err, "failed to parse HICLAW_OPENAI_BASE_URL (non-fatal)")
+				} else {
+					proto := "https"
+					if strings.HasPrefix(cfg.OpenAIBaseURL, "http://") {
+						proto = "http"
+					}
+					if err := i.Gateway.EnsureServiceSource(ctx, "openai-compat", host, port, proto); err != nil {
+						logger.Error(err, "failed to register openai-compat service source (non-fatal)")
+					}
+					raw := map[string]interface{}{
+						"hiclawMode":               true,
+						"openaiCustomUrl":           cfg.OpenAIBaseURL,
+						"openaiCustomServiceName":   "openai-compat.dns",
+						"openaiCustomServicePort":   port,
+					}
+					if err := i.Gateway.EnsureAIProvider(ctx, gateway.AIProviderRequest{
+						Name:     "openai-compat",
+						Type:     "openai",
+						Tokens:   []string{cfg.LLMAPIKey},
+						Protocol: "openai/v1",
+						Raw:      raw,
+					}); err != nil {
+						logger.Error(err, "failed to create LLM provider (non-fatal)")
+					}
+				}
+			}
+
+		default:
+			raw := map[string]interface{}{"hiclawMode": true}
+			if err := i.Gateway.EnsureAIProvider(ctx, gateway.AIProviderRequest{
+				Name:     provider,
+				Type:     "openai",
+				Tokens:   []string{cfg.LLMAPIKey},
+				Protocol: "openai/v1",
+				Raw:      raw,
+			}); err != nil {
+				logger.Error(err, "failed to create LLM provider (non-fatal)")
+			}
 		}
 
 		// 4. AI Route — auth framework enabled with empty consumer list.

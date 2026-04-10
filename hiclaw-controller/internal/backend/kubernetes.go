@@ -99,7 +99,10 @@ func (k *K8sBackend) Available(_ context.Context) bool {
 }
 
 func (k *K8sBackend) Create(ctx context.Context, req CreateRequest) (*WorkerResult, error) {
-	podName := k.podName(req.NamePrefix, req.Name)
+	podName := req.ContainerName
+	if podName == "" {
+		podName = k.podName(req.NamePrefix, req.Name)
+	}
 	if _, err := k.client.Pods(k.config.Namespace).Get(ctx, podName, metav1.GetOptions{}); err == nil {
 		return nil, fmt.Errorf("%w: pod %q", ErrConflict, podName)
 	} else if !apierrors.IsNotFound(err) {

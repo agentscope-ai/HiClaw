@@ -140,7 +140,7 @@ if [ "${USE_EXISTING}" = true ]; then
 
     # Enable YOLO mode for test run (auto-decision, no interactive prompts)
     # Try agent container first (embedded mode), fall back to manager container (legacy mode)
-    agent_container="$(docker ps --format '{{.Names}}' 2>/dev/null | grep -E '^hiclaw-manager-' | head -1)"
+    agent_container="$(docker ps --format '{{.Names}}' 2>/dev/null | grep -E '^hiclaw-manager(-|$)' | head -1)"
     agent_container="${agent_container:-${TEST_MANAGER_CONTAINER}}"
     docker exec "${agent_container}" touch /root/manager-workspace/yolo-mode 2>/dev/null && \
         log "YOLO mode enabled (${agent_container})" || \
@@ -171,7 +171,7 @@ else
     log "  Console port:   ${TEST_CONSOLE_PORT}"
 
     # Enable YOLO mode for test run
-    agent_container="$(docker ps --format '{{.Names}}' 2>/dev/null | grep -E '^hiclaw-manager-' | head -1)"
+    agent_container="$(docker ps --format '{{.Names}}' 2>/dev/null | grep -E '^hiclaw-manager(-|$)' | head -1)"
     agent_container="${agent_container:-${TEST_MANAGER_CONTAINER}}"
     docker exec "${agent_container}" touch /root/manager-workspace/yolo-mode 2>/dev/null && \
         log "YOLO mode enabled (${agent_container})" || true
@@ -205,7 +205,7 @@ _setup_manager_identity() {
     # Check if identity is already configured
     # Check in agent container (embedded mode) or manager container (legacy mode)
     local _agent
-    _agent="$(docker ps --format '{{.Names}}' 2>/dev/null | grep -E '^hiclaw-manager-' | head -1)"
+    _agent="$(docker ps --format '{{.Names}}' 2>/dev/null | grep -E '^hiclaw-manager(-|$)' | head -1)"
     _agent="${_agent:-${TEST_MANAGER_CONTAINER}}"
 
     if docker exec "${_agent}" test -f /root/manager-workspace/soul-configured 2>/dev/null; then

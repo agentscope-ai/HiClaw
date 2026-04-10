@@ -100,8 +100,9 @@ type Config struct {
 	ModelMaxTokens     int
 
 	// LLM provider (for Gateway initialization)
-	LLMProvider string
-	LLMAPIKey   string
+	LLMProvider    string
+	LLMAPIKey      string
+	OpenAIBaseURL  string // HICLAW_OPENAI_BASE_URL — custom base URL for openai-compat providers
 
 	// Element Web URL (for Gateway route initialization)
 	ElementWebURL string
@@ -218,6 +219,7 @@ func LoadConfig() *Config {
 
 		LLMProvider:   envOrDefault("HICLAW_LLM_PROVIDER", "qwen"),
 		LLMAPIKey:     os.Getenv("HICLAW_LLM_API_KEY"),
+		OpenAIBaseURL: os.Getenv("HICLAW_OPENAI_BASE_URL"),
 		ElementWebURL: os.Getenv("HICLAW_ELEMENT_WEB_URL"),
 
 		CMSTracesEnabled:  envBool("HICLAW_CMS_TRACES_ENABLED"),

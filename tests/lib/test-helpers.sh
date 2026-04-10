@@ -22,7 +22,7 @@ fi
 
 # Auto-detect Manager Agent container (separate container in embedded-controller mode)
 if [ -z "${TEST_AGENT_CONTAINER}" ]; then
-    export TEST_AGENT_CONTAINER="$(docker ps --format '{{.Names}}' 2>/dev/null | grep -E '^hiclaw-manager-' | head -1)"
+    export TEST_AGENT_CONTAINER="$(docker ps --format '{{.Names}}' 2>/dev/null | grep -E '^hiclaw-manager(-|$)' | head -1)"
     export TEST_AGENT_CONTAINER="${TEST_AGENT_CONTAINER:-${TEST_MANAGER_CONTAINER}}"
 fi
 
