@@ -34,13 +34,18 @@ _cleanup() {
         return
     fi
     log_info "All tests passed — cleaning up"
-    exec_in_manager hiclaw delete human "${TEST_HUMAN}" 2>/dev/null || true
+    exec_in_agent hiclaw delete team "${TEST_TEAM}" 2>/dev/null || true
+    exec_in_agent hiclaw delete human "${TEST_HUMAN}" 2>/dev/null || true
+    sleep 5
+    # Fallback: force-remove containers
     docker rm -f "hiclaw-worker-${TEST_LEADER}" 2>/dev/null || true
     docker rm -f "hiclaw-worker-${TEST_W1}" 2>/dev/null || true
     for w in "${TEST_LEADER}" "${TEST_W1}"; do
         exec_in_manager mc rm -r --force "${STORAGE_PREFIX}/agents/${w}/" 2>/dev/null || true
         exec_in_manager rm -rf "/root/hiclaw-fs/agents/${w}" 2>/dev/null || true
     done
+    exec_in_agent rm -f "/tmp/hiclaw-test-${TEST_HUMAN}.yaml" "/tmp/hiclaw-test-${TEST_TEAM}.yaml" 2>/dev/null || true
+    # Fallback: clean registries
     exec_in_agent bash -c "
         jq 'del(.workers[\"${TEST_LEADER}\"], .workers[\"${TEST_W1}\"])' \
             /root/manager-workspace/workers-registry.json > /tmp/wr-clean.json 2>/dev/null && \
@@ -63,8 +68,7 @@ HUMAN_MATRIX_ID="@${TEST_HUMAN}:${TEST_MATRIX_DOMAIN}"
 # ============================================================
 log_section "Create Human via Declarative YAML (before Team)"
 
-APPLY_OUTPUT=$(exec_in_manager bash -c "
-    cat > /tmp/${TEST_HUMAN}.yaml <<YAML
+exec_in_agent bash -c "cat > /tmp/hiclaw-test-${TEST_HUMAN}.yaml << 'YAMLEOF'
 apiVersion: hiclaw.io/v1beta1
 kind: Human
 metadata:
@@ -75,9 +79,10 @@ spec:
   accessibleTeams:
     - ${TEST_TEAM}
   note: Integration test Team Admin
-YAML
-    hiclaw apply -f /tmp/${TEST_HUMAN}.yaml
-" 2>&1)
+YAMLEOF
+" 2>/dev/null
+
+APPLY_OUTPUT=$(exec_in_agent hiclaw apply -f "/tmp/hiclaw-test-${TEST_HUMAN}.yaml" 2>&1)
 
 if echo "${APPLY_OUTPUT}" | grep -q "created\|configured"; then
     log_pass "Human YAML applied via hiclaw CLI"
@@ -147,25 +152,67 @@ SOUL
     " 2>/dev/null
 done
 
-CREATE_OUTPUT=$(exec_in_manager bash -c "
-    bash /opt/hiclaw/agent/skills/team-management/scripts/create-team.sh \
-        --name '${TEST_TEAM}' --leader '${TEST_LEADER}' --workers '${TEST_W1}' \
-        --team-admin '${TEST_HUMAN}' --team-admin-matrix-id '${HUMAN_MATRIX_ID}'
-" 2>&1)
+exec_in_agent bash -c "cat > /tmp/hiclaw-test-${TEST_TEAM}.yaml << 'YAMLEOF'
+apiVersion: hiclaw.io/v1beta1
+kind: Team
+metadata:
+  name: ${TEST_TEAM}
+spec:
+  admin:
+    name: ${TEST_HUMAN}
+    matrixUserId: ${HUMAN_MATRIX_ID}
+  leader:
+    name: ${TEST_LEADER}
+    model: qwen3.5-plus
+  workers:
+    - name: ${TEST_W1}
+      model: qwen3.5-plus
+YAMLEOF
+" 2>/dev/null
 
-if echo "${CREATE_OUTPUT}" | grep -q "RESULT"; then
-    log_pass "Team created with Team Admin"
+APPLY_TEAM_OUTPUT=$(exec_in_agent hiclaw apply -f "/tmp/hiclaw-test-${TEST_TEAM}.yaml" 2>&1)
+if echo "${APPLY_TEAM_OUTPUT}" | grep -q "created\|configured"; then
+    log_pass "Team YAML applied via hiclaw CLI"
 else
-    log_fail "Team creation failed"
-    echo "${CREATE_OUTPUT}" | tail -10
+    log_fail "Team YAML apply failed: ${APPLY_TEAM_OUTPUT}"
 fi
 
-# Check backfill log
-if echo "${CREATE_OUTPUT}" | grep -qi "backfill\|Configuring permissions for human"; then
-    log_pass "Team creation backfilled Human permissions"
+# Wait for controller to reconcile team
+log_info "Waiting for controller to reconcile team..."
+TEAM_TIMEOUT=180; TEAM_ELAPSED=0
+TEAM_CREATED=false
+while [ "${TEAM_ELAPSED}" -lt "${TEAM_TIMEOUT}" ]; do
+    if exec_in_manager cat /var/log/hiclaw/hiclaw-controller-error.log 2>/dev/null | grep -q "team created.*${TEST_TEAM}"; then
+        TEAM_CREATED=true
+        break
+    fi
+    sleep 5; TEAM_ELAPSED=$((TEAM_ELAPSED + 5))
+    printf "\r[TEST INFO] Waiting for team reconcile... (%ds/%ds)" "${TEAM_ELAPSED}" "${TEAM_TIMEOUT}"
+done
+echo ""
+
+if [ "${TEAM_CREATED}" = true ]; then
+    log_pass "TeamReconciler created team (took ~${TEAM_ELAPSED}s)"
 else
-    log_info "No backfill log found (Human may have been configured during team creation)"
+    log_fail "TeamReconciler did not create team within ${TEAM_TIMEOUT}s"
+    exec_in_manager cat /var/log/hiclaw/hiclaw-controller-error.log 2>/dev/null | grep "${TEST_TEAM}" | tail -10
 fi
+
+# Wait for all workers to be reconciled
+for w in "${TEST_LEADER}" "${TEST_W1}"; do
+    W_TIMEOUT=120; W_ELAPSED=0
+    while [ "${W_ELAPSED}" -lt "${W_TIMEOUT}" ]; do
+        if exec_in_manager cat /var/log/hiclaw/hiclaw-controller-error.log 2>/dev/null | grep -q "worker created.*${w}"; then
+            break
+        fi
+        sleep 5; W_ELAPSED=$((W_ELAPSED + 5))
+    done
+    if [ "${W_ELAPSED}" -lt "${W_TIMEOUT}" ]; then
+        log_pass "Worker ${w} reconciled (took ~${W_ELAPSED}s)"
+    else
+        log_fail "Worker ${w} not reconciled within ${W_TIMEOUT}s"
+    fi
+done
 
 # ============================================================
 # Section 4: Verify Team Admin in teams-registry.json

@@ -27,12 +27,14 @@ _cleanup() {
     fi
     log_info "All tests passed — cleaning up test workers"
     for w in "${TEST_WORKER}" "${TEST_WORKER_OVERRIDE}"; do
-        exec_in_manager hiclaw delete worker "${w}" 2>/dev/null || true
+        exec_in_agent hiclaw delete worker "${w}" 2>/dev/null || true
         sleep 2
         docker rm -f "hiclaw-worker-${w}" 2>/dev/null || true
+        exec_in_agent rm -rf "/tmp/hiclaw-test-${w}" 2>/dev/null || true
         exec_in_manager rm -rf "/root/hiclaw-fs/agents/${w}" 2>/dev/null || true
         exec_in_manager mc rm -r --force "${STORAGE_PREFIX}/agents/${w}/" 2>/dev/null || true
     done
+    exec_in_agent rm -f "/tmp/hiclaw-test-${TEST_WORKER}.yaml" 2>/dev/null || true
     exec_in_manager rm -rf "/tmp/hiclaw-test-${TEST_WORKER_OVERRIDE}" 2>/dev/null || true
     exec_in_manager mc rm "${STORAGE_PREFIX}/hiclaw-config/packages/${TEST_WORKER_OVERRIDE}*.zip" 2>/dev/null || true
 }
@@ -76,8 +78,8 @@ AGENTS_CONTENT="# Inline Test Workspace
 - This is a test worker created via inline YAML fields
 - Respond to all messages politely"
 
-# Write YAML with inline soul and agents
-exec_in_manager bash -c "cat > /tmp/hiclaw-test-${TEST_WORKER}.yaml << 'YAMLEOF'
+# Write YAML with inline soul and agents (in agent container where hiclaw CLI runs)
+exec_in_agent bash -c "cat > /tmp/hiclaw-test-${TEST_WORKER}.yaml << 'YAMLEOF'
 apiVersion: hiclaw.io/v1beta1
 kind: Worker
 metadata:
@@ -91,7 +93,7 @@ $(echo "${AGENTS_CONTENT}" | sed 's/^/    /')
 YAMLEOF
 " 2>/dev/null
 
-YAML_EXISTS=$(exec_in_manager test -f "/tmp/hiclaw-test-${TEST_WORKER}.yaml" && echo "yes" || echo "no")
+YAML_EXISTS=$(exec_in_agent test -f "/tmp/hiclaw-test-${TEST_WORKER}.yaml" && echo "yes" || echo "no")
 if [ "${YAML_EXISTS}" = "yes" ]; then
     log_pass "Worker YAML with inline fields created"
 else
@@ -103,7 +105,7 @@ fi
 # ============================================================
 log_section "Apply Worker YAML"
 
-APPLY_OUTPUT=$(exec_in_manager hiclaw apply -f "/tmp/hiclaw-test-${TEST_WORKER}.yaml" 2>&1)
+APPLY_OUTPUT=$(exec_in_agent hiclaw apply -f "/tmp/hiclaw-test-${TEST_WORKER}.yaml" 2>&1)
 APPLY_EXIT=$?
 
 if [ ${APPLY_EXIT} -eq 0 ]; then
@@ -227,7 +229,7 @@ fi
 # ============================================================
 log_section "Delete Worker"
 
-DELETE_OUTPUT=$(exec_in_manager hiclaw delete worker "${TEST_WORKER}" 2>&1)
+DELETE_OUTPUT=$(exec_in_agent hiclaw delete worker "${TEST_WORKER}" 2>&1)
 if echo "${DELETE_OUTPUT}" | grep -q "deleted"; then
     log_pass "hiclaw delete reported success"
 else
@@ -287,8 +289,14 @@ else
     log_fail "Failed to create override test ZIP package"
 fi
 
+# Copy ZIP from controller to agent container
+docker cp "${TEST_MANAGER_CONTAINER}:${OVERRIDE_WORK_DIR}/${TEST_WORKER_OVERRIDE}.zip" /tmp/_hiclaw_test_zip_$$ 2>/dev/null
+exec_in_agent mkdir -p "${OVERRIDE_WORK_DIR}" 2>/dev/null
+docker cp /tmp/_hiclaw_test_zip_$$ "${TEST_AGENT_CONTAINER}:${OVERRIDE_WORK_DIR}/${TEST_WORKER_OVERRIDE}.zip" 2>/dev/null
+rm -f /tmp/_hiclaw_test_zip_$$ 2>/dev/null
+
 # Import ZIP first to get it into MinIO
-APPLY_ZIP_OUTPUT=$(exec_in_manager hiclaw apply worker --zip "${OVERRIDE_WORK_DIR}/${TEST_WORKER_OVERRIDE}.zip" --name "${TEST_WORKER_OVERRIDE}" 2>&1)
+APPLY_ZIP_OUTPUT=$(exec_in_agent hiclaw apply worker --zip "${OVERRIDE_WORK_DIR}/${TEST_WORKER_OVERRIDE}.zip" --name "${TEST_WORKER_OVERRIDE}" 2>&1)
 if [ $? -eq 0 ]; then
     log_pass "ZIP imported for override test"
 else
@@ -306,7 +314,7 @@ This soul was set via inline field and should replace the package version."
 OVERRIDE_AGENTS="# OVERRIDDEN AGENTS FROM INLINE
 This agents config was set via inline field."
 
-exec_in_manager bash -c "cat > /tmp/hiclaw-override-${TEST_WORKER_OVERRIDE}.yaml << 'YAMLEOF'
+exec_in_agent bash -c "cat > /tmp/hiclaw-override-${TEST_WORKER_OVERRIDE}.yaml << 'YAMLEOF'
 apiVersion: hiclaw.io/v1beta1
 kind: Worker
 metadata:
@@ -322,7 +330,7 @@ YAMLEOF
 " 2>/dev/null
 
 # Apply the YAML with both package and inline fields
-APPLY_OVERRIDE=$(exec_in_manager hiclaw apply -f "/tmp/hiclaw-override-${TEST_WORKER_OVERRIDE}.yaml" 2>&1)
+APPLY_OVERRIDE=$(exec_in_agent hiclaw apply -f "/tmp/hiclaw-override-${TEST_WORKER_OVERRIDE}.yaml" 2>&1)
 if echo "${APPLY_OVERRIDE}" | grep -q "created\|configured"; then
     log_pass "Applied YAML with package + inline override"
 else
@@ -377,7 +385,7 @@ else
 fi
 
 # Clean up override worker
-exec_in_manager hiclaw delete worker "${TEST_WORKER_OVERRIDE}" 2>/dev/null
+exec_in_agent hiclaw delete worker "${TEST_WORKER_OVERRIDE}" 2>/dev/null
 log_pass "Override worker deleted"
 
 # ============================================================

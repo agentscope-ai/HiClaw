@@ -30,10 +30,11 @@ _cleanup() {
         return
     fi
     log_info "All tests passed — cleaning up test worker: ${TEST_WORKER}"
-    exec_in_manager hiclaw delete worker "${TEST_WORKER}" 2>/dev/null || true
+    exec_in_agent hiclaw delete worker "${TEST_WORKER}" 2>/dev/null || true
     exec_in_manager mc rm "${STORAGE_PREFIX}/hiclaw-config/packages/${TEST_WORKER}*.zip" 2>/dev/null || true
     sleep 5
     docker rm -f "hiclaw-worker-${TEST_WORKER}" 2>/dev/null || true
+    exec_in_agent rm -rf "/tmp/hiclaw-test-${TEST_WORKER}" 2>/dev/null || true
     exec_in_manager rm -rf "/root/hiclaw-fs/agents/${TEST_WORKER}" 2>/dev/null || true
     exec_in_manager rm -rf "/tmp/hiclaw-test-${TEST_WORKER}" 2>/dev/null || true
     exec_in_manager mc rm -r --force "${STORAGE_PREFIX}/agents/${TEST_WORKER}/" 2>/dev/null || true
@@ -59,11 +60,11 @@ else
     log_fail "kube-apiserver process is not running"
 fi
 
-HICLAW_HELP=$(exec_in_manager hiclaw --help 2>&1 | head -1 || echo "")
+HICLAW_HELP=$(exec_in_agent hiclaw --help 2>&1 | head -1 || echo "")
 if echo "${HICLAW_HELP}" | grep -qi "hiclaw\|declarative\|resource"; then
-    log_pass "hiclaw CLI is available"
+    log_pass "hiclaw CLI is available (in agent container)"
 else
-    log_fail "hiclaw CLI is not available"
+    log_fail "hiclaw CLI is not available (in agent container)"
 fi
 
 # ============================================================
@@ -127,12 +128,18 @@ else
     log_fail "Failed to create test ZIP package"
 fi
 
+# Copy ZIP from controller to agent container
+docker cp "${TEST_MANAGER_CONTAINER}:${WORK_DIR}/${TEST_WORKER}.zip" /tmp/_hiclaw_test_zip_$$ 2>/dev/null
+exec_in_agent mkdir -p "${WORK_DIR}" 2>/dev/null
+docker cp /tmp/_hiclaw_test_zip_$$ "${TEST_AGENT_CONTAINER}:${WORK_DIR}/${TEST_WORKER}.zip" 2>/dev/null
+rm -f /tmp/_hiclaw_test_zip_$$ 2>/dev/null
+
 # ============================================================
 # Section 3: Import via hiclaw apply worker --zip
 # ============================================================
 log_section "Import Worker via hiclaw apply worker --zip"
 
-APPLY_OUTPUT=$(exec_in_manager hiclaw apply worker --zip "${WORK_DIR}/${TEST_WORKER}.zip" --name "${TEST_WORKER}" 2>&1)
+APPLY_OUTPUT=$(exec_in_agent hiclaw apply worker --zip "${WORK_DIR}/${TEST_WORKER}.zip" --name "${TEST_WORKER}" 2>&1)
 APPLY_EXIT=$?
 
 if [ ${APPLY_EXIT} -eq 0 ]; then
@@ -169,7 +176,7 @@ fi
 # ============================================================
 log_section "Verify hiclaw get"
 
-GET_LIST=$(exec_in_manager hiclaw get workers 2>&1)
+GET_LIST=$(exec_in_agent hiclaw get workers 2>&1)
 assert_contains "${GET_LIST}" "${TEST_WORKER}" "Worker visible in 'hiclaw get workers'"
 
 # ============================================================
@@ -177,7 +184,7 @@ assert_contains "${GET_LIST}" "${TEST_WORKER}" "Worker visible in 'hiclaw get wo
 # ============================================================
 log_section "Idempotency"
 
-REIMPORT_OUTPUT=$(exec_in_manager hiclaw apply worker --zip "${WORK_DIR}/${TEST_WORKER}.zip" --name "${TEST_WORKER}" 2>&1)
+REIMPORT_OUTPUT=$(exec_in_agent hiclaw apply worker --zip "${WORK_DIR}/${TEST_WORKER}.zip" --name "${TEST_WORKER}" 2>&1)
 if echo "${REIMPORT_OUTPUT}" | grep -q "updated\|configured"; then
     log_pass "Re-import correctly reports 'updated' (idempotent)"
 else
@@ -352,7 +359,7 @@ fi
 # ============================================================
 log_section "Delete Worker"
 
-DELETE_OUTPUT=$(exec_in_manager hiclaw delete worker "${TEST_WORKER}" 2>&1)
+DELETE_OUTPUT=$(exec_in_agent hiclaw delete worker "${TEST_WORKER}" 2>&1)
 if echo "${DELETE_OUTPUT}" | grep -q "deleted"; then
     log_pass "hiclaw delete reported success"
 else

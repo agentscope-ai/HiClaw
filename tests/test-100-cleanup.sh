@@ -70,11 +70,10 @@ if [ -n "${TEST_TEAMS}" ]; then
 
     for team in ${TEST_TEAMS}; do
         log_info "Deleting team: ${team}"
-        DELETE_OUTPUT=$(exec_in_manager hiclaw delete team "${team}" 2>&1)
+        DELETE_OUTPUT=$(exec_in_agent hiclaw delete team "${team}" 2>&1)
         if echo "${DELETE_OUTPUT}" | grep -q "deleted"; then
             log_pass "hiclaw delete team ${team} reported success"
         else
-            # YAML may already be gone (cleaned up by individual test's trap handler)
             log_info "hiclaw delete team ${team} failed (YAML likely already removed by prior test cleanup)"
         fi
     done
@@ -103,12 +102,10 @@ if [ -n "${TEST_WORKERS}" ]; then
         fi
 
         log_info "Deleting worker: ${worker}"
-        DELETE_OUTPUT=$(exec_in_manager hiclaw delete worker "${worker}" 2>&1)
+        DELETE_OUTPUT=$(exec_in_agent hiclaw delete worker "${worker}" 2>&1)
         if echo "${DELETE_OUTPUT}" | grep -q "deleted"; then
             log_pass "hiclaw delete worker ${worker} reported success"
         else
-            # YAML may already be gone (cleaned up by individual test's trap handler).
-            # Fall back to direct container + lifecycle cleanup.
             log_info "hiclaw delete worker ${worker} skipped (YAML likely already removed by prior test)"
             docker rm -f "hiclaw-worker-${worker}" 2>/dev/null || true
             exec_in_agent bash /opt/hiclaw/agent/skills/worker-management/scripts/lifecycle-worker.sh \

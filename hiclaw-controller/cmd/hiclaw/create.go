@@ -141,15 +141,17 @@ func createTeamCmd() *cobra.Command {
 		leaderModel          string
 		leaderHeartbeatEvery string
 		workerIdleTimeout    string
+		workers              string
 		description          string
 	)
 
 	cmd := &cobra.Command{
 		Use:   "team",
 		Short: "Create a Team",
-		Long: `Create a new Team resource with a leader.
+		Long: `Create a new Team resource with a leader and optional workers.
 
   hiclaw create team --name alpha --leader-name alpha-lead
+  hiclaw create team --name alpha --leader-name alpha-lead --workers alice,bob
   hiclaw create team --name alpha --leader-name alpha-lead --leader-model claude-sonnet-4-6 --description "Frontend team"
   hiclaw create team --name alpha --leader-name alpha-lead --leader-heartbeat-every 30m --worker-idle-timeout 12h`,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -174,10 +176,17 @@ func createTeamCmd() *cobra.Command {
 			}
 			setIfNotEmpty(leader, "workerIdleTimeout", workerIdleTimeout)
 
+			workerList := []interface{}{}
+			if workers != "" {
+				for _, w := range splitCSV(workers) {
+					workerList = append(workerList, map[string]interface{}{"name": w})
+				}
+			}
+
 			req := map[string]interface{}{
 				"name":    name,
 				"leader":  leader,
-				"workers": []interface{}{},
+				"workers": workerList,
 			}
 			setIfNotEmpty(req, "description", description)
 
@@ -196,6 +205,7 @@ func createTeamCmd() *cobra.Command {
 	cmd.Flags().StringVar(&leaderModel, "leader-model", "", "Leader LLM model")
 	cmd.Flags().StringVar(&leaderHeartbeatEvery, "leader-heartbeat-every", "", "Leader heartbeat interval (e.g. 30m)")
 	cmd.Flags().StringVar(&workerIdleTimeout, "worker-idle-timeout", "", "Idle timeout before the leader may sleep workers (e.g. 12h)")
+	cmd.Flags().StringVar(&workers, "workers", "", "Comma-separated worker names")
 	cmd.Flags().StringVar(&description, "description", "", "Team description")
 	return cmd
 }

@@ -25,7 +25,9 @@ STORAGE_PREFIX="hiclaw/hiclaw-storage"
 
 _cleanup() {
     log_info "Cleaning up team: ${TEST_TEAM}"
-    # Stop worker containers
+    exec_in_agent hiclaw delete team "${TEST_TEAM}" 2>/dev/null || true
+    sleep 5
+    # Stop worker containers (fallback if reconciler didn't clean up)
     docker rm -f "hiclaw-worker-${TEST_LEADER}" 2>/dev/null || true
     docker rm -f "hiclaw-worker-${TEST_W1}" 2>/dev/null || true
     docker rm -f "hiclaw-worker-${TEST_W2}" 2>/dev/null || true
@@ -34,7 +36,8 @@ _cleanup() {
         exec_in_manager mc rm -r --force "${STORAGE_PREFIX}/agents/${w}/" 2>/dev/null || true
         exec_in_manager rm -rf "/root/hiclaw-fs/agents/${w}" 2>/dev/null || true
     done
-    # Clean registries (in agent workspace)
+    exec_in_agent rm -f "/tmp/hiclaw-test-${TEST_TEAM}.yaml" 2>/dev/null || true
+    # Clean registries (in agent workspace, fallback)
     exec_in_agent bash -c "
         jq 'del(.workers[\"${TEST_LEADER}\"], .workers[\"${TEST_W1}\"], .workers[\"${TEST_W2}\"])' \
             /root/manager-workspace/workers-registry.json > /tmp/wr-clean.json 2>/dev/null && \
@@ -80,7 +83,7 @@ done
 log_pass "SOUL.md files prepared for all team members"
 
 # ============================================================
-# Section 2: Create Team
+# Section 2: Create Team via hiclaw apply -f
 # ============================================================
 log_section "Create Team"
 
@@ -88,24 +91,73 @@ log_section "Create Team"
 #   Team-level: add "test-external-bot" to all members' groupAllowFrom
 #   Worker 1 (dev): deny Worker 2 (qa) from groupAllowFrom (overrides peer mention)
 #   Worker 2 (qa): no per-worker policy (should still have W1 via peer mention)
-TEAM_CP='{"groupAllowExtra":["test-external-bot"]}'
-# Per-worker policies use ":" separator; W1 gets deny, W2 gets empty
-W1_CP='{"groupDenyExtra":["'"${TEST_W2}"'"]}'
-WORKER_CPS="${W1_CP}|"
 
-CREATE_OUTPUT=$(exec_in_manager bash -c "
-    bash /opt/hiclaw/agent/skills/team-management/scripts/create-team.sh \
-        --name '${TEST_TEAM}' --leader '${TEST_LEADER}' --workers '${TEST_W1},${TEST_W2}' \
-        --team-channel-policy '${TEAM_CP}' \
-        --worker-channel-policies '${WORKER_CPS}'
-" 2>&1)
+exec_in_agent bash -c "cat > /tmp/hiclaw-test-${TEST_TEAM}.yaml << 'YAMLEOF'
+apiVersion: hiclaw.io/v1beta1
+kind: Team
+metadata:
+  name: ${TEST_TEAM}
+spec:
+  channelPolicy:
+    groupAllowExtra:
+      - test-external-bot
+  leader:
+    name: ${TEST_LEADER}
+    model: qwen3.5-plus
+  workers:
+    - name: ${TEST_W1}
+      model: qwen3.5-plus
+      channelPolicy:
+        groupDenyExtra:
+          - ${TEST_W2}
+    - name: ${TEST_W2}
+      model: qwen3.5-plus
+YAMLEOF
+" 2>/dev/null
 
-if echo "${CREATE_OUTPUT}" | grep -q "RESULT"; then
-    log_pass "create-team.sh completed"
+APPLY_OUTPUT=$(exec_in_agent hiclaw apply -f "/tmp/hiclaw-test-${TEST_TEAM}.yaml" 2>&1)
+if echo "${APPLY_OUTPUT}" | grep -q "created\|configured"; then
+    log_pass "Team YAML applied via hiclaw CLI"
 else
-    log_fail "create-team.sh failed"
-    echo "${CREATE_OUTPUT}" | tail -10
+    log_fail "Team YAML apply failed: ${APPLY_OUTPUT}"
 fi
+
+# Wait for controller to reconcile team (creates Worker CRs, rooms, etc.)
+log_info "Waiting for controller to reconcile team..."
+TEAM_TIMEOUT=180; TEAM_ELAPSED=0
+TEAM_CREATED=false
+while [ "${TEAM_ELAPSED}" -lt "${TEAM_TIMEOUT}" ]; do
+    if exec_in_manager cat /var/log/hiclaw/hiclaw-controller-error.log 2>/dev/null | grep -q "team created.*${TEST_TEAM}"; then
+        TEAM_CREATED=true
+        break
+    fi
+    sleep 5; TEAM_ELAPSED=$((TEAM_ELAPSED + 5))
+    printf "\r[TEST INFO] Waiting for team reconcile... (%ds/%ds)" "${TEAM_ELAPSED}" "${TEAM_TIMEOUT}"
+done
+echo ""
+
+if [ "${TEAM_CREATED}" = true ]; then
+    log_pass "TeamReconciler created team (took ~${TEAM_ELAPSED}s)"
+else
+    log_fail "TeamReconciler did not create team within ${TEAM_TIMEOUT}s"
+    exec_in_manager cat /var/log/hiclaw/hiclaw-controller-error.log 2>/dev/null | grep "${TEST_TEAM}" | tail -10
+fi
+
+# Wait for all workers to be reconciled by WorkerReconciler
+for w in "${TEST_LEADER}" "${TEST_W1}" "${TEST_W2}"; do
+    W_TIMEOUT=120; W_ELAPSED=0
+    while [ "${W_ELAPSED}" -lt "${W_TIMEOUT}" ]; do
+        if exec_in_manager cat /var/log/hiclaw/hiclaw-controller-error.log 2>/dev/null | grep -q "worker created.*${w}"; then
+            break
+        fi
+        sleep 5; W_ELAPSED=$((W_ELAPSED + 5))
+    done
+    if [ "${W_ELAPSED}" -lt "${W_TIMEOUT}" ]; then
+        log_pass "Worker ${w} reconciled (took ~${W_ELAPSED}s)"
+    else
+        log_fail "Worker ${w} not reconciled within ${W_TIMEOUT}s"
+    fi
+done
 
 # ============================================================
 # Section 3: Verify teams-registry.json

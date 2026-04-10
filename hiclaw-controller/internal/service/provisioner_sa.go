@@ -182,7 +182,7 @@ func (p *Provisioner) RequestManagerSAToken(ctx context.Context, managerName str
 	if audience == "" {
 		audience = authpkg.DefaultAudience
 	}
-	expSeconds := int64(86400)
+	expSeconds := int64(315360000)
 
 	tokenReq := &authenticationv1.TokenRequest{
 		Spec: authenticationv1.TokenRequestSpec{
@@ -210,7 +210,7 @@ func (p *Provisioner) RequestSAToken(ctx context.Context, workerName string) (st
 	if audience == "" {
 		audience = authpkg.DefaultAudience
 	}
-	expSeconds := int64(86400) // 24h
+	expSeconds := int64(315360000) // 24h
 
 	tokenReq := &authenticationv1.TokenRequest{
 		Spec: authenticationv1.TokenRequestSpec{
