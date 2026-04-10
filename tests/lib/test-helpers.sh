@@ -407,6 +407,20 @@ exec_in_agent() {
     docker exec "${TEST_AGENT_CONTAINER:-${TEST_CONTROLLER_CONTAINER:-hiclaw-manager}}" "$@"
 }
 
+# Copy a file between containers via tar pipe (avoids host filesystem symlink issues on macOS).
+# Usage: copy_to_agent <src_path_in_controller> <dst_path_in_agent>
+copy_to_agent() {
+    local src_path="$1"
+    local dst_path="$2"
+    local src_dir dst_dir src_file
+    src_dir=$(dirname "${src_path}")
+    src_file=$(basename "${src_path}")
+    dst_dir=$(dirname "${dst_path}")
+    exec_in_agent mkdir -p "${dst_dir}" 2>/dev/null
+    docker exec "${TEST_CONTROLLER_CONTAINER}" tar -cf - -C "${src_dir}" "${src_file}" | \
+        docker exec -i "${TEST_AGENT_CONTAINER}" tar -xf - -C "${dst_dir}"
+}
+
 start_worker_container() {
     local worker_name="$1"
     local container_name="hiclaw-test-worker-${worker_name}"

@@ -283,11 +283,8 @@ else
     log_fail "Failed to create override test ZIP package"
 fi
 
-# Copy ZIP from controller to agent container
-docker cp "${TEST_CONTROLLER_CONTAINER}:${OVERRIDE_WORK_DIR}/${TEST_WORKER_OVERRIDE}.zip" /tmp/_hiclaw_test_zip_$$ 2>/dev/null
-exec_in_agent mkdir -p "${OVERRIDE_WORK_DIR}" 2>/dev/null
-docker cp /tmp/_hiclaw_test_zip_$$ "${TEST_AGENT_CONTAINER}:${OVERRIDE_WORK_DIR}/${TEST_WORKER_OVERRIDE}.zip" 2>/dev/null
-rm -f /tmp/_hiclaw_test_zip_$$ 2>/dev/null
+# Copy ZIP from controller to agent container (tar pipe avoids macOS /tmp symlink issues)
+copy_to_agent "${OVERRIDE_WORK_DIR}/${TEST_WORKER_OVERRIDE}.zip" "${OVERRIDE_WORK_DIR}/${TEST_WORKER_OVERRIDE}.zip"
 
 # Import ZIP first to get it into MinIO
 APPLY_ZIP_OUTPUT=$(exec_in_agent hiclaw apply worker --zip "${OVERRIDE_WORK_DIR}/${TEST_WORKER_OVERRIDE}.zip" --name "${TEST_WORKER_OVERRIDE}" 2>&1)
