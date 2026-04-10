@@ -5,6 +5,7 @@
 #   ./hiclaw-install.sh                  # Interactive installation (choose Quick Start or Manual)
 #   ./hiclaw-install.sh manager          # Same as above (explicit)
 #   ./hiclaw-install.sh worker --name <name> ...  # Worker installation
+#   ./hiclaw-install.sh uninstall        # Stop and remove Manager + all Workers
 #
 # Onboarding Modes:
 #   Quick Start  - Fast installation with all default values (recommended)
@@ -59,18 +60,20 @@ STEP_RESULT=""  # Used by state machine to signal "back" navigation
 
 HICLAW_LOG_FILE="${HOME}/hiclaw-install.log"
 
-# Redirect all output (stdout and stderr) to both terminal and log file
-exec > >(tee -a "${HICLAW_LOG_FILE}") 2>&1
+if [ "${1:-}" != "uninstall" ]; then
+    # Redirect all output (stdout and stderr) to both terminal and log file
+    exec > >(tee -a "${HICLAW_LOG_FILE}") 2>&1
 
-echo ""
-echo "========================================"
-echo "HiClaw Installation Log"
-echo "Started: $(date)"
-echo "User: $(whoami)"
-echo "System: $(uname -a)"
-echo "Log file: ${HICLAW_LOG_FILE}"
-echo "========================================"
-echo ""
+    echo ""
+    echo "========================================"
+    echo "HiClaw Installation Log"
+    echo "Started: $(date)"
+    echo "User: $(whoami)"
+    echo "System: $(uname -a)"
+    echo "Log file: ${HICLAW_LOG_FILE}"
+    echo "========================================"
+    echo ""
+fi
 
 # ============================================================
 # Utility functions (needed early for timezone detection)
@@ -825,6 +828,31 @@ msg() {
         "lang.option_en.en") text="  2) English" ;;
         "lang.prompt.zh") text="请选择 / Enter choice" ;;
         "lang.prompt.en") text="请选择 / Enter choice" ;;
+        # --- Uninstall messages ---
+        "uninstall.title.zh") text="正在卸载 HiClaw..." ;;
+        "uninstall.title.en") text="Uninstalling HiClaw..." ;;
+        "uninstall.stopping_manager.zh") text="正在停止并移除 hiclaw-manager..." ;;
+        "uninstall.stopping_manager.en") text="Stopping and removing hiclaw-manager..." ;;
+        "uninstall.stopping_workers.zh") text="正在停止并移除 Worker 容器..." ;;
+        "uninstall.stopping_workers.en") text="Stopping and removing worker containers..." ;;
+        "uninstall.removed.zh") text="  已移除: %s" ;;
+        "uninstall.removed.en") text="  Removed: %s" ;;
+        "uninstall.removing_volume.zh") text="正在移除 Docker 卷: %s" ;;
+        "uninstall.removing_volume.en") text="Removing Docker volume: %s" ;;
+        "uninstall.removing_env.zh") text="正在移除 env 文件: %s" ;;
+        "uninstall.removing_env.en") text="Removing env file: %s" ;;
+        "uninstall.removing_proxy.zh") text="正在停止并移除 Docker API 代理容器: hiclaw-docker-proxy" ;;
+        "uninstall.removing_proxy.en") text="Stopping and removing Docker API proxy container: hiclaw-docker-proxy" ;;
+        "uninstall.removing_network.zh") text="正在移除 Docker 网络: hiclaw-net" ;;
+        "uninstall.removing_network.en") text="Removing Docker network: hiclaw-net" ;;
+        "uninstall.removing_workspace.zh") text="正在移除工作空间目录: %s" ;;
+        "uninstall.removing_workspace.en") text="Removing workspace directory: %s" ;;
+        "uninstall.removing_workspace_elevated.zh") text="  工作空间包含 root 文件，通过容器清理..." ;;
+        "uninstall.removing_workspace_elevated.en") text="  Workspace contains root-owned files, cleaning via container..." ;;
+        "uninstall.removing_log.zh") text="正在移除日志文件: %s" ;;
+        "uninstall.removing_log.en") text="Removing log file: %s" ;;
+        "uninstall.done.zh") text="HiClaw 已卸载。" ;;
+        "uninstall.done.en") text="HiClaw has been uninstalled." ;;
         # --- Error messages ---
         "error.name_required.zh") text="--name 是必需的" ;;
         "error.name_required.en") text="--name is required" ;;
@@ -2762,6 +2790,98 @@ test_embedding_connectivity() {
 }
 
 # ============================================================
+# Uninstall
+# ============================================================
+
+uninstall_hiclaw() {
+    log "$(msg uninstall.title)"
+
+    # Capture manager image before removing (needed for workspace cleanup on Linux)
+    local manager_image=""
+    manager_image=$(${DOCKER_CMD} inspect hiclaw-manager --format '{{.Config.Image}}' 2>/dev/null || true)
+
+    # Stop and remove manager
+    if ${DOCKER_CMD} ps -a --format '{{.Names}}' 2>/dev/null | grep -q "^hiclaw-manager$"; then
+        log "$(msg uninstall.stopping_manager)"
+        ${DOCKER_CMD} stop hiclaw-manager >/dev/null 2>&1 || true
+        ${DOCKER_CMD} rm hiclaw-manager >/dev/null 2>&1 || true
+    fi
+
+    # Stop and remove workers
+    local workers
+    workers=$(${DOCKER_CMD} ps -a --filter "name=hiclaw-worker-" --format '{{.Names}}' 2>/dev/null || true)
+    if [ -n "${workers}" ]; then
+        log "$(msg uninstall.stopping_workers)"
+        echo "${workers}" | while read -r w; do
+            ${DOCKER_CMD} rm -f "${w}" >/dev/null 2>&1 || true
+            log "$(msg uninstall.removed "${w}")"
+        done
+    fi
+
+    # Stop and remove docker-proxy
+    if ${DOCKER_CMD} ps -a --format '{{.Names}}' 2>/dev/null | grep -q "^hiclaw-docker-proxy$"; then
+        log "$(msg uninstall.removing_proxy)"
+        ${DOCKER_CMD} stop hiclaw-docker-proxy >/dev/null 2>&1 || true
+        ${DOCKER_CMD} rm hiclaw-docker-proxy >/dev/null 2>&1 || true
+    fi
+
+    # Read env file for data/workspace info before removing
+    local env_file="${HICLAW_ENV_FILE:-${HOME}/hiclaw-manager.env}"
+    [ ! -f "${env_file}" ] && [ -f "./hiclaw-manager.env" ] && env_file="./hiclaw-manager.env"
+
+    local data_dir="" workspace_dir=""
+    if [ -f "${env_file}" ]; then
+        data_dir=$(grep '^HICLAW_DATA_DIR=' "${env_file}" 2>/dev/null | cut -d= -f2- || true)
+        workspace_dir=$(grep '^HICLAW_WORKSPACE_DIR=' "${env_file}" 2>/dev/null | cut -d= -f2- || true)
+    fi
+
+    # Remove Docker volume
+    local vol="${data_dir:-hiclaw-data}"
+    if ${DOCKER_CMD} volume inspect "${vol}" >/dev/null 2>&1; then
+        log "$(msg uninstall.removing_volume "${vol}")"
+        ${DOCKER_CMD} volume rm "${vol}" >/dev/null 2>&1 || true
+    fi
+
+    # Remove Docker network
+    if ${DOCKER_CMD} network ls --format '{{.Name}}' 2>/dev/null | grep -q "^hiclaw-net$"; then
+        log "$(msg uninstall.removing_network)"
+        ${DOCKER_CMD} network rm hiclaw-net >/dev/null 2>&1 || true
+    fi
+
+    # Remove workspace directory
+    if [ -n "${workspace_dir}" ] && [ -d "${workspace_dir}" ]; then
+        log "$(msg uninstall.removing_workspace "${workspace_dir}")"
+        rm -rf "${workspace_dir}" 2>/dev/null || true
+        if [ -d "${workspace_dir}" ]; then
+            log "$(msg uninstall.removing_workspace_elevated)"
+            local _parent _base
+            _parent=$(dirname "${workspace_dir}")
+            _base=$(basename "${workspace_dir}")
+            local _rm_image="${manager_image:-busybox}"
+            ${DOCKER_CMD} run --rm --entrypoint sh \
+                -v "${_parent}:/host-parent" \
+                "${_rm_image}" \
+                -c "rm -rf /host-parent/${_base}" 2>/dev/null || true
+        fi
+    fi
+
+    # Remove env file
+    if [ -f "${env_file}" ]; then
+        log "$(msg uninstall.removing_env "${env_file}")"
+        rm -f "${env_file}"
+    fi
+
+    # Remove install log
+    if [ -f "${HOME}/hiclaw-install.log" ]; then
+        log "$(msg uninstall.removing_log "${HOME}/hiclaw-install.log")"
+        rm -f "${HOME}/hiclaw-install.log"
+    fi
+
+    echo ""
+    log "$(msg uninstall.done)"
+}
+
+# ============================================================
 # Check container runtime (docker or podman)
 # ============================================================
 
@@ -2786,20 +2906,23 @@ check_container_runtime
 
 case "${1:-}" in
     manager|"")
-        # Default to manager installation if no argument or explicit "manager"
         install_manager
         ;;
     worker)
         shift
         install_worker "$@"
         ;;
+    uninstall)
+        uninstall_hiclaw
+        ;;
     *)
-        echo "Usage: $0 [manager|worker [options]]"
+        echo "Usage: $0 [manager|worker [options]|uninstall]"
         echo ""
         echo "Commands:"
         echo "  manager              Interactive Manager installation (default)"
         echo "                       Choose Quick Start (all defaults) or Manual mode"
         echo "  worker               Worker installation (requires --name and connection params)"
+        echo "  uninstall            Stop and remove Manager + all Worker containers"
         echo ""
         echo "Quick Start (fastest):"
         echo "  $0"

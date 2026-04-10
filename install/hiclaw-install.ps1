@@ -580,8 +580,11 @@ $script:Messages = @{
     "uninstall.removed" = @{ zh = "  已移除: {0}"; en = "  Removed: {0}" }
     "uninstall.removing_volume" = @{ zh = "正在移除 Docker 卷: hiclaw-data"; en = "Removing Docker volume: hiclaw-data" }
     "uninstall.removing_env" = @{ zh = "正在移除 env 文件: {0}"; en = "Removing env file: {0}" }
+    "uninstall.removing_proxy" = @{ zh = "正在停止并移除 Docker API 代理容器: hiclaw-docker-proxy"; en = "Stopping and removing Docker API proxy container: hiclaw-docker-proxy" }
+    "uninstall.removing_network" = @{ zh = "正在移除 Docker 网络: hiclaw-net"; en = "Removing Docker network: hiclaw-net" }
+    "uninstall.removing_workspace" = @{ zh = "正在移除工作空间目录: {0}"; en = "Removing workspace directory: {0}" }
+    "uninstall.removing_log" = @{ zh = "正在移除日志文件: {0}"; en = "Removing log file: {0}" }
     "uninstall.done" = @{ zh = "HiClaw 已卸载。"; en = "HiClaw has been uninstalled." }
-    "uninstall.workspace_note" = @{ zh = "注意: Manager 工作空间目录已保留。如需删除请手动操作。"; en = "Note: Manager workspace directory was preserved. Remove manually if desired." }
 }
 
 # Get-Msg: look up message by key, with -f style argument substitution.
@@ -2529,11 +2532,49 @@ function Uninstall-HiClaw {
         }
     }
 
-    # Remove Docker volume
-    $volume = docker volume ls -q 2>$null | Select-String "^hiclaw-data$"
+    # Stop and remove docker-proxy
+    $proxy = docker ps -a --format "{{.Names}}" 2>$null | Select-String "^hiclaw-docker-proxy$"
+    if ($proxy) {
+        Write-Log (Get-Msg "uninstall.removing_proxy")
+        docker stop hiclaw-docker-proxy *>$null
+        docker rm hiclaw-docker-proxy *>$null
+    }
+
+    # Remove Docker volume (read custom name from env file if available)
+    $dataVolume = "hiclaw-data"
+    if (Test-Path $script:HICLAW_ENV_FILE) {
+        $envContent = Get-Content $script:HICLAW_ENV_FILE -ErrorAction SilentlyContinue
+        $dataLine = $envContent | Select-String "^HICLAW_DATA_DIR="
+        if ($dataLine) {
+            $parsed = ($dataLine -split "=", 2)[1]
+            if ($parsed) { $dataVolume = $parsed }
+        }
+    }
+    $volume = docker volume ls -q 2>$null | Select-String "^${dataVolume}$"
     if ($volume) {
         Write-Log (Get-Msg "uninstall.removing_volume")
-        docker volume rm hiclaw-data *>$null
+        docker volume rm $dataVolume *>$null
+    }
+
+    # Remove Docker network
+    $network = docker network ls --format "{{.Name}}" 2>$null | Select-String "^hiclaw-net$"
+    if ($network) {
+        Write-Log (Get-Msg "uninstall.removing_network")
+        docker network rm hiclaw-net *>$null
+    }
+
+    # Remove workspace directory
+    $workspaceDir = "$env:USERPROFILE\hiclaw-manager"
+    if (Test-Path $script:HICLAW_ENV_FILE) {
+        $envContent = Get-Content $script:HICLAW_ENV_FILE -ErrorAction SilentlyContinue
+        $wsLine = $envContent | Select-String "^HICLAW_WORKSPACE_DIR="
+        if ($wsLine) {
+            $workspaceDir = ($wsLine -split "=", 2)[1]
+        }
+    }
+    if ($workspaceDir -and (Test-Path $workspaceDir)) {
+        Write-Log (Get-Msg "uninstall.removing_workspace" -f $workspaceDir)
+        Remove-Item -Recurse -Force $workspaceDir -ErrorAction SilentlyContinue
     }
 
     # Remove env file
@@ -2542,9 +2583,15 @@ function Uninstall-HiClaw {
         Remove-Item -Force $script:HICLAW_ENV_FILE
     }
 
+    # Remove install log (stop transcript first to release the file)
+    if (Test-Path $script:HICLAW_LOG_FILE) {
+        Write-Log (Get-Msg "uninstall.removing_log" -f $script:HICLAW_LOG_FILE)
+        try { Stop-Transcript *>$null } catch {}
+        Remove-Item -Force $script:HICLAW_LOG_FILE -ErrorAction SilentlyContinue
+    }
+
     Write-Log ""
     Write-Log (Get-Msg "uninstall.done")
-    Write-Log (Get-Msg "uninstall.workspace_note")
 }
 
 # ============================================================
