@@ -235,16 +235,6 @@ func (a *App) initServiceLayer(_ context.Context) error {
 		AdminUser:    cfg.MatrixAdminUser,
 	})
 
-	a.deployer = service.NewDeployer(service.DeployerConfig{
-		AgentConfig:    a.agentGen,
-		OSS:            a.oss,
-		Executor:       a.shell,
-		Packages:       a.packages,
-		AgentFSDir:     cfg.AgentFSDir(),
-		WorkerAgentDir: cfg.WorkerAgentDir(),
-		MatrixDomain:   cfg.MatrixDomain,
-	})
-
 	a.envBuilder = service.NewWorkerEnvBuilder(cfg.WorkerEnv)
 
 	if cfg.KubeMode == "embedded" {
@@ -253,6 +243,17 @@ func (a *App) initServiceLayer(_ context.Context) error {
 			MatrixDomain: cfg.MatrixDomain,
 		})
 	}
+
+	a.deployer = service.NewDeployer(service.DeployerConfig{
+		AgentConfig:    a.agentGen,
+		OSS:            a.oss,
+		Executor:       a.shell,
+		Packages:       a.packages,
+		Legacy:         a.legacy,
+		AgentFSDir:     cfg.AgentFSDir(),
+		WorkerAgentDir: cfg.WorkerAgentDir(),
+		MatrixDomain:   cfg.MatrixDomain,
+	})
 
 	return nil
 }
