@@ -1031,6 +1031,31 @@ wait_matrix_ready() {
     error "$(msg install.wait_matrix.timeout "${timeout}" "${container}")"
 }
 
+# Read secret input with masked echo (shows * per keystroke, supports backspace)
+# Usage: read_secret "prompt text: "; value="${_RS_RESULT}"
+read_secret() {
+    local _rs_prompt="$1"
+    _RS_RESULT=""
+    local _rs_char=""
+
+    printf "%s" "${_rs_prompt}"
+
+    while IFS= read -r -s -n 1 _rs_char; do
+        if [[ -z "${_rs_char}" ]]; then
+            break
+        elif [[ "${_rs_char}" == $'\177' ]] || [[ "${_rs_char}" == $'\b' ]]; then
+            if [ -n "${_RS_RESULT}" ]; then
+                _RS_RESULT="${_RS_RESULT%?}"
+                printf "\b \b"
+            fi
+        else
+            _RS_RESULT="${_RS_RESULT}${_rs_char}"
+            printf "*"
+        fi
+    done
+    echo
+}
+
 # In non-interactive mode, uses default or errors if required and no default.
 # Usage: prompt VAR_NAME "Prompt text" "default" [true=secret]
 prompt() {
@@ -1057,8 +1082,8 @@ prompt() {
             log "$(msg prompt.upgrade_keep "${prompt_text}" "${display_value}")"
             local new_value=""
             if [ "${is_secret}" = "true" ]; then
-                read -s -e -p "${prompt_text}: " new_value
-                echo
+                read_secret "${prompt_text}: "
+                new_value="${_RS_RESULT}"
             else
                 read -e -p "${prompt_text}: " new_value
                 if [ "${new_value}" = "b" ]; then STEP_RESULT="back"; return 1; fi
@@ -1091,8 +1116,8 @@ prompt() {
 
     local value=""
     if [ "${is_secret}" = "true" ]; then
-        read -s -e -p "${prompt_text}: " value
-        echo
+        read_secret "${prompt_text}: "
+        value="${_RS_RESULT}"
     else
         read -e -p "${prompt_text}: " value
         if [ "${value}" = "b" ]; then STEP_RESULT="back"; return 1; fi
@@ -1141,8 +1166,8 @@ prompt_optional() {
             fi
             local new_value=""
             if [ "${is_secret}" = "true" ]; then
-                read -s -e -p "${prompt_text}: " new_value
-                echo
+                read_secret "${prompt_text}: "
+                new_value="${_RS_RESULT}"
             else
                 read -e -p "${prompt_text}: " new_value
                 if [ "${new_value}" = "b" ]; then STEP_RESULT="back"; return 1; fi
@@ -1164,8 +1189,8 @@ prompt_optional() {
 
     local value=""
     if [ "${is_secret}" = "true" ]; then
-        read -s -e -p "${prompt_text}: " value
-        echo
+        read_secret "${prompt_text}: "
+        value="${_RS_RESULT}"
     else
         read -e -p "${prompt_text}: " value
         if [ "${value}" = "b" ]; then STEP_RESULT="back"; return 1; fi
