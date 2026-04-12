@@ -196,8 +196,12 @@ func (p *PackageResolver) DeployToMinIO(ctx context.Context, extractedDir, worke
 
 	// ── Phase 1: Push to MinIO FIRST from extracted dir (immune to background sync) ──
 
-	// Config files
+	// Config files — when excludeMemory is true (update path), skip SOUL.md and AGENTS.md
+	// because DeployWorkerConfig handles them with proper inline override priority.
 	for _, f := range configFiles {
+		if excludeMemory && (f.name == "SOUL.md" || f.name == "AGENTS.md") {
+			continue
+		}
 		if err := mcPut(ctx, minioBase+"/"+f.name, f.data); err != nil {
 			return fmt.Errorf("push %s to MinIO: %w", f.name, err)
 		}

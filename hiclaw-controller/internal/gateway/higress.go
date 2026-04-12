@@ -9,6 +9,7 @@ import (
 	"math/rand"
 	"net/http"
 	"strings"
+	"log"
 	"sync"
 	"time"
 )
@@ -618,6 +619,30 @@ func (c *HigressClient) doJSON(ctx context.Context, method, path string, reqBody
 }
 
 // ── helpers ──
+
+// TriggerPush asks istiod to push config to Envoy immediately.
+// No-op if PilotURL is not configured. Errors are logged but do not propagate.
+func (c *HigressClient) TriggerPush() {
+	if c.config.PilotURL == "" {
+		return
+	}
+	log.Printf("[gateway] TriggerPush: pushing config to Envoy via %s", c.config.PilotURL)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.config.PilotURL+"/debug/adsz?push=true", nil)
+	if err != nil {
+		log.Printf("[gateway] TriggerPush: build request: %v", err)
+		return
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		log.Printf("[gateway] TriggerPush: %v", err)
+		return
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	log.Printf("[gateway] TriggerPush: HTTP %d, response: %s", resp.StatusCode, string(body))
+}
 
 func toStringSlice(v interface{}) []string {
 	if v == nil {
