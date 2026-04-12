@@ -214,7 +214,8 @@ wait_for_session_stable() {
         session=$(get_latest_session "$manager_container" "$manager_session_dir")
         local size=0
         if [ -n "$session" ]; then
-            size=$(docker exec "$manager_container" sh -c "wc -c < '${session}' 2>/dev/null || echo 0")
+            size=$(docker exec "$manager_container" sh -c "wc -c < '${session}' 2>/dev/null || echo 0" | tr -dc '0-9')
+            size=${size:-0}
         fi
 
         if [ "$size" -eq "$last_size" ]; then

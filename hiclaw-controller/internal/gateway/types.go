@@ -5,6 +5,7 @@ type Config struct {
 	ConsoleURL    string // gateway console API, e.g. http://127.0.0.1:8001
 	AdminUser     string // console login username
 	AdminPassword string // console login password
+	PilotURL      string // istiod debug API, e.g. http://127.0.0.1:15014 (embedded mode only)
 }
 
 // ConsumerRequest describes a gateway consumer to create.

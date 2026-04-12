@@ -425,11 +425,15 @@ func (c *Config) MatrixConfig() matrix.Config {
 }
 
 func (c *Config) GatewayConfig() gateway.Config {
-	return gateway.Config{
+	cfg := gateway.Config{
 		ConsoleURL:    c.HigressBaseURL,
 		AdminUser:     c.HigressAdminUser,
 		AdminPassword: c.HigressAdminPassword,
 	}
+	if c.KubeMode == "embedded" {
+		cfg.PilotURL = "http://127.0.0.1:15014"
+	}
+	return cfg
 }
 
 func (c *Config) OSSConfig() oss.Config {

@@ -81,6 +81,7 @@ RUN chmod +x /opt/hiclaw/scripts/init/*.sh
 # Agent templates (builtin AGENTS.md, skills for worker and team-leader)
 COPY manager/agent/worker-agent/ /opt/hiclaw/agent/worker-agent/
 COPY manager/agent/team-leader-agent/ /opt/hiclaw/agent/team-leader-agent/
+COPY manager/agent/skills/ /opt/hiclaw/agent/skills/
 
 # ---- Ports ----
 # 8080: Higress Gateway (unified entry point)
