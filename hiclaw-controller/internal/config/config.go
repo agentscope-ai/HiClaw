@@ -131,6 +131,7 @@ type WorkerEnvDefaults struct {
 	AIGatewayURL  string
 	MatrixURL     string
 	AdminUser     string
+	Runtime       string // "docker" for embedded, "k8s" for incluster
 }
 
 func LoadConfig() *Config {
