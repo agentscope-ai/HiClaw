@@ -8,6 +8,10 @@ on:
       - 'manager/**'
       - 'hiclaw-controller/**'
       - 'tests/**'
+      - 'install/**'
+      - 'shared/**'
+      - 'copaw/**'
+      - 'Makefile'
       - '.github/workflows/test-integration.yml'
   push:
     branches:
@@ -18,6 +22,10 @@ on:
       - 'manager/**'
       - 'hiclaw-controller/**'
       - 'tests/**'
+      - 'install/**'
+      - 'shared/**'
+      - 'copaw/**'
+      - 'Makefile'
   workflow_dispatch:
     inputs:
       test_filter:
@@ -42,11 +50,6 @@ on:
         default: 'qwen3.5-plus'
 
 env:
-  MANAGER_IMAGE: hiclaw/manager-agent:ci-test
-  MANAGER_COPAW_IMAGE: hiclaw/manager-copaw:ci-test
-  WORKER_IMAGE: hiclaw/worker-agent:ci-test
-  COPAW_WORKER_IMAGE: hiclaw/copaw-worker:ci-test
-  CONTROLLER_IMAGE: hiclaw/hiclaw-controller:ci-test
   # Tests that do not require a GitHub token
   NON_GITHUB_TESTS: "01 02 03 04 05 06 14 15 17 18 19 20 100"
 
@@ -79,83 +82,22 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Pull base images
-        run: docker pull higress-registry.us-west-1.cr.aliyuncs.com/higress/openclaw-base:latest
-
-      - name: Build images
-        run: |
-          RUNTIME="${{ inputs.worker_runtime || 'openclaw' }}"
-          BUILD_TARGETS="build-manager build-hiclaw-controller"
-          if [ "$RUNTIME" = "copaw" ]; then
-            BUILD_TARGETS="build-manager-copaw build-copaw-worker build-hiclaw-controller"
-          else
-            BUILD_TARGETS="build-manager build-worker build-copaw-worker build-hiclaw-controller"
-          fi
-          make ${BUILD_TARGETS} VERSION=ci-test HIGRESS_REGISTRY=higress-registry.us-west-1.cr.aliyuncs.com \
-            DOCKER_BUILD_ARGS="--build-arg APT_MIRROR= --build-arg PIP_INDEX_URL=https://pypi.org/simple/"
-
       - name: Install dependencies
         run: sudo apt-get update && sudo apt-get install -y jq curl unzip
 
-      - name: Install HiClaw
-        env:
-          HICLAW_LLM_API_KEY: ${{ secrets.HICLAW_LLM_API_KEY }}
-        run: |
-          RUNTIME="${{ inputs.worker_runtime || 'openclaw' }}"
-          MODEL="${{ inputs.model || 'qwen3.5-plus' }}"
-          if [ "$RUNTIME" = "copaw" ]; then
-            WORKER_IMG="${{ env.COPAW_WORKER_IMAGE }}"
-            MANAGER_IMG="${{ env.MANAGER_COPAW_IMAGE }}"
-            MANAGER_RUNTIME="copaw"
-          else
-            WORKER_IMG="${{ env.WORKER_IMAGE }}"
-            MANAGER_IMG="${{ env.MANAGER_IMAGE }}"
-            MANAGER_RUNTIME="openclaw"
-          fi
-          HICLAW_NON_INTERACTIVE=1 \
-          HICLAW_VERSION=ci-test \
-          HICLAW_MOUNT_SOCKET=1 \
-          HICLAW_MATRIX_E2EE=0 \
-          HICLAW_LLM_PROVIDER=qwen \
-          HICLAW_MANAGER_RUNTIME="$MANAGER_RUNTIME" \
-          HICLAW_DEFAULT_WORKER_RUNTIME="$RUNTIME" \
-          HICLAW_DEFAULT_MODEL="$MODEL" \
-          HICLAW_INSTALL_MANAGER_IMAGE="$MANAGER_IMG" \
-          HICLAW_INSTALL_MANAGER_COPAW_IMAGE="${{ env.MANAGER_COPAW_IMAGE }}" \
-          HICLAW_INSTALL_WORKER_IMAGE="$WORKER_IMG" \
-          HICLAW_INSTALL_COPAW_WORKER_IMAGE=${{ env.COPAW_WORKER_IMAGE }} \
-          HICLAW_INSTALL_CONTROLLER_IMAGE=${{ env.CONTROLLER_IMAGE }} \
-          bash ./install/hiclaw-install.sh manager
-
-      - name: Wait for Manager to be ready
-        run: |
-          for i in {1..60}; do
-            if docker exec hiclaw-manager curl -sf http://127.0.0.1:8001/ >/dev/null 2>&1; then
-              if docker exec hiclaw-manager curl -sf http://127.0.0.1:6167/_matrix/client/versions >/dev/null 2>&1; then
-                echo "Manager ready, waiting 60s for agent initialization..."
-                sleep 60
-                exit 0
-              fi
-            fi
-            echo "Waiting... ($i/60)"
-            sleep 5
-          done
-          echo "Manager did not become ready in time"
-          docker logs hiclaw-manager --tail 50
-          exit 1
-
-      - name: Enable YOLO mode
-        run: docker exec hiclaw-manager touch /root/manager-workspace/yolo-mode
-
-      - name: Run integration tests
+      - name: Run embedded integration tests
         id: tests
         env:
           HICLAW_LLM_API_KEY: ${{ secrets.HICLAW_LLM_API_KEY }}
+          HICLAW_LLM_PROVIDER: qwen
+          HICLAW_DEFAULT_MODEL: ${{ inputs.model || 'qwen3.5-plus' }}
+          HICLAW_MANAGER_RUNTIME: ${{ inputs.worker_runtime || 'openclaw' }}
         run: |
           FILTER="${{ github.event.inputs.test_filter }}"
           [ -z "$FILTER" ] && FILTER="${NON_GITHUB_TESTS}"
-          TEST_GATEWAY_PORT=18080 TEST_CONSOLE_PORT=18001 TEST_MANAGER_CONTAINER=hiclaw-manager \
-            ./tests/run-all-tests.sh --skip-build --use-existing --test-filter "$FILTER"
+          make test-embedded \
+            DOCKER_BUILD_ARGS="--build-arg APT_MIRROR=" \
+            TEST_FILTER="$FILTER"
 
       # ============================================================
       # Metrics: download latest release baseline for comparison
@@ -357,16 +299,16 @@ jobs:
 
       - name: Cleanup
         if: always()
-        run: make uninstall || true && docker system prune -af || true
+        run: make uninstall-embedded 2>/dev/null || true && docker system prune -af || true
 
       - name: Test Summary
         if: always()
         run: |
           echo "### Integration Test Summary" >> $GITHUB_STEP_SUMMARY
           echo "- Tests: \`$NON_GITHUB_TESTS\`" >> $GITHUB_STEP_SUMMARY
-          echo "- Manager Image: \`${{ env.MANAGER_IMAGE }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- Worker Runtime: \`${{ inputs.worker_runtime || 'openclaw' }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- Model: \`${{ inputs.model || 'qwen3.5-plus' }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Install Mode: embedded (make test-embedded)" >> $GITHUB_STEP_SUMMARY
 
 # ============================================================
 # Manual baseline re-generation for a specific release version
@@ -498,4 +440,4 @@ jobs:
 
       - name: Cleanup
         if: always()
-        run: make uninstall || true && docker system prune -af || true
+        run: make uninstall-embedded 2>/dev/null || true && docker system prune -af || true

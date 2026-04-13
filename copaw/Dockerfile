@@ -26,7 +26,7 @@ FROM ${HIGRESS_REGISTRY}/higress/mc:20260216 AS mc
 FROM ${HIGRESS_REGISTRY}/higress/python:3.11-slim
 
 ARG APT_MIRROR=
-ARG PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
+ARG PIP_INDEX_URL=https://pypi.org/simple/
 ARG LITE_COPAW_REPO=https://github.com/johnlanni/CoPaw
 ARG LITE_COPAW_COMMIT=212405a30380bc319b02397c166d5296029c89b8
 
