@@ -512,12 +512,12 @@ uninstall: ## Stop and remove Manager + all Worker containers
 
 install-embedded: ## Install in embedded mode (dual-container: controller + agent)
 ifndef SKIP_BUILD
-	$(MAKE) build-embedded build-manager build-worker build-copaw-worker
+	$(MAKE) build-embedded build-manager build-manager-copaw build-worker build-copaw-worker
 endif
 	@echo "==> Installing HiClaw (embedded mode)..."
 	HICLAW_NON_INTERACTIVE=1 \
 		HICLAW_EMBEDDED_IMAGE=$(LOCAL_EMBEDDED) \
-		HICLAW_MANAGER_IMAGE=$(LOCAL_MANAGER) \
+		HICLAW_MANAGER_IMAGE=$(if $(filter copaw,$(HICLAW_MANAGER_RUNTIME)),$(LOCAL_MANAGER_COPAW),$(LOCAL_MANAGER)) \
 		HICLAW_WORKER_IMAGE=$(LOCAL_WORKER) \
 		HICLAW_COPAW_WORKER_IMAGE=$(LOCAL_COPAW_WORKER) \
 		HICLAW_MATRIX_E2EE=0 \

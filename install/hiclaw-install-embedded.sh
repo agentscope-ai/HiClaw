@@ -107,9 +107,15 @@ NETWORK="hiclaw-net"
 # ============================================================
 
 EMBEDDED_IMAGE="${HICLAW_EMBEDDED_IMAGE:-${HICLAW_REGISTRY}/higress/hiclaw-embedded:${HICLAW_VERSION}}"
-MANAGER_IMAGE="${HICLAW_MANAGER_IMAGE:-${HICLAW_REGISTRY}/higress/hiclaw-manager:${HICLAW_VERSION}}"
 WORKER_IMAGE="${HICLAW_WORKER_IMAGE:-${HICLAW_REGISTRY}/higress/hiclaw-worker:${HICLAW_VERSION}}"
 COPAW_WORKER_IMAGE="${HICLAW_COPAW_WORKER_IMAGE:-${HICLAW_REGISTRY}/higress/hiclaw-copaw-worker:${HICLAW_VERSION}}"
+
+# Select Manager image based on runtime
+if [ "${HICLAW_MANAGER_RUNTIME}" = "copaw" ]; then
+    MANAGER_IMAGE="${HICLAW_MANAGER_IMAGE:-${HICLAW_REGISTRY}/higress/hiclaw-manager-copaw:${HICLAW_VERSION}}"
+else
+    MANAGER_IMAGE="${HICLAW_MANAGER_IMAGE:-${HICLAW_REGISTRY}/higress/hiclaw-manager:${HICLAW_VERSION}}"
+fi
 
 # ============================================================
 # Helpers

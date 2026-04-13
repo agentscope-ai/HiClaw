@@ -29,7 +29,7 @@ FROM ${HICLAW_CONTROLLER_IMAGE} AS hiclaw-controller
 # ============ Final Image: Python 3.11 ============
 FROM ${HIGRESS_REGISTRY}/higress/python:3.11-slim
 
-ARG APT_MIRROR=mirrors.aliyun.com
+ARG APT_MIRROR=
 ARG PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
 ARG NPM_REGISTRY=https://registry.npmjs.org/
 
@@ -41,7 +41,7 @@ RUN if [ -n "${APT_MIRROR}" ]; then \
     apt-get update && apt-get install -y --no-install-recommends \
         libolm-dev \
         libjemalloc2 \
-        git curl jq tzdata ca-certificates openssh-client \
+        git curl jq tzdata ca-certificates openssh-client gettext-base procps \
     && rm -rf /var/lib/apt/lists/*
 
 # jemalloc for memory efficiency
