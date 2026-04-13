@@ -156,6 +156,9 @@ fi
 # ============================================================
 log_section "Verify Resource State"
 
+# Brief pause for CR to propagate through kube-apiserver
+sleep 2
+
 WORKER_JSON=$(exec_in_agent hiclaw get workers "${TEST_WORKER}" -o json 2>/dev/null || echo "")
 assert_not_empty "${WORKER_JSON}" "Worker CR exists (hiclaw get workers)"
 WORKER_NAME_CHK=$(echo "${WORKER_JSON}" | jq -r '.name // empty' 2>/dev/null)

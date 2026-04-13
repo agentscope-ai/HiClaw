@@ -417,8 +417,12 @@ copy_to_agent() {
     src_file=$(basename "${src_path}")
     dst_dir=$(dirname "${dst_path}")
     exec_in_agent mkdir -p "${dst_dir}" 2>/dev/null
-    docker exec "${TEST_CONTROLLER_CONTAINER}" tar -cf - -C "${src_dir}" "${src_file}" | \
-        docker exec -i "${TEST_AGENT_CONTAINER}" tar -xf - -C "${dst_dir}"
+    # Use docker cp via host temp dir for reliability (tar pipe can truncate)
+    local tmp_host="/tmp/.hiclaw-copy-$$"
+    mkdir -p "${tmp_host}"
+    docker cp "${TEST_CONTROLLER_CONTAINER}:${src_path}" "${tmp_host}/${src_file}" 2>/dev/null
+    docker cp "${tmp_host}/${src_file}" "${TEST_AGENT_CONTAINER}:${dst_path}" 2>/dev/null
+    rm -rf "${tmp_host}"
 }
 
 start_worker_container() {
