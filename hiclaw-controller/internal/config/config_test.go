@@ -76,3 +76,65 @@ func TestLoadConfigPanicsOnInvalidManagerSpec(t *testing.T) {
 
 	_ = LoadConfig()
 }
+
+func TestLoadConfigPrefersAbstractInfraEnv(t *testing.T) {
+	t.Setenv("HICLAW_KUBE_MODE", "incluster")
+	t.Setenv("HICLAW_AI_GATEWAY_ADMIN_URL", "http://higress-admin.example.com:8001")
+	t.Setenv("HIGRESS_BASE_URL", "http://legacy-higress.example.com:8001")
+	t.Setenv("HICLAW_FS_BUCKET", "hiclaw-fs")
+	t.Setenv("HICLAW_OSS_BUCKET", "legacy-bucket")
+	t.Setenv("HICLAW_FS_ENDPOINT", "http://fs.example.com:9000")
+	t.Setenv("HICLAW_STORAGE_PREFIX", "teams/demo")
+	t.Setenv("HICLAW_CONTROLLER_URL", "http://controller.example.com:8090")
+	t.Setenv("HICLAW_AI_GATEWAY_URL", "http://aigw.example.com:8080")
+	t.Setenv("HICLAW_MATRIX_URL", "http://matrix.example.com:8080")
+
+	cfg := LoadConfig()
+
+	if cfg.HigressBaseURL != "http://higress-admin.example.com:8001" {
+		t.Fatalf("HigressBaseURL = %q, want abstract admin URL", cfg.HigressBaseURL)
+	}
+	if cfg.OSSBucket != "hiclaw-fs" {
+		t.Fatalf("OSSBucket = %q, want %q", cfg.OSSBucket, "hiclaw-fs")
+	}
+	if cfg.WorkerEnv.FSBucket != "hiclaw-fs" {
+		t.Fatalf("WorkerEnv.FSBucket = %q, want %q", cfg.WorkerEnv.FSBucket, "hiclaw-fs")
+	}
+	if cfg.WorkerEnv.MinIOBucket != "hiclaw-fs" {
+		t.Fatalf("WorkerEnv.MinIOBucket = %q, want %q", cfg.WorkerEnv.MinIOBucket, "hiclaw-fs")
+	}
+	if cfg.WorkerEnv.MinIOEndpoint != "http://fs.example.com:9000" {
+		t.Fatalf("WorkerEnv.MinIOEndpoint = %q, want %q", cfg.WorkerEnv.MinIOEndpoint, "http://fs.example.com:9000")
+	}
+}
+
+func TestManagerAgentEnvForwardsAbstractInfraEnv(t *testing.T) {
+	t.Setenv("HICLAW_KUBE_MODE", "incluster")
+	t.Setenv("HICLAW_MINIO_USER", "root")
+	t.Setenv("HICLAW_MINIO_PASSWORD", "secret")
+	t.Setenv("HICLAW_AI_GATEWAY_ADMIN_URL", "http://higress-admin.example.com:8001")
+	t.Setenv("HICLAW_FS_BUCKET", "hiclaw-fs")
+	t.Setenv("HICLAW_FS_ENDPOINT", "http://fs.example.com:9000")
+	t.Setenv("HICLAW_STORAGE_PREFIX", "teams/demo")
+	t.Setenv("HICLAW_AI_GATEWAY_URL", "http://aigw.example.com:8080")
+	t.Setenv("HICLAW_MATRIX_URL", "http://matrix.example.com:8080")
+
+	cfg := LoadConfig()
+	env := cfg.ManagerAgentEnv()
+
+	for key, want := range map[string]string{
+		"HICLAW_AI_GATEWAY_ADMIN_URL": "http://higress-admin.example.com:8001",
+		"HIGRESS_BASE_URL":            "http://higress-admin.example.com:8001",
+		"HICLAW_MATRIX_URL":           "http://matrix.example.com:8080",
+		"HICLAW_AI_GATEWAY_URL":       "http://aigw.example.com:8080",
+		"HICLAW_FS_ENDPOINT":          "http://fs.example.com:9000",
+		"HICLAW_FS_BUCKET":            "hiclaw-fs",
+		"HICLAW_STORAGE_PREFIX":       "teams/demo",
+		"HICLAW_FS_ACCESS_KEY":        "root",
+		"HICLAW_FS_SECRET_KEY":        "secret",
+	} {
+		if got := env[key]; got != want {
+			t.Fatalf("%s = %q, want %q", key, got, want)
+		}
+	}
+}

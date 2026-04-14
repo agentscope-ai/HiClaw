@@ -393,12 +393,30 @@ func mergeOSSRegionFromProcessEnv(env map[string]string) {
 	if env == nil {
 		return
 	}
-	if v := strings.TrimSpace(os.Getenv("HICLAW_OSS_BUCKET")); v != "" && strings.TrimSpace(env["HICLAW_OSS_BUCKET"]) == "" {
-		env["HICLAW_OSS_BUCKET"] = v
+	bucket := firstNonEmptyTrimmed(
+		env["HICLAW_FS_BUCKET"],
+		os.Getenv("HICLAW_FS_BUCKET"),
+		env["HICLAW_OSS_BUCKET"],
+		os.Getenv("HICLAW_OSS_BUCKET"),
+	)
+	if bucket != "" && strings.TrimSpace(env["HICLAW_FS_BUCKET"]) == "" {
+		env["HICLAW_FS_BUCKET"] = bucket
+	}
+	if bucket != "" && strings.TrimSpace(env["HICLAW_OSS_BUCKET"]) == "" {
+		env["HICLAW_OSS_BUCKET"] = bucket
 	}
 	if v := strings.TrimSpace(os.Getenv("HICLAW_REGION")); v != "" && strings.TrimSpace(env["HICLAW_REGION"]) == "" {
 		env["HICLAW_REGION"] = v
 	}
+}
+
+func firstNonEmptyTrimmed(values ...string) string {
+	for _, v := range values {
+		if trimmed := strings.TrimSpace(v); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
 }
 
 func buildK8sEnvVars(env map[string]string) []corev1.EnvVar {

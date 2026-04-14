@@ -54,6 +54,8 @@ spec:
               value: {{ .Values.controller.timezone | quote }}
             - name: HICLAW_FS_ENDPOINT
               value: {{ include "hiclaw.storage.endpoint" . | quote }}
+            - name: HICLAW_FS_BUCKET
+              value: {{ include "hiclaw.storage.bucket" . | quote }}
             - name: HICLAW_OSS_BUCKET
               value: {{ include "hiclaw.storage.bucket" . | quote }}
             {{- if eq .Values.storage.provider "minio" }}
@@ -73,6 +75,8 @@ spec:
               value: {{ include "hiclaw.storage.bucket" . | quote }}
             {{- end }}
             {{- if eq .Values.gateway.provider "higress" }}
+            - name: HICLAW_AI_GATEWAY_ADMIN_URL
+              value: {{ include "hiclaw.gateway.adminURL" . | quote }}
             - name: HIGRESS_BASE_URL
               value: {{ include "hiclaw.gateway.adminURL" . | quote }}
             - name: HICLAW_HIGRESS_ADMIN_USER

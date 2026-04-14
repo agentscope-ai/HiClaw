@@ -433,9 +433,10 @@ start_worker_container() {
         --name "${container_name}" \
         --network host \
         -e "HICLAW_WORKER_NAME=${worker_name}" \
-        -e "HICLAW_MATRIX_SERVER=http://${TEST_MANAGER_HOST}:${TEST_GATEWAY_PORT}" \
-        -e "HICLAW_AI_GATEWAY=http://${TEST_MANAGER_HOST}:${TEST_GATEWAY_PORT}" \
+        -e "HICLAW_MATRIX_URL=http://${TEST_MANAGER_HOST}:${TEST_GATEWAY_PORT}" \
+        -e "HICLAW_AI_GATEWAY_URL=http://${TEST_MANAGER_HOST}:${TEST_GATEWAY_PORT}" \
         -e "HICLAW_FS_ENDPOINT=http://${TEST_MANAGER_HOST}:9000" \
+        -e "HICLAW_FS_BUCKET=hiclaw-storage" \
         -e "HICLAW_FS_ACCESS_KEY=${TEST_MINIO_USER}" \
         -e "HICLAW_FS_SECRET_KEY=${TEST_MINIO_PASSWORD}" \
         "hiclaw/worker-agent:${HICLAW_VERSION:-latest}" 2>/dev/null

@@ -29,7 +29,7 @@ _OSS_CRED_REFRESH_MARGIN=600  # refresh if less than 10 minutes remaining
 # Only used when HICLAW_WORKER_NAME is set (worker context).
 _oss_build_worker_policy() {
     local worker="$1"
-    local bucket="${HICLAW_OSS_BUCKET:-hiclaw-cloud-storage}"
+    local bucket="${HICLAW_FS_BUCKET:-${HICLAW_OSS_BUCKET:-hiclaw-cloud-storage}}"
     cat <<POLICY
 {"Version":"1","Statement":[{"Effect":"Allow","Action":["oss:ListObjects"],"Resource":["acs:oss:*:*:${bucket}"],"Condition":{"StringLike":{"oss:Prefix":["agents/${worker}/*","shared/*"]}}},{"Effect":"Allow","Action":["oss:GetObject","oss:PutObject","oss:DeleteObject"],"Resource":["acs:oss:*:*:${bucket}/agents/${worker}/*","acs:oss:*:*:${bucket}/shared/*"]}]}
 POLICY

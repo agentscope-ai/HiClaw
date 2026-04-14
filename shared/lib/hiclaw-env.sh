@@ -33,15 +33,15 @@ if [ -z "${HICLAW_RUNTIME:-}" ]; then
 fi
 
 # ── Normalized variables ──────────────────────────────────────────────────────
-# Matrix server: cloud mode uses external NLB address, local uses localhost
+# Matrix server compatibility alias: prefer abstract env, keep legacy default
 HICLAW_MATRIX_SERVER="${HICLAW_MATRIX_URL:-http://127.0.0.1:6167}"
 
-# AI Gateway: cloud mode uses env endpoint (HICLAW_AI_GATEWAY_URL), local uses domain:8080
+# AI Gateway compatibility alias: prefer abstract env, keep legacy local default
 HICLAW_AI_GATEWAY_SERVER="${HICLAW_AI_GATEWAY_URL:-http://${HICLAW_AI_GATEWAY_DOMAIN:-aigw-local.hiclaw.io}:8080}"
 
-# Storage: cloud mode uses OSS bucket name, k8s uses Helm-injected HICLAW_MINIO_BUCKET, local uses MinIO default
-HICLAW_STORAGE_BUCKET="${HICLAW_OSS_BUCKET:-${HICLAW_MINIO_BUCKET:-hiclaw-storage}}"
-HICLAW_STORAGE_PREFIX="hiclaw/${HICLAW_STORAGE_BUCKET}"
+# Storage compatibility aliases: preserve controller-injected remote root when present.
+HICLAW_STORAGE_BUCKET="${HICLAW_FS_BUCKET:-${HICLAW_OSS_BUCKET:-${HICLAW_MINIO_BUCKET:-hiclaw-storage}}}"
+HICLAW_STORAGE_PREFIX="${HICLAW_STORAGE_PREFIX:-hiclaw/${HICLAW_STORAGE_BUCKET}}"
 
 # ── Credential management ────────────────────────────────────────────────────
 # In cloud mode, provides ensure_mc_credentials() for STS token refresh.

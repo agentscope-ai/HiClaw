@@ -31,7 +31,7 @@ CLUSTER_NAME="${HICLAW_CLUSTER_NAME:-hiclaw}"
 NAMESPACE="${HICLAW_NAMESPACE:-hiclaw}"
 SKIP_KIND="${HICLAW_SKIP_KIND:-0}"
 SKIP_BUILD="${HICLAW_SKIP_BUILD:-0}"
-BUILD_K8S_IMAGE="${HICLAW_BUILD_K8S_IMAGE:-1}"
+BUILD_K8S_IMAGE="${HICLAW_BUILD_K8S_IMAGE:-0}"
 
 LLM_API_KEY="${HICLAW_LLM_API_KEY:-}"
 REGISTRATION_TOKEN="${HICLAW_REGISTRATION_TOKEN:-}"
@@ -102,10 +102,14 @@ if [ "$SKIP_BUILD" = "0" ]; then
         log "Building manager image (lightweight k8s)..."
         docker build -t "$MANAGER_IMAGE" \
             --build-arg OPENCLAW_BASE_IMAGE=higress-registry.cn-hangzhou.cr.aliyuncs.com/higress/openclaw-base:latest \
+            --build-arg HICLAW_CONTROLLER_IMAGE="$CONTROLLER_IMAGE" \
             -f "${PROJECT_ROOT}/manager/Dockerfile.k8s" "${PROJECT_ROOT}"
     else
         log "Building manager image (all-in-one)..."
-        docker build -t "$MANAGER_IMAGE" -f "${PROJECT_ROOT}/manager/Dockerfile" "${PROJECT_ROOT}"
+        docker build -t "$MANAGER_IMAGE" \
+            --build-arg OPENCLAW_BASE_IMAGE=higress-registry.cn-hangzhou.cr.aliyuncs.com/higress/openclaw-base:latest \
+            --build-arg HICLAW_CONTROLLER_IMAGE="$CONTROLLER_IMAGE" \
+            -f "${PROJECT_ROOT}/manager/Dockerfile" "${PROJECT_ROOT}"
     fi
 
     # Worker images (openclaw + copaw)
@@ -129,7 +133,18 @@ if [ "$SKIP_BUILD" = "0" ]; then
     # Pre-load Docker Hub images that Kind nodes may not be able to pull directly
     # (e.g., behind GFW or with unreliable Docker Hub access)
     log "Pre-loading Docker Hub images into kind cluster..."
-    for img in "higress-registry.cn-hangzhou.cr.aliyuncs.com/higress/minio:20260216" "higress-registry.cn-hangzhou.cr.aliyuncs.com/higress/mc:20260216"; do
+    PRELOAD_IMAGES=(
+        "higress-registry.cn-hangzhou.cr.aliyuncs.com/higress/minio:20260216"
+        "higress-registry.cn-hangzhou.cr.aliyuncs.com/higress/mc:20260216"
+        "higress-registry.cn-hangzhou.cr.aliyuncs.com/higress/tuwunel:20260216"
+        "higress-registry.cn-hangzhou.cr.aliyuncs.com/higress/element-web:20260216"
+        "higress-registry.cn-hangzhou.cr.aliyuncs.com/higress/console:2.2.0"
+        "higress-registry.cn-hangzhou.cr.aliyuncs.com/higress/higress:2.2.0"
+        "higress-registry.cn-hangzhou.cr.aliyuncs.com/higress/pilot:2.2.0"
+        "higress-registry.cn-hangzhou.cr.aliyuncs.com/higress/gateway:2.2.0"
+        "higress-registry.cn-hangzhou.cr.aliyuncs.com/higress/proxyv2:2.2.0"
+    )
+    for img in "${PRELOAD_IMAGES[@]}"; do
         docker pull "$img" 2>/dev/null || log "WARN: failed to pull $img (may already exist locally)"
         kind load docker-image "$img" --name "$CLUSTER_NAME"
     done
