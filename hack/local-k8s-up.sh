@@ -104,10 +104,13 @@ if [ "$SKIP_BUILD" = "0" ]; then
         log "Building manager image (lightweight k8s)..."
         docker build -t "$MANAGER_IMAGE" \
             --build-arg OPENCLAW_BASE_IMAGE=higress-registry.cn-hangzhou.cr.aliyuncs.com/higress/openclaw-base:latest \
-            -f "${PROJECT_ROOT}/manager/Dockerfile.k8s" "${PROJECT_ROOT}"
+            --build-arg HICLAW_CONTROLLER_IMAGE="$CONTROLLER_IMAGE" \
+            -f "${PROJECT_ROOT}/manager/Dockerfile" "${PROJECT_ROOT}"
     else
         log "Building manager image (all-in-one)..."
-        docker build -t "$MANAGER_IMAGE" -f "${PROJECT_ROOT}/manager/Dockerfile" "${PROJECT_ROOT}"
+        docker build -t "$MANAGER_IMAGE" \
+            --build-arg HICLAW_CONTROLLER_IMAGE="$CONTROLLER_IMAGE" \
+            -f "${PROJECT_ROOT}/manager/Dockerfile" "${PROJECT_ROOT}"
     fi
 
     # Worker images (openclaw + copaw)

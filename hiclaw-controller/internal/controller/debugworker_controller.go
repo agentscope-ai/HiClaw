@@ -38,7 +38,6 @@ type DebugWorkerReconciler struct {
 type debugConfig struct {
 	Targets          []string                   `json:"targets"`
 	MatrixCredential *v1beta1.MatrixCredential  `json:"matrixCredential,omitempty"`
-	OSSPrefix        string                     `json:"ossPrefix,omitempty"`
 }
 
 func (r *DebugWorkerReconciler) SetupWithManager(mgr ctrl.Manager) error {
@@ -79,12 +78,13 @@ func (r *DebugWorkerReconciler) Reconcile(ctx context.Context, req reconcile.Req
 
 	// Phase routing
 	switch dw.Status.Phase {
-	case "", "Failed":
+	case "":
 		return r.handleCreate(ctx, &dw)
-	case "Pending":
+	case "Pending", "Running":
 		return r.syncChildWorkerStatus(ctx, &dw)
-	case "Running":
-		return r.syncChildWorkerStatus(ctx, &dw)
+	case "Failed":
+		// Failed can be retried — handleCreate is idempotent (checks for existing child Worker)
+		return r.handleCreate(ctx, &dw)
 	default:
 		logger.Info("unknown phase, re-syncing", "phase", dw.Status.Phase)
 		return r.syncChildWorkerStatus(ctx, &dw)
@@ -154,11 +154,20 @@ func (r *DebugWorkerReconciler) handleCreate(ctx context.Context, dw *v1beta1.De
 		},
 	}
 
-	// 4. Create the Worker CRD
-	if err := r.Create(ctx, worker); err != nil {
-		return r.failCreate(ctx, dw, fmt.Sprintf("create child Worker: %v", err))
+	// 4. Create the Worker CRD (idempotent: skip if already exists)
+	var existingWorker v1beta1.Worker
+	if err := r.Get(ctx, client.ObjectKeyFromObject(worker), &existingWorker); err != nil {
+		if client.IgnoreNotFound(err) != nil {
+			return reconcile.Result{}, fmt.Errorf("check existing child Worker: %w", err)
+		}
+		// Not found — create it
+		if err := r.Create(ctx, worker); err != nil {
+			return r.failCreate(ctx, dw, fmt.Sprintf("create child Worker: %v", err))
+		}
+		logger.Info("created child Worker CRD", "worker", dwName)
+	} else {
+		logger.Info("child Worker already exists, skipping creation", "worker", dwName)
 	}
-	logger.Info("created child Worker CRD", "worker", dwName)
 
 	// 5. Update DebugWorker status to Pending
 	dw.Status.Phase = "Pending"
