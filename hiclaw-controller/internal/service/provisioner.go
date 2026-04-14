@@ -321,6 +321,28 @@ func (p *Provisioner) RefreshCredentials(ctx context.Context, workerName string)
 	}, nil
 }
 
+// RefreshManagerCredentials loads persisted credentials for the Manager and
+// obtains a fresh Matrix token. The Manager CR name (e.g. "default") differs
+// from the Matrix username (always "manager"), so this uses a dedicated method.
+func (p *Provisioner) RefreshManagerCredentials(ctx context.Context, managerName string) (*RefreshResult, error) {
+	creds, err := p.creds.Load(ctx, managerName)
+	if err != nil || creds == nil {
+		return nil, fmt.Errorf("credentials not found for manager %s", managerName)
+	}
+
+	matrixToken, err := p.matrix.Login(ctx, "manager", creds.MatrixPassword)
+	if err != nil {
+		return nil, fmt.Errorf("Matrix login failed: %w", err)
+	}
+
+	return &RefreshResult{
+		MatrixToken:    matrixToken,
+		GatewayKey:     creds.GatewayKey,
+		MinIOPassword:  creds.MinIOPassword,
+		MatrixPassword: creds.MatrixPassword,
+	}, nil
+}
+
 // ReconcileMCPAuth reauthorizes MCP servers for a consumer. Returns the list of
 // successfully authorized server names.
 func (p *Provisioner) ReconcileMCPAuth(ctx context.Context, consumerName string, mcpServers []string) ([]string, error) {

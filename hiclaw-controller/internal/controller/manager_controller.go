@@ -356,11 +356,10 @@ func (r *ManagerReconciler) failManagerUpdate(ctx context.Context, m *v1beta1.Ma
 // --- Desired state reconciliation ---
 
 func (r *ManagerReconciler) reconcileDesiredState(ctx context.Context, m *v1beta1.Manager, desired string) (reconcile.Result, error) {
-	// If current phase already matches desired state, nothing to do.
-	// This also avoids calling backend Status/Stop/Delete for Managers
-	// in Docker mode, where the container name ("hiclaw-manager") doesn't
-	// include the backend's worker prefix ("hiclaw-worker-").
-	if m.Status.Phase == desired {
+	// For Running state, always verify the container exists (it may have been
+	// removed externally, e.g. by an upgrade install script).
+	// For other states, skip if phase already matches.
+	if m.Status.Phase == desired && desired != "Running" {
 		return reconcile.Result{}, nil
 	}
 
@@ -486,7 +485,8 @@ func (r *ManagerReconciler) recreateManagerContainer(ctx context.Context, m *v1b
 	logger := log.FromContext(ctx)
 	managerName := m.Name
 
-	refreshResult, err := r.Provisioner.RefreshCredentials(ctx, managerName)
+	// Manager CR name is "default" but Matrix username is always "manager"
+	refreshResult, err := r.Provisioner.RefreshManagerCredentials(ctx, managerName)
 	if err != nil {
 		return fmt.Errorf("refresh credentials: %w", err)
 	}
@@ -538,6 +538,16 @@ func (r *ManagerReconciler) recreateManagerContainer(ctx context.Context, m *v1b
 			})
 		}
 		createReq.RestartPolicy = "unless-stopped"
+		// Map manager console port to host (18799 is the UI console for both runtimes)
+		consoleHostPort := r.EmbeddedConfig.ManagerConsolePort
+		if consoleHostPort == "" {
+			consoleHostPort = "18888"
+		}
+		createReq.Ports = append(createReq.Ports, backend.PortMapping{
+			HostIP:        "127.0.0.1",
+			HostPort:      consoleHostPort,
+			ContainerPort: "18799",
+		})
 		for k, v := range r.EmbeddedConfig.ExtraEnv {
 			if _, exists := createReq.Env[k]; !exists {
 				createReq.Env[k] = v
