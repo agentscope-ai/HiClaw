@@ -3,14 +3,12 @@ package service
 import (
 	"context"
 	"fmt"
-	"time"
 
 	v1beta1 "github.com/hiclaw/hiclaw-controller/api/v1beta1"
 	"github.com/hiclaw/hiclaw-controller/internal/gateway"
 	"github.com/hiclaw/hiclaw-controller/internal/matrix"
 	"github.com/hiclaw/hiclaw-controller/internal/oss"
 	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
@@ -78,7 +76,6 @@ type ProvisionerConfig struct {
 	OSSAdmin     oss.StorageAdminClient // nil in incluster/cloud mode
 	Creds        CredentialStore
 	K8sClient    kubernetes.Interface
-	RestConfig   *rest.Config // for dynamic client (WasmPlugin patching)
 	KubeMode     string
 	Namespace    string
 	AuthAudience string
@@ -95,7 +92,6 @@ type Provisioner struct {
 	ossAdmin     oss.StorageAdminClient
 	creds        CredentialStore
 	k8sClient    kubernetes.Interface
-	restConfig   *rest.Config
 	kubeMode     string
 	namespace    string
 	authAudience string
@@ -110,7 +106,6 @@ func NewProvisioner(cfg ProvisionerConfig) *Provisioner {
 		ossAdmin:     cfg.OSSAdmin,
 		creds:        cfg.Creds,
 		k8sClient:    cfg.K8sClient,
-		restConfig:   cfg.RestConfig,
 		kubeMode:     cfg.KubeMode,
 		namespace:    cfg.Namespace,
 		authAudience: cfg.AuthAudience,
@@ -233,14 +228,9 @@ func (p *Provisioner) ProvisionWorker(ctx context.Context, req WorkerProvisionRe
 	if err := p.gateway.AuthorizeAIRoutes(ctx, consumerName); err != nil {
 		return nil, fmt.Errorf("AI route authorization failed: %w", err)
 	}
-	// Higress Console may not sync the key-auth WasmPlugin allow list reliably.
-	// Patch it directly via K8s API as a fallback to prevent 403 errors.
-	if err := p.syncKeyAuthAllowList(ctx, consumerName); err != nil {
-		logger.Error(err, "key-auth allow list sync failed (non-fatal, may cause 403)")
-	}
-	// Higress WASM key-auth plugin needs ~1-2s to sync after route update.
-	// Without this, the worker's first LLM call may get 401.
-	time.Sleep(2 * time.Second)
+	// Higress Console syncs the key-auth WasmPlugin asynchronously after
+	// the AI route PUT. Wait and re-trigger to ensure the sync completes.
+	p.waitForKeyAuthSync(ctx, consumerName)
 
 	var authorizedMCPs []string
 	if len(req.McpServers) > 0 {
@@ -505,14 +495,9 @@ func (p *Provisioner) ProvisionManager(ctx context.Context, req ManagerProvision
 	if err := p.gateway.AuthorizeAIRoutes(ctx, consumerName); err != nil {
 		return nil, fmt.Errorf("AI route authorization failed: %w", err)
 	}
-	// Higress Console may not sync the key-auth WasmPlugin allow list reliably.
-	// Patch it directly via K8s API as a fallback to prevent 403 errors.
-	if err := p.syncKeyAuthAllowList(ctx, consumerName); err != nil {
-		logger.Error(err, "key-auth allow list sync failed (non-fatal, may cause 403)")
-	}
-	// Higress WASM key-auth plugin needs ~1-2s to sync after route update.
-	// Without this, the worker's first LLM call may get 401.
-	time.Sleep(2 * time.Second)
+	// Higress Console syncs the key-auth WasmPlugin asynchronously after
+	// the AI route PUT. Wait and re-trigger to ensure the sync completes.
+	p.waitForKeyAuthSync(ctx, consumerName)
 
 	var authorizedMCPs []string
 	if len(req.McpServers) > 0 {

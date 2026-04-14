@@ -535,6 +535,9 @@ func (c *HigressClient) ensureRoute(ctx context.Context, name string, domains []
 	if pathPrefix == "" {
 		pathPrefix = "/"
 	}
+	if domains == nil {
+		domains = []string{}
+	}
 	body := map[string]interface{}{
 		"name":    name,
 		"domains": domains,
