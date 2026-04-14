@@ -195,20 +195,15 @@ func (r *ManagerReconciler) handleCreate(ctx context.Context, m *v1beta1.Manager
 					})
 				}
 				createReq.RestartPolicy = "unless-stopped"
-				// Map manager console port to host
-				// OpenClaw gateway serves Control UI on 18800, CoPaw app API on 18799
+				// Map manager console port to host (18799 is the UI console for both runtimes)
 				consoleHostPort := r.EmbeddedConfig.ManagerConsolePort
 				if consoleHostPort == "" {
 					consoleHostPort = "18888"
 				}
-				consoleContainerPort := "18800" // openclaw default
-				if createReq.Runtime == "copaw" {
-					consoleContainerPort = "18799"
-				}
 				createReq.Ports = append(createReq.Ports, backend.PortMapping{
 					HostIP:        "127.0.0.1",
 					HostPort:      consoleHostPort,
-					ContainerPort: consoleContainerPort,
+					ContainerPort: "18799",
 				})
 				for k, v := range r.EmbeddedConfig.ExtraEnv {
 					if _, exists := createReq.Env[k]; !exists {
