@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"time"
 
 	v1beta1 "github.com/hiclaw/hiclaw-controller/api/v1beta1"
 	"github.com/hiclaw/hiclaw-controller/internal/gateway"
@@ -228,9 +229,9 @@ func (p *Provisioner) ProvisionWorker(ctx context.Context, req WorkerProvisionRe
 	if err := p.gateway.AuthorizeAIRoutes(ctx, consumerName); err != nil {
 		return nil, fmt.Errorf("AI route authorization failed: %w", err)
 	}
-	// Higress Console syncs the key-auth WasmPlugin asynchronously after
-	// the AI route PUT. Wait and re-trigger to ensure the sync completes.
-	p.waitForKeyAuthSync(ctx, consumerName)
+	// Higress WASM key-auth plugin needs ~1-2s to sync after route update.
+	// Without this, the worker's first LLM call may get 401.
+	time.Sleep(2 * time.Second)
 
 	var authorizedMCPs []string
 	if len(req.McpServers) > 0 {
@@ -495,9 +496,9 @@ func (p *Provisioner) ProvisionManager(ctx context.Context, req ManagerProvision
 	if err := p.gateway.AuthorizeAIRoutes(ctx, consumerName); err != nil {
 		return nil, fmt.Errorf("AI route authorization failed: %w", err)
 	}
-	// Higress Console syncs the key-auth WasmPlugin asynchronously after
-	// the AI route PUT. Wait and re-trigger to ensure the sync completes.
-	p.waitForKeyAuthSync(ctx, consumerName)
+	// Higress WASM key-auth plugin needs ~1-2s to sync after route update.
+	// Without this, the worker's first LLM call may get 401.
+	time.Sleep(2 * time.Second)
 
 	var authorizedMCPs []string
 	if len(req.McpServers) > 0 {
