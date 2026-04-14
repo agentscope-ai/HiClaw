@@ -15,7 +15,6 @@
 #   HICLAW_CLUSTER_NAME         kind cluster name (default: hiclaw)
 #   HICLAW_NAMESPACE            K8s namespace (default: hiclaw)
 #   HICLAW_SKIP_KIND            Skip kind cluster creation (default: 0)
-#   HICLAW_CONTROLLER_API_KEY   Controller auth key (auto-generated if empty)
 #   HICLAW_SKIP_BUILD           Skip local image build (default: 0, set to 1 to use remote images)
 #   HICLAW_BUILD_K8S_IMAGE      Build lightweight k8s manager image instead of all-in-one (default: 0)
 #
@@ -48,24 +47,6 @@ done
 
 if [ -z "$LLM_API_KEY" ]; then
     error "HICLAW_LLM_API_KEY is required. Example: HICLAW_LLM_API_KEY=sk-xxx $0"
-fi
-
-# Auto-generate secrets if not provided
-if [ -z "$REGISTRATION_TOKEN" ]; then
-    REGISTRATION_TOKEN=$(openssl rand -hex 16)
-    log "Auto-generated registration token: ${REGISTRATION_TOKEN}"
-fi
-
-if [ -z "$ADMIN_PASSWORD" ]; then
-    ADMIN_PASSWORD=$(openssl rand -base64 12 | tr -d '/+=' | head -c 16)
-    log "Auto-generated admin password: ${ADMIN_PASSWORD}"
-fi
-
-# Controller & Manager secrets: must be stable across pod restarts (injected via Helm Secret)
-CONTROLLER_API_KEY="${HICLAW_CONTROLLER_API_KEY:-}"
-if [ -z "$CONTROLLER_API_KEY" ]; then
-    CONTROLLER_API_KEY=$(openssl rand -hex 16)
-    log "Auto-generated controller API key"
 fi
 
 # ── Step 1: Create kind cluster ───────────────────────────────────────────
@@ -168,14 +149,20 @@ helm dependency build "$CHART_DIR"
 
 # ── Step 4: Helm install / upgrade ──────────────────────────────────────────
 
+HELM_SET_OVERRIDES=""
+if [ -n "$REGISTRATION_TOKEN" ]; then
+    HELM_SET_OVERRIDES="${HELM_SET_OVERRIDES} --set credentials.registrationToken=${REGISTRATION_TOKEN}"
+fi
+if [ -n "$ADMIN_PASSWORD" ]; then
+    HELM_SET_OVERRIDES="${HELM_SET_OVERRIDES} --set credentials.adminPassword=${ADMIN_PASSWORD}"
+fi
+
 log "Installing HiClaw via Helm..."
 helm upgrade --install hiclaw "$CHART_DIR" \
     --namespace "$NAMESPACE" --create-namespace \
-    -f "${CHART_DIR}/values-kind.yaml" \
-    --set credentials.registrationToken="$REGISTRATION_TOKEN" \
-    --set credentials.adminPassword="$ADMIN_PASSWORD" \
+    --set gateway.publicURL="http://localhost:18080" \
     --set credentials.llmApiKey="$LLM_API_KEY" \
-    --set credentials.controllerApiKey="$CONTROLLER_API_KEY" \
+    ${HELM_SET_OVERRIDES} \
     ${HELM_IMAGE_OVERRIDES} \
     --timeout 10m \
     --wait=false
@@ -206,10 +193,17 @@ log "Namespace: ${NAMESPACE}"
 echo ""
 log "Admin credentials:"
 log "  Username: admin"
-log "  Password: ${ADMIN_PASSWORD}"
+if [ -n "$ADMIN_PASSWORD" ]; then
+    log "  Password: ${ADMIN_PASSWORD}"
+else
+    log "  Password: (auto-generated, view with: kubectl get secret -n ${NAMESPACE} -o jsonpath='{.data.HICLAW_ADMIN_PASSWORD}' \$(kubectl get secret -n ${NAMESPACE} -l app.kubernetes.io/instance=hiclaw -o name | head -1) | base64 -d)"
+fi
 echo ""
-log "Registration token: ${REGISTRATION_TOKEN}"
-log "Controller API key: ${CONTROLLER_API_KEY}"
+if [ -n "$REGISTRATION_TOKEN" ]; then
+    log "Registration token: ${REGISTRATION_TOKEN}"
+else
+    log "Registration token: (auto-generated, stored in K8s Secret)"
+fi
 echo ""
 log "Access Element Web:"
 log "  Then open: http://localhost:18080"

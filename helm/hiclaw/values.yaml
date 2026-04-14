@@ -14,9 +14,9 @@ imagePullSecrets: []
 
 # ── Credentials (shared across all components) ────────────────────────────
 credentials:
-  registrationToken: ""       # Matrix registration token (required)
+  registrationToken: ""       # Matrix registration token (auto-generated if empty)
   adminUser: "admin"
-  adminPassword: ""           # Matrix admin password (required)
+  adminPassword: ""           # Matrix admin password (auto-generated if empty)
   llmApiKey: ""               # LLM API key (required)
   llmProvider: "qwen"
   defaultModel: "qwen3.5-plus"
@@ -106,6 +106,19 @@ higress:
       replicas: 1
       httpPort: 80
       httpsPort: 443
+      service:
+        type: NodePort
+        ports:
+          - name: http2
+            port: 80
+            protocol: TCP
+            targetPort: 80
+            nodePort: 30080
+          - name: https
+            port: 443
+            protocol: TCP
+            targetPort: 443
+            nodePort: 30443
     controller:
       replicas: 1
       image: higress
