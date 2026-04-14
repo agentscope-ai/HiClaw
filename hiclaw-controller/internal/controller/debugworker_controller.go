@@ -14,6 +14,7 @@ import (
 	"time"
 
 	v1beta1 "github.com/hiclaw/hiclaw-controller/api/v1beta1"
+	"github.com/hiclaw/hiclaw-controller/internal/matrix"
 	"github.com/hiclaw/hiclaw-controller/internal/oss"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -35,6 +36,9 @@ type DebugWorkerReconciler struct {
 	client.Client
 	OSS            oss.StorageClient
 	OSSAdmin       oss.StorageAdminClient // nil in incluster mode
+	Matrix         matrix.Client          // for auto-injecting admin Matrix credentials
+	AdminUser      string                 // Matrix admin username (e.g. "admin")
+	AdminPassword  string                 // Matrix admin password
 	WorkerAgentDir string                 // source dir for debug-analysis skill files
 	SourceRepoURL  string                 // GitHub repo URL for source download, e.g. "https://github.com/higress-group/hiclaw"
 }
@@ -104,9 +108,23 @@ func (r *DebugWorkerReconciler) handleCreate(ctx context.Context, dw *v1beta1.De
 	agentPrefix := fmt.Sprintf("agents/%s", dwName)
 
 	// 1. Push debug-config.json to OSS
+	// Auto-inject admin Matrix credentials if not provided by the user.
+	matrixCred := dw.Spec.MatrixCredential
+	if matrixCred == nil && r.Matrix != nil && r.AdminUser != "" && r.AdminPassword != "" {
+		token, err := r.Matrix.Login(ctx, r.AdminUser, r.AdminPassword)
+		if err != nil {
+			logger.Error(err, "failed to auto-inject admin Matrix credentials (non-fatal, message export will be unavailable)")
+		} else {
+			matrixCred = &v1beta1.MatrixCredential{
+				UserID:      r.Matrix.UserID(r.AdminUser),
+				AccessToken: token,
+			}
+			logger.Info("auto-injected admin Matrix credentials for message export")
+		}
+	}
 	cfg := debugConfig{
 		Targets:          dw.Spec.Targets,
-		MatrixCredential: dw.Spec.MatrixCredential,
+		MatrixCredential: matrixCred,
 	}
 	cfgJSON, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {

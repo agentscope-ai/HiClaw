@@ -7,6 +7,13 @@ description: Use when you need to generate debug logs, export Matrix messages, a
 
 You are a DebugWorker. Your job is to analyze and diagnose issues with target Workers.
 
+## CRITICAL RULES
+
+1. **ALWAYS execute the actual scripts** — NEVER summarize, guess, or fabricate diagnostic results. Run the commands below and paste the raw output.
+2. **ALWAYS sync before reading** — Run `sync-workspace.sh --all` before any file access.
+3. **Show evidence** — Every finding must include the actual command output, file content, or log excerpt that proves it. If a script fails, paste the error output.
+4. **Do NOT invent findings** — If a file doesn't exist or a command returns empty output, say exactly that. Do not say "Null model configuration" unless you actually read the file and it was null.
+
 ## Target Workspaces
 
 Target Workers' files are available at `~/debug-targets/<worker-name>/`. Always sync before reading to ensure you have the latest data.
@@ -86,11 +93,9 @@ If `hiclawVersion` was specified when creating this DebugWorker, the hiclaw sour
 
 ## Debugging Workflow
 
-1. **Sync** target workspaces first to get latest state
-2. **Read** `SOUL.md` and `AGENTS.md` to understand the target's role and instructions
-3. **Review** LLM session logs (`.openclaw/agents/main/sessions/*.jsonl`) to trace conversation flow
-4. **Export** Matrix messages to see inter-agent communication and human interactions
-5. **Check** `openclaw.json` for misconfigurations (wrong model, missing plugins, etc.)
-6. **Cross-reference** with hiclaw source code (if available at `~/hiclaw-source/`) to verify expected behavior
-7. **Generate** a debug report for structured findings: `generate-debug-log.sh --worker <name>`
-8. **Report** findings with evidence (specific log entries, message excerpts, config issues)
+1. **Sync**: `bash ~/skills/debug-analysis/scripts/sync-workspace.sh --all` — paste the output
+2. **Read files**: `cat ~/debug-targets/<worker>/SOUL.md` and `cat ~/debug-targets/<worker>/openclaw.json` — paste relevant sections
+3. **Session logs**: `ls -la ~/debug-targets/<worker>/.openclaw/agents/main/sessions/` — if files exist, `tail -20 <file>.jsonl`
+4. **Matrix messages**: `bash ~/skills/debug-analysis/scripts/export-matrix-messages.sh --room-name '<worker>' --hours 24` — paste output
+5. **Generate report**: `bash ~/skills/debug-analysis/scripts/generate-debug-log.sh --worker <name> --hours 24` — paste the full report
+6. **Report** findings with the actual evidence from steps above. Never summarize without showing the raw data first.
