@@ -2426,9 +2426,22 @@ EOF
     fi
 
     # --- Pre-upgrade: extract Matrix passwords from running old containers ---
-    # Only needed when upgrading TO embedded architecture.
+    # Only needed when upgrading FROM old architecture (v1.0.9) TO embedded.
+    # For new-arch-to-new-arch upgrades, credential files already exist with
+    # correct room IDs — we must NOT overwrite them.
     _creds_tmp=""
     if [ "${HICLAW_UPGRADE:-0}" = "1" ] && [ "${HICLAW_USE_EMBEDDED}" = "1" ]; then
+        # Detect if upgrading from old arch: old arch has no hiclaw-controller container
+        # (or has it as a docker-proxy only, not embedded). Check if the existing
+        # hiclaw-controller is an embedded image (has supervisord) or just a proxy.
+        _is_old_arch=0
+        if ! ${DOCKER_CMD} ps -a --format '{{.Names}}' 2>/dev/null | grep -q "^hiclaw-controller$"; then
+            _is_old_arch=1
+        elif ${DOCKER_CMD} ps -a --format '{{.Names}} {{.Image}}' 2>/dev/null | grep "^hiclaw-controller " | grep -qv "embedded"; then
+            _is_old_arch=1
+        fi
+
+        if [ "${_is_old_arch}" = "1" ]; then
         _creds_tmp=$(mktemp -d)
 
         # Manager password (stored in container env as HICLAW_MANAGER_PASSWORD)
@@ -2460,6 +2473,7 @@ CREDEOF
                 fi
             done
         fi
+        fi  # _is_old_arch
     fi
 
     # --- Stop and remove existing containers ---
@@ -2491,6 +2505,7 @@ CREDEOF
     done
 
     # --- Upgrade: inject extracted credentials into data volume ---
+    # Only needed for old-arch upgrades (credential files were extracted above).
     if [ -n "${_creds_tmp}" ] && [ -d "${_creds_tmp}" ] && [ -n "$(ls -A "${_creds_tmp}" 2>/dev/null)" ]; then
         local _cleanup_ctr="hiclaw-upgrade-cleanup"
         ${DOCKER_CMD} rm -f "${_cleanup_ctr}" 2>/dev/null || true
@@ -2499,7 +2514,7 @@ CREDEOF
             -v "${HICLAW_DATA_DIR}:/data" \
             -v "${_creds_tmp}:/creds:ro" \
             "${EMBEDDED_IMAGE}" -c '
-                rm -rf /data/worker-creds /data/hiclaw-controller
+                rm -rf /data/worker-creds
                 mkdir -p /data/worker-creds
                 cp /creds/*.env /data/worker-creds/ 2>/dev/null || true
                 chmod 600 /data/worker-creds/*.env 2>/dev/null || true
