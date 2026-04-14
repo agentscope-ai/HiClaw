@@ -644,6 +644,7 @@ local-k8s-down: ## Tear down the local HiClaw kind cluster
 	@bash hack/local-k8s-down.sh
 
 helm-template: ## Render Helm templates locally (dry-run validation)
+	@helm dependency build helm/hiclaw/
 	@helm template hiclaw helm/hiclaw/ \
 		--set credentials.registrationToken=test \
 		--set credentials.adminPassword=test \

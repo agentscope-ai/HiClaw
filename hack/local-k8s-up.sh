@@ -164,7 +164,7 @@ fi
 CHART_DIR="${PROJECT_ROOT}/helm/hiclaw"
 
 log "Building Helm dependencies..."
-helm dependency build "$CHART_DIR" 2>/dev/null || true
+helm dependency build "$CHART_DIR"
 
 # ── Step 4: Helm install / upgrade ──────────────────────────────────────────
 

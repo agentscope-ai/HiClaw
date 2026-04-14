@@ -108,6 +108,7 @@ higress:
       httpsPort: 443
     controller:
       replicas: 1
+      image: higress
   higress-console:
     admin:
       password: "admin"
