@@ -13,7 +13,8 @@ type Config struct {
 
 // MirrorOptions controls the behavior of Mirror operations.
 type MirrorOptions struct {
-	Overwrite bool // overwrite existing files at destination
+	Overwrite bool     // overwrite existing files at destination
+	Exclude   []string // file patterns to exclude (passed as --exclude flags to mc mirror)
 }
 
 // PolicyRequest describes a scoped access policy for a worker.

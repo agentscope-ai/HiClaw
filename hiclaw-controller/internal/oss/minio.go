@@ -125,6 +125,9 @@ func (c *MinIOClient) Mirror(ctx context.Context, src, dst string, opts MirrorOp
 	if opts.Overwrite {
 		args = append(args, "--overwrite")
 	}
+	for _, pattern := range opts.Exclude {
+		args = append(args, "--exclude", pattern)
+	}
 	_, err := c.runMC(ctx, args...)
 	return err
 }
