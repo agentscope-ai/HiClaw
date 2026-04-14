@@ -15,7 +15,8 @@ hiclaw-controller REST API.
 
 Environment variables:
   HICLAW_CONTROLLER_URL   Controller base URL (default: http://localhost:8090)
-  HICLAW_AUTH_TOKEN        Bearer token for authentication`,
+  HICLAW_AUTH_TOKEN        Bearer token for authentication
+  HICLAW_AUTH_TOKEN_FILE   Path to a file containing the bearer token (K8s projected volume)`,
 	}
 
 	rootCmd.AddCommand(applyCmd())

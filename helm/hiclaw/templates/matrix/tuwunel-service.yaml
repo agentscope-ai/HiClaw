@@ -1,4 +1,4 @@
-{{- if eq .Values.matrixServer.type "tuwunel" }}
+{{- if eq .Values.matrix.provider "tuwunel" }}
 {{- $comp := dict "root" . "component" "tuwunel" }}
 apiVersion: v1
 kind: Service
@@ -14,7 +14,7 @@ spec:
     {{- include "hiclaw.component.selectorLabels" $comp | nindent 4 }}
   ports:
     - name: matrix
-      port: {{ .Values.matrixServer.tuwunel.service.port }}
+      port: {{ .Values.matrix.tuwunel.service.port }}
       targetPort: matrix
       protocol: TCP
 {{- end }}

@@ -72,7 +72,7 @@ fi
 source "${WORKER_CREDS_FILE}"
 
 # Get fresh Matrix token via login
-WORKER_MATRIX_TOKEN=$(curl -sf -X POST ${HICLAW_MATRIX_SERVER}/_matrix/client/v3/login \
+WORKER_MATRIX_TOKEN=$(curl -sf -X POST ${HICLAW_MATRIX_URL}/_matrix/client/v3/login \
     -H 'Content-Type: application/json' \
     -d '{
         "type": "m.login.password",

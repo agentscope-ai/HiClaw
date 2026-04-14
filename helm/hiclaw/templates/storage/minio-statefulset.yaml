@@ -1,4 +1,4 @@
-{{- if eq .Values.objectStorage.type "minio" }}
+{{- if eq .Values.storage.provider "minio" }}
 {{- $comp := dict "root" . "component" "minio" }}
 apiVersion: apps/v1
 kind: StatefulSet
@@ -24,8 +24,8 @@ spec:
       {{- end }}
       containers:
         - name: minio
-          image: "{{ .Values.objectStorage.minio.image.repository }}:{{ .Values.objectStorage.minio.image.tag }}"
-          imagePullPolicy: {{ .Values.objectStorage.minio.image.pullPolicy }}
+          image: "{{ .Values.storage.minio.image.repository }}:{{ .Values.storage.minio.image.tag }}"
+          imagePullPolicy: {{ .Values.storage.minio.image.pullPolicy }}
           args:
             - server
             - /data
@@ -40,7 +40,7 @@ spec:
             - secretRef:
                 name: {{ include "hiclaw.minio.fullname" . }}
           resources:
-            {{- toYaml .Values.objectStorage.minio.resources | nindent 12 }}
+            {{- toYaml .Values.storage.minio.resources | nindent 12 }}
           readinessProbe:
             httpGet:
               path: /minio/health/ready
@@ -56,12 +56,12 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /data
-      {{- if not .Values.objectStorage.minio.persistence.enabled }}
+      {{- if not .Values.storage.minio.persistence.enabled }}
       volumes:
         - name: data
           emptyDir: {}
       {{- end }}
-  {{- if .Values.objectStorage.minio.persistence.enabled }}
+  {{- if .Values.storage.minio.persistence.enabled }}
   volumeClaimTemplates:
     - metadata:
         name: data
@@ -70,9 +70,9 @@ spec:
           - ReadWriteOnce
         resources:
           requests:
-            storage: {{ .Values.objectStorage.minio.persistence.size | quote }}
-        {{- if .Values.objectStorage.minio.persistence.storageClassName }}
-        storageClassName: {{ .Values.objectStorage.minio.persistence.storageClassName | quote }}
+            storage: {{ .Values.storage.minio.persistence.size | quote }}
+        {{- if .Values.storage.minio.persistence.storageClassName }}
+        storageClassName: {{ .Values.storage.minio.persistence.storageClassName | quote }}
         {{- end }}
   {{- end }}
 {{- end }}

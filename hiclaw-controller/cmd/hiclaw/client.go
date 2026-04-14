@@ -47,18 +47,14 @@ func NewAPIClient() *APIClient {
 }
 
 // discoverToken returns a bearer token using a multi-level fallback:
-//  1. HICLAW_AUTH_TOKEN env var (Agent containers, injected by Reconciler)
-//  2. /var/run/hiclaw/token file (embedded controller)
-//  3. K8s SA projected token (incluster pods)
-//  4. empty string (unauthenticated, for controllers with auth disabled)
+//  1. HICLAW_AUTH_TOKEN env var (Docker containers, injected by Reconciler)
+//  2. HICLAW_AUTH_TOKEN_FILE env var pointing to a token file (K8s projected volume)
+//  3. empty string (unauthenticated, for controllers with auth disabled)
 func discoverToken() string {
 	if token := os.Getenv("HICLAW_AUTH_TOKEN"); token != "" {
 		return token
 	}
-	for _, path := range []string{
-		"/var/run/hiclaw/token",
-		"/var/run/secrets/kubernetes.io/serviceaccount/token",
-	} {
+	if path := os.Getenv("HICLAW_AUTH_TOKEN_FILE"); path != "" {
 		if data, err := os.ReadFile(path); err == nil {
 			if t := strings.TrimSpace(string(data)); t != "" {
 				return t

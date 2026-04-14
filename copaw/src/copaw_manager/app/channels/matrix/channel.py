@@ -310,7 +310,7 @@ class MatrixChannel(BaseChannel):
     ) -> "MatrixChannel":
         cfg = MatrixChannelConfig(
             {
-                "homeserver": os.environ.get("HICLAW_MATRIX_SERVER", ""),
+                "homeserver": os.environ.get("HICLAW_MATRIX_URL", ""),
                 "access_token": os.environ.get("HICLAW_MATRIX_TOKEN", ""),
             },
         )

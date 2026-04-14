@@ -1,5 +1,5 @@
 {{- if .Values.elementWeb.enabled }}
-{{- $matrixUrl := .Values.elementWeb.matrixServerUrl | default (include "hiclaw.tuwunel.internalURL" .) }}
+{{- $matrixUrl := include "hiclaw.gateway.publicURL" . }}
 apiVersion: v1
 kind: ConfigMap
 metadata:

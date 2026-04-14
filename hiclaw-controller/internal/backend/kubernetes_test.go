@@ -95,6 +95,9 @@ func newTestK8sBackend(objects ...*corev1.Pod) *K8sBackend {
 }
 
 func TestK8sCreate(t *testing.T) {
+	t.Setenv("HICLAW_FS_BUCKET", "hiclaw-fs")
+	t.Setenv("HICLAW_REGION", "cn-hangzhou")
+
 	b := newTestK8sBackend()
 
 	result, err := b.Create(context.Background(), CreateRequest{
@@ -145,6 +148,15 @@ func TestK8sCreate(t *testing.T) {
 	}
 	if envs["HICLAW_CONTROLLER_URL"] != "http://controller:8090" {
 		t.Fatalf("expected injected controller URL, got %q", envs["HICLAW_CONTROLLER_URL"])
+	}
+	if envs["HICLAW_FS_BUCKET"] != "hiclaw-fs" {
+		t.Fatalf("expected HICLAW_FS_BUCKET from process env, got %q", envs["HICLAW_FS_BUCKET"])
+	}
+	if _, ok := envs["HICLAW_OSS_BUCKET"]; ok {
+		t.Fatalf("unexpected legacy HICLAW_OSS_BUCKET in worker pod env")
+	}
+	if envs["HICLAW_REGION"] != "cn-hangzhou" {
+		t.Fatalf("expected HICLAW_REGION from process env, got %q", envs["HICLAW_REGION"])
 	}
 }
 

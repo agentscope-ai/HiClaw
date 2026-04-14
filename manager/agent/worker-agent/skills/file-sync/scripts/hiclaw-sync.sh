@@ -9,7 +9,8 @@ if [ -f /opt/hiclaw/scripts/lib/hiclaw-env.sh ]; then
 else
     . /opt/hiclaw/scripts/lib/oss-credentials.sh 2>/dev/null || true
     ensure_mc_credentials 2>/dev/null || true
-    HICLAW_STORAGE_PREFIX="hiclaw/${HICLAW_OSS_BUCKET:-hiclaw-storage}"
+    HICLAW_FS_BUCKET="${HICLAW_FS_BUCKET:-hiclaw-storage}"
+    HICLAW_STORAGE_PREFIX="${HICLAW_STORAGE_PREFIX:-hiclaw/${HICLAW_FS_BUCKET}}"
 fi
 
 # Merge helper for openclaw.json (remote base + local Worker additions)

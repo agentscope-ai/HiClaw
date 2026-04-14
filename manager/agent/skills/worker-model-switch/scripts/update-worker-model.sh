@@ -91,7 +91,7 @@ update_worker_model() {
     _log "Updating worker $worker model to ${new_model} (ctx=${CTX}, max=${MAX}, reasoning=${REASONING}, input=${INPUT})"
 
     # ── Pre-flight: verify the model is reachable via AI Gateway ─────────────
-    local gateway_url="${HICLAW_AI_GATEWAY_SERVER}/v1/chat/completions"
+    local gateway_url="${HICLAW_AI_GATEWAY_URL}/v1/chat/completions"
     local gateway_key="${HICLAW_MANAGER_GATEWAY_KEY:-}"
     if [ -z "${gateway_key}" ] && [ -f "/data/hiclaw-secrets.env" ]; then
         source /data/hiclaw-secrets.env
@@ -216,7 +216,7 @@ update_worker_model() {
         local msg_body
         msg_body="@${worker}:${matrix_domain} Your model has been updated to \`${new_model}\` (reasoning=${REASONING}). Please use your file-sync skill to sync the latest config."
         curl -sf -X PUT \
-            "${HICLAW_MATRIX_SERVER}/_matrix/client/v3/rooms/${room_id}/send/m.room.message/${txn_id}" \
+            "${HICLAW_MATRIX_URL}/_matrix/client/v3/rooms/${room_id}/send/m.room.message/${txn_id}" \
             -H "Authorization: Bearer ${manager_token}" \
             -H 'Content-Type: application/json' \
             -d "{\"msgtype\":\"m.text\",\"body\":\"${msg_body}\",\"m.mentions\":{\"user_ids\":[\"@${worker}:${matrix_domain}\"]}}" \

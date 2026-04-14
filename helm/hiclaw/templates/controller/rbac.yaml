@@ -25,9 +25,6 @@ rules:
   - apiGroups: [""]
     resources: ["serviceaccounts"]
     verbs: ["get", "list", "create", "delete"]
-  - apiGroups: ["rbac.authorization.k8s.io"]
-    resources: ["roles", "rolebindings"]
-    verbs: ["get", "list", "create", "update", "patch", "delete"]
   - apiGroups: [""]
     resources: ["events"]
     verbs: ["create", "patch"]
@@ -56,29 +53,6 @@ subjects:
   - kind: ServiceAccount
     name: {{ include "hiclaw.controller.serviceAccountName" . }}
     namespace: {{ include "hiclaw.namespace" . }}
----
-{{- /*
-  ClusterRole for worker ServiceAccounts.
-  Workers authenticate to the controller via projected SA tokens (HTTP bearer),
-  not directly via the K8s API. This ClusterRole exists so that per-worker
-  RoleBindings created by the controller have a valid RoleRef.
-*/}}
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: hiclaw-worker
-  labels:
-    {{- include "hiclaw.component.labels" (dict "root" . "component" "controller") | nindent 4 }}
-rules: []
----
-{{- /* ClusterRole for Manager ServiceAccount (same pattern as hiclaw-worker). */}}
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: hiclaw-manager
-  labels:
-    {{- include "hiclaw.component.labels" (dict "root" . "component" "controller") | nindent 4 }}
-rules: []
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole

@@ -47,13 +47,13 @@ if [ "${HICLAW_RUNTIME:-}" = "aliyun" ]; then
     FS_ENDPOINT="https://oss-placeholder.aliyuncs.com"
     FS_ACCESS_KEY="rrsa"
     FS_SECRET_KEY="rrsa"
-    FS_BUCKET="${HICLAW_OSS_BUCKET:-hiclaw-cloud-storage}"
+    FS_BUCKET="${HICLAW_FS_BUCKET:-hiclaw-cloud-storage}"
     log "  OSS bucket: ${FS_BUCKET}"
 else
     FS_ENDPOINT="${HICLAW_FS_ENDPOINT:?HICLAW_FS_ENDPOINT is required}"
     FS_ACCESS_KEY="${HICLAW_FS_ACCESS_KEY:?HICLAW_FS_ACCESS_KEY is required}"
     FS_SECRET_KEY="${HICLAW_FS_SECRET_KEY:?HICLAW_FS_SECRET_KEY is required}"
-    FS_BUCKET="hiclaw-storage"
+    FS_BUCKET="${HICLAW_FS_BUCKET:-hiclaw-storage}"
 fi
 
 # Set up skills CLI symlink: ~/.agents/skills -> worker's skills directory
@@ -69,49 +69,26 @@ ln -sfn "${INSTALL_DIR}/${WORKER_NAME}" /root/hiclaw-fs 2>/dev/null || true
 
 # Background readiness reporter — report ready to controller when CoPaw bridge completes
 _start_readiness_reporter() {
-    [ -z "${HICLAW_CONTROLLER_URL:-${HICLAW_ORCHESTRATOR_URL:-}}" ] && return 0
-    local _controller_url="${HICLAW_CONTROLLER_URL:-${HICLAW_ORCHESTRATOR_URL:-}}"
-
-    # Build auth header (SA token for embedded mode, API key for cloud mode)
-    local auth_header=""
-    if [ -n "${HICLAW_AUTH_TOKEN:-}" ]; then
-        auth_header="Authorization: Bearer ${HICLAW_AUTH_TOKEN}"
-    elif [ -n "${HICLAW_WORKER_API_KEY:-}" ]; then
-        auth_header="Authorization: Bearer ${HICLAW_WORKER_API_KEY}"
-    fi
+    [ -z "${HICLAW_CONTROLLER_URL:-}" ] && return 0
 
     (
-        # Phase 1: Wait for initial readiness (with timeout)
+        # Phase 1: Wait for CoPaw config to be ready (with timeout)
         TIMEOUT=120; ELAPSED=0
         CONFIG_FILE="${INSTALL_DIR}/${WORKER_NAME}/.copaw/config.json"
         while [ "${ELAPSED}" -lt "${TIMEOUT}" ]; do
             if [ -f "${CONFIG_FILE}" ] && grep -q '"channels"' "${CONFIG_FILE}" 2>/dev/null; then
-                for _attempt in 1 2 3; do
-                    if curl -sf -X POST "${_controller_url}/api/v1/workers/${WORKER_NAME}/ready" \
-                        ${auth_header:+-H "${auth_header}"} 2>/dev/null; then
-                        log "Reported ready to controller"
-                        break 2
-                    fi
-                    sleep 2
-                done
-                log "WARNING: POST to controller failed, will retry health check loop"
+                break
             fi
             sleep 5; ELAPSED=$((ELAPSED + 5))
         done
 
         if [ "${ELAPSED}" -ge "${TIMEOUT}" ]; then
-            log "WARNING: readiness reporter timed out after ${TIMEOUT}s"
+            log "WARNING: readiness reporter timed out waiting for config after ${TIMEOUT}s"
             exit 1
         fi
 
-        # Phase 2: Periodic heartbeat (every 60s) — self-heals after controller restart
-        while true; do
-            sleep 60
-            if [ -f "${CONFIG_FILE}" ] && grep -q '"channels"' "${CONFIG_FILE}" 2>/dev/null; then
-                curl -sf -X POST "${_controller_url}/api/v1/workers/${WORKER_NAME}/ready" \
-                    ${auth_header:+-H "${auth_header}"} 2>/dev/null || true
-            fi
-        done
+        # Report ready to controller via hiclaw CLI
+        hiclaw worker report-ready
     ) &
     log "Background readiness reporter started (PID: $!)"
 }

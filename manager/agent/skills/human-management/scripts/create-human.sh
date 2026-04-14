@@ -76,7 +76,7 @@ if [ -z "${MANAGER_MATRIX_TOKEN:-}" ]; then
     if [ -z "${MANAGER_PASSWORD}" ]; then
         _fail "MANAGER_MATRIX_TOKEN not set"
     fi
-    MANAGER_MATRIX_TOKEN=$(curl -sf -X POST ${HICLAW_MATRIX_SERVER}/_matrix/client/v3/login \
+    MANAGER_MATRIX_TOKEN=$(curl -sf -X POST ${HICLAW_MATRIX_URL}/_matrix/client/v3/login \
         -H 'Content-Type: application/json' \
         -d '{"type":"m.login.password","identifier":{"type":"m.id.user","user":"manager"},"password":"'"${MANAGER_PASSWORD}"'"}' \
         2>/dev/null | jq -r '.access_token // empty')
@@ -89,7 +89,7 @@ fi
 log "Step 1: Registering Matrix account..."
 HUMAN_PASSWORD=$(openssl rand -hex 16 2>/dev/null || head -c 16 /dev/urandom | xxd -p)
 
-REG_RESP=$(curl -s -X POST ${HICLAW_MATRIX_SERVER}/_matrix/client/v3/register \
+REG_RESP=$(curl -s -X POST ${HICLAW_MATRIX_URL}/_matrix/client/v3/register \
     -H 'Content-Type: application/json' \
     -d '{
         "username": "'"${HUMAN_USERNAME}"'",
@@ -107,7 +107,7 @@ else
     log "  Account may already exist (registration response: ${REG_RESP:0:100})"
     log "  Proceeding with permission configuration..."
     # Try to login to get a token for auto-joining rooms
-    HUMAN_TOKEN=$(curl -sf -X POST ${HICLAW_MATRIX_SERVER}/_matrix/client/v3/login \
+    HUMAN_TOKEN=$(curl -sf -X POST ${HICLAW_MATRIX_URL}/_matrix/client/v3/login \
         -H 'Content-Type: application/json' \
         -d '{"type":"m.login.password","identifier":{"type":"m.id.user","user":"'"${HUMAN_USERNAME}"'"},"password":"'"${HUMAN_PASSWORD}"'"}' \
         2>/dev/null | jq -r '.access_token // empty')
@@ -175,7 +175,7 @@ _invite_to_room() {
     local room_id="$1"
     [ -z "${room_id}" ] || [ "${room_id}" = "null" ] && return
 
-    curl -sf -X POST "${HICLAW_MATRIX_SERVER}/_matrix/client/v3/rooms/${room_id}/invite" \
+    curl -sf -X POST "${HICLAW_MATRIX_URL}/_matrix/client/v3/rooms/${room_id}/invite" \
         -H "Authorization: Bearer ${MANAGER_MATRIX_TOKEN}" \
         -H 'Content-Type: application/json' \
         -d '{"user_id": "'"${MATRIX_ID}"'"}' 2>/dev/null || true
@@ -185,7 +185,7 @@ _invite_to_room() {
     if [ -n "${HUMAN_TOKEN:-}" ]; then
         local _room_enc
         _room_enc=$(echo "${room_id}" | sed 's/!/%21/g')
-        curl -sf -X POST "${HICLAW_MATRIX_SERVER}/_matrix/client/v3/rooms/${_room_enc}/join" \
+        curl -sf -X POST "${HICLAW_MATRIX_URL}/_matrix/client/v3/rooms/${_room_enc}/join" \
             -H "Authorization: Bearer ${HUMAN_TOKEN}" \
             -H 'Content-Type: application/json' \
             -d '{}' > /dev/null 2>&1 || true

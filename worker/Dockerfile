@@ -12,9 +12,13 @@
 
 ARG HIGRESS_REGISTRY=higress-registry.cn-hangzhou.cr.aliyuncs.com
 ARG OPENCLAW_BASE_IMAGE=hiclaw/openclaw-base:20260327-74de2f2
+ARG HICLAW_CONTROLLER_IMAGE=hiclaw/hiclaw-controller:latest
 
 # ============ Stage 1: mc (MinIO Client) ============
 FROM ${HIGRESS_REGISTRY}/higress/mc:20260216 AS mc
+
+# ============ Stage 2: hiclaw CLI (from controller image) ============
+FROM ${HICLAW_CONTROLLER_IMAGE} AS hiclaw-controller
 
 # ============ Final Image: Based on openclaw-base ============
 # openclaw-base already includes: all-in-one + Node.js 22 + OpenClaw + mcporter + common tools
@@ -22,6 +26,9 @@ FROM ${OPENCLAW_BASE_IMAGE}
 
 # mc (MinIO Client) — real binary; wrapper installed after shared libs are copied
 COPY --from=mc /usr/bin/mc /usr/local/bin/mc.bin
+
+# hiclaw CLI — for worker/team/human management via controller REST API
+COPY --from=hiclaw-controller /usr/local/bin/hiclaw /usr/local/bin/hiclaw
 
 # ---- Built-in observability plugin (bundled unconditionally, enabled at runtime) ----
 # Placed before scripts/lib COPY so that code changes do not invalidate this layer.

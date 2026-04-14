@@ -26,9 +26,9 @@ Namespace: {{ include "hiclaw.namespace" . }}
    kubectl get managers -n {{ include "hiclaw.namespace" . }}
 
    Infrastructure endpoints:
-   Matrix:       {{ include "hiclaw.tuwunel.internalURL" . }}
+   Matrix:       {{ include "hiclaw.matrix.internalURL" . }}
    Controller:   {{ include "hiclaw.controller.internalURL" . }}
-   AI Gateway:   {{ include "hiclaw.higress.gatewayURL" . }}
+   AI Gateway:   {{ include "hiclaw.gateway.internalURL" . }}
 
 5. View logs:
 

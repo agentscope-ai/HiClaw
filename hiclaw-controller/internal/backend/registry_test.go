@@ -36,9 +36,9 @@ func (m *mockGatewayBackend) DeleteConsumer(_ context.Context, _ string) error  
 
 func TestDetectWorkerBackend_Priority(t *testing.T) {
 	docker := &mockWorkerBackend{name: "docker", available: true}
-	sae := &mockWorkerBackend{name: "sae", available: true}
+	k8s := &mockWorkerBackend{name: "k8s", available: true}
 
-	reg := NewRegistry([]WorkerBackend{docker, sae}, nil)
+	reg := NewRegistry([]WorkerBackend{docker, k8s}, nil)
 	got := reg.DetectWorkerBackend(context.Background())
 	if got == nil || got.Name() != "docker" {
 		t.Errorf("expected docker backend (first available), got %v", got)
@@ -47,12 +47,12 @@ func TestDetectWorkerBackend_Priority(t *testing.T) {
 
 func TestDetectWorkerBackend_Fallback(t *testing.T) {
 	docker := &mockWorkerBackend{name: "docker", available: false}
-	sae := &mockWorkerBackend{name: "sae", available: true}
+	k8s := &mockWorkerBackend{name: "k8s", available: true}
 
-	reg := NewRegistry([]WorkerBackend{docker, sae}, nil)
+	reg := NewRegistry([]WorkerBackend{docker, k8s}, nil)
 	got := reg.DetectWorkerBackend(context.Background())
-	if got == nil || got.Name() != "sae" {
-		t.Errorf("expected sae backend (fallback), got %v", got)
+	if got == nil || got.Name() != "k8s" {
+		t.Errorf("expected k8s backend (fallback), got %v", got)
 	}
 }
 
@@ -68,16 +68,16 @@ func TestDetectWorkerBackend_None(t *testing.T) {
 
 func TestGetWorkerBackend_ByName(t *testing.T) {
 	docker := &mockWorkerBackend{name: "docker", available: true}
-	sae := &mockWorkerBackend{name: "sae", available: false}
+	k8s := &mockWorkerBackend{name: "k8s", available: false}
 
-	reg := NewRegistry([]WorkerBackend{docker, sae}, nil)
+	reg := NewRegistry([]WorkerBackend{docker, k8s}, nil)
 
-	got, err := reg.GetWorkerBackend(context.Background(), "sae")
+	got, err := reg.GetWorkerBackend(context.Background(), "k8s")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if got.Name() != "sae" {
-		t.Errorf("expected sae, got %s", got.Name())
+	if got.Name() != "k8s" {
+		t.Errorf("expected k8s, got %s", got.Name())
 	}
 }
 

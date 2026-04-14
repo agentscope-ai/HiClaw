@@ -43,7 +43,7 @@ if [ -f "${SECRETS_FILE}" ]; then
     source "${SECRETS_FILE}"
 fi
 if [ -z "${MANAGER_MATRIX_TOKEN}" ]; then
-    MANAGER_MATRIX_TOKEN=$(curl -sf -X POST ${HICLAW_MATRIX_SERVER}/_matrix/client/v3/login \
+    MANAGER_MATRIX_TOKEN=$(curl -sf -X POST ${HICLAW_MATRIX_URL}/_matrix/client/v3/login \
         -H 'Content-Type: application/json' \
         -d '{"type":"m.login.password","identifier":{"type":"m.id.user","user":"manager"},"password":"'"${HICLAW_MANAGER_PASSWORD}"'"}' \
         2>/dev/null | jq -r '.access_token // empty')
@@ -118,7 +118,7 @@ INVITE_LIST="${INVITE_LIST}]"
 
 MANAGER_MATRIX_ID="@manager:${MATRIX_DOMAIN}"
 ADMIN_MATRIX_ID="@${ADMIN_USER}:${MATRIX_DOMAIN}"
-ROOM_RESP=$(curl -sf -X POST ${HICLAW_MATRIX_SERVER}/_matrix/client/v3/createRoom \
+ROOM_RESP=$(curl -sf -X POST ${HICLAW_MATRIX_URL}/_matrix/client/v3/createRoom \
     -H "Authorization: Bearer ${MANAGER_MATRIX_TOKEN}" \
     -H 'Content-Type: application/json' \
     -d '{
@@ -141,7 +141,7 @@ log "  Project room created: ${ROOM_ID}"
 # Update meta.json with room_id
 jq --arg rid "${ROOM_ID}" '.project_room_id = $rid' "${PROJECT_DIR}/meta.json" > /tmp/proj-meta-updated.json
 mv /tmp/proj-meta-updated.json "${PROJECT_DIR}/meta.json"
-curl -sf -X POST "${HICLAW_MATRIX_SERVER}/_matrix/client/v3/rooms/${ROOM_ID}/invite" \
+curl -sf -X POST "${HICLAW_MATRIX_URL}/_matrix/client/v3/rooms/${ROOM_ID}/invite" \
     -H "Authorization: Bearer ${MANAGER_MATRIX_TOKEN}" \
     -H 'Content-Type: application/json' \
     -d "{\"user_id\": \"${ADMIN_MATRIX_ID}\"}" > /dev/null 2>&1 || true
@@ -150,14 +150,14 @@ log "  Admin ${ADMIN_MATRIX_ID} invited to project room"
 # Auto-join admin into project room
 ADMIN_TOKEN=""
 if [ -n "${HICLAW_ADMIN_PASSWORD:-}" ]; then
-    ADMIN_TOKEN=$(curl -sf -X POST ${HICLAW_MATRIX_SERVER}/_matrix/client/v3/login \
+    ADMIN_TOKEN=$(curl -sf -X POST ${HICLAW_MATRIX_URL}/_matrix/client/v3/login \
         -H 'Content-Type: application/json' \
         -d '{"type":"m.login.password","identifier":{"type":"m.id.user","user":"'"${ADMIN_USER}"'"},"password":"'"${HICLAW_ADMIN_PASSWORD}"'"}' \
         2>/dev/null | jq -r '.access_token // empty')
 fi
 if [ -n "${ADMIN_TOKEN}" ]; then
     ROOM_ENC=$(echo "${ROOM_ID}" | sed 's/!/%21/g')
-    if curl -sf -X POST "${HICLAW_MATRIX_SERVER}/_matrix/client/v3/rooms/${ROOM_ENC}/join" \
+    if curl -sf -X POST "${HICLAW_MATRIX_URL}/_matrix/client/v3/rooms/${ROOM_ENC}/join" \
         -H "Authorization: Bearer ${ADMIN_TOKEN}" \
         -H 'Content-Type: application/json' \
         -d '{}' > /dev/null 2>&1; then

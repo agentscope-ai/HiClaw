@@ -1,4 +1,4 @@
-{{- if eq .Values.objectStorage.type "minio" }}
+{{- if eq .Values.storage.provider "minio" }}
 {{- $comp := dict "root" . "component" "minio" }}
 apiVersion: v1
 kind: Service
@@ -14,11 +14,11 @@ spec:
     {{- include "hiclaw.component.selectorLabels" $comp | nindent 4 }}
   ports:
     - name: api
-      port: {{ .Values.objectStorage.minio.service.apiPort }}
+      port: {{ .Values.storage.minio.service.apiPort }}
       targetPort: api
       protocol: TCP
     - name: console
-      port: {{ .Values.objectStorage.minio.service.consolePort }}
+      port: {{ .Values.storage.minio.service.consolePort }}
       targetPort: console
       protocol: TCP
 {{- end }}

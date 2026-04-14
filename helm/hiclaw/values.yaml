@@ -14,9 +14,9 @@ imagePullSecrets: []
 
 # ── Credentials (shared across all components) ────────────────────────────
 credentials:
-  registrationToken: ""       # Matrix registration token (required)
+  registrationToken: ""       # Matrix registration token (auto-generated if empty)
   adminUser: "admin"
-  adminPassword: ""           # Matrix admin password (required)
+  adminPassword: ""           # Matrix admin password (auto-generated if empty)
   llmApiKey: ""               # LLM API key (required)
   llmProvider: "qwen"
   defaultModel: "qwen3.5-plus"
@@ -24,11 +24,12 @@ credentials:
   higressAdminUser: "admin"    # Higress console admin username
   higressAdminPassword: "admin" # Higress console admin password
 
-# ── Matrix Server ─────────────────────────────────────────────────────────
-# type: tuwunel | synapse (synapse support planned for Phase 2)
-matrixServer:
-  type: tuwunel
-  serverName: ""        # Matrix server_name (e.g. "example.com"); defaults to Tuwunel cluster FQDN
+# ── Matrix ────────────────────────────────────────────────────────────────
+matrix:
+  provider: tuwunel           # tuwunel | synapse
+  mode: managed               # managed | existing
+  internalURL: ""             # existing mode only; managed mode auto-derives
+  serverName: ""              # existing mode only; managed mode auto-derives
   tuwunel:
     image:
       repository: higress-registry.cn-hangzhou.cr.aliyuncs.com/higress/tuwunel
@@ -51,11 +52,22 @@ matrixServer:
       storageClassName: ""    # empty = default StorageClass
       mountPath: /data/conduwuit
     extraEnv: {}
+  synapse: {}
 
-# ── Object Storage ────────────────────────────────────────────────────────
-# type: minio | external
-objectStorage:
-  type: minio
+# ── Gateway ───────────────────────────────────────────────────────────────
+gateway:
+  provider: higress           # higress | ai-gateway
+  mode: managed               # managed | existing
+  publicURL: ""               # required browser/public URL, e.g. http://localhost:18080
+  higress:
+    enabled: true             # controls Higress subchart deployment
+  aiGateway: {}
+
+# ── Storage ───────────────────────────────────────────────────────────────
+storage:
+  provider: minio             # minio | oss
+  mode: managed               # managed | existing
+  bucket: "hiclaw"
   minio:
     image:
       repository: higress-registry.cn-hangzhou.cr.aliyuncs.com/higress/minio
@@ -79,24 +91,12 @@ objectStorage:
     auth:
       rootUser: "minioadmin"
       rootPassword: "minioadmin"
-    bucketName: "hiclaw"
-  external:
-    endpoint: ""
-    bucket: ""
-    accessKey: ""
-    secretKey: ""
-
-# ── AI Gateway ────────────────────────────────────────────────────────────
-# type: higress | external
-aiGateway:
-  type: higress
-  higress:
-    enabled: true             # controls Higress subchart deployment
-  external:
-    gatewayUrl: ""            # external gateway URL (e.g., Alibaba Cloud APIG)
-    consoleUrl: ""
+  oss: {}
 
 # ── Higress subchart values (passed directly to the higress dependency) ───
+# `gateway.higress.enabled` is the materialized condition flag. The actual
+# Higress chart still reads values from the top-level `higress:` block because
+# the dependency name is `higress`.
 # See https://higress.io/en/docs/latest/user/configurations/ for full options.
 higress:
   global:
@@ -106,8 +106,22 @@ higress:
       replicas: 1
       httpPort: 80
       httpsPort: 443
+      service:
+        type: NodePort
+        ports:
+          - name: http2
+            port: 80
+            protocol: TCP
+            targetPort: 80
+            nodePort: 30080
+          - name: https
+            port: 443
+            protocol: TCP
+            targetPort: 443
+            nodePort: 30443
     controller:
       replicas: 1
+      image: higress
   higress-console:
     admin:
       password: "admin"
@@ -159,7 +173,6 @@ manager:
 # ── Element Web (IM UI, optional) ─────────────────────────────────────────
 elementWeb:
   enabled: true
-  matrixServerUrl: ""   # Browser-accessible Matrix URL (e.g. http://localhost:18080); defaults to internal Tuwunel URL
   image:
     repository: higress-registry.cn-hangzhou.cr.aliyuncs.com/higress/element-web
     tag: "20260216"

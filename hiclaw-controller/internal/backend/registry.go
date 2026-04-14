@@ -23,9 +23,9 @@ func NewRegistry(workers []WorkerBackend, gateways []GatewayBackend) *Registry {
 }
 
 // DetectWorkerBackend returns the first available worker backend.
-// Priority is determined by registration order (set in main.go buildBackends):
+// Priority is determined by registration order (set in buildBackends):
 //  1. Docker backend (socket available)
-//  2. SAE backend (SAE worker image configured)
+//  2. K8s backend (incluster mode)
 //  3. nil
 func (r *Registry) DetectWorkerBackend(ctx context.Context) WorkerBackend {
 	for _, b := range r.workerBackends {

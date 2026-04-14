@@ -59,7 +59,7 @@ if [ "${HICLAW_RUNTIME}" = "aliyun" ] || [ "${HICLAW_RUNTIME}" = "k8s" ]; then
         : "${HICLAW_ADMIN_PASSWORD:?HICLAW_ADMIN_PASSWORD is required}"
     fi
     log "${HICLAW_RUNTIME} mode: validating environment... OK"
-    log "  Matrix: ${HICLAW_MATRIX_SERVER}, AI Gateway: ${HICLAW_AI_GATEWAY_URL}, Storage: ${HICLAW_STORAGE_BUCKET}"
+    log "  Matrix: ${HICLAW_MATRIX_URL}, AI Gateway: ${HICLAW_AI_GATEWAY_URL}, Storage: ${HICLAW_FS_BUCKET}"
     if [ "${HICLAW_RUNTIME}" = "aliyun" ]; then
         ensure_mc_credentials || { log "FATAL: Initial STS credential fetch failed"; exit 1; }
     fi
@@ -93,14 +93,14 @@ if [ "${HICLAW_RUNTIME}" != "aliyun" ] && [ "${HICLAW_RUNTIME}" != "k8s" ]; then
     waitForService "Higress Gateway" "127.0.0.1" 8080 180
     waitForService "Higress Console" "127.0.0.1" 8001 180
     waitForService "Tuwunel" "127.0.0.1" 6167 120
-    waitForHTTP "Tuwunel Matrix API" "${HICLAW_MATRIX_SERVER}/_tuwunel/server_version" 120
+    waitForHTTP "Tuwunel Matrix API" "${HICLAW_MATRIX_URL}/_tuwunel/server_version" 120
     waitForService "MinIO" "127.0.0.1" 9000 120
 else
     # Cloud/K8s mode: wait for external Tuwunel
-    log "Waiting for Tuwunel Matrix server at ${HICLAW_MATRIX_SERVER}..."
+    log "Waiting for Tuwunel Matrix server at ${HICLAW_MATRIX_URL}..."
     _retry=0
     while [ "${_retry}" -lt 30 ]; do
-        if curl -sf "${HICLAW_MATRIX_SERVER}/_matrix/client/versions" > /dev/null 2>&1; then
+        if curl -sf "${HICLAW_MATRIX_URL}/_matrix/client/versions" > /dev/null 2>&1; then
             log "Tuwunel is ready"
             break
         fi
@@ -109,7 +109,7 @@ else
         sleep 5
     done
     if [ "${_retry}" -ge 30 ]; then
-        log "ERROR: Tuwunel not reachable at ${HICLAW_MATRIX_SERVER}"
+        log "ERROR: Tuwunel not reachable at ${HICLAW_MATRIX_URL}"
         exit 1
     fi
 fi
@@ -159,7 +159,7 @@ if [ "${HICLAW_RUNTIME}" = "k8s" ]; then
     HICLAW_FS="/root/hiclaw-fs"
     mkdir -p "${HICLAW_FS}/shared" "${HICLAW_FS}/agents" "${HICLAW_FS}/hiclaw-config"
     log "Configuring mc alias for cluster MinIO..."
-    mc alias set hiclaw "${HICLAW_MINIO_ENDPOINT}" "${HICLAW_MINIO_ACCESS_KEY}" "${HICLAW_MINIO_SECRET_KEY}"
+    mc alias set hiclaw "${HICLAW_FS_ENDPOINT}" "${HICLAW_FS_ACCESS_KEY}" "${HICLAW_FS_SECRET_KEY}"
     log "Syncing workspace from MinIO..."
     mc mirror "${HICLAW_STORAGE_PREFIX}/" "${HICLAW_FS}/" --overwrite 2>/dev/null || true
     ln -sfn "${HICLAW_FS}" /root/manager-workspace/hiclaw-fs
@@ -212,7 +212,7 @@ if [ "${HICLAW_RUNTIME}" = "k8s" ]; then
     log "K8s mode: skipping Matrix registration (handled by controller)"
     # Controller injects HICLAW_MANAGER_PASSWORD via env; login to get token
     log "Obtaining Manager Matrix access token..."
-    _LOGIN_RESPONSE=$(curl -s -X POST ${HICLAW_MATRIX_SERVER}/_matrix/client/v3/login \
+    _LOGIN_RESPONSE=$(curl -s -X POST ${HICLAW_MATRIX_URL}/_matrix/client/v3/login \
         -H 'Content-Type: application/json' \
         -d '{
             "type": "m.login.password",
@@ -228,7 +228,7 @@ if [ "${HICLAW_RUNTIME}" = "k8s" ]; then
     log "Manager Matrix token obtained (token prefix: ${MANAGER_TOKEN:0:10}...)"
 else
 log "Registering human admin Matrix account..."
-curl -sf -X POST ${HICLAW_MATRIX_SERVER}/_matrix/client/v3/register \
+curl -sf -X POST ${HICLAW_MATRIX_URL}/_matrix/client/v3/register \
     -H 'Content-Type: application/json' \
     -d '{
         "username": "'"${HICLAW_ADMIN_USER}"'",
@@ -240,7 +240,7 @@ curl -sf -X POST ${HICLAW_MATRIX_SERVER}/_matrix/client/v3/register \
     }' > /dev/null 2>&1 || log "Admin account may already exist"
 
 log "Registering Manager Agent Matrix account..."
-curl -sf -X POST ${HICLAW_MATRIX_SERVER}/_matrix/client/v3/register \
+curl -sf -X POST ${HICLAW_MATRIX_URL}/_matrix/client/v3/register \
     -H 'Content-Type: application/json' \
     -d '{
         "username": "manager",
@@ -253,7 +253,7 @@ curl -sf -X POST ${HICLAW_MATRIX_SERVER}/_matrix/client/v3/register \
 
 # Get Manager Agent's Matrix access token
 log "Obtaining Manager Matrix access token..."
-_LOGIN_RESPONSE=$(curl -s -X POST ${HICLAW_MATRIX_SERVER}/_matrix/client/v3/login \
+_LOGIN_RESPONSE=$(curl -s -X POST ${HICLAW_MATRIX_URL}/_matrix/client/v3/login \
     -H 'Content-Type: application/json' \
     -d '{
         "type": "m.login.password",
@@ -382,7 +382,7 @@ if [ -n "${_HIGRESS_CONSOLE_URL}" ]; then
 
         # 1. Service Sources (DNS type → K8s Service FQDN)
         # Extract host:port from URLs for Higress service source registration
-        _TUWUNEL_HOST=$(echo "${HICLAW_MATRIX_SERVER}" | sed 's|^http[s]*://||')
+        _TUWUNEL_HOST=$(echo "${HICLAW_MATRIX_URL}" | sed 's|^http[s]*://||')
         _TUWUNEL_DOMAIN=$(echo "${_TUWUNEL_HOST}" | cut -d: -f1)
         _TUWUNEL_PORT=$(echo "${_TUWUNEL_HOST}" | cut -d: -f2)
         _k8s_higress_api POST /v1/service-sources "Registering Tuwunel service source" \
@@ -460,7 +460,7 @@ MANAGER_FULL_ID="@manager:${MATRIX_DOMAIN}"
 ADMIN_FULL_ID="@${HICLAW_ADMIN_USER}:${MATRIX_DOMAIN}"
 
 log "Logging in as admin to create DM room..."
-_ADMIN_LOGIN=$(curl -sf -X POST "${HICLAW_MATRIX_SERVER}/_matrix/client/v3/login" \
+_ADMIN_LOGIN=$(curl -sf -X POST "${HICLAW_MATRIX_URL}/_matrix/client/v3/login" \
     -H 'Content-Type: application/json' \
     -d '{
         "type": "m.login.password",
@@ -474,11 +474,11 @@ if [ -z "${ADMIN_MATRIX_TOKEN}" ]; then
 else
     # Search for existing DM room with Manager (idempotent)
     DM_ROOM_ID=""
-    _JOINED_ROOMS=$(curl -sf "${HICLAW_MATRIX_SERVER}/_matrix/client/v3/joined_rooms" \
+    _JOINED_ROOMS=$(curl -sf "${HICLAW_MATRIX_URL}/_matrix/client/v3/joined_rooms" \
         -H "Authorization: Bearer ${ADMIN_MATRIX_TOKEN}" 2>/dev/null \
         | jq -r '.joined_rooms[]' 2>/dev/null) || true
     for _rid in ${_JOINED_ROOMS}; do
-        _members=$(curl -sf "${HICLAW_MATRIX_SERVER}/_matrix/client/v3/rooms/${_rid}/members" \
+        _members=$(curl -sf "${HICLAW_MATRIX_URL}/_matrix/client/v3/rooms/${_rid}/members" \
             -H "Authorization: Bearer ${ADMIN_MATRIX_TOKEN}" 2>/dev/null \
             | jq -r '.chunk[].state_key' 2>/dev/null) || continue
         _count=$(echo "${_members}" | wc -l | xargs)
@@ -492,7 +492,7 @@ else
         log "Existing DM room found: ${DM_ROOM_ID}"
     else
         log "Creating DM room with Manager..."
-        _RAW=$(curl -s -w '\nHTTP_CODE:%{http_code}' -X POST "${HICLAW_MATRIX_SERVER}/_matrix/client/v3/createRoom" \
+        _RAW=$(curl -s -w '\nHTTP_CODE:%{http_code}' -X POST "${HICLAW_MATRIX_URL}/_matrix/client/v3/createRoom" \
             -H "Authorization: Bearer ${ADMIN_MATRIX_TOKEN}" \
             -H 'Content-Type: application/json' \
             -d "{\"is_direct\":true,\"invite\":[\"${MANAGER_FULL_ID}\"],\"preset\":\"trusted_private_chat\"}" 2>&1) || true
@@ -542,7 +542,7 @@ else
             # joins, so OpenClaw's /sync never picks it up.
             _join_ok=false
             for _join_attempt in 1 2 3; do
-                if curl -sf -X POST "${HICLAW_MATRIX_SERVER}/_matrix/client/v3/rooms/${DM_ROOM_ID}/join" \
+                if curl -sf -X POST "${HICLAW_MATRIX_URL}/_matrix/client/v3/rooms/${DM_ROOM_ID}/join" \
                     -H "Authorization: Bearer ${MANAGER_TOKEN}" \
                     -H 'Content-Type: application/json' \
                     -d '{}' > /dev/null 2>&1; then
@@ -577,7 +577,7 @@ Please begin the onboarding conversation:
 The human admin will start chatting shortly."
             _txn_id="welcome-$(date +%s)"
             _payload=$(jq -nc --arg body "${_welcome_msg}" '{"msgtype":"m.text","body":$body}')
-            _raw=$(curl -s -w '\nHTTP_CODE:%{http_code}' -X PUT "${HICLAW_MATRIX_SERVER}/_matrix/client/v3/rooms/${DM_ROOM_ID}/send/m.room.message/${_txn_id}" \
+            _raw=$(curl -s -w '\nHTTP_CODE:%{http_code}' -X PUT "${HICLAW_MATRIX_URL}/_matrix/client/v3/rooms/${DM_ROOM_ID}/send/m.room.message/${_txn_id}" \
                 -H "Authorization: Bearer ${ADMIN_MATRIX_TOKEN}" \
                 -H 'Content-Type: application/json' \
                 -d "${_payload}" 2>&1) || true
@@ -733,7 +733,7 @@ fi
 # Cloud/K8s mode: overlay cloud-specific settings onto generated config
 if [ "${HICLAW_RUNTIME}" = "aliyun" ] || [ "${HICLAW_RUNTIME}" = "k8s" ]; then
     log "Applying cloud/k8s overlay to openclaw.json..."
-    jq --arg homeserver "${HICLAW_MATRIX_SERVER}" \
+    jq --arg homeserver "${HICLAW_MATRIX_URL}" \
        --arg gateway "${HICLAW_AI_GATEWAY_URL}/v1" \
        --arg key "${HICLAW_MANAGER_GATEWAY_KEY}" \
        '.channels.matrix.homeserver = $homeserver
@@ -1039,7 +1039,7 @@ if [ -f /root/manager-workspace/.upgrade-pending-worker-notify ]; then
                     _txn_id="upgrade-$(date +%s%N)"
                     _msg="@${_worker_name}:${MATRIX_DOMAIN} Manager upgraded builtin files (AGENTS.md, skills). Please use your file-sync skill to sync the latest config."
                     _raw=$(curl -s -w '\nHTTP_CODE:%{http_code}' -X PUT \
-                        "${HICLAW_MATRIX_SERVER}/_matrix/client/v3/rooms/${_room_id}/send/m.room.message/${_txn_id}" \
+                        "${HICLAW_MATRIX_URL}/_matrix/client/v3/rooms/${_room_id}/send/m.room.message/${_txn_id}" \
                         -H "Authorization: Bearer ${MANAGER_TOKEN}" \
                         -H 'Content-Type: application/json' \
                         -d "{\"msgtype\":\"m.text\",\"body\":\"${_msg}\",\"m.mentions\":{\"user_ids\":[\"${_worker_id}\"]}}" \

@@ -1,4 +1,4 @@
-{{- if eq .Values.matrixServer.type "tuwunel" }}
+{{- if eq .Values.matrix.provider "tuwunel" }}
 {{- $comp := dict "root" . "component" "tuwunel" }}
 apiVersion: apps/v1
 kind: StatefulSet
@@ -9,7 +9,7 @@ metadata:
     {{- include "hiclaw.component.labels" $comp | nindent 4 }}
 spec:
   serviceName: {{ include "hiclaw.tuwunel.fullname" . }}
-  replicas: {{ .Values.matrixServer.tuwunel.replicaCount }}
+  replicas: {{ .Values.matrix.tuwunel.replicaCount }}
   selector:
     matchLabels:
       {{- include "hiclaw.component.selectorLabels" $comp | nindent 6 }}
@@ -24,14 +24,14 @@ spec:
       {{- end }}
       containers:
         - name: tuwunel
-          image: "{{ .Values.matrixServer.tuwunel.image.repository }}:{{ .Values.matrixServer.tuwunel.image.tag }}"
-          imagePullPolicy: {{ .Values.matrixServer.tuwunel.image.pullPolicy }}
+          image: "{{ .Values.matrix.tuwunel.image.repository }}:{{ .Values.matrix.tuwunel.image.tag }}"
+          imagePullPolicy: {{ .Values.matrix.tuwunel.image.pullPolicy }}
           ports:
             - name: matrix
               containerPort: 6167
           env:
             - name: CONDUWUIT_DATABASE_PATH
-              value: {{ .Values.matrixServer.tuwunel.persistence.mountPath | quote }}
+              value: {{ .Values.matrix.tuwunel.persistence.mountPath | quote }}
             - name: CONDUWUIT_ADDRESS
               value: "0.0.0.0"
             - name: CONDUWUIT_PORT
@@ -51,12 +51,12 @@ spec:
                 secretKeyRef:
                   name: {{ include "hiclaw.secretName" . }}
                   key: HICLAW_REGISTRATION_TOKEN
-            {{- range $k, $v := .Values.matrixServer.tuwunel.extraEnv }}
+            {{- range $k, $v := .Values.matrix.tuwunel.extraEnv }}
             - name: {{ $k }}
               value: {{ $v | quote }}
             {{- end }}
           resources:
-            {{- toYaml .Values.matrixServer.tuwunel.resources | nindent 12 }}
+            {{- toYaml .Values.matrix.tuwunel.resources | nindent 12 }}
           readinessProbe:
             tcpSocket:
               port: matrix
@@ -69,13 +69,13 @@ spec:
             periodSeconds: 20
           volumeMounts:
             - name: data
-              mountPath: {{ .Values.matrixServer.tuwunel.persistence.mountPath | quote }}
-      {{- if not .Values.matrixServer.tuwunel.persistence.enabled }}
+              mountPath: {{ .Values.matrix.tuwunel.persistence.mountPath | quote }}
+      {{- if not .Values.matrix.tuwunel.persistence.enabled }}
       volumes:
         - name: data
           emptyDir: {}
       {{- end }}
-  {{- if .Values.matrixServer.tuwunel.persistence.enabled }}
+  {{- if .Values.matrix.tuwunel.persistence.enabled }}
   volumeClaimTemplates:
     - metadata:
         name: data
@@ -84,9 +84,9 @@ spec:
           - ReadWriteOnce
         resources:
           requests:
-            storage: {{ .Values.matrixServer.tuwunel.persistence.size | quote }}
-        {{- if .Values.matrixServer.tuwunel.persistence.storageClassName }}
-        storageClassName: {{ .Values.matrixServer.tuwunel.persistence.storageClassName | quote }}
+            storage: {{ .Values.matrix.tuwunel.persistence.size | quote }}
+        {{- if .Values.matrix.tuwunel.persistence.storageClassName }}
+        storageClassName: {{ .Values.matrix.tuwunel.persistence.storageClassName | quote }}
         {{- end }}
   {{- end }}
 {{- end }}

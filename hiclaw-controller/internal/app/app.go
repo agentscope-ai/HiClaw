@@ -406,7 +406,7 @@ func (a *App) startInCluster() (*rest.Config, error) {
 // =========================================================================
 
 func buildCloudCredentials(cfg *config.Config) backend.CloudCredentialProvider {
-	if cfg.SAEWorkerImage != "" || cfg.GWGatewayID != "" || cfg.OIDCTokenFile != "" || cfg.OSSBucket != "" {
+	if cfg.GWGatewayID != "" || cfg.OIDCTokenFile != "" || cfg.OSSBucket != "" {
 		return backend.NewDefaultCloudCredentialProvider()
 	}
 	return nil
@@ -433,17 +433,6 @@ func buildBackends(cfg *config.Config, cloudCreds backend.CloudCredentialProvide
 			log.Printf("[WARN] Failed to create K8s backend: %v", err)
 		} else {
 			workers = append(workers, k8s)
-		}
-	case "sae":
-		if cfg.SAEWorkerImage == "" || cloudCreds == nil {
-			log.Printf("[WARN] SAE backend requested but config incomplete")
-		} else {
-			sae, err := backend.NewSAEBackend(cloudCreds, cfg.SAEConfig(), cfg.ContainerPrefix)
-			if err != nil {
-				log.Printf("[WARN] Failed to create SAE backend: %v", err)
-			} else {
-				workers = append(workers, sae)
-			}
 		}
 	}
 

@@ -15,7 +15,6 @@
 #   HICLAW_CLUSTER_NAME         kind cluster name (default: hiclaw)
 #   HICLAW_NAMESPACE            K8s namespace (default: hiclaw)
 #   HICLAW_SKIP_KIND            Skip kind cluster creation (default: 0)
-#   HICLAW_CONTROLLER_API_KEY   Controller auth key (auto-generated if empty)
 #   HICLAW_SKIP_BUILD           Skip local image build (default: 0, set to 1 to use remote images)
 #   HICLAW_BUILD_K8S_IMAGE      Build lightweight k8s manager image instead of all-in-one (default: 0)
 #
@@ -31,7 +30,7 @@ CLUSTER_NAME="${HICLAW_CLUSTER_NAME:-hiclaw}"
 NAMESPACE="${HICLAW_NAMESPACE:-hiclaw}"
 SKIP_KIND="${HICLAW_SKIP_KIND:-0}"
 SKIP_BUILD="${HICLAW_SKIP_BUILD:-0}"
-BUILD_K8S_IMAGE="${HICLAW_BUILD_K8S_IMAGE:-1}"
+BUILD_K8S_IMAGE="${HICLAW_BUILD_K8S_IMAGE:-0}"
 
 LLM_API_KEY="${HICLAW_LLM_API_KEY:-}"
 REGISTRATION_TOKEN="${HICLAW_REGISTRATION_TOKEN:-}"
@@ -48,24 +47,6 @@ done
 
 if [ -z "$LLM_API_KEY" ]; then
     error "HICLAW_LLM_API_KEY is required. Example: HICLAW_LLM_API_KEY=sk-xxx $0"
-fi
-
-# Auto-generate secrets if not provided
-if [ -z "$REGISTRATION_TOKEN" ]; then
-    REGISTRATION_TOKEN=$(openssl rand -hex 16)
-    log "Auto-generated registration token: ${REGISTRATION_TOKEN}"
-fi
-
-if [ -z "$ADMIN_PASSWORD" ]; then
-    ADMIN_PASSWORD=$(openssl rand -base64 12 | tr -d '/+=' | head -c 16)
-    log "Auto-generated admin password: ${ADMIN_PASSWORD}"
-fi
-
-# Controller & Manager secrets: must be stable across pod restarts (injected via Helm Secret)
-CONTROLLER_API_KEY="${HICLAW_CONTROLLER_API_KEY:-}"
-if [ -z "$CONTROLLER_API_KEY" ]; then
-    CONTROLLER_API_KEY=$(openssl rand -hex 16)
-    log "Auto-generated controller API key"
 fi
 
 # ── Step 1: Create kind cluster ───────────────────────────────────────────
@@ -102,21 +83,27 @@ if [ "$SKIP_BUILD" = "0" ]; then
         log "Building manager image (lightweight k8s)..."
         docker build -t "$MANAGER_IMAGE" \
             --build-arg OPENCLAW_BASE_IMAGE=higress-registry.cn-hangzhou.cr.aliyuncs.com/higress/openclaw-base:latest \
+            --build-arg HICLAW_CONTROLLER_IMAGE="$CONTROLLER_IMAGE" \
             -f "${PROJECT_ROOT}/manager/Dockerfile.k8s" "${PROJECT_ROOT}"
     else
         log "Building manager image (all-in-one)..."
-        docker build -t "$MANAGER_IMAGE" -f "${PROJECT_ROOT}/manager/Dockerfile" "${PROJECT_ROOT}"
+        docker build -t "$MANAGER_IMAGE" \
+            --build-arg OPENCLAW_BASE_IMAGE=higress-registry.cn-hangzhou.cr.aliyuncs.com/higress/openclaw-base:latest \
+            --build-arg HICLAW_CONTROLLER_IMAGE="$CONTROLLER_IMAGE" \
+            -f "${PROJECT_ROOT}/manager/Dockerfile" "${PROJECT_ROOT}"
     fi
 
     # Worker images (openclaw + copaw)
     log "Building worker image (openclaw)..."
     docker build -t "$WORKER_IMAGE" \
         --build-arg OPENCLAW_BASE_IMAGE=higress-registry.cn-hangzhou.cr.aliyuncs.com/higress/openclaw-base:latest \
+        --build-arg HICLAW_CONTROLLER_IMAGE="$CONTROLLER_IMAGE" \
         --build-context shared="${PROJECT_ROOT}/shared/lib" \
         -f "${PROJECT_ROOT}/worker/Dockerfile" "${PROJECT_ROOT}/worker"
 
     log "Building worker image (copaw)..."
     docker build -t "$COPAW_WORKER_IMAGE" \
+        --build-arg HICLAW_CONTROLLER_IMAGE="$CONTROLLER_IMAGE" \
         --build-context shared="${PROJECT_ROOT}/shared/lib" \
         -f "${PROJECT_ROOT}/copaw/Dockerfile" "${PROJECT_ROOT}/copaw"
 
@@ -129,7 +116,18 @@ if [ "$SKIP_BUILD" = "0" ]; then
     # Pre-load Docker Hub images that Kind nodes may not be able to pull directly
     # (e.g., behind GFW or with unreliable Docker Hub access)
     log "Pre-loading Docker Hub images into kind cluster..."
-    for img in "higress-registry.cn-hangzhou.cr.aliyuncs.com/higress/minio:20260216" "higress-registry.cn-hangzhou.cr.aliyuncs.com/higress/mc:20260216"; do
+    PRELOAD_IMAGES=(
+        "higress-registry.cn-hangzhou.cr.aliyuncs.com/higress/minio:20260216"
+        "higress-registry.cn-hangzhou.cr.aliyuncs.com/higress/mc:20260216"
+        "higress-registry.cn-hangzhou.cr.aliyuncs.com/higress/tuwunel:20260216"
+        "higress-registry.cn-hangzhou.cr.aliyuncs.com/higress/element-web:20260216"
+        "higress-registry.cn-hangzhou.cr.aliyuncs.com/higress/console:2.2.0"
+        "higress-registry.cn-hangzhou.cr.aliyuncs.com/higress/higress:2.2.0"
+        "higress-registry.cn-hangzhou.cr.aliyuncs.com/higress/pilot:2.2.0"
+        "higress-registry.cn-hangzhou.cr.aliyuncs.com/higress/gateway:2.2.0"
+        "higress-registry.cn-hangzhou.cr.aliyuncs.com/higress/proxyv2:2.2.0"
+    )
+    for img in "${PRELOAD_IMAGES[@]}"; do
         docker pull "$img" 2>/dev/null || log "WARN: failed to pull $img (may already exist locally)"
         kind load docker-image "$img" --name "$CLUSTER_NAME"
     done
@@ -149,18 +147,24 @@ fi
 CHART_DIR="${PROJECT_ROOT}/helm/hiclaw"
 
 log "Building Helm dependencies..."
-helm dependency build "$CHART_DIR" 2>/dev/null || true
+helm dependency build "$CHART_DIR"
 
 # ── Step 4: Helm install / upgrade ──────────────────────────────────────────
+
+HELM_SET_OVERRIDES=""
+if [ -n "$REGISTRATION_TOKEN" ]; then
+    HELM_SET_OVERRIDES="${HELM_SET_OVERRIDES} --set credentials.registrationToken=${REGISTRATION_TOKEN}"
+fi
+if [ -n "$ADMIN_PASSWORD" ]; then
+    HELM_SET_OVERRIDES="${HELM_SET_OVERRIDES} --set credentials.adminPassword=${ADMIN_PASSWORD}"
+fi
 
 log "Installing HiClaw via Helm..."
 helm upgrade --install hiclaw "$CHART_DIR" \
     --namespace "$NAMESPACE" --create-namespace \
-    -f "${CHART_DIR}/values-kind.yaml" \
-    --set credentials.registrationToken="$REGISTRATION_TOKEN" \
-    --set credentials.adminPassword="$ADMIN_PASSWORD" \
+    --set gateway.publicURL="http://localhost:18080" \
     --set credentials.llmApiKey="$LLM_API_KEY" \
-    --set credentials.controllerApiKey="$CONTROLLER_API_KEY" \
+    ${HELM_SET_OVERRIDES} \
     ${HELM_IMAGE_OVERRIDES} \
     --timeout 10m \
     --wait=false
@@ -191,10 +195,27 @@ log "Namespace: ${NAMESPACE}"
 echo ""
 log "Admin credentials:"
 log "  Username: admin"
-log "  Password: ${ADMIN_PASSWORD}"
+if [ -n "$ADMIN_PASSWORD" ]; then
+    log "  Password: ${ADMIN_PASSWORD}"
+else
+    AUTO_ADMIN_PASSWORD=$(kubectl get secret -n "${NAMESPACE}" hiclaw-runtime-env -o jsonpath='{.data.HICLAW_ADMIN_PASSWORD}' 2>/dev/null | base64 -d 2>/dev/null)
+    if [ -n "$AUTO_ADMIN_PASSWORD" ]; then
+        log "  Password: ${AUTO_ADMIN_PASSWORD}"
+    else
+        log "  Password: (unable to retrieve, check secret hiclaw-runtime-env in namespace ${NAMESPACE})"
+    fi
+fi
 echo ""
-log "Registration token: ${REGISTRATION_TOKEN}"
-log "Controller API key: ${CONTROLLER_API_KEY}"
+if [ -n "$REGISTRATION_TOKEN" ]; then
+    log "Registration token: ${REGISTRATION_TOKEN}"
+else
+    AUTO_REG_TOKEN=$(kubectl get secret -n "${NAMESPACE}" hiclaw-runtime-env -o jsonpath='{.data.HICLAW_REGISTRATION_TOKEN}' 2>/dev/null | base64 -d 2>/dev/null)
+    if [ -n "$AUTO_REG_TOKEN" ]; then
+        log "Registration token: ${AUTO_REG_TOKEN}"
+    else
+        log "Registration token: (unable to retrieve, check secret hiclaw-runtime-env in namespace ${NAMESPACE})"
+    fi
+fi
 echo ""
 log "Access Element Web:"
 log "  Then open: http://localhost:18080"

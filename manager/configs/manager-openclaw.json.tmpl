@@ -16,7 +16,7 @@
   "channels": {
     "matrix": {
       "enabled": true,
-      "homeserver": "${HICLAW_MATRIX_SERVER}",
+      "homeserver": "${HICLAW_MATRIX_URL}",
       "accessToken": "${MANAGER_MATRIX_TOKEN}",
       "encryption": ${MATRIX_E2EE_ENABLED},
       "dm": {
@@ -39,7 +39,7 @@
     "mode": "merge",
     "providers": {
       "hiclaw-gateway": {
-        "baseUrl": "http://${HICLAW_AI_GATEWAY_DOMAIN}:8080/v1",
+        "baseUrl": "${HICLAW_AI_GATEWAY_URL}/v1",
         "apiKey": "${MANAGER_GATEWAY_KEY}",
         "api": "openai-completions",
         "models": [

@@ -8,7 +8,7 @@
 #    Worker inline policy applied when HICLAW_WORKER_NAME is set.
 #
 # 2. Controller-mediated STS (Workers without RRSA):
-#    HICLAW_CONTROLLER_URL (or legacy HICLAW_ORCHESTRATOR_URL) + HICLAW_WORKER_API_KEY → call controller /credentials/sts.
+#    HICLAW_CONTROLLER_URL + HICLAW_WORKER_API_KEY → call controller /credentials/sts.
 #
 # 3. Neither → no-op (local mode, mc alias configured with static credentials).
 #
@@ -29,7 +29,7 @@ _OSS_CRED_REFRESH_MARGIN=600  # refresh if less than 10 minutes remaining
 # Only used when HICLAW_WORKER_NAME is set (worker context).
 _oss_build_worker_policy() {
     local worker="$1"
-    local bucket="${HICLAW_OSS_BUCKET:-hiclaw-cloud-storage}"
+    local bucket="${HICLAW_FS_BUCKET:-hiclaw-cloud-storage}"
     cat <<POLICY
 {"Version":"1","Statement":[{"Effect":"Allow","Action":["oss:ListObjects"],"Resource":["acs:oss:*:*:${bucket}"],"Condition":{"StringLike":{"oss:Prefix":["agents/${worker}/*","shared/*"]}}},{"Effect":"Allow","Action":["oss:GetObject","oss:PutObject","oss:DeleteObject"],"Resource":["acs:oss:*:*:${bucket}/agents/${worker}/*","acs:oss:*:*:${bucket}/shared/*"]}]}
 POLICY
@@ -104,7 +104,7 @@ EOF
 # --------------------------------------------------------------------------
 
 _oss_refresh_sts_via_controller() {
-    local _controller_url="${HICLAW_CONTROLLER_URL:-${HICLAW_ORCHESTRATOR_URL:-}}"
+    local _controller_url="${HICLAW_CONTROLLER_URL:-}"
     local resp http_code
     local sts_ak sts_sk sts_token oss_endpoint oss_bucket
 
@@ -156,7 +156,7 @@ ensure_mc_credentials() {
     fi
 
     # Priority 2: Controller URL + worker API key → controller-mediated STS
-    if [ -n "${HICLAW_CONTROLLER_URL:-${HICLAW_ORCHESTRATOR_URL:-}}" ] && [ -n "${HICLAW_WORKER_API_KEY:-}" ]; then
+    if [ -n "${HICLAW_CONTROLLER_URL:-}" ] && [ -n "${HICLAW_WORKER_API_KEY:-}" ]; then
         _oss_ensure_refresh _oss_refresh_sts_via_controller
         return $?
     fi

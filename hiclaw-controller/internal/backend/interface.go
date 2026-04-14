@@ -74,7 +74,7 @@ type CreateRequest struct {
 	ControllerURL string `json:"-"`
 
 	// SA-based auth — ServiceAccountName is set on K8s Pods (projected token).
-	// AuthToken is the pre-issued SA token for Docker/SAE backends.
+	// AuthToken is the pre-issued SA token for Docker backend.
 	// AuthAudience is the projected token audience (K8s backend only; defaults to "hiclaw-controller").
 	ServiceAccountName string `json:"-"`
 	AuthToken          string `json:"-"`
@@ -131,9 +131,9 @@ type WorkerResult struct {
 }
 
 // WorkerBackend defines the interface for worker lifecycle operations.
-// Implementations: DockerBackend (local), SAEBackend (Alibaba Cloud), future K8s/ACS.
+// Implementations: DockerBackend (local), KubernetesBackend (incluster).
 type WorkerBackend interface {
-	// Name returns the backend identifier (e.g. "docker", "sae").
+	// Name returns the backend identifier (e.g. "docker", "k8s").
 	Name() string
 
 	// DeploymentMode returns the user-facing deployment mode ("local" or "cloud").

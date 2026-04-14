@@ -121,7 +121,7 @@ esac
 log "Updating Manager model: ${MODEL_NAME} (ctx=${CTX}, max=${MAX}, reasoning=${REASONING}, input=${INPUT})"
 
 # ── Pre-flight: verify the model is reachable via AI Gateway ──────────────────
-GATEWAY_URL="${HICLAW_AI_GATEWAY_SERVER}/v1/chat/completions"
+GATEWAY_URL="${HICLAW_AI_GATEWAY_URL}/v1/chat/completions"
 GATEWAY_KEY="${HICLAW_MANAGER_GATEWAY_KEY:-}"
 if [ -z "${GATEWAY_KEY}" ] && [ -f "/data/hiclaw-secrets.env" ]; then
     source /data/hiclaw-secrets.env

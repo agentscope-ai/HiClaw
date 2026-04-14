@@ -36,18 +36,21 @@ func (b *WorkerEnvBuilder) Build(workerName string, prov *WorkerProvisionResult)
 
 // BuildManager returns the env map for a Manager container.
 func (b *WorkerEnvBuilder) BuildManager(managerName string, prov *ManagerProvisionResult, spec v1beta1.ManagerSpec) map[string]string {
+	runtime := b.defaults.Runtime
+	if runtime == "" {
+		runtime = "k8s"
+	}
+
 	env := map[string]string{
 		"HICLAW_MANAGER_NAME":        managerName,
 		"HICLAW_MANAGER_GATEWAY_KEY": prov.GatewayKey,
 		"HICLAW_MANAGER_PASSWORD":    prov.MatrixPassword,
 		"HICLAW_FS_ACCESS_KEY":       managerName,
 		"HICLAW_FS_SECRET_KEY":       prov.MinIOPassword,
-		"HICLAW_MINIO_ACCESS_KEY":    managerName,
-		"HICLAW_MINIO_SECRET_KEY":    prov.MinIOPassword,
 		"OPENCLAW_DISABLE_BONJOUR":   "1",
 		"OPENCLAW_MDNS_HOSTNAME":     "hiclaw-manager",
 		"HOME":                       "/root/manager-workspace",
-		"HICLAW_RUNTIME":             "k8s",
+		"HICLAW_RUNTIME":             runtime,
 	}
 
 	if spec.Model != "" {
@@ -79,8 +82,7 @@ func (b *WorkerEnvBuilder) applyClusterDefaults(env map[string]string) {
 	for k, v := range map[string]string{
 		"HICLAW_MATRIX_DOMAIN":  b.defaults.MatrixDomain,
 		"HICLAW_FS_ENDPOINT":    b.defaults.FSEndpoint,
-		"HICLAW_MINIO_ENDPOINT": b.defaults.MinIOEndpoint,
-		"HICLAW_MINIO_BUCKET":   b.defaults.MinIOBucket,
+		"HICLAW_FS_BUCKET":      b.defaults.FSBucket,
 		"HICLAW_STORAGE_PREFIX": b.defaults.StoragePrefix,
 		"HICLAW_CONTROLLER_URL": b.defaults.ControllerURL,
 		"HICLAW_AI_GATEWAY_URL": b.defaults.AIGatewayURL,

@@ -1,0 +1,32 @@
+{{- $matrixProvider := .Values.matrix.provider | default "" -}}
+{{- if ne $matrixProvider "tuwunel" -}}
+{{- fail (printf "unsupported matrix.provider %q: Phase 2 only supports \"tuwunel\"" $matrixProvider) -}}
+{{- end -}}
+{{- if ne (.Values.matrix.mode | default "") "managed" -}}
+{{- fail (printf "unsupported matrix.mode %q: Phase 2 only supports \"managed\"" (.Values.matrix.mode | default "")) -}}
+{{- end -}}
+
+{{- $gatewayProvider := .Values.gateway.provider | default "" -}}
+{{- if ne $gatewayProvider "higress" -}}
+{{- fail (printf "unsupported gateway.provider %q: Phase 2 only supports \"higress\"" $gatewayProvider) -}}
+{{- end -}}
+{{- if ne (.Values.gateway.mode | default "") "managed" -}}
+{{- fail (printf "unsupported gateway.mode %q: Phase 2 only supports \"managed\"" (.Values.gateway.mode | default "")) -}}
+{{- end -}}
+{{- if not (.Values.gateway.publicURL | default "") -}}
+{{- fail "gateway.publicURL is required" -}}
+{{- end -}}
+
+{{- $storageProvider := .Values.storage.provider | default "" -}}
+{{- if ne $storageProvider "minio" -}}
+{{- fail (printf "unsupported storage.provider %q: Phase 2 only supports \"minio\"" $storageProvider) -}}
+{{- end -}}
+{{- if ne (.Values.storage.mode | default "") "managed" -}}
+{{- fail (printf "unsupported storage.mode %q: Phase 2 only supports \"managed\"" (.Values.storage.mode | default "")) -}}
+{{- end -}}
+
+{{- $expectedHigressEnabled := eq (include "hiclaw.gateway.higress.enabled" . | trim) "true" -}}
+{{- $actualHigressEnabled := .Values.gateway.higress.enabled | default false -}}
+{{- if ne $actualHigressEnabled $expectedHigressEnabled -}}
+{{- fail (printf "gateway.higress.enabled=%t is inconsistent with gateway.provider=%q and gateway.mode=%q; expected %t" $actualHigressEnabled $gatewayProvider (.Values.gateway.mode | default "") $expectedHigressEnabled) -}}
+{{- end -}}

@@ -52,43 +52,43 @@ spec:
               value: {{ include "hiclaw.worker.copawImage" . | quote }}
             - name: TZ
               value: {{ .Values.controller.timezone | quote }}
-            {{- if eq .Values.objectStorage.type "minio" }}
-            - name: HICLAW_MINIO_ENDPOINT
-              value: {{ include "hiclaw.minio.internalURL" . | quote }}
-            - name: HICLAW_MINIO_ACCESS_KEY
+            - name: HICLAW_FS_ENDPOINT
+              value: {{ include "hiclaw.storage.endpoint" . | quote }}
+            - name: HICLAW_FS_BUCKET
+              value: {{ include "hiclaw.storage.bucket" . | quote }}
+            {{- if eq .Values.storage.provider "minio" }}
+            - name: HICLAW_FS_ACCESS_KEY
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "hiclaw.minio.fullname" . }}
-                  key: MINIO_ROOT_USER
-            - name: HICLAW_MINIO_SECRET_KEY
+                  name: {{ include "hiclaw.storage.adminSecretName" . }}
+                  key: {{ include "hiclaw.storage.adminAccessKeyKey" . }}
+            - name: HICLAW_FS_SECRET_KEY
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "hiclaw.minio.fullname" . }}
-                  key: MINIO_ROOT_PASSWORD
-            - name: HICLAW_MINIO_BUCKET
-              value: {{ .Values.objectStorage.minio.bucketName | quote }}
+                  name: {{ include "hiclaw.storage.adminSecretName" . }}
+                  key: {{ include "hiclaw.storage.adminSecretKeyKey" . }}
             {{- end }}
-            {{- if eq .Values.aiGateway.type "higress" }}
-            - name: HIGRESS_BASE_URL
-              value: {{ include "hiclaw.higress.consoleURL" . | quote }}
+            {{- if eq .Values.gateway.provider "higress" }}
+            - name: HICLAW_AI_GATEWAY_ADMIN_URL
+              value: {{ include "hiclaw.gateway.adminURL" . | quote }}
             - name: HICLAW_HIGRESS_ADMIN_USER
               value: {{ .Values.credentials.higressAdminUser | default "admin" | quote }}
             - name: HICLAW_HIGRESS_ADMIN_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: higress-console
-                  key: adminPassword
+                  name: {{ include "hiclaw.gateway.adminSecretName" . }}
+                  key: {{ include "hiclaw.gateway.adminPasswordKey" . }}
             - name: HICLAW_AI_GATEWAY_URL
-              value: {{ include "hiclaw.higress.gatewayURL" . | quote }}
+              value: {{ include "hiclaw.gateway.internalURL" . | quote }}
             {{- end }}
             {{- /* Matrix connection (Go MatrixClient) */}}
             - name: HICLAW_MATRIX_URL
-              value: {{ include "hiclaw.tuwunel.internalURL" . | quote }}
+              value: {{ include "hiclaw.matrix.internalURL" . | quote }}
             - name: HICLAW_MATRIX_DOMAIN
-              value: {{ include "hiclaw.tuwunel.serverName" . | quote }}
+              value: {{ include "hiclaw.matrix.serverName" . | quote }}
             {{- /* OSS storage prefix */}}
             - name: HICLAW_STORAGE_PREFIX
-              value: "hiclaw/{{ .Values.objectStorage.minio.bucketName }}"
+              value: {{ include "hiclaw.storage.remoteRoot" . | quote }}
             {{- /* K8s mode runtime */}}
             - name: HICLAW_RUNTIME
               value: "k8s"
@@ -100,16 +100,8 @@ spec:
             {{- /* Manager CRD-driven deployment */}}
             - name: HICLAW_MANAGER_ENABLED
               value: {{ .Values.manager.enabled | quote }}
-            - name: HICLAW_MANAGER_MODEL
-              value: {{ .Values.manager.model | default .Values.credentials.defaultModel | quote }}
-            - name: HICLAW_MANAGER_RUNTIME
-              value: {{ .Values.manager.runtime | default "openclaw" | quote }}
-            - name: HICLAW_MANAGER_IMAGE
-              value: {{ include "hiclaw.manager.image" . | quote }}
-            - name: HICLAW_K8S_MANAGER_CPU
-              value: {{ .Values.manager.resources.limits.cpu | default "2" | quote }}
-            - name: HICLAW_K8S_MANAGER_MEMORY
-              value: {{ .Values.manager.resources.limits.memory | default "4Gi" | quote }}
+            - name: HICLAW_MANAGER_SPEC
+              value: {{ include "hiclaw.manager.spec" . | quote }}
             {{- /* Element Web URL (for Gateway route initialization) */}}
             {{- if .Values.elementWeb.enabled }}
             - name: HICLAW_ELEMENT_WEB_URL

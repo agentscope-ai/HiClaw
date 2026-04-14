@@ -48,3 +48,6 @@ CLAUDE.md
 # Compiled binaries
 hiclaw-controller/controller
 hiclaw-controller/hiclaw
+
+# Helm dependency artifacts
+helm/hiclaw/charts/*.tgz

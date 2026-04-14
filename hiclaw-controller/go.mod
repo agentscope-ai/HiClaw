@@ -5,7 +5,6 @@ go 1.25.0
 require (
 	github.com/alibabacloud-go/apig-20240327/v6 v6.0.6
 	github.com/alibabacloud-go/darabonba-openapi/v2 v2.1.16
-	github.com/alibabacloud-go/sae-20190506/v4 v4.11.5
 	github.com/alibabacloud-go/tea v1.3.13
 	github.com/aliyun/credentials-go v1.4.12
 	github.com/fsnotify/fsnotify v1.9.0
@@ -22,6 +21,7 @@ require (
 require (
 	filippo.io/edwards25519 v1.1.0 // indirect
 	github.com/Rican7/retry v0.3.1 // indirect
+	github.com/alibabacloud-go/alibabacloud-gateway-pop v0.0.8 // indirect
 	github.com/alibabacloud-go/alibabacloud-gateway-spi v0.0.5 // indirect
 	github.com/alibabacloud-go/debug v1.0.1 // indirect
 	github.com/alibabacloud-go/tea-utils/v2 v2.0.7 // indirect

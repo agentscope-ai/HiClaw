@@ -4,7 +4,7 @@
 # Usage:
 #   generate-worker-config.sh <WORKER_NAME> <MATRIX_TOKEN> <GATEWAY_KEY> [MODEL_ID] [TEAM_LEADER_NAME]
 #
-# Reads env vars: HICLAW_MATRIX_DOMAIN, HICLAW_AI_GATEWAY_DOMAIN, HICLAW_ADMIN_USER, HICLAW_DEFAULT_MODEL
+# Reads env vars: HICLAW_MATRIX_URL, HICLAW_MATRIX_DOMAIN, HICLAW_AI_GATEWAY_URL, HICLAW_ADMIN_USER, HICLAW_DEFAULT_MODEL
 # Output: /root/hiclaw-fs/agents/<WORKER_NAME>/openclaw.json
 #
 # If TEAM_LEADER_NAME is provided, groupAllowFrom and dm.allowFrom will use
@@ -27,7 +27,6 @@ if [ -z "${WORKER_NAME}" ] || [ -z "${WORKER_MATRIX_TOKEN}" ] || [ -z "${WORKER_
 fi
 
 MATRIX_DOMAIN="${HICLAW_MATRIX_DOMAIN:-matrix-local.hiclaw.io:8080}"
-AI_GATEWAY_DOMAIN="${HICLAW_AI_GATEWAY_DOMAIN:-aigw-local.hiclaw.io}"
 ADMIN_USER="${HICLAW_ADMIN_USER:-admin}"
 
 # Matrix Domain for user IDs (keep original port like :9080)
@@ -84,18 +83,18 @@ export WORKER_GATEWAY_KEY
 #   Local mode: always use fixed internal domain so workers on hiclaw-net can reach Higress
 #   regardless of user-configured Matrix domain (Higress matrix-homeserver route uses domains:[])
 if [ -n "${HICLAW_MATRIX_URL:-}" ] && [ "${HICLAW_RUNTIME}" != "docker" ]; then
-    export HICLAW_MATRIX_SERVER="${HICLAW_MATRIX_URL}"
+    export HICLAW_MATRIX_URL
 else
-    export HICLAW_MATRIX_SERVER="http://matrix-local.hiclaw.io:8080"
+    export HICLAW_MATRIX_URL="http://matrix-local.hiclaw.io:8080"
 fi
 # Matrix Domain for user IDs keeps original port (e.g., :9080)
 export HICLAW_MATRIX_DOMAIN="${MATRIX_DOMAIN_FOR_ID}"
 # AI Gateway URL: cloud/k8s uses HICLAW_AI_GATEWAY_URL; local always uses fixed internal domain
 # so workers on hiclaw-net can reach Higress regardless of user-configured AI gateway domain.
 if [ -n "${HICLAW_AI_GATEWAY_URL:-}" ] && [ "${HICLAW_RUNTIME}" != "docker" ]; then
-    export HICLAW_AI_GATEWAY="${HICLAW_AI_GATEWAY_URL}"
+    export HICLAW_AI_GATEWAY_URL
 else
-    export HICLAW_AI_GATEWAY="http://aigw-local.hiclaw.io:8080"
+    export HICLAW_AI_GATEWAY_URL="http://aigw-local.hiclaw.io:8080"
 fi
 export HICLAW_ADMIN_USER="${ADMIN_USER}"
 export HICLAW_DEFAULT_MODEL="${MODEL_NAME}"
@@ -122,7 +121,7 @@ envsubst < /opt/hiclaw/agent/skills/worker-management/references/worker-openclaw
 if ! jq -e --arg model "${MODEL_NAME}" '.models.providers["hiclaw-gateway"].models | map(.id) | index($model)' "${OUTPUT_DIR}/openclaw.json" > /dev/null 2>&1; then
     log "Custom model '${MODEL_NAME}' not in built-in list, injecting into worker config..."
     jq --arg emb_model "${HICLAW_EMBEDDING_MODEL}" \
-       --arg aigw "${HICLAW_AI_GATEWAY}" \
+       --arg aigw "${HICLAW_AI_GATEWAY_URL}" \
        --arg key "${WORKER_GATEWAY_KEY}" \
        --arg model "${MODEL_NAME}" \
        --argjson ctx "${CTX}" \
@@ -137,7 +136,7 @@ if ! jq -e --arg model "${MODEL_NAME}" '.models.providers["hiclaw-gateway"].mode
         mv "${OUTPUT_DIR}/openclaw.json.tmp" "${OUTPUT_DIR}/openclaw.json"
 elif [ -n "${HICLAW_EMBEDDING_MODEL}" ]; then
     jq --arg emb_model "${HICLAW_EMBEDDING_MODEL}" \
-       --arg aigw "${HICLAW_AI_GATEWAY}" \
+       --arg aigw "${HICLAW_AI_GATEWAY_URL}" \
        --arg key "${WORKER_GATEWAY_KEY}" \
        '.agents.defaults.memorySearch = {"provider":"openai","model":$emb_model,"remote":{"baseUrl":($aigw + "/v1"),"apiKey":$key}}' \
        "${OUTPUT_DIR}/openclaw.json" > "${OUTPUT_DIR}/openclaw.json.tmp" && \

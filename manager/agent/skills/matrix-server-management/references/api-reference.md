@@ -1,6 +1,6 @@
 # Matrix API Reference
 
-All calls use `MATRIX_URL="${HICLAW_MATRIX_SERVER}"`.
+All calls use `MATRIX_URL="${HICLAW_MATRIX_URL}"`.
 
 ## User Registration
 

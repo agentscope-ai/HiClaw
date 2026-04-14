@@ -6,8 +6,9 @@
 #
 # Provides:
 #   HICLAW_RUNTIME         — "aliyun" | "k8s" | "docker" | "none"
-#   HICLAW_MATRIX_SERVER   — Matrix server URL (works in both local and cloud)
-#   HICLAW_STORAGE_BUCKET  — bucket name for mc commands
+#   HICLAW_MATRIX_URL      — Matrix server URL (works in both local and cloud)
+#   HICLAW_AI_GATEWAY_URL  — AI Gateway base URL
+#   HICLAW_FS_BUCKET       — bucket name for mc commands
 #   HICLAW_STORAGE_PREFIX  — "hiclaw/<bucket>" ready for mc paths
 #   ensure_mc_credentials  — callable function (no-op in local mode)
 #
@@ -33,15 +34,11 @@ if [ -z "${HICLAW_RUNTIME:-}" ]; then
 fi
 
 # ── Normalized variables ──────────────────────────────────────────────────────
-# Matrix server: cloud mode uses external NLB address, local uses localhost
-HICLAW_MATRIX_SERVER="${HICLAW_MATRIX_URL:-http://127.0.0.1:6167}"
-
-# AI Gateway: cloud mode uses env endpoint (HICLAW_AI_GATEWAY_URL), local uses domain:8080
-HICLAW_AI_GATEWAY_SERVER="${HICLAW_AI_GATEWAY_URL:-http://${HICLAW_AI_GATEWAY_DOMAIN:-aigw-local.hiclaw.io}:8080}"
-
-# Storage: cloud mode uses OSS bucket name, k8s uses Helm-injected HICLAW_MINIO_BUCKET, local uses MinIO default
-HICLAW_STORAGE_BUCKET="${HICLAW_OSS_BUCKET:-${HICLAW_MINIO_BUCKET:-hiclaw-storage}}"
-HICLAW_STORAGE_PREFIX="hiclaw/${HICLAW_STORAGE_BUCKET}"
+# Runtime-neutral infra contract with local defaults.
+HICLAW_MATRIX_URL="${HICLAW_MATRIX_URL:-http://127.0.0.1:6167}"
+HICLAW_AI_GATEWAY_URL="${HICLAW_AI_GATEWAY_URL:-http://${HICLAW_AI_GATEWAY_DOMAIN:-aigw-local.hiclaw.io}:8080}"
+HICLAW_FS_BUCKET="${HICLAW_FS_BUCKET:-hiclaw-storage}"
+HICLAW_STORAGE_PREFIX="${HICLAW_STORAGE_PREFIX:-hiclaw/${HICLAW_FS_BUCKET}}"
 
 # ── Credential management ────────────────────────────────────────────────────
 # In cloud mode, provides ensure_mc_credentials() for STS token refresh.
@@ -52,4 +49,4 @@ source /opt/hiclaw/scripts/lib/oss-credentials.sh 2>/dev/null || true
 # Use - (not :-) so HICLAW_EMBEDDING_MODEL="" in env file means "disabled" instead of falling back to default.
 HICLAW_EMBEDDING_MODEL="${HICLAW_EMBEDDING_MODEL-text-embedding-v4}"
 
-export HICLAW_RUNTIME HICLAW_MATRIX_SERVER HICLAW_AI_GATEWAY_SERVER HICLAW_STORAGE_BUCKET HICLAW_STORAGE_PREFIX HICLAW_EMBEDDING_MODEL
+export HICLAW_RUNTIME HICLAW_MATRIX_URL HICLAW_AI_GATEWAY_URL HICLAW_FS_BUCKET HICLAW_STORAGE_PREFIX HICLAW_EMBEDDING_MODEL

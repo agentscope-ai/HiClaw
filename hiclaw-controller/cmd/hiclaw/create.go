@@ -6,6 +6,7 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 )
@@ -28,20 +29,22 @@ func createCmd() *cobra.Command {
 
 func createWorkerCmd() *cobra.Command {
 	var (
-		name       string
-		model      string
-		runtime    string
-		image      string
-		identity   string
-		soul       string
-		soulFile   string
-		skills     string
-		mcpServers string
-		packageURI string
-		expose     string
-		team       string
-		role       string
-		outputFmt  string
+		name        string
+		model       string
+		runtime     string
+		image       string
+		identity    string
+		soul        string
+		soulFile    string
+		skills      string
+		mcpServers  string
+		packageURI  string
+		expose      string
+		team        string
+		role        string
+		outputFmt   string
+		noWait      bool
+		waitTimeout time.Duration
 	)
 
 	cmd := &cobra.Command{
@@ -100,14 +103,29 @@ func createWorkerCmd() *cobra.Command {
 			}
 
 			client := NewAPIClient()
-			var resp map[string]interface{}
-			if err := client.DoJSON("POST", "/api/v1/workers", req, &resp); err != nil {
+			var createResp map[string]interface{}
+			if err := client.DoJSON("POST", "/api/v1/workers", req, &createResp); err != nil {
 				return fmt.Errorf("create worker: %w", err)
 			}
+
+			if noWait {
+				if outputFmt == "json" {
+					printJSON(createResp)
+				} else {
+					fmt.Printf("worker/%s created\n", name)
+				}
+				return nil
+			}
+
+			finalStatus, err := waitForWorkerReady(client, name, waitTimeout)
+			if err != nil {
+				return err
+			}
+
 			if outputFmt == "json" {
-				printJSON(resp)
+				printJSON(finalStatus)
 			} else {
-				fmt.Printf("worker/%s created\n", name)
+				fmt.Printf("worker/%s ready\n", name)
 			}
 			return nil
 		},
@@ -127,7 +145,74 @@ func createWorkerCmd() *cobra.Command {
 	cmd.Flags().StringVar(&team, "team", "", "Team name (assigns worker to a team)")
 	cmd.Flags().StringVar(&role, "role", "", "Role within team (team_leader|worker)")
 	cmd.Flags().StringVarP(&outputFmt, "output", "o", "", "Output format (json)")
+	cmd.Flags().BoolVar(&noWait, "no-wait", false, "Return after the Worker CR is created instead of waiting for runtime readiness")
+	cmd.Flags().DurationVar(&waitTimeout, "wait-timeout", 3*time.Minute, "Maximum time to wait for the Worker to report Ready")
 	return cmd
+}
+
+func waitForWorkerReady(client *APIClient, name string, timeout time.Duration) (*workerResp, error) {
+	deadline := time.Now().Add(timeout)
+	last := &workerResp{Name: name, Phase: "Pending"}
+
+	for {
+		var resp workerResp
+		err := client.DoJSON("GET", "/api/v1/workers/"+name+"/status", nil, &resp)
+		if err == nil {
+			last = &resp
+			switch resp.Phase {
+			case "Ready":
+				return &resp, nil
+			case "Failed":
+				return nil, fmt.Errorf("worker/%s failed during startup: %s", name, renderWorkerStatusSummary(&resp))
+			}
+		} else {
+			var apiErr *APIError
+			if !isRetryableWorkerStatusError(err, &apiErr) {
+				return nil, fmt.Errorf("wait for worker/%s ready: %w", name, err)
+			}
+		}
+
+		if time.Now().After(deadline) {
+			return nil, fmt.Errorf("worker/%s did not become ready within %s (last status: %s)", name, timeout, renderWorkerStatusSummary(last))
+		}
+
+		time.Sleep(2 * time.Second)
+	}
+}
+
+func isRetryableWorkerStatusError(err error, apiErr **APIError) bool {
+	if err == nil {
+		return false
+	}
+	typed, ok := err.(*APIError)
+	if !ok {
+		return false
+	}
+	if apiErr != nil {
+		*apiErr = typed
+	}
+	return typed.StatusCode == 404 || typed.StatusCode >= 500
+}
+
+func renderWorkerStatusSummary(resp *workerResp) string {
+	if resp == nil {
+		return "unknown"
+	}
+
+	parts := []string{}
+	if phase := strings.TrimSpace(resp.Phase); phase != "" {
+		parts = append(parts, "phase="+phase)
+	}
+	if state := strings.TrimSpace(resp.ContainerState); state != "" {
+		parts = append(parts, "state="+state)
+	}
+	if msg := strings.TrimSpace(resp.Message); msg != "" {
+		parts = append(parts, "message="+msg)
+	}
+	if len(parts) == 0 {
+		return "unknown"
+	}
+	return strings.Join(parts, ", ")
 }
 
 // ---------------------------------------------------------------------------
