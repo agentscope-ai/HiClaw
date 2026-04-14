@@ -103,19 +103,19 @@ app.kubernetes.io/component: {{ .component }}
 {{- end }}
 
 {{- define "hiclaw.tuwunel.internalURL" -}}
-{{- printf "http://%s:%d" (include "hiclaw.tuwunel.clusterFQDN" .) (.Values.matrixServer.tuwunel.service.port | int) }}
+{{- printf "http://%s:%d" (include "hiclaw.tuwunel.clusterFQDN" .) (.Values.matrix.tuwunel.service.port | int) }}
 {{- end }}
 
 {{- define "hiclaw.tuwunel.serverName" -}}
-{{- if .Values.matrixServer.serverName }}
-{{- .Values.matrixServer.serverName }}
+{{- if .Values.matrix.serverName }}
+{{- .Values.matrix.serverName }}
 {{- else }}
 {{- include "hiclaw.tuwunel.clusterFQDN" . }}
 {{- end }}
 {{- end }}
 
 {{- define "hiclaw.minio.internalURL" -}}
-{{- printf "http://%s.%s.svc.cluster.local:%d" (include "hiclaw.minio.fullname" .) (include "hiclaw.namespace" .) (.Values.objectStorage.minio.service.apiPort | int) }}
+{{- printf "http://%s.%s.svc.cluster.local:%d" (include "hiclaw.minio.fullname" .) (include "hiclaw.namespace" .) (.Values.storage.minio.service.apiPort | int) }}
 {{- end }}
 
 {{- define "hiclaw.controller.internalURL" -}}
@@ -128,8 +128,8 @@ app.kubernetes.io/component: {{ .component }}
 
 {{- define "hiclaw.higress.gatewayURL" -}}
 {{- $port := 80 }}
-{{- if and .Values.aiGateway.higress (index .Values.aiGateway.higress "higress-core") }}
-{{- $gw := index (index .Values.aiGateway.higress "higress-core") "gateway" | default dict }}
+{{- if and .Values.higress (index .Values.higress "higress-core") }}
+{{- $gw := index (index .Values.higress "higress-core") "gateway" | default dict }}
 {{- $port = $gw.httpPort | default 80 }}
 {{- end }}
 {{- printf "http://higress-gateway.%s.svc.cluster.local:%d" (include "hiclaw.namespace" .) ($port | int) }}

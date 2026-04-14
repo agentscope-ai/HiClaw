@@ -1,20 +1,32 @@
-{{- $matrixType := .Values.matrixServer.type | default "" -}}
-{{- if ne $matrixType "tuwunel" -}}
-{{- fail (printf "unsupported matrixServer.type %q: Phase 1 only supports \"tuwunel\"" $matrixType) -}}
+{{- $matrixProvider := .Values.matrix.provider | default "" -}}
+{{- if ne $matrixProvider "tuwunel" -}}
+{{- fail (printf "unsupported matrix.provider %q: Phase 2 only supports \"tuwunel\"" $matrixProvider) -}}
+{{- end -}}
+{{- if ne (.Values.matrix.mode | default "") "managed" -}}
+{{- fail (printf "unsupported matrix.mode %q: Phase 2 only supports \"managed\"" (.Values.matrix.mode | default "")) -}}
 {{- end -}}
 
-{{- $gatewayType := .Values.aiGateway.type | default "" -}}
-{{- if ne $gatewayType "higress" -}}
-{{- fail (printf "unsupported aiGateway.type %q: Phase 1 only supports \"higress\"" $gatewayType) -}}
+{{- $gatewayProvider := .Values.gateway.provider | default "" -}}
+{{- if ne $gatewayProvider "higress" -}}
+{{- fail (printf "unsupported gateway.provider %q: Phase 2 only supports \"higress\"" $gatewayProvider) -}}
+{{- end -}}
+{{- if ne (.Values.gateway.mode | default "") "managed" -}}
+{{- fail (printf "unsupported gateway.mode %q: Phase 2 only supports \"managed\"" (.Values.gateway.mode | default "")) -}}
+{{- end -}}
+{{- if not (.Values.gateway.publicURL | default "") -}}
+{{- fail "gateway.publicURL is required" -}}
 {{- end -}}
 
-{{- $storageType := .Values.objectStorage.type | default "" -}}
-{{- if ne $storageType "minio" -}}
-{{- fail (printf "unsupported objectStorage.type %q: Phase 1 only supports \"minio\"" $storageType) -}}
+{{- $storageProvider := .Values.storage.provider | default "" -}}
+{{- if ne $storageProvider "minio" -}}
+{{- fail (printf "unsupported storage.provider %q: Phase 2 only supports \"minio\"" $storageProvider) -}}
+{{- end -}}
+{{- if ne (.Values.storage.mode | default "") "managed" -}}
+{{- fail (printf "unsupported storage.mode %q: Phase 2 only supports \"managed\"" (.Values.storage.mode | default "")) -}}
 {{- end -}}
 
 {{- $expectedHigressEnabled := eq (include "hiclaw.gateway.higress.enabled" . | trim) "true" -}}
-{{- $actualHigressEnabled := .Values.aiGateway.higress.enabled | default false -}}
+{{- $actualHigressEnabled := .Values.gateway.higress.enabled | default false -}}
 {{- if ne $actualHigressEnabled $expectedHigressEnabled -}}
-{{- fail (printf "aiGateway.higress.enabled=%t is inconsistent with aiGateway.type=%q; expected %t" $actualHigressEnabled $gatewayType $expectedHigressEnabled) -}}
+{{- fail (printf "gateway.higress.enabled=%t is inconsistent with gateway.provider=%q and gateway.mode=%q; expected %t" $actualHigressEnabled $gatewayProvider (.Values.gateway.mode | default "") $expectedHigressEnabled) -}}
 {{- end -}}

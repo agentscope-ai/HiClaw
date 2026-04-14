@@ -11,7 +11,7 @@
 # =============================================================================
 
 # kind uses local-path-provisioner by default; no StorageClass needed.
-matrixServer:
+matrix:
   tuwunel:
     persistence:
       storageClassName: ""
@@ -23,7 +23,7 @@ matrixServer:
         cpu: 250m
         memory: 256Mi
 
-objectStorage:
+storage:
   minio:
     persistence:
       storageClassName: ""
@@ -54,8 +54,10 @@ manager:
       cpu: "2"
       memory: 4Gi
 
+gateway:
+  publicURL: "http://localhost:18080"
+
 elementWeb:
-  matrixServerUrl: "http://localhost:18080"
   service:
     type: ClusterIP
   resources:

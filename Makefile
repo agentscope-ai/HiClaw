@@ -647,7 +647,8 @@ helm-template: ## Render Helm templates locally (dry-run validation)
 	@helm template hiclaw helm/hiclaw/ \
 		--set credentials.registrationToken=test \
 		--set credentials.adminPassword=test \
-		--set credentials.llmApiKey=test
+		--set credentials.llmApiKey=test \
+		--set gateway.publicURL=http://localhost:18080
 
 # ---------- Help ----------
 

@@ -56,7 +56,7 @@ spec:
               value: {{ include "hiclaw.storage.endpoint" . | quote }}
             - name: HICLAW_OSS_BUCKET
               value: {{ include "hiclaw.storage.bucket" . | quote }}
-            {{- if eq .Values.objectStorage.type "minio" }}
+            {{- if eq .Values.storage.provider "minio" }}
             - name: HICLAW_MINIO_ENDPOINT
               value: {{ include "hiclaw.storage.endpoint" . | quote }}
             - name: HICLAW_MINIO_ACCESS_KEY
@@ -72,7 +72,7 @@ spec:
             - name: HICLAW_MINIO_BUCKET
               value: {{ include "hiclaw.storage.bucket" . | quote }}
             {{- end }}
-            {{- if eq .Values.aiGateway.type "higress" }}
+            {{- if eq .Values.gateway.provider "higress" }}
             - name: HIGRESS_BASE_URL
               value: {{ include "hiclaw.gateway.adminURL" . | quote }}
             - name: HICLAW_HIGRESS_ADMIN_USER

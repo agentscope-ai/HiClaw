@@ -1,73 +1,70 @@
 {{/*
 Infrastructure abstraction helpers.
 
-Phase 1 keeps reading legacy values paths (`matrixServer.*`, `aiGateway.*`,
-`objectStorage.*`, `elementWeb.matrixServerUrl`) so templates can decouple
-from provider-specific structures before the public values API is renamed.
+Phase 2 reads the new public values API (`matrix.*`, `gateway.*`, `storage.*`).
+The Higress dependency still consumes top-level `higress:` values because the
+dependency name remains `higress`; `gateway.higress.enabled` is only the
+materialized condition flag.
 */}}
 
 {{- define "hiclaw.matrix.internalURL" -}}
-{{- if eq .Values.matrixServer.type "tuwunel" -}}
+{{- if and (eq .Values.matrix.provider "tuwunel") (eq .Values.matrix.mode "managed") -}}
 {{- include "hiclaw.tuwunel.internalURL" . -}}
 {{- else -}}
-{{- .Values.matrixServer.externalURL | default "" -}}
+{{- .Values.matrix.internalURL | default "" -}}
 {{- end -}}
 {{- end }}
 
 {{- define "hiclaw.matrix.serverName" -}}
-{{- if eq .Values.matrixServer.type "tuwunel" -}}
+{{- if and (eq .Values.matrix.provider "tuwunel") (eq .Values.matrix.mode "managed") -}}
 {{- include "hiclaw.tuwunel.serverName" . -}}
 {{- else -}}
-{{- .Values.matrixServer.serverName | default "" -}}
+{{- .Values.matrix.serverName | default "" -}}
 {{- end -}}
 {{- end }}
 
 {{- define "hiclaw.gateway.publicURL" -}}
-{{- default (include "hiclaw.matrix.internalURL" .) .Values.elementWeb.matrixServerUrl -}}
+{{- required "gateway.publicURL is required" .Values.gateway.publicURL -}}
 {{- end }}
 
 {{- define "hiclaw.gateway.internalURL" -}}
-{{- if eq .Values.aiGateway.type "higress" -}}
+{{- if and (eq .Values.gateway.provider "higress") (eq .Values.gateway.mode "managed") -}}
 {{- include "hiclaw.higress.gatewayURL" . -}}
 {{- else -}}
-{{- .Values.aiGateway.external.gatewayUrl | default "" -}}
+{{- fail (printf "unsupported gateway combination %s/%s" .Values.gateway.provider .Values.gateway.mode) -}}
 {{- end -}}
 {{- end }}
 
 {{- define "hiclaw.gateway.adminURL" -}}
-{{- if eq .Values.aiGateway.type "higress" -}}
+{{- if and (eq .Values.gateway.provider "higress") (eq .Values.gateway.mode "managed") -}}
 {{- include "hiclaw.higress.consoleURL" . -}}
 {{- else -}}
-{{- .Values.aiGateway.external.consoleUrl | default "" -}}
+{{- fail (printf "unsupported gateway admin combination %s/%s" .Values.gateway.provider .Values.gateway.mode) -}}
 {{- end -}}
 {{- end }}
 
 {{- define "hiclaw.gateway.higress.enabled" -}}
-{{- if eq .Values.aiGateway.type "higress" -}}true{{- else -}}false{{- end -}}
+{{- if and (eq .Values.gateway.provider "higress") (eq .Values.gateway.mode "managed") -}}true{{- else -}}false{{- end -}}
 {{- end }}
 
 {{- define "hiclaw.gateway.adminSecretName" -}}
-{{- if eq .Values.aiGateway.type "higress" -}}higress-console{{- end -}}
+{{- if and (eq .Values.gateway.provider "higress") (eq .Values.gateway.mode "managed") -}}higress-console{{- end -}}
 {{- end }}
 
 {{- define "hiclaw.gateway.adminPasswordKey" -}}
-{{- if eq .Values.aiGateway.type "higress" -}}adminPassword{{- end -}}
+{{- if and (eq .Values.gateway.provider "higress") (eq .Values.gateway.mode "managed") -}}adminPassword{{- end -}}
 {{- end }}
 
 {{- define "hiclaw.storage.endpoint" -}}
-{{- if eq .Values.objectStorage.type "minio" -}}
+{{- if and (eq .Values.storage.provider "minio") (eq .Values.storage.mode "managed") -}}
 {{- include "hiclaw.minio.internalURL" . -}}
 {{- else -}}
-{{- .Values.objectStorage.external.endpoint | default "" -}}
+{{- fail (printf "unsupported storage combination %s/%s" .Values.storage.provider .Values.storage.mode) -}}
 {{- end -}}
 {{- end }}
 
 {{- define "hiclaw.storage.bucket" -}}
-{{- if eq .Values.objectStorage.type "minio" -}}
-{{- .Values.objectStorage.minio.bucketName -}}
-{{- else -}}
-{{- .Values.objectStorage.external.bucket | default "" -}}
-{{- end -}}
+{{- required "storage.bucket is required" .Values.storage.bucket -}}
 {{- end }}
 
 {{- define "hiclaw.storage.remoteRoot" -}}
@@ -75,17 +72,17 @@ from provider-specific structures before the public values API is renamed.
 {{- end }}
 
 {{- define "hiclaw.storage.adminSecretName" -}}
-{{- if eq .Values.objectStorage.type "minio" -}}
+{{- if and (eq .Values.storage.provider "minio") (eq .Values.storage.mode "managed") -}}
 {{- include "hiclaw.minio.fullname" . -}}
 {{- end -}}
 {{- end }}
 
 {{- define "hiclaw.storage.adminAccessKeyKey" -}}
-{{- if eq .Values.objectStorage.type "minio" -}}MINIO_ROOT_USER{{- end -}}
+{{- if and (eq .Values.storage.provider "minio") (eq .Values.storage.mode "managed") -}}MINIO_ROOT_USER{{- end -}}
 {{- end }}
 
 {{- define "hiclaw.storage.adminSecretKeyKey" -}}
-{{- if eq .Values.objectStorage.type "minio" -}}MINIO_ROOT_PASSWORD{{- end -}}
+{{- if and (eq .Values.storage.provider "minio") (eq .Values.storage.mode "managed") -}}MINIO_ROOT_PASSWORD{{- end -}}
 {{- end }}
 
 {{- define "hiclaw.manager.spec" -}}
