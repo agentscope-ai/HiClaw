@@ -108,15 +108,32 @@ if [ -f "${DEBUG_CONFIG}" ]; then
     export HICLAW_DEBUG_TARGETS
 
     # Pull each target workspace (read-only snapshots)
+    # Retry with backoff: the DebugWorker's OSS policy may not include
+    # read-only target access until the controller updates it after the
+    # child Worker reaches Running phase.
     DEBUG_TARGETS_DIR="${HICLAW_ROOT}/debug-targets"
     mkdir -p "${DEBUG_TARGETS_DIR}"
-    for target in $(echo "${HICLAW_DEBUG_TARGETS}" | tr ',' ' '); do
-        log "Pulling target workspace: ${target}"
-        mkdir -p "${DEBUG_TARGETS_DIR}/${target}"
-        ensure_mc_credentials 2>/dev/null || true
-        mc mirror "${HICLAW_STORAGE_PREFIX}/agents/${target}/" \
-            "${DEBUG_TARGETS_DIR}/${target}/" --overwrite 2>/dev/null || true
+    _debug_sync_ok=false
+    for _attempt in 1 2 3 4 5 6; do
+        _all_ok=true
+        for target in $(echo "${HICLAW_DEBUG_TARGETS}" | tr ',' ' '); do
+            mkdir -p "${DEBUG_TARGETS_DIR}/${target}"
+            ensure_mc_credentials 2>/dev/null || true
+            if ! mc mirror "${HICLAW_STORAGE_PREFIX}/agents/${target}/" \
+                "${DEBUG_TARGETS_DIR}/${target}/" --overwrite 2>/dev/null; then
+                _all_ok=false
+            fi
+        done
+        if [ "${_all_ok}" = "true" ]; then
+            _debug_sync_ok=true
+            break
+        fi
+        log "Target workspace sync failed (attempt ${_attempt}/6), retrying in 10s (waiting for OSS policy update)..."
+        sleep 10
     done
+    if [ "${_debug_sync_ok}" = "false" ]; then
+        log "WARNING: Some target workspaces could not be synced after retries. The debug-analysis skill can retry via sync-workspace.sh."
+    fi
 
     # Create symlink from workspace for easy access
     ln -sfn "${DEBUG_TARGETS_DIR}" "${WORKSPACE}/debug-targets"
