@@ -30,6 +30,7 @@
 
 ## ニュース
 
+- **2026-04-14**：詳細解説——Kubernetes ネイティブなマルチ Agent 協調オーケストレーションシステムとしての HiClaw。[Blog](blog/hiclaw-k8s-native-multi-agent-collaboration.md) | [中文](blog/hiclaw-k8s-native-multi-agent-collaboration.zh-CN.md)
 - **2026-04-03**：HiClaw 1.0.9 リリース。Kubernetes 風の宣言型リソース管理を導入し、YAML を用いて Worker、Team、Human などのリソースを定義可能に。Worker テンプレートマーケットを正式リリースし、テンプレートから Worker を作成可能に。Manager CoPaw ランタイムをサポート。Nacos Skills 登録センターなどの新機能を追加。
 - **2026-03-14**: HiClaw 1.0.6 — エンタープライズグレードの MCP Server 管理、認証情報のゼロ露出。[ブログ](blog/hiclaw-1.0.6-release.md)
 - **2026-03-10**: HiClaw 1.0.4 — CoPaw Worker サポート、メモリ使用量 80% 削減。[ブログ](blog/hiclaw-1.0.4-release.md)
