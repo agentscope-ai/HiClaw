@@ -69,8 +69,7 @@ func (g *Generator) GenerateOpenClawConfig(req WorkerConfigRequest) ([]byte, err
 			"matrix": g.buildMatrixChannelConfig(req, matrixServerURL, matrixDomain, adminMatrixID),
 		},
 		"models": map[string]interface{}{
-			"mode":    "merge",
-			"default": "hiclaw-gateway/" + modelName,
+			"mode": "merge",
 			"providers": map[string]interface{}{
 				"hiclaw-gateway": map[string]interface{}{
 					"baseUrl": aiGatewayURL + "/v1",
