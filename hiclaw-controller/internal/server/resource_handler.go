@@ -52,6 +52,7 @@ func (h *ResourceHandler) CreateWorker(w http.ResponseWriter, r *http.Request) {
 			Package:       req.Package,
 			Expose:        req.Expose,
 			ChannelPolicy: req.ChannelPolicy,
+			State:         req.State,
 		},
 	}
 
@@ -180,6 +181,9 @@ func (h *ResourceHandler) UpdateWorker(w http.ResponseWriter, r *http.Request) {
 	if req.ChannelPolicy != nil {
 		worker.Spec.ChannelPolicy = req.ChannelPolicy
 	}
+	if req.State != nil {
+		worker.Spec.State = req.State
+	}
 
 	if err := h.client.Update(r.Context(), &worker); err != nil {
 		writeK8sError(w, "update worker", err)
@@ -244,6 +248,7 @@ func (h *ResourceHandler) CreateTeam(w http.ResponseWriter, r *http.Request) {
 				Heartbeat:         toHeartbeatSpec(req.Leader.Heartbeat),
 				WorkerIdleTimeout: req.Leader.WorkerIdleTimeout,
 				ChannelPolicy:     req.Leader.ChannelPolicy,
+				State:             req.Leader.State,
 			},
 		},
 	}
@@ -262,6 +267,7 @@ func (h *ResourceHandler) CreateTeam(w http.ResponseWriter, r *http.Request) {
 			Package:       tw.Package,
 			Expose:        tw.Expose,
 			ChannelPolicy: tw.ChannelPolicy,
+			State:         tw.State,
 		})
 	}
 
@@ -359,6 +365,9 @@ func (h *ResourceHandler) UpdateTeam(w http.ResponseWriter, r *http.Request) {
 		}
 		if req.Leader.ChannelPolicy != nil {
 			team.Spec.Leader.ChannelPolicy = req.Leader.ChannelPolicy
+		}
+		if req.Leader.State != nil {
+			team.Spec.Leader.State = req.Leader.State
 		}
 	}
 	if req.Workers != nil {
@@ -523,6 +532,7 @@ func (h *ResourceHandler) CreateManager(w http.ResponseWriter, r *http.Request) 
 			Skills:     req.Skills,
 			McpServers: req.McpServers,
 			Package:    req.Package,
+			State:      req.State,
 		},
 	}
 	if req.Config != nil {
@@ -614,6 +624,9 @@ func (h *ResourceHandler) UpdateManager(w http.ResponseWriter, r *http.Request) 
 	if req.Config != nil {
 		mgr.Spec.Config = *req.Config
 	}
+	if req.State != nil {
+		mgr.Spec.State = req.State
+	}
 
 	if err := h.client.Update(r.Context(), &mgr); err != nil {
 		writeK8sError(w, "update manager", err)
@@ -647,6 +660,7 @@ func workerToResponse(w *v1beta1.Worker) WorkerResponse {
 	resp := WorkerResponse{
 		Name:           w.Name,
 		Phase:          w.Status.Phase,
+		State:          w.Spec.DesiredState(),
 		Model:          w.Spec.Model,
 		Runtime:        w.Spec.Runtime,
 		Image:          w.Spec.Image,
@@ -721,6 +735,7 @@ func managerToResponse(m *v1beta1.Manager) ManagerResponse {
 	resp := ManagerResponse{
 		Name:         m.Name,
 		Phase:        m.Status.Phase,
+		State:        m.Spec.DesiredState(),
 		Model:        m.Spec.Model,
 		Runtime:      m.Spec.Runtime,
 		Image:        m.Spec.Image,

@@ -49,6 +49,9 @@ func TestLifecycleSleepSetsSleepingPhase(t *testing.T) {
 	if updated.Status.Phase != "Sleeping" {
 		t.Fatalf("expected phase Sleeping, got %q", updated.Status.Phase)
 	}
+	if updated.Spec.DesiredState() != "Sleeping" {
+		t.Fatalf("expected spec.state Sleeping, got %q", updated.Spec.DesiredState())
+	}
 
 	var resp WorkerLifecycleResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
@@ -56,6 +59,44 @@ func TestLifecycleSleepSetsSleepingPhase(t *testing.T) {
 	}
 	if resp.Phase != "Sleeping" {
 		t.Fatalf("expected response phase Sleeping, got %q", resp.Phase)
+	}
+}
+
+func TestLifecycleWakeSetsRunningPhase(t *testing.T) {
+	scheme := newLifecycleTestScheme(t)
+	sleeping := "Sleeping"
+	worker := &v1beta1.Worker{
+		ObjectMeta: metav1.ObjectMeta{Name: "alpha-dev", Namespace: "default"},
+		Spec:       v1beta1.WorkerSpec{State: &sleeping},
+		Status:     v1beta1.WorkerStatus{Phase: "Sleeping"},
+	}
+	k8sClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithStatusSubresource(&v1beta1.Worker{}).
+		WithObjects(worker).
+		Build()
+	backendStub := &stubWorkerBackend{status: backend.StatusRunning}
+	handler := NewLifecycleHandler(k8sClient, backend.NewRegistry([]backend.WorkerBackend{backendStub}, nil), "default")
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/workers/alpha-dev/wake", nil)
+	req.SetPathValue("name", "alpha-dev")
+	rec := httptest.NewRecorder()
+
+	handler.Wake(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, rec.Code, rec.Body.String())
+	}
+
+	var updated v1beta1.Worker
+	if err := k8sClient.Get(context.Background(), client.ObjectKey{Name: "alpha-dev", Namespace: "default"}, &updated); err != nil {
+		t.Fatalf("get worker: %v", err)
+	}
+	if updated.Status.Phase != "Running" {
+		t.Fatalf("expected phase Running, got %q", updated.Status.Phase)
+	}
+	if updated.Spec.DesiredState() != "Running" {
+		t.Fatalf("expected spec.state Running, got %q", updated.Spec.DesiredState())
 	}
 }
 
@@ -82,9 +123,6 @@ func TestLifecycleEnsureReadyStartsSleepingWorker(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, rec.Code, rec.Body.String())
 	}
-	if backendStub.startCalls != 1 {
-		t.Fatalf("expected one start call, got %d", backendStub.startCalls)
-	}
 
 	var updated v1beta1.Worker
 	if err := k8sClient.Get(context.Background(), client.ObjectKey{Name: "alpha-dev", Namespace: "default"}, &updated); err != nil {
@@ -92,6 +130,9 @@ func TestLifecycleEnsureReadyStartsSleepingWorker(t *testing.T) {
 	}
 	if updated.Status.Phase != "Running" {
 		t.Fatalf("expected phase Running, got %q", updated.Status.Phase)
+	}
+	if updated.Spec.DesiredState() != "Running" {
+		t.Fatalf("expected spec.state Running, got %q", updated.Spec.DesiredState())
 	}
 }
 

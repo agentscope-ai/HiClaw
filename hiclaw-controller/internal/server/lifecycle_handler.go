@@ -45,25 +45,27 @@ func (h *LifecycleHandler) Wake(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	b := h.registry.DetectWorkerBackend(r.Context())
-	if b == nil {
-		httputil.WriteError(w, http.StatusServiceUnavailable, "no worker backend available")
+	// Set desired state in spec (declarative, triggers reconciler)
+	running := "Running"
+	worker.Spec.State = &running
+	if err := h.k8s.Update(r.Context(), &worker); err != nil {
+		writeK8sError(w, "update worker spec.state", err)
 		return
+	}
+
+	// Directly operate on backend for immediate response
+	b := h.registry.DetectWorkerBackend(r.Context())
+	if b != nil {
+		_ = b.Start(r.Context(), name)
 	}
 
 	h.setReady(name, false)
 
-	if err := b.Start(r.Context(), name); err != nil {
-		log.Printf("[ERROR] wake worker %s: %v", name, err)
-		writeBackendError(w, err)
-		return
-	}
-
+	// Refresh and update status
+	_ = h.k8s.Get(r.Context(), client.ObjectKey{Name: name, Namespace: h.namespace}, &worker)
 	worker.Status.Phase = "Running"
 	worker.Status.Message = ""
-	if err := h.k8s.Status().Update(r.Context(), &worker); err != nil {
-		log.Printf("[WARN] failed to update worker status after wake: %v", err)
-	}
+	_ = h.k8s.Status().Update(r.Context(), &worker)
 
 	httputil.WriteJSON(w, http.StatusOK, WorkerLifecycleResponse{Name: name, Phase: "Running"})
 }
@@ -82,25 +84,27 @@ func (h *LifecycleHandler) Sleep(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	b := h.registry.DetectWorkerBackend(r.Context())
-	if b == nil {
-		httputil.WriteError(w, http.StatusServiceUnavailable, "no worker backend available")
+	// Set desired state in spec (declarative, triggers reconciler)
+	sleeping := "Sleeping"
+	worker.Spec.State = &sleeping
+	if err := h.k8s.Update(r.Context(), &worker); err != nil {
+		writeK8sError(w, "update worker spec.state", err)
 		return
+	}
+
+	// Directly operate on backend for immediate response
+	b := h.registry.DetectWorkerBackend(r.Context())
+	if b != nil {
+		_ = b.Stop(r.Context(), name)
 	}
 
 	h.setReady(name, false)
 
-	if err := b.Stop(r.Context(), name); err != nil {
-		log.Printf("[ERROR] sleep worker %s: %v", name, err)
-		writeBackendError(w, err)
-		return
-	}
-
+	// Refresh and update status
+	_ = h.k8s.Get(r.Context(), client.ObjectKey{Name: name, Namespace: h.namespace}, &worker)
 	worker.Status.Phase = "Sleeping"
 	worker.Status.Message = ""
-	if err := h.k8s.Status().Update(r.Context(), &worker); err != nil {
-		log.Printf("[WARN] failed to update worker status after sleep: %v", err)
-	}
+	_ = h.k8s.Status().Update(r.Context(), &worker)
 
 	httputil.WriteJSON(w, http.StatusOK, WorkerLifecycleResponse{Name: name, Phase: "Sleeping"})
 }
@@ -119,19 +123,29 @@ func (h *LifecycleHandler) EnsureReady(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	b := h.registry.DetectWorkerBackend(r.Context())
-	if b == nil {
-		httputil.WriteError(w, http.StatusServiceUnavailable, "no worker backend available")
-		return
-	}
-
 	if worker.Status.Phase == "Stopped" || worker.Status.Phase == "Sleeping" {
-		h.setReady(name, false)
-		if err := b.Start(r.Context(), name); err != nil {
-			log.Printf("[ERROR] ensure-ready start worker %s: %v", name, err)
-			writeBackendError(w, err)
+		// Set desired state in spec (declarative)
+		running := "Running"
+		worker.Spec.State = &running
+		if err := h.k8s.Update(r.Context(), &worker); err != nil {
+			writeK8sError(w, "update worker spec.state", err)
 			return
 		}
+
+		// Directly operate on backend for immediate response
+		b := h.registry.DetectWorkerBackend(r.Context())
+		if b != nil {
+			if err := b.Start(r.Context(), name); err != nil {
+				// Start may fail if container/pod was removed (Stopped state on K8s).
+				// The reconciler will handle recreation.
+				log.Printf("[WARN] ensure-ready start worker %s: %v (reconciler will retry)", name, err)
+			}
+		}
+
+		h.setReady(name, false)
+
+		// Refresh and update status
+		_ = h.k8s.Get(r.Context(), client.ObjectKey{Name: name, Namespace: h.namespace}, &worker)
 		worker.Status.Phase = "Running"
 		worker.Status.Message = ""
 		_ = h.k8s.Status().Update(r.Context(), &worker)

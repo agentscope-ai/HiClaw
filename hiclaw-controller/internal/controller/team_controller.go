@@ -370,6 +370,7 @@ func (r *TeamReconciler) buildLeaderCR(t *v1beta1.Team) *v1beta1.Worker {
 			Agents:        t.Spec.Leader.Agents,
 			Package:       t.Spec.Leader.Package,
 			ChannelPolicy: policy,
+			State:         t.Spec.Leader.State,
 		},
 	}
 }
@@ -424,6 +425,7 @@ func (r *TeamReconciler) buildWorkerCR(t *v1beta1.Team, w v1beta1.TeamWorkerSpec
 			Package:       w.Package,
 			Expose:        w.Expose,
 			ChannelPolicy: policy,
+			State:         w.State,
 		},
 	}
 }

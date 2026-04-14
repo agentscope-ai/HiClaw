@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -9,15 +10,19 @@ import (
 	authpkg "github.com/hiclaw/hiclaw-controller/internal/auth"
 	"github.com/hiclaw/hiclaw-controller/internal/backend"
 	"github.com/hiclaw/hiclaw-controller/internal/service"
+	corev1 "k8s.io/api/core/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
 const (
-	finalizerName = "hiclaw.io/cleanup"
+	finalizerName       = "hiclaw.io/cleanup"
+	reconcileInterval   = 5 * time.Minute
+	reconcileRetryDelay = 30 * time.Second
 )
 
 // WorkerReconciler reconciles Worker resources using Service-layer orchestration.
@@ -72,8 +77,15 @@ func (r *WorkerReconciler) Reconcile(ctx context.Context, req reconcile.Request)
 		}
 		return reconcile.Result{}, nil
 	default:
+		// For provisioned workers, reconcile desired lifecycle state
+		desired := worker.Spec.DesiredState()
+		result, err := r.reconcileDesiredState(ctx, &worker, desired)
+		if err != nil || result.RequeueAfter > 0 {
+			return result, err
+		}
+
 		if worker.Generation == worker.Status.ObservedGeneration {
-			return reconcile.Result{}, nil
+			return reconcile.Result{RequeueAfter: reconcileInterval}, nil
 		}
 		return r.handleUpdate(ctx, &worker)
 	}
@@ -383,10 +395,206 @@ func (r *WorkerReconciler) failUpdate(ctx context.Context, w *v1beta1.Worker, ms
 	return reconcile.Result{RequeueAfter: time.Minute}, fmt.Errorf("%s", msg)
 }
 
+// --- Desired state reconciliation ---
+
+// reconcileDesiredState compares the desired lifecycle state (spec.state) with
+// the actual backend state and takes corrective action when drift is detected.
+func (r *WorkerReconciler) reconcileDesiredState(ctx context.Context, w *v1beta1.Worker, desired string) (reconcile.Result, error) {
+	// If current phase already matches desired state, nothing to do.
+	// This also avoids unnecessary backend Status calls on every reconcile.
+	if w.Status.Phase == desired {
+		return reconcile.Result{}, nil
+	}
+
+	logger := log.FromContext(ctx)
+	logger.Info("reconciling desired state", "name", w.Name, "current", w.Status.Phase, "desired", desired)
+
+	switch desired {
+	case "Running":
+		return r.ensureWorkerRunning(ctx, w)
+	case "Sleeping":
+		return r.ensureWorkerSleeping(ctx, w)
+	case "Stopped":
+		return r.ensureWorkerStopped(ctx, w)
+	default:
+		logger.Info("unknown desired state, ignoring", "state", desired)
+		return reconcile.Result{}, nil
+	}
+}
+
+// ensureWorkerRunning wakes a worker from Sleeping or Stopped state.
+func (r *WorkerReconciler) ensureWorkerRunning(ctx context.Context, w *v1beta1.Worker) (reconcile.Result, error) {
+	logger := log.FromContext(ctx)
+
+	if r.Backend == nil {
+		return reconcile.Result{}, nil
+	}
+	wb := r.Backend.DetectWorkerBackend(ctx)
+	if wb == nil {
+		return reconcile.Result{}, nil
+	}
+
+	result, err := wb.Status(ctx, w.Name)
+	if err != nil {
+		logger.Error(err, "failed to check backend status")
+		return reconcile.Result{RequeueAfter: reconcileRetryDelay}, nil
+	}
+
+	switch {
+	case result.Status == backend.StatusRunning || result.Status == backend.StatusStarting:
+		// Already running — just update status.phase
+	case result.Status == backend.StatusStopped && wb.Name() == "docker":
+		// Docker Sleeping: container exists but stopped → docker start
+		if err := wb.Start(ctx, w.Name); err != nil {
+			return r.failLifecycle(ctx, w, fmt.Sprintf("start failed: %v", err))
+		}
+	default:
+		// Container removed (Docker Stopped) or pod deleted (K8s) → recreate
+		if err := r.recreateWorkerContainer(ctx, w, wb); err != nil {
+			return r.failLifecycle(ctx, w, fmt.Sprintf("recreate failed: %v", err))
+		}
+	}
+
+	_ = r.Get(ctx, client.ObjectKeyFromObject(w), w)
+	w.Status.Phase = "Running"
+	w.Status.Message = ""
+	r.Status().Update(ctx, w)
+
+	logger.Info("worker running", "name", w.Name)
+	return reconcile.Result{}, nil
+}
+
+// ensureWorkerSleeping stops a worker: docker stop (container kept) or delete pod (K8s).
+func (r *WorkerReconciler) ensureWorkerSleeping(ctx context.Context, w *v1beta1.Worker) (reconcile.Result, error) {
+	logger := log.FromContext(ctx)
+
+	if r.Backend == nil {
+		return reconcile.Result{}, nil
+	}
+	wb := r.Backend.DetectWorkerBackend(ctx)
+	if wb == nil {
+		return reconcile.Result{}, nil
+	}
+
+	if err := wb.Stop(ctx, w.Name); err != nil && !errors.Is(err, backend.ErrNotFound) {
+		return r.failLifecycle(ctx, w, fmt.Sprintf("sleep failed: %v", err))
+	}
+
+	_ = r.Get(ctx, client.ObjectKeyFromObject(w), w)
+	w.Status.Phase = "Sleeping"
+	w.Status.Message = ""
+	r.Status().Update(ctx, w)
+
+	logger.Info("worker sleeping", "name", w.Name)
+	return reconcile.Result{}, nil
+}
+
+// ensureWorkerStopped stops and removes a worker: docker stop+rm or delete pod (K8s).
+func (r *WorkerReconciler) ensureWorkerStopped(ctx context.Context, w *v1beta1.Worker) (reconcile.Result, error) {
+	logger := log.FromContext(ctx)
+
+	if r.Backend == nil {
+		return reconcile.Result{}, nil
+	}
+	wb := r.Backend.DetectWorkerBackend(ctx)
+	if wb == nil {
+		return reconcile.Result{}, nil
+	}
+
+	_ = wb.Stop(ctx, w.Name) // best-effort stop first
+	if err := wb.Delete(ctx, w.Name); err != nil && !errors.Is(err, backend.ErrNotFound) {
+		return r.failLifecycle(ctx, w, fmt.Sprintf("stop failed: %v", err))
+	}
+
+	_ = r.Get(ctx, client.ObjectKeyFromObject(w), w)
+	w.Status.Phase = "Stopped"
+	w.Status.Message = ""
+	r.Status().Update(ctx, w)
+
+	logger.Info("worker stopped", "name", w.Name)
+	return reconcile.Result{}, nil
+}
+
+// recreateWorkerContainer rebuilds a worker container/pod from the Worker CR spec
+// and stored credentials. Used when waking from Stopped (container removed) or
+// K8s (pod deleted).
+func (r *WorkerReconciler) recreateWorkerContainer(ctx context.Context, w *v1beta1.Worker, wb backend.WorkerBackend) error {
+	logger := log.FromContext(ctx)
+	workerName := w.Name
+
+	// Refresh credentials from persisted store
+	refreshResult, err := r.Provisioner.RefreshCredentials(ctx, workerName)
+	if err != nil {
+		return fmt.Errorf("refresh credentials: %w", err)
+	}
+
+	// Ensure ServiceAccount still exists
+	if err := r.Provisioner.EnsureServiceAccount(ctx, workerName); err != nil {
+		logger.Error(err, "ServiceAccount ensure during recreate (non-fatal)")
+	}
+
+	// Build env from stored credentials
+	workerEnv := r.EnvBuilder.Build(workerName, &service.WorkerProvisionResult{
+		MatrixToken:    refreshResult.MatrixToken,
+		GatewayKey:     refreshResult.GatewayKey,
+		MinIOPassword:  refreshResult.MinIOPassword,
+		MatrixPassword: refreshResult.MatrixPassword,
+	})
+
+	// Build create request
+	saName := authpkg.SAName(authpkg.RoleWorker, workerName)
+	createReq := backend.CreateRequest{
+		Name:               workerName,
+		Image:              w.Spec.Image,
+		Runtime:            w.Spec.Runtime,
+		Env:                workerEnv,
+		ServiceAccountName: saName,
+	}
+	if wb.Name() != "k8s" {
+		token, err := r.Provisioner.RequestSAToken(ctx, workerName)
+		if err != nil {
+			logger.Error(err, "SA token request during recreate (non-fatal)")
+		}
+		createReq.AuthToken = token
+	}
+
+	if _, err := wb.Create(ctx, createReq); err != nil {
+		return fmt.Errorf("container recreate: %w", err)
+	}
+	return nil
+}
+
+func (r *WorkerReconciler) failLifecycle(ctx context.Context, w *v1beta1.Worker, msg string) (reconcile.Result, error) {
+	_ = r.Get(ctx, client.ObjectKeyFromObject(w), w)
+	w.Status.Message = msg
+	r.Status().Update(ctx, w)
+	return reconcile.Result{RequeueAfter: time.Minute}, fmt.Errorf("%s", msg)
+}
+
 func (r *WorkerReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	return ctrl.NewControllerManagedBy(mgr).
-		For(&v1beta1.Worker{}).
-		Complete(r)
+	builder := ctrl.NewControllerManagedBy(mgr).
+		For(&v1beta1.Worker{})
+
+	// In-cluster mode: watch Pod events with hiclaw.io/worker label,
+	// map to corresponding Worker CR for immediate reconcile on pod failure/deletion.
+	if r.Backend != nil {
+		if wb := r.Backend.DetectWorkerBackend(context.Background()); wb != nil && wb.Name() == "k8s" {
+			builder = builder.Watches(
+				&corev1.Pod{},
+				handler.EnqueueRequestsFromMapFunc(func(_ context.Context, obj client.Object) []reconcile.Request {
+					workerName := obj.GetLabels()["hiclaw.io/worker"]
+					if workerName == "" {
+						return nil
+					}
+					return []reconcile.Request{
+						{NamespacedName: client.ObjectKey{Name: workerName}},
+					}
+				}),
+			)
+		}
+	}
+
+	return builder.Complete(r)
 }
 
 // --- Package-level helpers ---

@@ -11,6 +11,8 @@ import (
 func TestEnsureConsumer_Created(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/system/init":
+			w.WriteHeader(http.StatusOK)
 		case "/session/login":
 			http.SetCookie(w, &http.Cookie{Name: "session", Value: "test"})
 			w.WriteHeader(http.StatusOK)
@@ -47,6 +49,8 @@ func TestEnsureConsumer_Created(t *testing.T) {
 func TestEnsureConsumer_Exists(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/system/init":
+			w.WriteHeader(http.StatusOK)
 		case "/session/login":
 			http.SetCookie(w, &http.Cookie{Name: "session", Value: "test"})
 			w.WriteHeader(http.StatusOK)
@@ -154,6 +158,8 @@ func TestSessionReauth(t *testing.T) {
 	loginCount := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/system/init":
+			w.WriteHeader(http.StatusOK)
 		case "/session/login":
 			loginCount++
 			http.SetCookie(w, &http.Cookie{Name: "session", Value: "test"})

@@ -45,6 +45,10 @@ spec:
                 package:
                   type: string
                   description: "Package URI: file://, http(s)://, or nacos://"
+                state:
+                  type: string
+                  enum: [Running, Sleeping, Stopped]
+                  description: "Desired lifecycle state (default: Running). The controller reconciles actual state toward this."
                 config:
                   type: object
                   properties:
@@ -65,7 +69,7 @@ spec:
                   format: int64
                 phase:
                   type: string
-                  enum: [Pending, Running, Updating, Failed]
+                  enum: [Pending, Running, Sleeping, Updating, Stopped, Failed]
                 matrixUserID:
                   type: string
                 roomID:

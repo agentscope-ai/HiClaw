@@ -32,6 +32,19 @@ type WorkerSpec struct {
 	Package       string             `json:"package,omitempty"` // file://, http(s)://, or nacos:// URI
 	Expose        []ExposePort       `json:"expose,omitempty"`  // ports to expose via Higress gateway
 	ChannelPolicy *ChannelPolicySpec `json:"channelPolicy,omitempty"`
+
+	// State is the desired lifecycle state of the worker.
+	// Valid values: "Running" (default), "Sleeping", "Stopped".
+	// The controller reconciles actual backend state toward this desired state.
+	State *string `json:"state,omitempty"`
+}
+
+// DesiredState returns the effective desired state, defaulting to "Running".
+func (s WorkerSpec) DesiredState() string {
+	if s.State != nil && *s.State != "" {
+		return *s.State
+	}
+	return "Running"
 }
 
 // ExposePort defines a container port to expose via the Higress gateway.
@@ -110,6 +123,7 @@ type LeaderSpec struct {
 	Heartbeat         *TeamLeaderHeartbeatSpec `json:"heartbeat,omitempty"`
 	WorkerIdleTimeout string                   `json:"workerIdleTimeout,omitempty"`
 	ChannelPolicy     *ChannelPolicySpec       `json:"channelPolicy,omitempty"`
+	State             *string                  `json:"state,omitempty"` // desired lifecycle state: Running, Sleeping, Stopped
 }
 
 type TeamLeaderHeartbeatSpec struct {
@@ -130,6 +144,7 @@ type TeamWorkerSpec struct {
 	Package       string             `json:"package,omitempty"`
 	Expose        []ExposePort       `json:"expose,omitempty"`
 	ChannelPolicy *ChannelPolicySpec `json:"channelPolicy,omitempty"`
+	State         *string            `json:"state,omitempty"` // desired lifecycle state: Running, Sleeping, Stopped
 }
 
 type TeamStatus struct {
@@ -211,6 +226,19 @@ type ManagerSpec struct {
 	McpServers []string      `json:"mcpServers,omitempty"` // MCP servers to authorize via Gateway
 	Package    string        `json:"package,omitempty"`    // file://, http(s)://, or nacos:// URI
 	Config     ManagerConfig `json:"config,omitempty"`
+
+	// State is the desired lifecycle state of the manager.
+	// Valid values: "Running" (default), "Sleeping", "Stopped".
+	// The controller reconciles actual backend state toward this desired state.
+	State *string `json:"state,omitempty"`
+}
+
+// DesiredState returns the effective desired state, defaulting to "Running".
+func (s ManagerSpec) DesiredState() string {
+	if s.State != nil && *s.State != "" {
+		return *s.State
+	}
+	return "Running"
 }
 
 type ManagerConfig struct {

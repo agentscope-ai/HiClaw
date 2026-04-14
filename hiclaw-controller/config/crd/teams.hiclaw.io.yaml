@@ -76,6 +76,10 @@ spec:
                           type: string
                     workerIdleTimeout:
                       type: string
+                    state:
+                      type: string
+                      enum: [Running, Sleeping, Stopped]
+                      description: "Desired lifecycle state for the team leader (default: Running)"
                     channelPolicy:
                       type: object
                       properties:
@@ -158,6 +162,10 @@ spec:
                             type: array
                             items:
                               type: string
+                      state:
+                        type: string
+                        enum: [Running, Sleeping, Stopped]
+                        description: "Desired lifecycle state for this team worker (default: Running)"
             status:
               type: object
               properties:

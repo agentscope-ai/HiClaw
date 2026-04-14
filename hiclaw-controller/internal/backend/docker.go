@@ -49,6 +49,16 @@ func NewDockerBackend(config DockerConfig, containerPrefix string) *DockerBacken
 	}
 }
 
+// WithPrefix returns a shallow copy of the backend with a different container name prefix.
+// The returned backend shares the same HTTP client (safe — client is read-only).
+// Use WithPrefix("") to disable prefix for containers that already have full names
+// (e.g. Manager containers named "hiclaw-manager" rather than "hiclaw-worker-X").
+func (d *DockerBackend) WithPrefix(prefix string) *DockerBackend {
+	cp := *d
+	cp.containerPrefix = prefix
+	return &cp
+}
+
 func (d *DockerBackend) Name() string                        { return "docker" }
 func (d *DockerBackend) DeploymentMode() string               { return DeployLocal }
 func (d *DockerBackend) NeedsCredentialInjection() bool       { return false }

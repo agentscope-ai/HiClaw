@@ -87,6 +87,10 @@ spec:
                       items:
                         type: string
                       description: "Matrix user IDs to deny from DMs (overrides allow)"
+                state:
+                  type: string
+                  enum: [Running, Sleeping, Stopped]
+                  description: "Desired lifecycle state (default: Running). The controller reconciles actual state toward this."
             status:
               type: object
               properties:
@@ -96,7 +100,7 @@ spec:
                   description: Last spec generation reconciled by the controller
                 phase:
                   type: string
-                  enum: [Pending, Running, Updating, Stopped, Failed]
+                  enum: [Pending, Running, Sleeping, Updating, Stopped, Failed]
                 matrixUserID:
                   type: string
                 roomID:

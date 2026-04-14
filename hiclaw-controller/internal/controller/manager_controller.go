@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
@@ -89,8 +91,15 @@ func (r *ManagerReconciler) Reconcile(ctx context.Context, req reconcile.Request
 		}
 		return reconcile.Result{}, nil
 	default:
+		// For provisioned managers, reconcile desired lifecycle state
+		desired := mgr.Spec.DesiredState()
+		result, err := r.reconcileDesiredState(ctx, &mgr, desired)
+		if err != nil || result.RequeueAfter > 0 {
+			return result, err
+		}
+
 		if mgr.Generation == mgr.Status.ObservedGeneration {
-			return reconcile.Result{}, nil
+			return reconcile.Result{RequeueAfter: reconcileInterval}, nil
 		}
 		return r.handleUpdate(ctx, &mgr)
 	}
@@ -349,8 +358,233 @@ func (r *ManagerReconciler) failManagerUpdate(ctx context.Context, m *v1beta1.Ma
 	return reconcile.Result{RequeueAfter: time.Minute}, fmt.Errorf("%s", msg)
 }
 
+// --- Desired state reconciliation ---
+
+func (r *ManagerReconciler) reconcileDesiredState(ctx context.Context, m *v1beta1.Manager, desired string) (reconcile.Result, error) {
+	// If current phase already matches desired state, nothing to do.
+	// This also avoids calling backend Status/Stop/Delete for Managers
+	// in Docker mode, where the container name ("hiclaw-manager") doesn't
+	// include the backend's worker prefix ("hiclaw-worker-").
+	if m.Status.Phase == desired {
+		return reconcile.Result{}, nil
+	}
+
+	logger := log.FromContext(ctx)
+	logger.Info("reconciling desired state", "name", m.Name, "current", m.Status.Phase, "desired", desired)
+
+	switch desired {
+	case "Running":
+		return r.ensureManagerRunning(ctx, m)
+	case "Sleeping":
+		return r.ensureManagerSleeping(ctx, m)
+	case "Stopped":
+		return r.ensureManagerStopped(ctx, m)
+	default:
+		logger.Info("unknown desired state, ignoring", "state", desired)
+		return reconcile.Result{}, nil
+	}
+}
+
+// managerBackend returns the WorkerBackend with Docker's container prefix cleared.
+// Manager containers are created with ContainerName override (e.g. "hiclaw-manager"),
+// which doesn't include the default worker prefix ("hiclaw-worker-").  Without this
+// adjustment, Docker backend's Status/Stop/Delete/Start would look for the wrong name.
+func (r *ManagerReconciler) managerBackend(ctx context.Context) backend.WorkerBackend {
+	if r.Backend == nil {
+		return nil
+	}
+	wb := r.Backend.DetectWorkerBackend(ctx)
+	if wb == nil {
+		return nil
+	}
+	// Docker backend always prepends containerPrefix to name parameters.
+	// Manager containers use a different naming scheme, so strip the prefix.
+	if docker, ok := wb.(*backend.DockerBackend); ok {
+		return docker.WithPrefix("")
+	}
+	return wb
+}
+
+func (r *ManagerReconciler) ensureManagerRunning(ctx context.Context, m *v1beta1.Manager) (reconcile.Result, error) {
+	logger := log.FromContext(ctx)
+
+	wb := r.managerBackend(ctx)
+	if wb == nil {
+		return reconcile.Result{}, nil
+	}
+
+	containerName := managerContainerName(m.Name)
+	result, err := wb.Status(ctx, containerName)
+	if err != nil {
+		logger.Error(err, "failed to check backend status")
+		return reconcile.Result{RequeueAfter: reconcileRetryDelay}, nil
+	}
+
+	switch {
+	case result.Status == backend.StatusRunning || result.Status == backend.StatusStarting:
+		// Already running
+	case result.Status == backend.StatusStopped && wb.Name() == "docker":
+		if err := wb.Start(ctx, containerName); err != nil {
+			return r.failManagerLifecycle(ctx, m, fmt.Sprintf("start failed: %v", err))
+		}
+	default:
+		if err := r.recreateManagerContainer(ctx, m, wb); err != nil {
+			return r.failManagerLifecycle(ctx, m, fmt.Sprintf("recreate failed: %v", err))
+		}
+	}
+
+	_ = r.Get(ctx, client.ObjectKeyFromObject(m), m)
+	m.Status.Phase = "Running"
+	m.Status.Message = ""
+	r.Status().Update(ctx, m)
+
+	logger.Info("manager running", "name", m.Name)
+	return reconcile.Result{}, nil
+}
+
+func (r *ManagerReconciler) ensureManagerSleeping(ctx context.Context, m *v1beta1.Manager) (reconcile.Result, error) {
+	logger := log.FromContext(ctx)
+
+	wb := r.managerBackend(ctx)
+	if wb == nil {
+		return reconcile.Result{}, nil
+	}
+
+	containerName := managerContainerName(m.Name)
+	if err := wb.Stop(ctx, containerName); err != nil && !errors.Is(err, backend.ErrNotFound) {
+		return r.failManagerLifecycle(ctx, m, fmt.Sprintf("sleep failed: %v", err))
+	}
+
+	_ = r.Get(ctx, client.ObjectKeyFromObject(m), m)
+	m.Status.Phase = "Sleeping"
+	m.Status.Message = ""
+	r.Status().Update(ctx, m)
+
+	logger.Info("manager sleeping", "name", m.Name)
+	return reconcile.Result{}, nil
+}
+
+func (r *ManagerReconciler) ensureManagerStopped(ctx context.Context, m *v1beta1.Manager) (reconcile.Result, error) {
+	logger := log.FromContext(ctx)
+
+	wb := r.managerBackend(ctx)
+	if wb == nil {
+		return reconcile.Result{}, nil
+	}
+
+	containerName := managerContainerName(m.Name)
+	_ = wb.Stop(ctx, containerName) // best-effort stop first
+	if err := wb.Delete(ctx, containerName); err != nil && !errors.Is(err, backend.ErrNotFound) {
+		return r.failManagerLifecycle(ctx, m, fmt.Sprintf("stop failed: %v", err))
+	}
+
+	_ = r.Get(ctx, client.ObjectKeyFromObject(m), m)
+	m.Status.Phase = "Stopped"
+	m.Status.Message = ""
+	r.Status().Update(ctx, m)
+
+	logger.Info("manager stopped", "name", m.Name)
+	return reconcile.Result{}, nil
+}
+
+func (r *ManagerReconciler) recreateManagerContainer(ctx context.Context, m *v1beta1.Manager, wb backend.WorkerBackend) error {
+	logger := log.FromContext(ctx)
+	managerName := m.Name
+
+	refreshResult, err := r.Provisioner.RefreshCredentials(ctx, managerName)
+	if err != nil {
+		return fmt.Errorf("refresh credentials: %w", err)
+	}
+
+	_ = r.Provisioner.EnsureManagerServiceAccount(ctx, managerName)
+
+	managerEnv := r.EnvBuilder.BuildManager(managerName, &service.ManagerProvisionResult{
+		MatrixToken:    refreshResult.MatrixToken,
+		GatewayKey:     refreshResult.GatewayKey,
+		MinIOPassword:  refreshResult.MinIOPassword,
+		MatrixPassword: refreshResult.MatrixPassword,
+	}, m.Spec)
+
+	containerName := managerContainerName(managerName)
+	saName := authpkg.SAName(authpkg.RoleManager, managerName)
+	createReq := backend.CreateRequest{
+		Name:               managerName,
+		ContainerName:      containerName,
+		Image:              m.Spec.Image,
+		Runtime:            m.Spec.Runtime,
+		Env:                managerEnv,
+		ServiceAccountName: saName,
+		Resources:          r.ManagerResources,
+		Labels: map[string]string{
+			"app":               "hiclaw-manager",
+			"hiclaw.io/manager": managerName,
+		},
+	}
+	if wb.Name() != "k8s" {
+		token, err := r.Provisioner.RequestManagerSAToken(ctx, managerName)
+		if err != nil {
+			logger.Error(err, "SA token request during recreate (non-fatal)")
+		}
+		createReq.AuthToken = token
+	}
+
+	// Embedded (Docker) mode: inject host volume mounts and extra env
+	if wb.Name() == "docker" && r.EmbeddedConfig != nil {
+		if r.EmbeddedConfig.WorkspaceDir != "" {
+			createReq.Volumes = append(createReq.Volumes, backend.VolumeMount{
+				HostPath:      r.EmbeddedConfig.WorkspaceDir,
+				ContainerPath: "/root/manager-workspace",
+			})
+		}
+		if r.EmbeddedConfig.HostShareDir != "" {
+			createReq.Volumes = append(createReq.Volumes, backend.VolumeMount{
+				HostPath:      r.EmbeddedConfig.HostShareDir,
+				ContainerPath: "/host-share",
+			})
+		}
+		createReq.RestartPolicy = "unless-stopped"
+		for k, v := range r.EmbeddedConfig.ExtraEnv {
+			if _, exists := createReq.Env[k]; !exists {
+				createReq.Env[k] = v
+			}
+		}
+	}
+
+	if _, err := wb.Create(ctx, createReq); err != nil {
+		return fmt.Errorf("container recreate: %w", err)
+	}
+	return nil
+}
+
+func (r *ManagerReconciler) failManagerLifecycle(ctx context.Context, m *v1beta1.Manager, msg string) (reconcile.Result, error) {
+	_ = r.Get(ctx, client.ObjectKeyFromObject(m), m)
+	m.Status.Message = msg
+	r.Status().Update(ctx, m)
+	return reconcile.Result{RequeueAfter: time.Minute}, fmt.Errorf("%s", msg)
+}
+
 func (r *ManagerReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	return ctrl.NewControllerManagedBy(mgr).
-		For(&v1beta1.Manager{}).
-		Complete(r)
+	builder := ctrl.NewControllerManagedBy(mgr).
+		For(&v1beta1.Manager{})
+
+	// In-cluster mode: watch Pod events with hiclaw.io/manager label,
+	// map to corresponding Manager CR for immediate reconcile on pod failure/deletion.
+	if r.Backend != nil {
+		if wb := r.Backend.DetectWorkerBackend(context.Background()); wb != nil && wb.Name() == "k8s" {
+			builder = builder.Watches(
+				&corev1.Pod{},
+				handler.EnqueueRequestsFromMapFunc(func(_ context.Context, obj client.Object) []reconcile.Request {
+					managerName := obj.GetLabels()["hiclaw.io/manager"]
+					if managerName == "" {
+						return nil
+					}
+					return []reconcile.Request{
+						{NamespacedName: client.ObjectKey{Name: managerName}},
+					}
+				}),
+			)
+		}
+	}
+
+	return builder.Complete(r)
 }
