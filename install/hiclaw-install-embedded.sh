@@ -21,6 +21,7 @@
 #   HICLAW_PORT_ELEMENT_WEB — Element Web port (default: 18088)
 #   HICLAW_LOCAL_ONLY      — Bind to 127.0.0.1 only (default: 1)
 #   HICLAW_YOLO            — Enable yolo mode (default: 0)
+#   HICLAW_UPGRADE         — Upgrade mode: preserve data volume and workspace (default: 0)
 #   HICLAW_DATA_DIR        — Persistent data volume name (default: hiclaw-data)
 #   HICLAW_WORKSPACE_DIR   — Manager workspace dir (default: ~/hiclaw-manager)
 #   HICLAW_HOST_SHARE_DIR  — Host share dir (default: ~)
@@ -81,6 +82,7 @@ HICLAW_LOCAL_ONLY="${HICLAW_LOCAL_ONLY:-1}"
 HICLAW_YOLO="${HICLAW_YOLO:-0}"
 HICLAW_NON_INTERACTIVE="${HICLAW_NON_INTERACTIVE:-0}"
 HICLAW_MATRIX_E2EE="${HICLAW_MATRIX_E2EE:-0}"
+HICLAW_UPGRADE="${HICLAW_UPGRADE:-0}"
 
 HICLAW_DATA_DIR="${HICLAW_DATA_DIR:-hiclaw-data}"
 HICLAW_WORKSPACE_DIR="${HICLAW_WORKSPACE_DIR:-${HOME}/hiclaw-manager}"
@@ -224,6 +226,50 @@ else
 fi
 
 # ============================================================
+# Pre-upgrade: extract credentials from running v1.0.9 containers
+# ============================================================
+# Must happen BEFORE stopping containers — we need them running to read passwords.
+
+_creds_tmp=""
+if [ "${HICLAW_UPGRADE}" = "1" ]; then
+    _creds_tmp=$(mktemp -d)
+
+    # Manager password (stored in container env as HICLAW_MANAGER_PASSWORD)
+    _mgr_pw=$(${DOCKER_CMD} inspect "${AGENT_CTR}" --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null | grep '^HICLAW_MANAGER_PASSWORD=' | cut -d= -f2-)
+    if [ -n "${_mgr_pw}" ]; then
+        cat > "${_creds_tmp}/default.env" <<CREDEOF
+WORKER_PASSWORD="${_mgr_pw}"
+WORKER_MINIO_PASSWORD="$(openssl rand -hex 24)"
+WORKER_GATEWAY_KEY="$(openssl rand -hex 32)"
+WORKER_ROOM_ID=""
+CREDEOF
+        log "Extracted Manager Matrix password"
+    fi
+
+    # Worker passwords (stored in MinIO at agents/{name}/credentials/matrix/password,
+    # readable from the manager container's local filesystem)
+    if [ -f "${HICLAW_WORKSPACE_DIR}/workers-registry.json" ]; then
+        _worker_names=$(python3 -c "import json; d=json.load(open('${HICLAW_WORKSPACE_DIR}/workers-registry.json')); print(' '.join(d.get('workers',{}).keys()))" 2>/dev/null || true)
+        for _wname in ${_worker_names}; do
+            _wpw=$(${DOCKER_CMD} exec "${AGENT_CTR}" cat "/root/hiclaw-fs/agents/${_wname}/credentials/matrix/password" 2>/dev/null || true)
+            if [ -z "${_wpw}" ]; then
+                # Fallback: try reading from the old manager container (v1.0.9 uses hiclaw-manager as AGENT_CTR)
+                _wpw=$(${DOCKER_CMD} exec hiclaw-manager cat "/root/hiclaw-fs/agents/${_wname}/credentials/matrix/password" 2>/dev/null || true)
+            fi
+            if [ -n "${_wpw}" ]; then
+                cat > "${_creds_tmp}/${_wname}.env" <<CREDEOF
+WORKER_PASSWORD="${_wpw}"
+WORKER_MINIO_PASSWORD="$(openssl rand -hex 24)"
+WORKER_GATEWAY_KEY="$(openssl rand -hex 32)"
+WORKER_ROOM_ID=""
+CREDEOF
+                log "Extracted ${_wname} Matrix password"
+            fi
+        done
+    fi
+fi
+
+# ============================================================
 # Cleanup existing containers
 # ============================================================
 
@@ -238,6 +284,42 @@ for w in $(${DOCKER_CMD} ps -a --format '{{.Names}}' 2>/dev/null | grep -E '^hic
     ${DOCKER_CMD} stop "${w}" 2>/dev/null || true
     ${DOCKER_CMD} rm -f "${w}" 2>/dev/null || true
 done
+
+# Clean up legacy containers (e.g. hiclaw-docker-proxy from v1.0.x)
+for legacy in $(${DOCKER_CMD} ps -a --format '{{.Names}}' 2>/dev/null | grep -E '^hiclaw-' | grep -vE "^(hiclaw-controller|hiclaw-manager|hiclaw-worker-)" || true); do
+    log "Removing legacy container: ${legacy}"
+    ${DOCKER_CMD} stop "${legacy}" 2>/dev/null || true
+    ${DOCKER_CMD} rm -f "${legacy}" 2>/dev/null || true
+done
+
+# In default (non-upgrade) mode, clean volume and workspace for a fresh install
+if [ "${HICLAW_UPGRADE}" != "1" ]; then
+    ${DOCKER_CMD} volume rm "${HICLAW_DATA_DIR}" 2>/dev/null && log "Removed volume: ${HICLAW_DATA_DIR}" || true
+    if [ -d "${HICLAW_WORKSPACE_DIR}" ]; then
+        rm -rf "${HICLAW_WORKSPACE_DIR}"
+        log "Cleaned workspace: ${HICLAW_WORKSPACE_DIR}"
+    fi
+else
+    log "Upgrade mode: preserving data volume and workspace"
+
+    # --- Clean controller state (kine DB, old creds) but preserve Tuwunel + MinIO ---
+    # Inject extracted credentials so the new controller can authenticate with existing Matrix users.
+    _cleanup_ctr="hiclaw-upgrade-cleanup"
+    ${DOCKER_CMD} rm -f "${_cleanup_ctr}" 2>/dev/null || true
+    if [ -n "${_creds_tmp}" ] && [ -d "${_creds_tmp}" ]; then
+        ${DOCKER_CMD} run --rm --name "${_cleanup_ctr}" \
+            --entrypoint sh \
+            -v "${HICLAW_DATA_DIR}:/data" \
+            -v "${_creds_tmp}:/creds:ro" \
+            "${EMBEDDED_IMAGE}" -c '
+                rm -rf /data/worker-creds /data/hiclaw-controller
+                mkdir -p /data/worker-creds
+                cp /creds/*.env /data/worker-creds/ 2>/dev/null || true
+                chmod 600 /data/worker-creds/*.env 2>/dev/null || true
+            ' 2>/dev/null && log "Cleaned controller state and injected credentials" || log "Warning: cleanup helper failed, continuing"
+        rm -rf "${_creds_tmp}"
+    fi
+fi
 
 # ============================================================
 # Network
