@@ -25,6 +25,10 @@ const (
 // Migrator converts v1.0.9 registry JSON files into CR resources on controller startup.
 // CRs are created with empty status so that reconcilers run handleCreate normally,
 // re-provisioning infrastructure (idempotent via Ensure* methods) and starting containers.
+//
+// This logic is version-independent: it reconciles registry state with CR state on every
+// startup. Workers/teams/humans in registry files that have no corresponding CR get created.
+// The per-CR Get-before-Create check ensures idempotency — existing CRs are never touched.
 type Migrator struct {
 	OSS          oss.StorageClient
 	RestCfg      *rest.Config
@@ -43,12 +47,6 @@ func (m *Migrator) managerName() string {
 
 func (m *Migrator) Run(ctx context.Context) error {
 	logger := ctrl.Log.WithName("migration")
-
-	// Idempotency: skip if already done
-	if err := m.OSS.Stat(ctx, migrationMarker); err == nil {
-		logger.Info("registry migration already completed, skipping")
-		return nil
-	}
 
 	dynClient, err := dynamic.NewForConfig(m.RestCfg)
 	if err != nil {
@@ -69,8 +67,8 @@ func (m *Migrator) Run(ctx context.Context) error {
 	}
 
 	if len(workersReg) == 0 && len(teamsReg) == 0 && len(humansReg) == 0 {
-		logger.Info("no registry data found, marking migration complete")
-		return m.writeMarker(ctx)
+		logger.Info("no registry data to reconcile")
+		return nil
 	}
 
 	// Build team lookup: workerName -> teamName
@@ -113,7 +111,7 @@ func (m *Migrator) Run(ctx context.Context) error {
 		}
 	}
 
-	return m.writeMarker(ctx)
+	return nil
 }
 
 // --- Registry types ---
@@ -440,10 +438,6 @@ func (m *Migrator) createHumanCR(ctx context.Context, dynClient dynamic.Interfac
 		return fmt.Errorf("create Human CR %s: %w", name, err)
 	}
 	return nil
-}
-
-func (m *Migrator) writeMarker(ctx context.Context) error {
-	return m.OSS.PutObject(ctx, migrationMarker, []byte("migration completed"))
 }
 
 func toInterfaceSlice(ss []string) []interface{} {
