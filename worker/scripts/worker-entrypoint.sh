@@ -171,9 +171,18 @@ log "HOME set to ${HOME} (workspace files will be synced to MinIO)"
                 --exclude ".cache/**" --exclude ".npm/**" \
                 --exclude ".local/**" --exclude ".mc/**" --exclude "*.lock" \
                 --exclude ".last-pull" \
-                --exclude ".openclaw/matrix/**" --exclude ".openclaw/canvas/**" 2>&1; then
+                --exclude ".openclaw/matrix/**" --exclude ".openclaw/canvas/**" \
+                --exclude "SOUL.md" --exclude "AGENTS.md" --exclude "HEARTBEAT.md" 2>&1; then
                 log "WARNING: Local->Remote sync failed"
             fi
+            # Push manager-managed files individually only if locally modified after last pull.
+            # This allows agents to sync their own edits (e.g. personality evolution in SOUL.md)
+            # while preventing stale package content from overwriting controller-pushed inline content.
+            for _mf in SOUL.md AGENTS.md HEARTBEAT.md; do
+                if [ -f "${WORKSPACE}/${_mf}" ] && [ "${WORKSPACE}/${_mf}" -nt "${PULL_MARKER}" ]; then
+                    mc cp "${WORKSPACE}/${_mf}" "${HICLAW_STORAGE_PREFIX}/agents/${WORKER_NAME}/${_mf}" 2>/dev/null || true
+                fi
+            done
         fi
         sleep 5
     done
