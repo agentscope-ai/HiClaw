@@ -53,7 +53,7 @@ func (p *PackageResolver) Resolve(ctx context.Context, uri string) (string, erro
 		// If the same content already exists locally, skip re-download.
 		storagePrefix := os.Getenv("HICLAW_STORAGE_PREFIX")
 		if storagePrefix == "" {
-			storagePrefix = "hiclaw/hiclaw-storage"
+			storagePrefix = "hiclaw/hiclaw"
 		}
 		minioPath := fmt.Sprintf("%s/hiclaw-config/%s", storagePrefix, uri)
 
@@ -138,7 +138,7 @@ func (p *PackageResolver) DeployToMinIO(ctx context.Context, extractedDir, worke
 
 	storagePrefix := os.Getenv("HICLAW_STORAGE_PREFIX")
 	if storagePrefix == "" {
-		storagePrefix = "hiclaw/hiclaw-storage"
+		storagePrefix = "hiclaw/hiclaw"
 	}
 	minioBase := fmt.Sprintf("%s/agents/%s", storagePrefix, workerName)
 
@@ -417,7 +417,7 @@ func (p *PackageResolver) resolveOSS(ctx context.Context, u *url.URL) (string, e
 	// Download from MinIO
 	storagePrefix := os.Getenv("HICLAW_STORAGE_PREFIX")
 	if storagePrefix == "" {
-		storagePrefix = "hiclaw/hiclaw-storage"
+		storagePrefix = "hiclaw/hiclaw"
 	}
 	minioPath := fmt.Sprintf("%s/%s", storagePrefix, ossPath)
 

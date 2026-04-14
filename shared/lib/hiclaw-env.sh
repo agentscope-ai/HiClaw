@@ -40,8 +40,11 @@ HICLAW_MATRIX_SERVER="${HICLAW_MATRIX_URL:-http://127.0.0.1:6167}"
 HICLAW_AI_GATEWAY_SERVER="${HICLAW_AI_GATEWAY_URL:-http://${HICLAW_AI_GATEWAY_DOMAIN:-aigw-local.hiclaw.io}:8080}"
 
 # Storage: cloud mode uses OSS bucket name, k8s uses Helm-injected HICLAW_MINIO_BUCKET, local uses MinIO default
-HICLAW_STORAGE_BUCKET="${HICLAW_OSS_BUCKET:-${HICLAW_MINIO_BUCKET:-hiclaw-storage}}"
-HICLAW_STORAGE_PREFIX="hiclaw/${HICLAW_STORAGE_BUCKET}"
+HICLAW_STORAGE_BUCKET="${HICLAW_OSS_BUCKET:-${HICLAW_MINIO_BUCKET:-hiclaw}}"
+# Respect pre-set HICLAW_STORAGE_PREFIX (e.g. injected by controller in K8s mode)
+if [ -z "${HICLAW_STORAGE_PREFIX:-}" ]; then
+    HICLAW_STORAGE_PREFIX="hiclaw/${HICLAW_STORAGE_BUCKET}"
+fi
 
 # ── Credential management ────────────────────────────────────────────────────
 # In cloud mode, provides ensure_mc_credentials() for STS token refresh.

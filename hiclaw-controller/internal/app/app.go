@@ -228,6 +228,7 @@ func (a *App) initServiceLayer(_ context.Context) error {
 		OSSAdmin:     a.ossAdmin,
 		Creds:        credStore,
 		K8sClient:    a.k8sClient,
+		RestConfig:   a.restCfg,
 		KubeMode:     cfg.KubeMode,
 		Namespace:    a.namespace,
 		AuthAudience: cfg.AuthAudience,

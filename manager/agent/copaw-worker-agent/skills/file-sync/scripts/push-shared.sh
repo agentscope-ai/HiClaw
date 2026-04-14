@@ -37,7 +37,7 @@ for _agents in "./AGENTS.md" "../AGENTS.md"; do
 done
 
 # Build MinIO destination
-HICLAW_STORAGE_PREFIX="${HICLAW_STORAGE_PREFIX:-hiclaw/hiclaw-storage}"
+HICLAW_STORAGE_PREFIX="${HICLAW_STORAGE_PREFIX:-hiclaw/hiclaw}"
 if [ -n "${TEAM_NAME}" ]; then
     MINIO_DEST="${HICLAW_STORAGE_PREFIX}/teams/${TEAM_NAME}/shared/${SUBPATH}"
 else

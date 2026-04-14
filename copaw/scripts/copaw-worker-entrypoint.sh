@@ -53,7 +53,7 @@ else
     FS_ENDPOINT="${HICLAW_FS_ENDPOINT:?HICLAW_FS_ENDPOINT is required}"
     FS_ACCESS_KEY="${HICLAW_FS_ACCESS_KEY:?HICLAW_FS_ACCESS_KEY is required}"
     FS_SECRET_KEY="${HICLAW_FS_SECRET_KEY:?HICLAW_FS_SECRET_KEY is required}"
-    FS_BUCKET="hiclaw-storage"
+    FS_BUCKET="${HICLAW_MINIO_BUCKET:-hiclaw}"
 fi
 
 # Set up skills CLI symlink: ~/.agents/skills -> worker's skills directory

@@ -30,10 +30,10 @@ EOF
 
 # Push to MinIO team shared
 mc cp /root/hiclaw-fs/shared/tasks/st-01/spec.md \
-  hiclaw/hiclaw-storage/teams/<TEAM_NAME>/shared/tasks/st-01/spec.md
+  ${HICLAW_STORAGE_PREFIX}/teams/<TEAM_NAME>/shared/tasks/st-01/spec.md
 ```
 
-The MinIO path MUST be `hiclaw/hiclaw-storage/teams/<your team name>/shared/tasks/<task-id>/spec.md`.
+The MinIO path MUST be `${HICLAW_STORAGE_PREFIX}/teams/<your team name>/shared/tasks/<task-id>/spec.md`.
 
 ### Step 2: Send @mention to worker in Team Room
 
