@@ -351,7 +351,7 @@ Open http://127.0.0.1:18088, log in to Element Web, and start chatting with your
 - **ZeroClaw**: Rust-based ultra-lightweight runtime, 3.4MB binary, <10ms cold start
 - **NanoClaw**: Minimal agent runtime, under 4000 lines of code
 - **Team Management Center**: Visual dashboard for watching and controlling agent teams
-- **Incluster Helm Chart**: Production-grade K8s deployment
+- **Incluster Helm Chart**: Production-grade K8s deployment (implemented, shipping in v1.1.0)
 - **NemoClaw Runtime Integration**: Sandbox security meets collaboration orchestration
 
 ---

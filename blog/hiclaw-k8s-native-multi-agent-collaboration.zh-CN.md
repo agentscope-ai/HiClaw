@@ -351,7 +351,7 @@ bash <(curl -sSL https://higress.ai/hiclaw/install.sh)
 - **ZeroClaw**：Rust 写的超轻量运行时，3.4MB 二进制，冷启动 <10ms
 - **NanoClaw**：极简 Agent 运行时，不到 4000 行代码
 - **Team 管理中心**：可视化 Dashboard，实时看到和控制 Agent 团队
-- **Incluster Helm Chart**：生产级 K8s 部署方案
+- **Incluster Helm Chart**：生产级 K8s 部署方案（已实现，将在 v1.1.0 正式发布）
 - **NemoClaw 运行时集成**：沙箱安全 + 协作编排，两手都要抓
 
 ---
