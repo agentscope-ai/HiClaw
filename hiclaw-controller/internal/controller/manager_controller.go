@@ -345,6 +345,14 @@ func (r *ManagerReconciler) failManagerUpdate(ctx context.Context, m *v1beta1.Ma
 // --- Desired state reconciliation ---
 
 func (r *ManagerReconciler) reconcileDesiredState(ctx context.Context, m *v1beta1.Manager, desired string) (reconcile.Result, error) {
+	// If current phase already matches desired state, nothing to do.
+	// This also avoids calling backend Status/Stop/Delete for Managers
+	// in Docker mode, where the container name ("hiclaw-manager") doesn't
+	// include the backend's worker prefix ("hiclaw-worker-").
+	if m.Status.Phase == desired {
+		return reconcile.Result{}, nil
+	}
+
 	logger := log.FromContext(ctx)
 	logger.Info("reconciling desired state", "name", m.Name, "current", m.Status.Phase, "desired", desired)
 
@@ -361,13 +369,30 @@ func (r *ManagerReconciler) reconcileDesiredState(ctx context.Context, m *v1beta
 	}
 }
 
+// managerBackend returns the WorkerBackend with Docker's container prefix cleared.
+// Manager containers are created with ContainerName override (e.g. "hiclaw-manager"),
+// which doesn't include the default worker prefix ("hiclaw-worker-").  Without this
+// adjustment, Docker backend's Status/Stop/Delete/Start would look for the wrong name.
+func (r *ManagerReconciler) managerBackend(ctx context.Context) backend.WorkerBackend {
+	if r.Backend == nil {
+		return nil
+	}
+	wb := r.Backend.DetectWorkerBackend(ctx)
+	if wb == nil {
+		return nil
+	}
+	// Docker backend always prepends containerPrefix to name parameters.
+	// Manager containers use a different naming scheme, so strip the prefix.
+	if docker, ok := wb.(*backend.DockerBackend); ok {
+		return docker.WithPrefix("")
+	}
+	return wb
+}
+
 func (r *ManagerReconciler) ensureManagerRunning(ctx context.Context, m *v1beta1.Manager) (reconcile.Result, error) {
 	logger := log.FromContext(ctx)
 
-	if r.Backend == nil {
-		return reconcile.Result{}, nil
-	}
-	wb := r.Backend.DetectWorkerBackend(ctx)
+	wb := r.managerBackend(ctx)
 	if wb == nil {
 		return reconcile.Result{}, nil
 	}
@@ -404,10 +429,7 @@ func (r *ManagerReconciler) ensureManagerRunning(ctx context.Context, m *v1beta1
 func (r *ManagerReconciler) ensureManagerSleeping(ctx context.Context, m *v1beta1.Manager) (reconcile.Result, error) {
 	logger := log.FromContext(ctx)
 
-	if r.Backend == nil {
-		return reconcile.Result{}, nil
-	}
-	wb := r.Backend.DetectWorkerBackend(ctx)
+	wb := r.managerBackend(ctx)
 	if wb == nil {
 		return reconcile.Result{}, nil
 	}
@@ -429,10 +451,7 @@ func (r *ManagerReconciler) ensureManagerSleeping(ctx context.Context, m *v1beta
 func (r *ManagerReconciler) ensureManagerStopped(ctx context.Context, m *v1beta1.Manager) (reconcile.Result, error) {
 	logger := log.FromContext(ctx)
 
-	if r.Backend == nil {
-		return reconcile.Result{}, nil
-	}
-	wb := r.Backend.DetectWorkerBackend(ctx)
+	wb := r.managerBackend(ctx)
 	if wb == nil {
 		return reconcile.Result{}, nil
 	}
