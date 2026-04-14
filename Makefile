@@ -643,6 +643,10 @@ local-k8s-up: ## Create kind cluster and deploy HiClaw via Helm
 local-k8s-down: ## Tear down the local HiClaw kind cluster
 	@bash hack/local-k8s-down.sh
 
+helm-lint: ## Lint Helm chart
+	@helm dependency build helm/hiclaw/
+	@helm lint helm/hiclaw/
+
 helm-template: ## Render Helm templates locally (dry-run validation)
 	@helm dependency build helm/hiclaw/
 	@helm template hiclaw helm/hiclaw/ \
