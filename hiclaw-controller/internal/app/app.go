@@ -122,6 +122,7 @@ func (a *App) Start(ctx context.Context) error {
 				AdminPassword:  a.cfg.MatrixAdminPassword,
 				Namespace:      a.namespace,
 				IsEmbedded:     a.cfg.KubeMode == "embedded",
+			AgentFSDir:     a.cfg.AgentFSDir(),
 				LLMProvider:    a.cfg.LLMProvider,
 				LLMAPIKey:      a.cfg.LLMAPIKey,
 				OpenAIBaseURL:  a.cfg.OpenAIBaseURL,

@@ -11,6 +11,7 @@ import (
 	v1beta1 "github.com/hiclaw/hiclaw-controller/api/v1beta1"
 	"github.com/hiclaw/hiclaw-controller/internal/gateway"
 	"github.com/hiclaw/hiclaw-controller/internal/matrix"
+	"github.com/hiclaw/hiclaw-controller/internal/migration"
 	"github.com/hiclaw/hiclaw-controller/internal/oss"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -30,6 +31,7 @@ type Config struct {
 	AdminPassword  string
 	Namespace      string
 	IsEmbedded     bool // embedded mode: use static service sources for local services
+	AgentFSDir     string // local filesystem root for agent workspaces (embedded mode)
 
 	// Gateway initialization
 	LLMProvider   string // e.g. "qwen", "openai"
@@ -92,6 +94,20 @@ func (i *Initializer) Run(ctx context.Context) error {
 			return fmt.Errorf("Manager CR creation failed: %w", err)
 		}
 		logger.Info("Manager CR ensured", "name", "default")
+	}
+
+	// Migrate v1.0.9 registry data to CRs (embedded mode only)
+	if i.Config.IsEmbedded {
+		migrator := &migration.Migrator{
+			OSS:          i.OSS,
+			RestCfg:      i.RestCfg,
+			Namespace:    i.Config.Namespace,
+			DefaultModel: i.Config.ManagerModel,
+			AgentFSDir:   i.Config.AgentFSDir,
+		}
+		if err := migrator.Run(ctx); err != nil {
+			logger.Error(err, "registry migration failed (non-fatal, continuing)")
+		}
 	}
 
 	logger.Info("cluster initialization complete")
