@@ -136,6 +136,16 @@ func (r *DebugWorkerReconciler) handleCreate(ctx context.Context, dw *v1beta1.De
 		runtime = "openclaw"
 	}
 
+	// Build channel policy: allow AccessControl.AllowedUsers to interact
+	// with the DebugWorker via both group @mentions and DMs.
+	var channelPolicy *v1beta1.ChannelPolicySpec
+	if len(dw.Spec.AccessControl.AllowedUsers) > 0 {
+		channelPolicy = &v1beta1.ChannelPolicySpec{
+			GroupAllowExtra: dw.Spec.AccessControl.AllowedUsers,
+			DmAllowExtra:    dw.Spec.AccessControl.AllowedUsers,
+		}
+	}
+
 	worker := &v1beta1.Worker{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      dwName,
@@ -159,10 +169,11 @@ func (r *DebugWorkerReconciler) handleCreate(ctx context.Context, dw *v1beta1.De
 			},
 		},
 		Spec: v1beta1.WorkerSpec{
-			Model:   dw.Spec.Model,
-			Runtime: runtime,
-			Image:   dw.Spec.Image,
-			Soul:    soul,
+			Model:         dw.Spec.Model,
+			Runtime:       runtime,
+			Image:         dw.Spec.Image,
+			Soul:          soul,
+			ChannelPolicy: channelPolicy,
 		},
 	}
 
