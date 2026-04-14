@@ -2528,8 +2528,11 @@ CREDEOF
         # Internal port: 8080 (Higress gateway inside the container).
         local _internal_gw_port=8080
         local _matrix_domain="${HICLAW_MATRIX_DOMAIN:-matrix-local.hiclaw.io:${HICLAW_PORT_GATEWAY}}"
-        local _aigw_domain="${HICLAW_AI_GATEWAY_DOMAIN:-aigw-local.hiclaw.io:${_internal_gw_port}}"
-        local _fs_domain="${HICLAW_FS_DOMAIN:-fs-local.hiclaw.io:${_internal_gw_port}}"
+        local _aigw_domain="${HICLAW_AI_GATEWAY_DOMAIN:-aigw-local.hiclaw.io}"
+        # Ensure internal gateway port is present (container-internal traffic uses 8080)
+        case "${_aigw_domain}" in *:*) ;; *) _aigw_domain="${_aigw_domain}:${_internal_gw_port}" ;; esac
+        local _fs_domain="${HICLAW_FS_DOMAIN:-fs-local.hiclaw.io}"
+        case "${_fs_domain}" in *:*) ;; *) _fs_domain="${_fs_domain}:${_internal_gw_port}" ;; esac
 
         # Controller env args
         local _ctrl_env_args=(
