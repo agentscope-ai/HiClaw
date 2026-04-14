@@ -135,8 +135,17 @@ func (d *Deployer) DeployWorkerConfig(ctx context.Context, req WorkerDeployReque
 	// --- Sync local agent files to storage FIRST (base layer) ---
 	// Mirror provides the base: package files, memory, custom skills, etc.
 	// All subsequent PutObject calls overwrite on top with authoritative content.
+	// Exclude files that will be overridden by inline spec content to prevent
+	// the mirror from pushing stale local copies that race with PutObject.
 	logger.Info("syncing agent files to storage", "name", req.Name)
-	if err := d.oss.Mirror(ctx, localAgentDir+"/", agentPrefix+"/", oss.MirrorOptions{Overwrite: true}); err != nil {
+	var mirrorExcludes []string
+	if req.Spec.Soul != "" {
+		mirrorExcludes = append(mirrorExcludes, "SOUL.md")
+	}
+	if req.Spec.Agents != "" {
+		mirrorExcludes = append(mirrorExcludes, "AGENTS.md")
+	}
+	if err := d.oss.Mirror(ctx, localAgentDir+"/", agentPrefix+"/", oss.MirrorOptions{Overwrite: true, Exclude: mirrorExcludes}); err != nil {
 		logger.Error(err, "agent file sync failed (non-fatal)")
 	}
 

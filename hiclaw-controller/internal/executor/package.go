@@ -225,6 +225,9 @@ func (p *PackageResolver) DeployToMinIO(ctx context.Context, extractedDir, worke
 	// ── Phase 2: Copy to local agent dir (safe — MinIO already has new content) ──
 
 	for _, f := range configFiles {
+		if excludeMemory && (f.name == "SOUL.md" || f.name == "AGENTS.md") {
+			continue
+		}
 		os.WriteFile(filepath.Join(agentDir, f.name), f.data, 0644)
 	}
 	for _, dirName := range configSubdirs {
