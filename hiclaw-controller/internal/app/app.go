@@ -300,9 +300,10 @@ func (a *App) initReconcilers(_ context.Context) error {
 	}
 	if a.cfg.KubeMode == "embedded" {
 		mgrReconciler.EmbeddedConfig = &controller.ManagerEmbeddedConfig{
-			WorkspaceDir: a.cfg.ManagerWorkspaceDir,
-			HostShareDir: a.cfg.HostShareDir,
-			ExtraEnv:     a.cfg.ManagerAgentEnv(),
+			WorkspaceDir:       a.cfg.ManagerWorkspaceDir,
+			HostShareDir:       a.cfg.HostShareDir,
+			ExtraEnv:           a.cfg.ManagerAgentEnv(),
+			ManagerConsolePort: a.cfg.ManagerConsolePort,
 		}
 	}
 	if err := mgrReconciler.SetupWithManager(a.mgr); err != nil {

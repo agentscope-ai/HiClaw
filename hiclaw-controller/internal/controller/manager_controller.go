@@ -33,9 +33,10 @@ func managerContainerName(name string) string {
 // ManagerEmbeddedConfig holds embedded-mode settings for the Manager Agent
 // container (workspace mount, host share, extra env from the controller's env).
 type ManagerEmbeddedConfig struct {
-	WorkspaceDir string            // host path for /root/manager-workspace
-	HostShareDir string            // host path for /host-share
-	ExtraEnv     map[string]string // infrastructure env vars forwarded to agent
+	WorkspaceDir       string            // host path for /root/manager-workspace
+	HostShareDir       string            // host path for /host-share
+	ExtraEnv           map[string]string // infrastructure env vars forwarded to agent
+	ManagerConsolePort string            // host port for manager console (default: 18888)
 }
 
 // ManagerReconciler reconciles Manager resources.
@@ -185,6 +186,21 @@ func (r *ManagerReconciler) handleCreate(ctx context.Context, m *v1beta1.Manager
 					})
 				}
 				createReq.RestartPolicy = "unless-stopped"
+				// Map manager console port to host
+				// OpenClaw gateway serves Control UI on 18800, CoPaw app API on 18799
+				consoleHostPort := r.EmbeddedConfig.ManagerConsolePort
+				if consoleHostPort == "" {
+					consoleHostPort = "18888"
+				}
+				consoleContainerPort := "18800" // openclaw default
+				if createReq.Runtime == "copaw" {
+					consoleContainerPort = "18799"
+				}
+				createReq.Ports = append(createReq.Ports, backend.PortMapping{
+					HostIP:        "127.0.0.1",
+					HostPort:      consoleHostPort,
+					ContainerPort: consoleContainerPort,
+				})
 				for k, v := range r.EmbeddedConfig.ExtraEnv {
 					if _, exists := createReq.Env[k]; !exists {
 						createReq.Env[k] = v
