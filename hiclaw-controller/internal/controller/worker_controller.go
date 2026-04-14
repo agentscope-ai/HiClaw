@@ -400,6 +400,12 @@ func (r *WorkerReconciler) failUpdate(ctx context.Context, w *v1beta1.Worker, ms
 // reconcileDesiredState compares the desired lifecycle state (spec.state) with
 // the actual backend state and takes corrective action when drift is detected.
 func (r *WorkerReconciler) reconcileDesiredState(ctx context.Context, w *v1beta1.Worker, desired string) (reconcile.Result, error) {
+	// If current phase already matches desired state, nothing to do.
+	// This also avoids unnecessary backend Status calls on every reconcile.
+	if w.Status.Phase == desired {
+		return reconcile.Result{}, nil
+	}
+
 	logger := log.FromContext(ctx)
 	logger.Info("reconciling desired state", "name", w.Name, "current", w.Status.Phase, "desired", desired)
 
