@@ -10,8 +10,12 @@ DebugWorkers are temporary Workers created to diagnose issues with other Workers
 ## Create DebugWorker
 
 ```bash
-# Debug specific workers
+# Debug specific workers (auto-adds your Matrix ID to allowedUsers)
 hiclaw debug create --target <worker1> --target <worker2>
+
+# Debug with explicit allowed users (so they can @mention the DebugWorker)
+hiclaw debug create --target <worker1> \
+  --allowed-user '@dev-leader:hiclaw-tuwunel.hiclaw.svc.cluster.local'
 
 # Debug with a custom name
 hiclaw debug create --name debug-my-issue --target <worker1>
@@ -24,6 +28,8 @@ hiclaw debug create --target <worker1> \
 # Debug with source code cross-referencing
 hiclaw debug create --target <worker1> --hiclaw-version main
 ```
+
+**IMPORTANT**: If a Team Leader or Human needs to interact with the DebugWorker directly, you MUST pass their Matrix user ID via `--allowed-user`. Without this, only you (Manager) and Admin can @mention the DebugWorker. You can find user Matrix IDs from the Team or Human CRD status.
 
 The DebugWorker will be created as a standard Worker with:
 - Read-only OSS access to all target Workers' workspaces

@@ -239,6 +239,7 @@ type CreateDebugWorkerRequest struct {
 	Targets          []string       `json:"targets,omitempty"`
 	MatrixCredential *MatrixCredReq `json:"matrixCredential,omitempty"`
 	AllowedUsers     []string       `json:"allowedUsers,omitempty"`
+	HiclawVersion    string         `json:"hiclawVersion,omitempty"`
 }
 
 type MatrixCredReq struct {

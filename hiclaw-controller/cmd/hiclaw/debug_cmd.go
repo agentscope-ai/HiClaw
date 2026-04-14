@@ -28,8 +28,10 @@ func debugCreateCmd() *cobra.Command {
 		name              string
 		model             string
 		targets           []string
+		allowedUsers      []string
 		matrixUserID      string
 		matrixAccessToken string
+		hiclawVersion     string
 		outputFmt         string
 	)
 
@@ -40,7 +42,8 @@ func debugCreateCmd() *cobra.Command {
 
   hiclaw debug create --target backend --target frontend
   hiclaw debug create --name debug-team --target backend,frontend --model qwen3-235b-a22b
-  hiclaw debug create --target backend --matrix-user-id @boss:matrix.local --matrix-access-token syt_xxx`,
+  hiclaw debug create --target backend --matrix-user-id @boss:matrix.local --matrix-access-token syt_xxx
+  hiclaw debug create --target backend --allowed-user @dev-leader:matrix.local`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Flatten comma-separated targets
 			var allTargets []string
@@ -54,11 +57,24 @@ func debugCreateCmd() *cobra.Command {
 				return fmt.Errorf("at least one --target is required")
 			}
 
+			// Flatten comma-separated allowed users
+			var allAllowedUsers []string
+			for _, u := range allowedUsers {
+				for _, item := range splitCSV(u) {
+					allAllowedUsers = append(allAllowedUsers, item)
+				}
+			}
+
 			req := map[string]interface{}{
 				"targets": allTargets,
 			}
 			setIfNotEmpty(req, "name", name)
 			setIfNotEmpty(req, "model", model)
+			setIfNotEmpty(req, "hiclawVersion", hiclawVersion)
+
+			if len(allAllowedUsers) > 0 {
+				req["allowedUsers"] = allAllowedUsers
+			}
 
 			if matrixUserID != "" && matrixAccessToken != "" {
 				req["matrixCredential"] = map[string]string{
@@ -84,8 +100,10 @@ func debugCreateCmd() *cobra.Command {
 	cmd.Flags().StringVar(&name, "name", "", "DebugWorker name (auto-generated if empty)")
 	cmd.Flags().StringVar(&model, "model", "", "LLM model ID (default: qwen3-235b-a22b)")
 	cmd.Flags().StringArrayVar(&targets, "target", nil, "Target Worker name (repeatable or comma-separated)")
+	cmd.Flags().StringArrayVar(&allowedUsers, "allowed-user", nil, "Matrix user IDs allowed to interact (repeatable or comma-separated)")
 	cmd.Flags().StringVar(&matrixUserID, "matrix-user-id", "", "Matrix user ID for message export (e.g. @boss:matrix.local)")
 	cmd.Flags().StringVar(&matrixAccessToken, "matrix-access-token", "", "Matrix access token for message export")
+	cmd.Flags().StringVar(&hiclawVersion, "hiclaw-version", "", "HiClaw version/branch for source code cross-referencing")
 	cmd.Flags().StringVarP(&outputFmt, "output", "o", "", "Output format (json)")
 	return cmd
 }

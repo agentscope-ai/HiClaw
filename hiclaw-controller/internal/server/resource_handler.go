@@ -805,9 +805,10 @@ func (h *ResourceHandler) CreateDebugWorker(w http.ResponseWriter, r *http.Reque
 			Namespace: h.namespace,
 		},
 		Spec: v1beta1.DebugWorkerSpec{
-			Model:   req.Model,
-			Runtime: req.Runtime,
-			Targets: req.Targets,
+			Model:         req.Model,
+			Runtime:       req.Runtime,
+			Targets:       req.Targets,
+			HiclawVersion: req.HiclawVersion,
 		},
 	}
 	if req.MatrixCredential != nil {
