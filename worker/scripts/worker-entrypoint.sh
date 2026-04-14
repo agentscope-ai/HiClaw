@@ -291,8 +291,8 @@ export OPENCLAW_NO_RESPAWN=1
 # Step 5c: Background readiness reporter
 # ============================================================
 # Poll local gateway health and report ready to controller when healthy.
-if [ -n "${HICLAW_CONTROLLER_URL:-}${HICLAW_ORCHESTRATOR_URL:-}" ]; then
-    _CONTROLLER_URL="${HICLAW_CONTROLLER_URL:-${HICLAW_ORCHESTRATOR_URL:-}}"
+if [ -n "${HICLAW_CONTROLLER_URL:-}" ]; then
+    _CONTROLLER_URL="${HICLAW_CONTROLLER_URL}"
 (
         # Build auth header (SA token for embedded mode, API key for cloud mode)
         AUTH_HEADER=""

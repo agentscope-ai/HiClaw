@@ -47,13 +47,13 @@ if [ "${HICLAW_RUNTIME:-}" = "aliyun" ]; then
     FS_ENDPOINT="https://oss-placeholder.aliyuncs.com"
     FS_ACCESS_KEY="rrsa"
     FS_SECRET_KEY="rrsa"
-    FS_BUCKET="${HICLAW_FS_BUCKET:-${HICLAW_OSS_BUCKET:-hiclaw-cloud-storage}}"
+    FS_BUCKET="${HICLAW_FS_BUCKET:-hiclaw-cloud-storage}"
     log "  OSS bucket: ${FS_BUCKET}"
 else
     FS_ENDPOINT="${HICLAW_FS_ENDPOINT:?HICLAW_FS_ENDPOINT is required}"
     FS_ACCESS_KEY="${HICLAW_FS_ACCESS_KEY:?HICLAW_FS_ACCESS_KEY is required}"
     FS_SECRET_KEY="${HICLAW_FS_SECRET_KEY:?HICLAW_FS_SECRET_KEY is required}"
-    FS_BUCKET="${HICLAW_FS_BUCKET:-${HICLAW_MINIO_BUCKET:-${HICLAW_OSS_BUCKET:-hiclaw-storage}}}"
+    FS_BUCKET="${HICLAW_FS_BUCKET:-hiclaw-storage}"
 fi
 
 # Set up skills CLI symlink: ~/.agents/skills -> worker's skills directory
@@ -69,8 +69,8 @@ ln -sfn "${INSTALL_DIR}/${WORKER_NAME}" /root/hiclaw-fs 2>/dev/null || true
 
 # Background readiness reporter — report ready to controller when CoPaw bridge completes
 _start_readiness_reporter() {
-    [ -z "${HICLAW_CONTROLLER_URL:-${HICLAW_ORCHESTRATOR_URL:-}}" ] && return 0
-    local _controller_url="${HICLAW_CONTROLLER_URL:-${HICLAW_ORCHESTRATOR_URL:-}}"
+    [ -z "${HICLAW_CONTROLLER_URL:-}" ] && return 0
+    local _controller_url="${HICLAW_CONTROLLER_URL}"
 
     # Build auth header (SA token for embedded mode, API key for cloud mode)
     local auth_header=""

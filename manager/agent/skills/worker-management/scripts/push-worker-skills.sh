@@ -165,7 +165,7 @@ _notify_worker() {
         return 0
     fi
 
-    local matrix_url="${HICLAW_MATRIX_SERVER}"
+    local matrix_url="${HICLAW_MATRIX_URL}"
     local msg="@${worker}:${MATRIX_DOMAIN} 我已向你的工作区推送了以下 skills 更新：[${skills_list}]。请使用 file-sync 技能同步最新文件。"
     local worker_id="@${worker}:${MATRIX_DOMAIN}"
 

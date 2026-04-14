@@ -59,4 +59,4 @@ worker/
 | `HICLAW_FS_ACCESS_KEY` | Yes | MinIO access key |
 | `HICLAW_FS_SECRET_KEY` | Yes | MinIO secret key |
 
-Legacy aliases `HICLAW_MATRIX_SERVER` and `HICLAW_AI_GATEWAY` are kept as compatibility variables inside the container.
+Runtime scripts now consume `HICLAW_MATRIX_URL` and `HICLAW_AI_GATEWAY_URL` directly; legacy aliases are no longer part of the main contract.

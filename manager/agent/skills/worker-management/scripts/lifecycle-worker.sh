@@ -405,7 +405,7 @@ action_start() {
             --arg fsk "${WORKER_MINIO_PASSWORD:-}" \
             --arg fs_domain "${HICLAW_FS_DOMAIN:-fs-local.hiclaw.io}" \
             --arg fs_endpoint "${HICLAW_FS_ENDPOINT:-}" \
-            --arg minio_bucket "${HICLAW_MINIO_BUCKET:-}" \
+            --arg fs_bucket "${HICLAW_FS_BUCKET:-}" \
             --arg controller_url "${HICLAW_CONTROLLER_URL:-}" \
             '{
                 "HICLAW_WORKER_NAME": $name,
@@ -414,7 +414,7 @@ action_start() {
                 "HICLAW_FS_SECRET_KEY": $fsk
             }
             | if $controller_url != "" then . + {"HICLAW_CONTROLLER_URL": $controller_url} else . end
-            | if $minio_bucket != "" then . + {"HICLAW_MINIO_BUCKET": $minio_bucket} else . end')
+            | if $fs_bucket != "" then . + {"HICLAW_FS_BUCKET": $fs_bucket} else . end')
 
         local create_body
         create_body=$(jq -cn \

@@ -129,8 +129,6 @@ type WorkerEnvDefaults struct {
 	MatrixDomain  string
 	FSEndpoint    string
 	FSBucket      string
-	MinIOEndpoint string
-	MinIOBucket   string
 	StoragePrefix string
 	ControllerURL string
 	AIGatewayURL  string
@@ -177,7 +175,7 @@ func LoadConfig() *Config {
 
 		AuthAudience: envOrDefault("HICLAW_AUTH_AUDIENCE", "hiclaw-controller"),
 
-		HigressBaseURL:       firstNonEmpty(os.Getenv("HICLAW_AI_GATEWAY_ADMIN_URL"), os.Getenv("HIGRESS_BASE_URL"), "http://127.0.0.1:8001"),
+		HigressBaseURL:       envOrDefault("HICLAW_AI_GATEWAY_ADMIN_URL", "http://127.0.0.1:8001"),
 		HigressCookieFile:    os.Getenv("HIGRESS_COOKIE_FILE"),
 		HigressAdminUser:     firstNonEmpty(os.Getenv("HICLAW_HIGRESS_ADMIN_USER"), envOrDefault("HICLAW_ADMIN_USER", "admin")),
 		HigressAdminPassword: firstNonEmpty(os.Getenv("HICLAW_HIGRESS_ADMIN_PASSWORD"), envOrDefault("HICLAW_ADMIN_PASSWORD", "admin")),
@@ -201,7 +199,7 @@ func LoadConfig() *Config {
 		GWModelAPIID: os.Getenv("HICLAW_GW_MODEL_API_ID"),
 		GWEnvID:      os.Getenv("HICLAW_GW_ENV_ID"),
 
-		OSSBucket:       firstNonEmpty(os.Getenv("HICLAW_FS_BUCKET"), os.Getenv("HICLAW_OSS_BUCKET"), os.Getenv("HICLAW_MINIO_BUCKET")),
+		OSSBucket:       envOrDefault("HICLAW_FS_BUCKET", "hiclaw-storage"),
 		STSRoleArn:      os.Getenv("ALIBABA_CLOUD_ROLE_ARN"),
 		OIDCProviderArn: os.Getenv("ALIBABA_CLOUD_OIDC_PROVIDER_ARN"),
 		OIDCTokenFile:   os.Getenv("ALIBABA_CLOUD_OIDC_TOKEN_FILE"),
@@ -219,10 +217,7 @@ func LoadConfig() *Config {
 		K8sManagerCPU:           envOrDefault("HICLAW_K8S_MANAGER_CPU", "2"),
 		K8sManagerMemory:        envOrDefault("HICLAW_K8S_MANAGER_MEMORY", "4Gi"),
 
-		ControllerURL: firstNonEmpty(
-			os.Getenv("HICLAW_CONTROLLER_URL"),
-			os.Getenv("HICLAW_ORCHESTRATOR_URL"), // legacy fallback
-		),
+		ControllerURL: os.Getenv("HICLAW_CONTROLLER_URL"),
 
 		ManagerWorkspaceDir: os.Getenv("HICLAW_WORKSPACE_DIR"),
 		HostShareDir:        os.Getenv("HICLAW_HOST_SHARE_DIR"),
@@ -256,12 +251,10 @@ func LoadConfig() *Config {
 
 		WorkerEnv: WorkerEnvDefaults{
 			MatrixDomain:  envOrDefault("HICLAW_MATRIX_DOMAIN", "matrix-local.hiclaw.io:8080"),
-			FSEndpoint:    firstNonEmpty(os.Getenv("HICLAW_FS_ENDPOINT"), os.Getenv("HICLAW_MINIO_ENDPOINT")),
-			FSBucket:      firstNonEmpty(os.Getenv("HICLAW_FS_BUCKET"), os.Getenv("HICLAW_OSS_BUCKET"), os.Getenv("HICLAW_MINIO_BUCKET")),
-			MinIOEndpoint: firstNonEmpty(os.Getenv("HICLAW_MINIO_ENDPOINT"), os.Getenv("HICLAW_FS_ENDPOINT")),
-			MinIOBucket:   firstNonEmpty(os.Getenv("HICLAW_MINIO_BUCKET"), os.Getenv("HICLAW_FS_BUCKET"), os.Getenv("HICLAW_OSS_BUCKET")),
+			FSEndpoint:    os.Getenv("HICLAW_FS_ENDPOINT"),
+			FSBucket:      envOrDefault("HICLAW_FS_BUCKET", "hiclaw-storage"),
 			StoragePrefix: envOrDefault("HICLAW_STORAGE_PREFIX", "hiclaw/hiclaw-storage"),
-			ControllerURL: firstNonEmpty(os.Getenv("HICLAW_CONTROLLER_URL"), os.Getenv("HICLAW_ORCHESTRATOR_URL")),
+			ControllerURL: os.Getenv("HICLAW_CONTROLLER_URL"),
 			AIGatewayURL:  envOrDefault("HICLAW_AI_GATEWAY_URL", "http://aigw-local.hiclaw.io:8080"),
 			MatrixURL:     envOrDefault("HICLAW_MATRIX_URL", "http://matrix-local.hiclaw.io:8080"),
 			AdminUser:     envOrDefault("HICLAW_ADMIN_USER", "admin"),
@@ -274,7 +267,6 @@ func LoadConfig() *Config {
 	if cfg.KubeMode == "embedded" {
 		if ctrlHost := extractHost(cfg.WorkerEnv.ControllerURL); ctrlHost != "" {
 			cfg.WorkerEnv.MatrixURL = replaceHost(cfg.WorkerEnv.MatrixURL, ctrlHost)
-			cfg.WorkerEnv.MinIOEndpoint = replaceHost(cfg.WorkerEnv.MinIOEndpoint, ctrlHost)
 			cfg.WorkerEnv.FSEndpoint = replaceHost(cfg.WorkerEnv.FSEndpoint, ctrlHost)
 		}
 	}
@@ -298,7 +290,7 @@ func (c *Config) Namespace() string {
 
 // HasMinIOAdmin reports whether the local MinIO admin API is available.
 func (c *Config) HasMinIOAdmin() bool {
-	return c.WorkerEnv.MinIOEndpoint != ""
+	return c.WorkerEnv.FSEndpoint != ""
 }
 
 // CredsDir returns the directory for persisted worker credentials (embedded mode).
@@ -499,18 +491,12 @@ func (c *Config) GatewayConfig() gateway.Config {
 }
 
 func (c *Config) OSSConfig() oss.Config {
-	accessKey := firstNonEmpty(os.Getenv("HICLAW_FS_ACCESS_KEY"), os.Getenv("HICLAW_MINIO_ACCESS_KEY"))
-	if accessKey == "" {
-		accessKey = os.Getenv("HICLAW_MINIO_USER")
-	}
-	secretKey := firstNonEmpty(os.Getenv("HICLAW_FS_SECRET_KEY"), os.Getenv("HICLAW_MINIO_SECRET_KEY"))
-	if secretKey == "" {
-		secretKey = os.Getenv("HICLAW_MINIO_PASSWORD")
-	}
+	accessKey := firstNonEmpty(os.Getenv("HICLAW_FS_ACCESS_KEY"), os.Getenv("HICLAW_MINIO_USER"))
+	secretKey := firstNonEmpty(os.Getenv("HICLAW_FS_SECRET_KEY"), os.Getenv("HICLAW_MINIO_PASSWORD"))
 	return oss.Config{
 		StoragePrefix: c.OSSStoragePrefix,
 		Bucket:        c.OSSBucket,
-		Endpoint:      firstNonEmpty(os.Getenv("HICLAW_FS_ENDPOINT"), os.Getenv("HICLAW_MINIO_ENDPOINT")),
+		Endpoint:      firstNonEmpty(os.Getenv("HICLAW_FS_ENDPOINT"), c.WorkerEnv.FSEndpoint),
 		AccessKey:     accessKey,
 		SecretKey:     secretKey,
 	}
@@ -534,14 +520,10 @@ func (c *Config) ManagerAgentEnv() map[string]string {
 	setIfNonEmpty("HICLAW_HIGRESS_ADMIN_USER", c.HigressAdminUser)
 	setIfNonEmpty("HICLAW_HIGRESS_ADMIN_PASSWORD", c.HigressAdminPassword)
 	setIfNonEmpty("HICLAW_AI_GATEWAY_ADMIN_URL", c.HigressBaseURL)
-	setIfNonEmpty("HIGRESS_BASE_URL", c.HigressBaseURL)
 	setIfNonEmpty("HICLAW_MATRIX_URL", c.WorkerEnv.MatrixURL)
 	setIfNonEmpty("HICLAW_AI_GATEWAY_URL", c.WorkerEnv.AIGatewayURL)
 	setIfNonEmpty("HICLAW_FS_ENDPOINT", c.WorkerEnv.FSEndpoint)
-	setIfNonEmpty("HICLAW_MINIO_ENDPOINT", c.WorkerEnv.MinIOEndpoint)
 	setIfNonEmpty("HICLAW_FS_BUCKET", c.WorkerEnv.FSBucket)
-	setIfNonEmpty("HICLAW_OSS_BUCKET", c.OSSBucket)
-	setIfNonEmpty("HICLAW_MINIO_BUCKET", c.WorkerEnv.MinIOBucket)
 	setIfNonEmpty("HICLAW_FS_ACCESS_KEY", firstNonEmpty(os.Getenv("HICLAW_FS_ACCESS_KEY"), os.Getenv("HICLAW_MINIO_USER")))
 	setIfNonEmpty("HICLAW_FS_SECRET_KEY", firstNonEmpty(os.Getenv("HICLAW_FS_SECRET_KEY"), os.Getenv("HICLAW_MINIO_PASSWORD")))
 	setIfNonEmpty("HICLAW_STORAGE_PREFIX", c.OSSStoragePrefix)

@@ -387,7 +387,7 @@ func (k *K8sBackend) getCurrentPodImagePullSecrets(ctx context.Context) []corev1
 	return append([]corev1.LocalObjectReference(nil), pod.Spec.ImagePullSecrets...)
 }
 
-// mergeOSSRegionFromProcessEnv sets HICLAW_OSS_BUCKET and HICLAW_REGION when the client
+// mergeOSSRegionFromProcessEnv sets HICLAW_FS_BUCKET and HICLAW_REGION when the client
 // omitted them; the controller process should already have these from the same Secret as Manager (envFrom).
 func mergeOSSRegionFromProcessEnv(env map[string]string) {
 	if env == nil {
@@ -396,14 +396,9 @@ func mergeOSSRegionFromProcessEnv(env map[string]string) {
 	bucket := firstNonEmptyTrimmed(
 		env["HICLAW_FS_BUCKET"],
 		os.Getenv("HICLAW_FS_BUCKET"),
-		env["HICLAW_OSS_BUCKET"],
-		os.Getenv("HICLAW_OSS_BUCKET"),
 	)
 	if bucket != "" && strings.TrimSpace(env["HICLAW_FS_BUCKET"]) == "" {
 		env["HICLAW_FS_BUCKET"] = bucket
-	}
-	if bucket != "" && strings.TrimSpace(env["HICLAW_OSS_BUCKET"]) == "" {
-		env["HICLAW_OSS_BUCKET"] = bucket
 	}
 	if v := strings.TrimSpace(os.Getenv("HICLAW_REGION")); v != "" && strings.TrimSpace(env["HICLAW_REGION"]) == "" {
 		env["HICLAW_REGION"] = v

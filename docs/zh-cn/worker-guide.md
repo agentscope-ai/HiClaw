@@ -154,7 +154,7 @@ Manager 自动管理 Worker 容器的生命周期：
 
 > 所有参数值均由 Manager 生成，并在 `docker run` 命令中提供，或在直接创建时自动设置。通常无需手动配置。
 >
-> 为兼容旧脚本，容器内仍会导出 `HICLAW_MATRIX_SERVER` 和 `HICLAW_AI_GATEWAY` 这两个别名。
+> 运行时脚本现在直接使用 `HICLAW_MATRIX_URL` 和 `HICLAW_AI_GATEWAY_URL`；旧别名已经不再属于主契约。
 
 ### 手动同步文件
 

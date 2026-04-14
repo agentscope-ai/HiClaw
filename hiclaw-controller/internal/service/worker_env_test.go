@@ -7,13 +7,11 @@ import (
 	"github.com/hiclaw/hiclaw-controller/internal/config"
 )
 
-func TestWorkerEnvBuilderBuildIncludesAbstractAndLegacyStorageEnv(t *testing.T) {
+func TestWorkerEnvBuilderBuildIncludesFinalRuntimeEnv(t *testing.T) {
 	builder := NewWorkerEnvBuilder(config.WorkerEnvDefaults{
 		MatrixDomain:  "matrix.example.com",
 		FSEndpoint:    "http://fs.example.com:9000",
 		FSBucket:      "hiclaw-fs",
-		MinIOEndpoint: "http://fs.example.com:9000",
-		MinIOBucket:   "hiclaw-fs",
 		StoragePrefix: "teams/demo",
 		ControllerURL: "http://controller.example.com:8090",
 		AIGatewayURL:  "http://aigw.example.com:8080",
@@ -33,9 +31,6 @@ func TestWorkerEnvBuilderBuildIncludesAbstractAndLegacyStorageEnv(t *testing.T) 
 		"HICLAW_FS_SECRET_KEY":       "secret",
 		"HICLAW_FS_ENDPOINT":         "http://fs.example.com:9000",
 		"HICLAW_FS_BUCKET":           "hiclaw-fs",
-		"HICLAW_MINIO_ENDPOINT":      "http://fs.example.com:9000",
-		"HICLAW_MINIO_BUCKET":        "hiclaw-fs",
-		"HICLAW_OSS_BUCKET":          "hiclaw-fs",
 		"HICLAW_STORAGE_PREFIX":      "teams/demo",
 		"HICLAW_CONTROLLER_URL":      "http://controller.example.com:8090",
 		"HICLAW_AI_GATEWAY_URL":      "http://aigw.example.com:8080",
@@ -51,6 +46,11 @@ func TestWorkerEnvBuilderBuildIncludesAbstractAndLegacyStorageEnv(t *testing.T) 
 			t.Fatalf("%s = %q, want %q", key, got, want)
 		}
 	}
+	for _, legacyKey := range []string{"HICLAW_MINIO_ENDPOINT", "HICLAW_MINIO_BUCKET", "HICLAW_OSS_BUCKET"} {
+		if _, ok := env[legacyKey]; ok {
+			t.Fatalf("unexpected legacy env %s in worker env", legacyKey)
+		}
+	}
 }
 
 func TestWorkerEnvBuilderBuildManagerUsesConfiguredRuntimeAndBucket(t *testing.T) {
@@ -58,8 +58,6 @@ func TestWorkerEnvBuilderBuildManagerUsesConfiguredRuntimeAndBucket(t *testing.T
 		MatrixDomain:  "matrix.example.com",
 		FSEndpoint:    "http://fs.example.com:9000",
 		FSBucket:      "hiclaw-fs",
-		MinIOEndpoint: "http://fs.example.com:9000",
-		MinIOBucket:   "hiclaw-fs",
 		StoragePrefix: "teams/demo",
 		ControllerURL: "http://controller.example.com:8090",
 		AIGatewayURL:  "http://aigw.example.com:8080",
@@ -80,16 +78,17 @@ func TestWorkerEnvBuilderBuildManagerUsesConfiguredRuntimeAndBucket(t *testing.T
 		"HICLAW_MANAGER_PASSWORD":    "matrix-password",
 		"HICLAW_FS_ACCESS_KEY":       "manager",
 		"HICLAW_FS_SECRET_KEY":       "secret",
-		"HICLAW_MINIO_ACCESS_KEY":    "manager",
-		"HICLAW_MINIO_SECRET_KEY":    "secret",
 		"HICLAW_FS_BUCKET":           "hiclaw-fs",
-		"HICLAW_OSS_BUCKET":          "hiclaw-fs",
-		"HICLAW_MINIO_BUCKET":        "hiclaw-fs",
 		"HICLAW_RUNTIME":             "docker",
 		"HICLAW_ADMIN_USER":          "admin",
 	} {
 		if got := env[key]; got != want {
 			t.Fatalf("%s = %q, want %q", key, got, want)
+		}
+	}
+	for _, legacyKey := range []string{"HICLAW_MINIO_ACCESS_KEY", "HICLAW_MINIO_SECRET_KEY", "HICLAW_MINIO_BUCKET", "HICLAW_OSS_BUCKET"} {
+		if _, ok := env[legacyKey]; ok {
+			t.Fatalf("unexpected legacy env %s in manager env", legacyKey)
 		}
 	}
 }

@@ -55,7 +55,7 @@ if [ -z "${MANAGER_MATRIX_TOKEN}" ]; then
     if [ -z "${HICLAW_MANAGER_PASSWORD}" ]; then
         _fail "MANAGER_MATRIX_TOKEN not set and HICLAW_MANAGER_PASSWORD not available"
     fi
-    MANAGER_MATRIX_TOKEN=$(curl -sf -X POST ${HICLAW_MATRIX_SERVER}/_matrix/client/v3/login \
+    MANAGER_MATRIX_TOKEN=$(curl -sf -X POST ${HICLAW_MATRIX_URL}/_matrix/client/v3/login \
         -H 'Content-Type: application/json' \
         -d '{"type":"m.login.password","identifier":{"type":"m.id.user","user":"manager"},"password":"'"${HICLAW_MANAGER_PASSWORD}"'"}' \
         | jq -r '.access_token // empty')
@@ -145,7 +145,7 @@ for w in "${UPDATED_WORKERS[@]}"; do
         PEERS=$(printf '%s\n' "${VALIDATED[@]}" | grep -v "^${w}$" | sed "s|^|@|; s|$|:${MATRIX_DOMAIN}|" | tr '\n' ' ' | sed 's/ $//')
         TXN_ID=$(openssl rand -hex 8)
         curl -sf -X PUT \
-            "${HICLAW_MATRIX_SERVER}/_matrix/client/v3/rooms/${ROOM_ID}/send/m.room.message/${TXN_ID}" \
+            "${HICLAW_MATRIX_URL}/_matrix/client/v3/rooms/${ROOM_ID}/send/m.room.message/${TXN_ID}" \
             -H "Authorization: Bearer ${MANAGER_MATRIX_TOKEN}" \
             -H 'Content-Type: application/json' \
             -d "{\"msgtype\":\"m.text\",\"body\":\"@${w}:${MATRIX_DOMAIN} Peer mention enabled: you can now be @mentioned by ${PEERS}. Please run: hiclaw-sync\",\"m.mentions\":{\"user_ids\":[\"@${w}:${MATRIX_DOMAIN}\"]}}" \

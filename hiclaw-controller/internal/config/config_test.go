@@ -80,9 +80,7 @@ func TestLoadConfigPanicsOnInvalidManagerSpec(t *testing.T) {
 func TestLoadConfigPrefersAbstractInfraEnv(t *testing.T) {
 	t.Setenv("HICLAW_KUBE_MODE", "incluster")
 	t.Setenv("HICLAW_AI_GATEWAY_ADMIN_URL", "http://higress-admin.example.com:8001")
-	t.Setenv("HIGRESS_BASE_URL", "http://legacy-higress.example.com:8001")
 	t.Setenv("HICLAW_FS_BUCKET", "hiclaw-fs")
-	t.Setenv("HICLAW_OSS_BUCKET", "legacy-bucket")
 	t.Setenv("HICLAW_FS_ENDPOINT", "http://fs.example.com:9000")
 	t.Setenv("HICLAW_STORAGE_PREFIX", "teams/demo")
 	t.Setenv("HICLAW_CONTROLLER_URL", "http://controller.example.com:8090")
@@ -100,11 +98,8 @@ func TestLoadConfigPrefersAbstractInfraEnv(t *testing.T) {
 	if cfg.WorkerEnv.FSBucket != "hiclaw-fs" {
 		t.Fatalf("WorkerEnv.FSBucket = %q, want %q", cfg.WorkerEnv.FSBucket, "hiclaw-fs")
 	}
-	if cfg.WorkerEnv.MinIOBucket != "hiclaw-fs" {
-		t.Fatalf("WorkerEnv.MinIOBucket = %q, want %q", cfg.WorkerEnv.MinIOBucket, "hiclaw-fs")
-	}
-	if cfg.WorkerEnv.MinIOEndpoint != "http://fs.example.com:9000" {
-		t.Fatalf("WorkerEnv.MinIOEndpoint = %q, want %q", cfg.WorkerEnv.MinIOEndpoint, "http://fs.example.com:9000")
+	if cfg.WorkerEnv.FSEndpoint != "http://fs.example.com:9000" {
+		t.Fatalf("WorkerEnv.FSEndpoint = %q, want %q", cfg.WorkerEnv.FSEndpoint, "http://fs.example.com:9000")
 	}
 }
 
@@ -124,7 +119,6 @@ func TestManagerAgentEnvForwardsAbstractInfraEnv(t *testing.T) {
 
 	for key, want := range map[string]string{
 		"HICLAW_AI_GATEWAY_ADMIN_URL": "http://higress-admin.example.com:8001",
-		"HIGRESS_BASE_URL":            "http://higress-admin.example.com:8001",
 		"HICLAW_MATRIX_URL":           "http://matrix.example.com:8080",
 		"HICLAW_AI_GATEWAY_URL":       "http://aigw.example.com:8080",
 		"HICLAW_FS_ENDPOINT":          "http://fs.example.com:9000",
@@ -135,6 +129,11 @@ func TestManagerAgentEnvForwardsAbstractInfraEnv(t *testing.T) {
 	} {
 		if got := env[key]; got != want {
 			t.Fatalf("%s = %q, want %q", key, got, want)
+		}
+	}
+	for _, legacyKey := range []string{"HIGRESS_BASE_URL", "HICLAW_MINIO_ENDPOINT", "HICLAW_MINIO_BUCKET", "HICLAW_OSS_BUCKET"} {
+		if _, ok := env[legacyKey]; ok {
+			t.Fatalf("unexpected legacy env %s in ManagerAgentEnv", legacyKey)
 		}
 	}
 }

@@ -152,8 +152,8 @@ func TestK8sCreate(t *testing.T) {
 	if envs["HICLAW_FS_BUCKET"] != "hiclaw-fs" {
 		t.Fatalf("expected HICLAW_FS_BUCKET from process env, got %q", envs["HICLAW_FS_BUCKET"])
 	}
-	if envs["HICLAW_OSS_BUCKET"] != "hiclaw-fs" {
-		t.Fatalf("expected HICLAW_OSS_BUCKET compat alias, got %q", envs["HICLAW_OSS_BUCKET"])
+	if _, ok := envs["HICLAW_OSS_BUCKET"]; ok {
+		t.Fatalf("unexpected legacy HICLAW_OSS_BUCKET in worker pod env")
 	}
 	if envs["HICLAW_REGION"] != "cn-hangzhou" {
 		t.Fatalf("expected HICLAW_REGION from process env, got %q", envs["HICLAW_REGION"])

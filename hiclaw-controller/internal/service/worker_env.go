@@ -47,8 +47,6 @@ func (b *WorkerEnvBuilder) BuildManager(managerName string, prov *ManagerProvisi
 		"HICLAW_MANAGER_PASSWORD":    prov.MatrixPassword,
 		"HICLAW_FS_ACCESS_KEY":       managerName,
 		"HICLAW_FS_SECRET_KEY":       prov.MinIOPassword,
-		"HICLAW_MINIO_ACCESS_KEY":    managerName,
-		"HICLAW_MINIO_SECRET_KEY":    prov.MinIOPassword,
 		"OPENCLAW_DISABLE_BONJOUR":   "1",
 		"OPENCLAW_MDNS_HOSTNAME":     "hiclaw-manager",
 		"HOME":                       "/root/manager-workspace",
@@ -85,9 +83,6 @@ func (b *WorkerEnvBuilder) applyClusterDefaults(env map[string]string) {
 		"HICLAW_MATRIX_DOMAIN":  b.defaults.MatrixDomain,
 		"HICLAW_FS_ENDPOINT":    b.defaults.FSEndpoint,
 		"HICLAW_FS_BUCKET":      b.defaults.FSBucket,
-		"HICLAW_MINIO_ENDPOINT": b.defaults.MinIOEndpoint,
-		"HICLAW_MINIO_BUCKET":   b.defaults.MinIOBucket,
-		"HICLAW_OSS_BUCKET":     firstNonEmpty(b.defaults.FSBucket, b.defaults.MinIOBucket),
 		"HICLAW_STORAGE_PREFIX": b.defaults.StoragePrefix,
 		"HICLAW_CONTROLLER_URL": b.defaults.ControllerURL,
 		"HICLAW_AI_GATEWAY_URL": b.defaults.AIGatewayURL,
@@ -97,13 +92,4 @@ func (b *WorkerEnvBuilder) applyClusterDefaults(env map[string]string) {
 			env[k] = v
 		}
 	}
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, v := range values {
-		if v != "" {
-			return v
-		}
-	}
-	return ""
 }
