@@ -30,6 +30,7 @@ HiClaw does not compete with other xxClaw projects. Instead of implementing Agen
 
 ## News
 
+- **2026-04-14**: Deep dive — HiClaw as a Kubernetes-native multi-agent collaboration orchestration system. [Blog](blog/hiclaw-k8s-native-multi-agent-collaboration.md) | [中文](blog/hiclaw-k8s-native-multi-agent-collaboration.zh-CN.md)
 - **2026-04-03**: HiClaw 1.0.9 — introduces Kubernetes-style declarative resource management, allowing Worker, Team, and Human resources to be defined via YAML; launches a Worker Template Marketplace for creating Workers based on templates; supports Manager CoPaw runtime; and adds Nacos Skills Registry, among other features.
 - **2026-03-14**: HiClaw 1.0.6 — enterprise-grade MCP Server management, zero credential exposure. [Blog](blog/hiclaw-1.0.6-release.md)
 - **2026-03-10**: HiClaw 1.0.4 — CoPaw Worker support, 80% less memory. [Blog](blog/hiclaw-1.0.4-release.md)
