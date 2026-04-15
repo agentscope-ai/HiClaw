@@ -224,16 +224,18 @@ func (a *App) initServiceLayer(_ context.Context) error {
 	}
 
 	a.provisioner = service.NewProvisioner(service.ProvisionerConfig{
-		Matrix:       a.matrix,
-		Gateway:      a.gateway,
-		OSSAdmin:     a.ossAdmin,
-		Creds:        credStore,
-		K8sClient:    a.k8sClient,
-		KubeMode:     cfg.KubeMode,
-		Namespace:    a.namespace,
-		AuthAudience: cfg.AuthAudience,
-		MatrixDomain: cfg.MatrixDomain,
-		AdminUser:    cfg.MatrixAdminUser,
+		Matrix:            a.matrix,
+		Gateway:           a.gateway,
+		OSSAdmin:          a.ossAdmin,
+		Creds:             credStore,
+		K8sClient:         a.k8sClient,
+		KubeMode:          cfg.KubeMode,
+		Namespace:         a.namespace,
+		AuthAudience:      cfg.AuthAudience,
+		MatrixDomain:      cfg.MatrixDomain,
+		AdminUser:         cfg.MatrixAdminUser,
+		ManagerPassword:   cfg.ManagerPassword,
+		ManagerGatewayKey: cfg.ManagerGatewayKey,
 	})
 
 	a.envBuilder = service.NewWorkerEnvBuilder(cfg.WorkerEnv)

@@ -82,6 +82,11 @@ type ProvisionerConfig struct {
 	AuthAudience string
 	MatrixDomain string
 	AdminUser    string
+
+	// Pre-generated Manager secrets (from install script env).
+	// When set, used instead of generating random credentials.
+	ManagerPassword   string
+	ManagerGatewayKey string
 }
 
 // Provisioner orchestrates infrastructure provisioning and deprovisioning
@@ -98,20 +103,25 @@ type Provisioner struct {
 	authAudience string
 	matrixDomain string
 	adminUser    string
+
+	managerPassword   string
+	managerGatewayKey string
 }
 
 func NewProvisioner(cfg ProvisionerConfig) *Provisioner {
 	return &Provisioner{
-		matrix:       cfg.Matrix,
-		gateway:      cfg.Gateway,
-		ossAdmin:     cfg.OSSAdmin,
-		creds:        cfg.Creds,
-		k8sClient:    cfg.K8sClient,
-		kubeMode:     cfg.KubeMode,
-		namespace:    cfg.Namespace,
-		authAudience: cfg.AuthAudience,
-		matrixDomain: cfg.MatrixDomain,
-		adminUser:    cfg.AdminUser,
+		matrix:            cfg.Matrix,
+		gateway:           cfg.Gateway,
+		ossAdmin:          cfg.OSSAdmin,
+		creds:             cfg.Creds,
+		k8sClient:         cfg.K8sClient,
+		kubeMode:          cfg.KubeMode,
+		namespace:         cfg.Namespace,
+		authAudience:      cfg.AuthAudience,
+		matrixDomain:      cfg.MatrixDomain,
+		adminUser:         cfg.AdminUser,
+		managerPassword:   cfg.ManagerPassword,
+		managerGatewayKey: cfg.ManagerGatewayKey,
 	}
 }
 
@@ -465,6 +475,13 @@ func (p *Provisioner) ProvisionManager(ctx context.Context, req ManagerProvision
 		creds, err = GenerateCredentials()
 		if err != nil {
 			return nil, fmt.Errorf("generate credentials: %w", err)
+		}
+		// Use pre-generated secrets from install script if available
+		if p.managerPassword != "" {
+			creds.MatrixPassword = p.managerPassword
+		}
+		if p.managerGatewayKey != "" {
+			creds.GatewayKey = p.managerGatewayKey
 		}
 		if err := p.creds.Save(ctx, managerName, creds); err != nil {
 			return nil, fmt.Errorf("save credentials: %w", err)

@@ -78,6 +78,10 @@ type Config struct {
 	HostShareDir        string // e.g. ~/ — mounted as /host-share
 	ManagerConsolePort  string // host port for manager console (default: 18888)
 
+	// Pre-generated Manager secrets (from install script env)
+	ManagerPassword   string // Matrix password for manager user
+	ManagerGatewayKey string // Gateway API key for manager consumer
+
 	// Matrix server
 	MatrixServerURL         string
 	MatrixDomain            string
@@ -207,6 +211,8 @@ func LoadConfig() *Config {
 		ManagerWorkspaceDir: os.Getenv("HICLAW_WORKSPACE_DIR"),
 		HostShareDir:        os.Getenv("HICLAW_HOST_SHARE_DIR"),
 		ManagerConsolePort:  envOrDefault("HICLAW_PORT_MANAGER_CONSOLE", "18888"),
+		ManagerPassword:     os.Getenv("HICLAW_MANAGER_PASSWORD"),
+		ManagerGatewayKey:   os.Getenv("HICLAW_MANAGER_GATEWAY_KEY"),
 
 		MatrixServerURL:         envOrDefault("HICLAW_MATRIX_URL", "http://matrix-local.hiclaw.io:8080"),
 		MatrixDomain:            envOrDefault("HICLAW_MATRIX_DOMAIN", "matrix-local.hiclaw.io:8080"),
