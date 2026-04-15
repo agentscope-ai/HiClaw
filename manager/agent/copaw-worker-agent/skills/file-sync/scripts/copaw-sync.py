@@ -75,7 +75,7 @@ def main():
     minio_endpoint = os.getenv("HICLAW_FS_ENDPOINT") or os.getenv("COPAW_MINIO_ENDPOINT")
     minio_access_key = os.getenv("HICLAW_FS_ACCESS_KEY") or os.getenv("COPAW_MINIO_ACCESS_KEY")
     minio_secret_key = os.getenv("HICLAW_FS_SECRET_KEY") or os.getenv("COPAW_MINIO_SECRET_KEY")
-    minio_bucket = os.getenv("HICLAW_FS_BUCKET") or os.getenv("COPAW_MINIO_BUCKET") or os.getenv("HICLAW_MINIO_BUCKET") or "hiclaw"
+    minio_bucket = os.getenv("HICLAW_FS_BUCKET") or os.getenv("COPAW_MINIO_BUCKET") or os.getenv("HICLAW_MINIO_BUCKET") or "hiclaw-storage"
     working_dir = os.getenv("COPAW_WORKING_DIR")
 
     if not all([worker_name, minio_endpoint, minio_access_key, minio_secret_key]):
