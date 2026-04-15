@@ -29,7 +29,7 @@ def main() -> None:
         fs_bucket: str = typer.Option("hiclaw-storage", "--fs-bucket", help="MinIO bucket"),
         sync_interval: int = typer.Option(300, "--sync-interval", help="Sync interval (seconds)"),
         install_dir: Optional[str] = typer.Option(None, "--install-dir", help="Base install dir"),
-        console_port: Optional[int] = typer.Option(None, "--console-port", help="Enable web console on this port (e.g. 8088, costs ~500MB extra RAM)"),
+        console_port: int = typer.Option(8088, "--console-port", help="Web console port (default: 8088)"),
     ) -> None:
         """Start the CoPaw Worker and connect to Matrix."""
         config = WorkerConfig(

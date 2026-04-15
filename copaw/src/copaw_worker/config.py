@@ -15,7 +15,7 @@ class WorkerConfig:
         minio_secure: bool = False,
         sync_interval: int = 300,
         install_dir: Path | None = None,
-        console_port: int | None = None,
+        console_port: int = 8088,
     ) -> None:
         self.worker_name = worker_name
         self.minio_endpoint = minio_endpoint
