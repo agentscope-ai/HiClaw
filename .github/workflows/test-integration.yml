@@ -281,7 +281,7 @@ jobs:
             DEBUG_TAIL=$(find "$DEBUG_DIR" -name "*.log" -exec tail -20 {} + 2>/dev/null | tail -80)
           fi
 
-          BODY="## ❌ Integration Tests Failed
+          BODY="## ❌ Integration Tests Failed (${{ matrix.shard }})
 
           **Commit:** ${{ github.event.pull_request.head.sha }}
           **Workflow run:** [#${{ github.run_number }}](${ARTIFACT_URL})
@@ -309,7 +309,7 @@ jobs:
 
           # Update or create comment
           EXISTING=$(gh api "repos/$REPO/issues/$PR_NUM/comments" \
-            --jq '.[] | select(.body | startswith("## ❌ Integration Tests Failed")) | .id' | head -1)
+            --jq '.[] | select(.body | startswith("## ❌ Integration Tests Failed (${{ matrix.shard }})")) | .id' | head -1)
           if [ -n "$EXISTING" ]; then
             gh api --method PATCH "repos/$REPO/issues/comments/$EXISTING" -f body="$BODY"
           else
