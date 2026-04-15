@@ -77,6 +77,15 @@ RUN pip install --no-cache-dir \
         "copaw==${COPAW_VERSION}" \
         "matrix-nio[e2e]>=0.24.0"
 
+# ---- CoPaw CMS Plugin (observability) ----
+RUN pip install --no-cache-dir \
+        "wrapt<2.0" \
+        loongsuite-site-bootstrap \
+        loongsuite-distro \
+        opentelemetry-exporter-otlp \
+        loongsuite-instrumentation-copaw \
+        loongsuite-instrumentation-agentscope
+
 # ---- Overlay HiClaw Matrix channel (not yet merged into CoPaw release) ----
 # Replace CoPaw's built-in Matrix channel with HiClaw-enhanced version
 COPY copaw/src/matrix/ /tmp/matrix-overlay/

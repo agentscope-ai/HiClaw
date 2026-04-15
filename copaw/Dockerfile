@@ -82,7 +82,14 @@ RUN python -m venv /opt/venv/copaw \
     && /opt/venv/copaw/bin/pip install --no-cache-dir \
         --index-url "${PIP_INDEX_URL}" \
         --trusted-host "$(echo ${PIP_INDEX_URL} | sed 's|https\?://||;s|/.*||')" \
-        /tmp/copaw-worker/
+        /tmp/copaw-worker/ \
+    && /opt/venv/copaw/bin/pip install --no-cache-dir \
+        "wrapt<2.0" \
+        loongsuite-site-bootstrap \
+        loongsuite-distro \
+        opentelemetry-exporter-otlp \
+        loongsuite-instrumentation-copaw \
+        loongsuite-instrumentation-agentscope
 
 # --- Overlay real copaw-worker source (high-frequency changes) ---
 # This layer is rebuilt on every src/ change but does NOT invalidate the
