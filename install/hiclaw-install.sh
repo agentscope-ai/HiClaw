@@ -2566,6 +2566,15 @@ CREDEOF
     # Ensure hiclaw-net Docker network exists
     ${DOCKER_CMD} network inspect hiclaw-net >/dev/null 2>&1 || ${DOCKER_CMD} network create hiclaw-net
 
+    if [ "${HICLAW_USE_EMBEDDED}" != "1" ] && [ "${HICLAW_UPGRADE:-0}" = "1" ]; then
+        # Check if current installation is embedded — downgrade to legacy is not supported
+        if ${DOCKER_CMD} ps -a --format '{{.Names}} {{.Image}}' 2>/dev/null | grep "^hiclaw-controller " | grep -q "embedded"; then
+            error "Downgrade from embedded architecture to legacy version (${HICLAW_VERSION}) is not supported."
+            error "Please use 'make uninstall-embedded' first, then do a clean install of the target version."
+            exit 1
+        fi
+    fi
+
     if [ "${HICLAW_USE_EMBEDDED}" = "1" ]; then
         # ============================================================
         # New architecture: embedded controller + auto-created manager
