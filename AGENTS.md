@@ -53,16 +53,28 @@ make build-manager build-worker build-copaw-worker \
 
 **Common pitfall**: Running `make build-manager build-worker OPENCLAW_BASE_VERSION=latest` without `OPENCLAW_BASE_IMAGE=hiclaw/openclaw-base` will pull the remote registry's `:latest` tag instead of using the locally-built image. Always set both variables together for local builds.
 
-**Proxy support**: If behind a proxy, pass build args (use `host.containers.internal` for Podman on macOS):
+**Proxy support**: If behind an HTTP proxy, pass proxy build args. This covers APT, PIP, NPM and all other network access — no mirror args needed:
 ```bash
-make build-openclaw-base DOCKER_BUILD_ARGS="\
-    --build-arg HTTP_PROXY=http://host.containers.internal:1087 \
+PROXY_ARGS="--build-arg HTTP_PROXY=http://host.containers.internal:1087 \
     --build-arg HTTPS_PROXY=http://host.containers.internal:1087 \
     --build-arg http_proxy=http://host.containers.internal:1087 \
     --build-arg https_proxy=http://host.containers.internal:1087"
-```
 
-**APT mirror**: `openclaw-base/Dockerfile` accepts `APT_MIRROR` build arg (default: empty = official Ubuntu sources). Set `APT_MIRROR=mirrors.aliyun.com` for China acceleration without proxy.
+make build-embedded build-manager build-worker build-copaw-worker DOCKER_BUILD_ARGS="${PROXY_ARGS}"
+```
+Note: use `host.containers.internal` for Podman on macOS, `host.docker.internal` for Docker Desktop.
+
+**China build acceleration (without proxy)**: All Dockerfiles default to official sources. For builds in China without proxy, pass mirror args:
+```bash
+# APT mirror (for Ubuntu/Debian-based images: openclaw-base, copaw, manager-copaw, embedded)
+make build-embedded DOCKER_BUILD_ARGS="--build-arg APT_MIRROR=mirrors.aliyun.com"
+
+# PIP mirror (for Python-based images: copaw, manager-copaw)
+make build-copaw-worker DOCKER_BUILD_ARGS="--build-arg APT_MIRROR=mirrors.aliyun.com --build-arg PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/"
+
+# NPM mirror (for Node.js-based images: openclaw-base)
+make build-openclaw-base DOCKER_BUILD_ARGS="--build-arg APT_MIRROR=mirrors.aliyun.com --build-arg NPM_REGISTRY=https://registry.npmmirror.com/"
+```
 
 ### To modify the Manager container
 - [manager/Dockerfile](manager/Dockerfile) -- multi-stage build definition

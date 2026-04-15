@@ -82,6 +82,11 @@ type ProvisionerConfig struct {
 	AuthAudience string
 	MatrixDomain string
 	AdminUser    string
+
+	// Pre-generated Manager secrets (from install script env).
+	// When set, used instead of generating random credentials.
+	ManagerPassword   string
+	ManagerGatewayKey string
 }
 
 // Provisioner orchestrates infrastructure provisioning and deprovisioning
@@ -98,20 +103,25 @@ type Provisioner struct {
 	authAudience string
 	matrixDomain string
 	adminUser    string
+
+	managerPassword   string
+	managerGatewayKey string
 }
 
 func NewProvisioner(cfg ProvisionerConfig) *Provisioner {
 	return &Provisioner{
-		matrix:       cfg.Matrix,
-		gateway:      cfg.Gateway,
-		ossAdmin:     cfg.OSSAdmin,
-		creds:        cfg.Creds,
-		k8sClient:    cfg.K8sClient,
-		kubeMode:     cfg.KubeMode,
-		namespace:    cfg.Namespace,
-		authAudience: cfg.AuthAudience,
-		matrixDomain: cfg.MatrixDomain,
-		adminUser:    cfg.AdminUser,
+		matrix:            cfg.Matrix,
+		gateway:           cfg.Gateway,
+		ossAdmin:          cfg.OSSAdmin,
+		creds:             cfg.Creds,
+		k8sClient:         cfg.K8sClient,
+		kubeMode:          cfg.KubeMode,
+		namespace:         cfg.Namespace,
+		authAudience:      cfg.AuthAudience,
+		matrixDomain:      cfg.MatrixDomain,
+		adminUser:         cfg.AdminUser,
+		managerPassword:   cfg.ManagerPassword,
+		managerGatewayKey: cfg.ManagerGatewayKey,
 	}
 }
 
@@ -321,6 +331,46 @@ func (p *Provisioner) RefreshCredentials(ctx context.Context, workerName string)
 	}, nil
 }
 
+// RefreshManagerCredentials loads persisted credentials for the Manager and
+// obtains a fresh Matrix token. The Manager CR name (e.g. "default") differs
+// from the Matrix username (always "manager"), so this uses a dedicated method.
+func (p *Provisioner) RefreshManagerCredentials(ctx context.Context, managerName string) (*RefreshResult, error) {
+	creds, err := p.creds.Load(ctx, managerName)
+	if err != nil || creds == nil {
+		return nil, fmt.Errorf("credentials not found for manager %s", managerName)
+	}
+
+	matrixToken, err := p.matrix.Login(ctx, "manager", creds.MatrixPassword)
+	if err != nil {
+		return nil, fmt.Errorf("Matrix login failed: %w", err)
+	}
+
+	return &RefreshResult{
+		MatrixToken:    matrixToken,
+		GatewayKey:     creds.GatewayKey,
+		MinIOPassword:  creds.MinIOPassword,
+		MatrixPassword: creds.MatrixPassword,
+	}, nil
+}
+
+// EnsureManagerGatewayAuth ensures the Manager's gateway consumer exists and is
+// authorized on AI routes. Called during container recreation to restore auth
+// that may have been lost (e.g. after upgrade with fresh Higress state).
+func (p *Provisioner) EnsureManagerGatewayAuth(ctx context.Context, managerName, gatewayKey string) error {
+	consumerName := "manager"
+	_, err := p.gateway.EnsureConsumer(ctx, gateway.ConsumerRequest{
+		Name:          consumerName,
+		CredentialKey: gatewayKey,
+	})
+	if err != nil {
+		return fmt.Errorf("ensure consumer: %w", err)
+	}
+	if err := p.gateway.AuthorizeAIRoutes(ctx, consumerName); err != nil {
+		return fmt.Errorf("authorize AI routes: %w", err)
+	}
+	return nil
+}
+
 // ReconcileMCPAuth reauthorizes MCP servers for a consumer. Returns the list of
 // successfully authorized server names.
 func (p *Provisioner) ReconcileMCPAuth(ctx context.Context, consumerName string, mcpServers []string) ([]string, error) {
@@ -425,6 +475,13 @@ func (p *Provisioner) ProvisionManager(ctx context.Context, req ManagerProvision
 		creds, err = GenerateCredentials()
 		if err != nil {
 			return nil, fmt.Errorf("generate credentials: %w", err)
+		}
+		// Use pre-generated secrets from install script if available
+		if p.managerPassword != "" {
+			creds.MatrixPassword = p.managerPassword
+		}
+		if p.managerGatewayKey != "" {
+			creds.GatewayKey = p.managerGatewayKey
 		}
 		if err := p.creds.Save(ctx, managerName, creds); err != nil {
 			return nil, fmt.Errorf("save credentials: %w", err)
