@@ -103,6 +103,38 @@ func TestLoadConfigPrefersAbstractInfraEnv(t *testing.T) {
 	}
 }
 
+func TestLoadConfigUsesSharedAdminCredentialsForHigress(t *testing.T) {
+	t.Setenv("HICLAW_ADMIN_USER", "shared-admin")
+	t.Setenv("HICLAW_ADMIN_PASSWORD", "shared-secret")
+
+	cfg := LoadConfig()
+
+	if cfg.HigressAdminUser != "shared-admin" {
+		t.Fatalf("HigressAdminUser = %q, want %q", cfg.HigressAdminUser, "shared-admin")
+	}
+	if cfg.HigressAdminPassword != "shared-secret" {
+		t.Fatalf("HigressAdminPassword = %q, want %q", cfg.HigressAdminPassword, "shared-secret")
+	}
+}
+
+func TestGatewayConfigAllowsDefaultAdminFallbackOnlyInEmbedded(t *testing.T) {
+	t.Run("embedded", func(t *testing.T) {
+		t.Setenv("HICLAW_KUBE_MODE", "embedded")
+		cfg := LoadConfig()
+		if !cfg.GatewayConfig().AllowDefaultAdminFallback {
+			t.Fatal("expected embedded gateway config to allow default admin fallback")
+		}
+	})
+
+	t.Run("incluster", func(t *testing.T) {
+		t.Setenv("HICLAW_KUBE_MODE", "incluster")
+		cfg := LoadConfig()
+		if cfg.GatewayConfig().AllowDefaultAdminFallback {
+			t.Fatal("expected incluster gateway config to disable default admin fallback")
+		}
+	})
+}
+
 func TestManagerAgentEnvForwardsAbstractInfraEnv(t *testing.T) {
 	t.Setenv("HICLAW_KUBE_MODE", "incluster")
 	t.Setenv("HICLAW_MINIO_USER", "root")
@@ -131,7 +163,14 @@ func TestManagerAgentEnvForwardsAbstractInfraEnv(t *testing.T) {
 			t.Fatalf("%s = %q, want %q", key, got, want)
 		}
 	}
-	for _, legacyKey := range []string{"HIGRESS_BASE_URL", "HICLAW_MINIO_ENDPOINT", "HICLAW_MINIO_BUCKET", "HICLAW_OSS_BUCKET"} {
+	for _, legacyKey := range []string{
+		"HIGRESS_BASE_URL",
+		"HICLAW_MINIO_ENDPOINT",
+		"HICLAW_MINIO_BUCKET",
+		"HICLAW_OSS_BUCKET",
+		"HICLAW_HIGRESS_ADMIN_USER",
+		"HICLAW_HIGRESS_ADMIN_PASSWORD",
+	} {
 		if _, ok := env[legacyKey]; ok {
 			t.Fatalf("unexpected legacy env %s in ManagerAgentEnv", legacyKey)
 		}
