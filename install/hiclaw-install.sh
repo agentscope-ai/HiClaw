@@ -1282,6 +1282,12 @@ should_skip_step() {
             [ "${HICLAW_NON_INTERACTIVE}" = "1" ] && return 0
             [ "${HICLAW_QUICKSTART}" = "1" ] && [ "${HICLAW_UPGRADE}" != "1" ] && return 0
             ;;
+        step_docker_proxy)
+            [ "${HICLAW_NON_INTERACTIVE}" = "1" ] && return 0
+            [ "${HICLAW_QUICKSTART}" = "1" ] && [ "${HICLAW_UPGRADE}" != "1" ] && return 0
+            # Embedded mode handles docker access natively — skip this step
+            [ "${HICLAW_USE_EMBEDDED:-}" = "1" ] && return 0
+            ;;
         step_manager_runtime)
             [ "${HICLAW_NON_INTERACTIVE}" = "1" ] && return 0
             ;;
@@ -2139,7 +2145,7 @@ install_manager() {
     # ── State machine ─────────────────────────────────────────────────────────
     local _STEPS=( step_lang step_mode step_version step_existing step_llm step_admin step_network \
                    step_ports step_domains step_github step_skills step_volume \
-                   step_workspace step_manager_runtime step_runtime step_e2ee step_idle step_hostshare )
+                   step_workspace step_manager_runtime step_runtime step_e2ee step_docker_proxy step_idle step_hostshare )
     local _STEP_HISTORY=()
     local _step_idx=0
     while [ "${_step_idx}" -lt "${#_STEPS[@]}" ]; do
@@ -2744,21 +2750,21 @@ CREDEOF
             fi
         done
 
-        # Start Docker API proxy if enabled
+        # Start Docker API proxy if enabled (security layer between Manager and Docker daemon)
         PROXY_ARGS=""
         if [ "${HICLAW_DOCKER_PROXY:-1}" = "1" ] && [ -n "${CONTAINER_SOCK:-}" ]; then
-            local _proxy_image="${HICLAW_REGISTRY}/higress/hiclaw-controller:${HICLAW_VERSION}"
+            local _proxy_image="${HICLAW_REGISTRY}/higress/hiclaw-docker-proxy:${HICLAW_VERSION}"
             # Try versioned tag, fallback to latest
             if ! ${DOCKER_CMD} image inspect "${_proxy_image}" >/dev/null 2>&1; then
                 ${DOCKER_CMD} pull "${_proxy_image}" 2>/dev/null || {
-                    _proxy_image="${HICLAW_REGISTRY}/higress/hiclaw-controller:latest"
+                    _proxy_image="${HICLAW_REGISTRY}/higress/hiclaw-docker-proxy:latest"
                     ${DOCKER_CMD} pull "${_proxy_image}" 2>/dev/null || true
                 }
             fi
             if ${DOCKER_CMD} image inspect "${_proxy_image}" >/dev/null 2>&1; then
                 log "Starting Docker API proxy..."
                 ${DOCKER_CMD} run -d \
-                    --name hiclaw-controller \
+                    --name hiclaw-docker-proxy \
                     --network hiclaw-net \
                     -v "${CONTAINER_SOCK}:/var/run/docker.sock" \
                     --security-opt label=disable \
@@ -2767,7 +2773,7 @@ CREDEOF
                     ${HICLAW_PROXY_ALLOWED_REGISTRIES:+-e HICLAW_PROXY_ALLOWED_REGISTRIES="${HICLAW_PROXY_ALLOWED_REGISTRIES}"} \
                     --restart unless-stopped \
                     "${_proxy_image}"
-                PROXY_ARGS="-e HICLAW_CONTROLLER_URL=http://hiclaw-controller:8090"
+                PROXY_ARGS="-e HICLAW_CONTROLLER_URL=http://hiclaw-docker-proxy:2375 -e HICLAW_CONTAINER_API=http://hiclaw-docker-proxy:2375"
                 SOCKET_MOUNT_ARGS=""
             fi
         fi
