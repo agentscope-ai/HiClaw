@@ -135,6 +135,13 @@ rm -f "${DM_ROOMS_FILE}" "${DM_ROOMS_FILE}.tmp"
 # agent.json uses config.json's channels config
 # Note: We need to preserve group_allow_from which BaseChannelConfig lacks
 log "Generating agent.json..."
+AGENT_JSON="${WORKSPACE_DIR}/agent.json"
+# Save runtime-only fields from existing agent.json before regenerating
+_RUNTIME_ENV=""
+if [ -f "${AGENT_JSON}" ]; then
+    _RUNTIME_ENV=$(jq -c 'select(.env != null) | .env' "${AGENT_JSON}" 2>/dev/null)
+fi
+# Generate fresh agent.json from config.json (channels, running, security always update)
 jq --arg ws "${WORKSPACE_DIR}" '{
   "id": "default",
   "name": "Manager",
@@ -142,8 +149,13 @@ jq --arg ws "${WORKSPACE_DIR}" '{
   "channels": .channels,
   "heartbeat": (.heartbeat // {"enabled": false}),
   "running": (.agents.running // {}),
-  "system_prompt_files": (.agents.system_prompt_files // ["AGENTS.md", "SOUL.md", "PROFILE.md", "TOOLS.md"])
-}' "${CONFIG_FILE}" > "${WORKSPACE_DIR}/agent.json"
+  "system_prompt_files": (.agents.system_prompt_files // ["AGENTS.md", "SOUL.md", "PROFILE.md", "TOOLS.md"]),
+  "security": (.security // {"tool_guard": {"enabled": false}, "file_guard": {"enabled": false}, "skill_scanner": {"mode": "off"}})
+}' "${CONFIG_FILE}" > "${AGENT_JSON}"
+# Restore runtime-only fields preserved from previous agent.json
+if [ -n "${_RUNTIME_ENV}" ] && [ "${_RUNTIME_ENV}" != "null" ]; then
+    jq --argjson e "${_RUNTIME_ENV}" '. + {env: $e}' "${AGENT_JSON}" > "${AGENT_JSON}.tmp" && mv "${AGENT_JSON}.tmp" "${AGENT_JSON}"
+fi
 log "Generated agent.json"
 
 # ============================================================
