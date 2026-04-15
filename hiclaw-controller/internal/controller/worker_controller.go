@@ -29,10 +29,10 @@ const (
 type WorkerReconciler struct {
 	client.Client
 
-	Provisioner *service.Provisioner
-	Deployer    *service.Deployer
+	Provisioner service.WorkerProvisioner
+	Deployer    service.WorkerDeployer
 	Backend     *backend.Registry
-	EnvBuilder  *service.WorkerEnvBuilder
+	EnvBuilder  service.WorkerEnvBuilderI
 	Legacy      *service.LegacyCompat // nil in incluster mode
 }
 
