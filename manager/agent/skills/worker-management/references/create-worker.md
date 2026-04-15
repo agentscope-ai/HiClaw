@@ -100,21 +100,78 @@ The JSON response contains the worker status. Key fields:
 - `"room_id"` — Worker's Matrix room ID
 - `"install_cmd"` — (when status is `pending_install`) Provide this **verbatim in a code block** (do NOT redact `--fs-secret`)
 
+## Step 2.5: Check Worker status
+
+**IMPORTANT**: After running `hiclaw create worker`, the Worker may be in `Pending` state (still creating). **DO NOT use `sleep` to wait**. Instead, immediately check the status:
+
+```bash
+hiclaw get workers -o json
+```
+
+This command returns ALL workers with their current status. Look for your Worker's `phase` field:
+- `"Pending"` — Still creating (Matrix registration, Higress config, container startup)
+- `"Running"` — Ready to receive tasks
+- `"Failed"` — Creation failed (check `message` field for error)
+
+**Typical creation time**:
+- OpenClaw Worker: 10-30 seconds
+- CoPaw Worker: 15-45 seconds
+
+**What NOT to do**:
+- ❌ `sleep 30 && hiclaw get worker <name>` — Wastes time
+- ❌ `ls ~/scripts/` — Scripts are not needed
+- ❌ `cat /root/hiclaw-fs/agents/<name>/config.json` — Config is in MinIO, not local filesystem
+- ❌ `docker ps -a --filter "name=<name>"` — Docker may not be available in Manager container
+- ❌ `hiclaw --help` or `hiclaw get worker --help` — You already know the command
+
+**What to do**:
+- ✅ `hiclaw get workers -o json` — Direct status check
+- ✅ If `phase` is `"Running"`, proceed to Post-creation
+- ✅ If `phase` is `"Failed"`, read the `message` field and report error to admin
+
 ## Post-creation
 
-1. Verify: check the JSON output from `hiclaw create worker -o json` for the `"status"` field.
+1. **Verify Worker is Running**: Use `hiclaw get workers -o json` to confirm `phase` is `"Running"`.
 
-2. Immediately reply to admin in the DM (do NOT wait for Worker to greet first):
+2. **Update workers-registry.json**: Add the new Worker to the registry:
+   ```bash
+   # Read current registry
+   REGISTRY=$(cat /root/hiclaw-fs/workers-registry.json 2>/dev/null || echo '{"workers":[]}')
+
+   # Add new worker entry
+   UPDATED=$(echo "$REGISTRY" | jq --arg name "<NAME>" --arg room "<ROOM_ID>" \
+     '.workers += [{"name": $name, "room_id": $room, "role": "<ROLE>", "created_at": (now|todate)}]')
+
+   # Write back
+   echo "$UPDATED" > /root/hiclaw-fs/workers-registry.json
+   ```
+
+3. **Reply to admin in DM** (do NOT wait for Worker to greet first):
    ```
    <NAME> is ready. Remember to @mention them when giving tasks.
 
    Note: By default, Workers only accept @mentions from Manager and admin — not from each other. Peer mentions can be enabled explicitly per-project.
    ```
 
-3. Send greeting in Worker's Room:
+4. **Send greeting in Worker's Room**:
+
+   **For CoPaw Manager**:
+   ```bash
+   copaw channels send \
+     --agent-id default \
+     --channel matrix \
+     --target-session "<ROOM_ID>" \
+     --message "@<NAME>:${HICLAW_MATRIX_DOMAIN} You're all set! Please introduce yourself to everyone in this room."
    ```
-   @<NAME>:${HICLAW_MATRIX_DOMAIN} You're all set! Please introduce yourself to everyone in this room.
+
+   **For OpenClaw Manager**:
+   ```bash
+   openclaw gateway send \
+     --room "<ROOM_ID>" \
+     --message "@<NAME>:${HICLAW_MATRIX_DOMAIN} You're all set! Please introduce yourself to everyone in this room."
    ```
+
+   Use the appropriate command based on your runtime (check `$HICLAW_MANAGER_RUNTIME` environment variable).
 
 ## Imported Worker Pull-Up
 
