@@ -2446,30 +2446,61 @@ EOF
 
         # Manager password (stored in container env as HICLAW_MANAGER_PASSWORD)
         _mgr_pw=$(${DOCKER_CMD} inspect hiclaw-manager --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null | grep '^HICLAW_MANAGER_PASSWORD=' | cut -d= -f2-)
+        # Manager admin DM room ID: login as admin, find DM room with @manager
+        _mgr_room=""
         if [ -n "${_mgr_pw}" ]; then
+            _admin_pw=$(grep HICLAW_ADMIN_PASSWORD "${HICLAW_ENV_FILE:-${HOME}/hiclaw-manager.env}" 2>/dev/null | cut -d= -f2-)
+            _admin_user=$(grep HICLAW_ADMIN_USER "${HICLAW_ENV_FILE:-${HOME}/hiclaw-manager.env}" 2>/dev/null | cut -d= -f2-)
+            _admin_user="${_admin_user:-admin}"
+            _matrix_domain=$(grep HICLAW_MATRIX_DOMAIN "${HICLAW_ENV_FILE:-${HOME}/hiclaw-manager.env}" 2>/dev/null | cut -d= -f2-)
+            if [ -n "${_admin_pw}" ]; then
+                _admin_token=$(${DOCKER_CMD} exec hiclaw-manager curl -sf -X POST http://127.0.0.1:6167/_matrix/client/v3/login \
+                    -H "Content-Type: application/json" \
+                    -d '{"type":"m.login.password","identifier":{"type":"m.id.user","user":"'"${_admin_user}"'"},"password":"'"${_admin_pw}"'"}' 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin).get('access_token',''))" 2>/dev/null || true)
+                if [ -n "${_admin_token}" ]; then
+                    _mgr_room=$(${DOCKER_CMD} exec hiclaw-manager curl -sf -X GET \
+                        -H "Authorization: Bearer ${_admin_token}" \
+                        "http://127.0.0.1:6167/_matrix/client/v3/joined_rooms" 2>/dev/null | python3 -c "
+import sys,json,subprocess
+rooms = json.load(sys.stdin).get('joined_rooms',[])
+for room_id in rooms:
+    enc = room_id.replace('!','%21')
+    members = json.loads(subprocess.check_output([
+        'docker','exec','hiclaw-manager','curl','-sf','-X','GET',
+        '-H','Authorization: Bearer ${_admin_token}',
+        'http://127.0.0.1:6167/_matrix/client/v3/rooms/'+enc+'/members'
+    ]).decode()).get('chunk',[])
+    member_ids = [m['state_key'] for m in members]
+    if any('manager' in m and 'admin' not in m.split(':')[0] for m in member_ids):
+        if len(member_ids) <= 3:
+            print(room_id)
+            break
+" 2>/dev/null || true)
+                fi
+            fi
             cat > "${_creds_tmp}/default.env" <<CREDEOF
 WORKER_PASSWORD="${_mgr_pw}"
 WORKER_MINIO_PASSWORD="$(openssl rand -hex 24)"
-WORKER_GATEWAY_KEY="$(openssl rand -hex 32)"
-WORKER_ROOM_ID=""
+WORKER_GATEWAY_KEY="${HICLAW_MANAGER_GATEWAY_KEY}"
+WORKER_ROOM_ID="${_mgr_room}"
 CREDEOF
-            log "Extracted Manager Matrix password"
+            log "Extracted Manager Matrix password${_mgr_room:+ and room ID}"
         fi
 
-        # Worker passwords (stored in MinIO at agents/{name}/credentials/matrix/password,
-        # readable from the manager container's local filesystem)
+        # Worker passwords and room IDs from workers-registry.json
         if [ -f "${HICLAW_WORKSPACE_DIR}/workers-registry.json" ]; then
             _worker_names=$(python3 -c "import json; d=json.load(open('${HICLAW_WORKSPACE_DIR}/workers-registry.json')); print(' '.join(d.get('workers',{}).keys()))" 2>/dev/null || true)
             for _wname in ${_worker_names}; do
                 _wpw=$(${DOCKER_CMD} exec hiclaw-manager cat "/root/hiclaw-fs/agents/${_wname}/credentials/matrix/password" 2>/dev/null || true)
+                _wroom=$(python3 -c "import json; d=json.load(open('${HICLAW_WORKSPACE_DIR}/workers-registry.json')); print(d.get('workers',{}).get('${_wname}',{}).get('room_id',''))" 2>/dev/null || true)
                 if [ -n "${_wpw}" ]; then
                     cat > "${_creds_tmp}/${_wname}.env" <<CREDEOF
 WORKER_PASSWORD="${_wpw}"
 WORKER_MINIO_PASSWORD="$(openssl rand -hex 24)"
 WORKER_GATEWAY_KEY="$(openssl rand -hex 32)"
-WORKER_ROOM_ID=""
+WORKER_ROOM_ID="${_wroom}"
 CREDEOF
-                    log "Extracted ${_wname} Matrix password"
+                    log "Extracted ${_wname} Matrix password${_wroom:+ and room ID}"
                 fi
             done
         fi
