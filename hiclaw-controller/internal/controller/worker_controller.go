@@ -400,8 +400,12 @@ func (r *WorkerReconciler) failUpdate(ctx context.Context, w *v1beta1.Worker, ms
 // reconcileDesiredState compares the desired lifecycle state (spec.state) with
 // the actual backend state and takes corrective action when drift is detected.
 func (r *WorkerReconciler) reconcileDesiredState(ctx context.Context, w *v1beta1.Worker, desired string) (reconcile.Result, error) {
-	// If current phase already matches desired state, nothing to do.
-	// This also avoids unnecessary backend Status calls on every reconcile.
+	// If current phase already matches desired state, verify the pod still exists.
+	// The pod may have been deleted externally (e.g. kubectl delete pod) while
+	// the CR status still shows Running.
+	if w.Status.Phase == desired && desired == "Running" {
+		return r.ensurePodExists(ctx, w)
+	}
 	if w.Status.Phase == desired {
 		return reconcile.Result{}, nil
 	}
@@ -569,6 +573,34 @@ func (r *WorkerReconciler) failLifecycle(ctx context.Context, w *v1beta1.Worker,
 	w.Status.Message = msg
 	r.Status().Update(ctx, w)
 	return reconcile.Result{RequeueAfter: time.Minute}, fmt.Errorf("%s", msg)
+}
+
+// ensurePodExists checks if the worker's pod/container still exists.
+// If the pod was deleted externally while the CR status is Running,
+// this triggers recreation via ensureWorkerRunning.
+func (r *WorkerReconciler) ensurePodExists(ctx context.Context, w *v1beta1.Worker) (reconcile.Result, error) {
+	if r.Backend == nil {
+		return reconcile.Result{}, nil
+	}
+	wb := r.Backend.DetectWorkerBackend(ctx)
+	if wb == nil {
+		return reconcile.Result{}, nil
+	}
+
+	result, err := wb.Status(ctx, w.Name)
+	if err != nil {
+		// Backend error — don't panic, just requeue
+		return reconcile.Result{RequeueAfter: reconcileRetryDelay}, nil
+	}
+
+	if result.Status == backend.StatusRunning || result.Status == backend.StatusStarting {
+		return reconcile.Result{}, nil // pod exists, all good
+	}
+
+	// Pod is gone — trigger recreation
+	logger := log.FromContext(ctx)
+	logger.Info("pod missing for Running worker, recreating", "name", w.Name, "backendStatus", result.Status)
+	return r.ensureWorkerRunning(ctx, w)
 }
 
 func (r *WorkerReconciler) SetupWithManager(mgr ctrl.Manager) error {

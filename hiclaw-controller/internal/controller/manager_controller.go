@@ -345,10 +345,10 @@ func (r *ManagerReconciler) failManagerUpdate(ctx context.Context, m *v1beta1.Ma
 // --- Desired state reconciliation ---
 
 func (r *ManagerReconciler) reconcileDesiredState(ctx context.Context, m *v1beta1.Manager, desired string) (reconcile.Result, error) {
-	// If current phase already matches desired state, nothing to do.
-	// This also avoids calling backend Status/Stop/Delete for Managers
-	// in Docker mode, where the container name ("hiclaw-manager") doesn't
-	// include the backend's worker prefix ("hiclaw-worker-").
+	// If current phase already matches desired state, verify the pod still exists.
+	if m.Status.Phase == desired && desired == "Running" {
+		return r.ensureManagerPodExists(ctx, m)
+	}
 	if m.Status.Phase == desired {
 		return reconcile.Result{}, nil
 	}
@@ -545,6 +545,28 @@ func (r *ManagerReconciler) failManagerLifecycle(ctx context.Context, m *v1beta1
 	m.Status.Message = msg
 	r.Status().Update(ctx, m)
 	return reconcile.Result{RequeueAfter: time.Minute}, fmt.Errorf("%s", msg)
+}
+
+// ensureManagerPodExists checks if the manager's pod/container still exists.
+func (r *ManagerReconciler) ensureManagerPodExists(ctx context.Context, m *v1beta1.Manager) (reconcile.Result, error) {
+	wb := r.managerBackend(ctx)
+	if wb == nil {
+		return reconcile.Result{}, nil
+	}
+
+	containerName := managerContainerName(m.Name)
+	result, err := wb.Status(ctx, containerName)
+	if err != nil {
+		return reconcile.Result{RequeueAfter: reconcileRetryDelay}, nil
+	}
+
+	if result.Status == backend.StatusRunning || result.Status == backend.StatusStarting {
+		return reconcile.Result{}, nil
+	}
+
+	logger := log.FromContext(ctx)
+	logger.Info("pod missing for Running manager, recreating", "name", m.Name, "backendStatus", result.Status)
+	return r.ensureManagerRunning(ctx, m)
 }
 
 func (r *ManagerReconciler) SetupWithManager(mgr ctrl.Manager) error {
