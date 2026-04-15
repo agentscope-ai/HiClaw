@@ -226,8 +226,15 @@ _setup_manager_identity() {
     local _console_url="http://${TEST_MANAGER_HOST}:${TEST_CONSOLE_PORT:-18001}"
     local _gw_url="http://${TEST_MANAGER_HOST}:${TEST_GATEWAY_PORT:-18080}"
     local _cookie_file="/tmp/higress-test-cookie-$$"
+    # Read the actual gateway key from controller's credential store (provisioner generates
+    # its own key, which may differ from the one in the env file)
     local _mgr_key
-    _mgr_key=$(grep HICLAW_MANAGER_GATEWAY_KEY "${HICLAW_ENV_FILE:-${HOME}/hiclaw-manager.env}" 2>/dev/null | cut -d= -f2-)
+    _mgr_key=$(docker exec "${TEST_CONTROLLER_CONTAINER:-hiclaw-controller}" \
+        grep WORKER_GATEWAY_KEY /data/worker-creds/default.env 2>/dev/null | cut -d'"' -f2)
+    if [ -z "${_mgr_key}" ]; then
+        # Fallback to env file
+        _mgr_key=$(grep HICLAW_MANAGER_GATEWAY_KEY "${HICLAW_ENV_FILE:-${HOME}/hiclaw-manager.env}" 2>/dev/null | cut -d= -f2-)
+    fi
     while [ "${_gw_elapsed}" -lt 60 ]; do
         # Login to Higress console and check manager consumer
         curl -sf -X POST "${_console_url}/session/login" \

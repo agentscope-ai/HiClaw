@@ -343,6 +343,24 @@ func (p *Provisioner) RefreshManagerCredentials(ctx context.Context, managerName
 	}, nil
 }
 
+// EnsureManagerGatewayAuth ensures the Manager's gateway consumer exists and is
+// authorized on AI routes. Called during container recreation to restore auth
+// that may have been lost (e.g. after upgrade with fresh Higress state).
+func (p *Provisioner) EnsureManagerGatewayAuth(ctx context.Context, managerName, gatewayKey string) error {
+	consumerName := "manager"
+	_, err := p.gateway.EnsureConsumer(ctx, gateway.ConsumerRequest{
+		Name:          consumerName,
+		CredentialKey: gatewayKey,
+	})
+	if err != nil {
+		return fmt.Errorf("ensure consumer: %w", err)
+	}
+	if err := p.gateway.AuthorizeAIRoutes(ctx, consumerName); err != nil {
+		return fmt.Errorf("authorize AI routes: %w", err)
+	}
+	return nil
+}
+
 // ReconcileMCPAuth reauthorizes MCP servers for a consumer. Returns the list of
 // successfully authorized server names.
 func (p *Provisioner) ReconcileMCPAuth(ctx context.Context, consumerName string, mcpServers []string) ([]string, error) {

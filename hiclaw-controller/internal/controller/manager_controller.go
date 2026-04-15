@@ -491,6 +491,11 @@ func (r *ManagerReconciler) recreateManagerContainer(ctx context.Context, m *v1b
 		return fmt.Errorf("refresh credentials: %w", err)
 	}
 
+	// Ensure gateway consumer is authorized on AI routes (may have been lost after upgrade)
+	if err := r.Provisioner.EnsureManagerGatewayAuth(ctx, managerName, refreshResult.GatewayKey); err != nil {
+		logger.Error(err, "gateway auth during recreate (non-fatal)")
+	}
+
 	_ = r.Provisioner.EnsureManagerServiceAccount(ctx, managerName)
 
 	managerEnv := r.EnvBuilder.BuildManager(managerName, &service.ManagerProvisionResult{
