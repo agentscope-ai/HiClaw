@@ -9,7 +9,7 @@
 #
 # Build args:
 #   HIGRESS_REGISTRY  - base image registry (default: cn-hangzhou)
-#   APT_MIRROR        - APT mirror host (default: mirrors.aliyun.com, set to empty to use official)
+#   APT_MIRROR        - APT mirror host (default: empty; set to mirrors.aliyun.com for China)
 # ============================================================
 
 ARG HIGRESS_REGISTRY=higress-registry.cn-hangzhou.cr.aliyuncs.com
@@ -18,7 +18,7 @@ ARG HIGRESS_REGISTRY=higress-registry.cn-hangzhou.cr.aliyuncs.com
 FROM ${HIGRESS_REGISTRY}/higress/all-in-one:sha-d32debd
 
 # Build args (must be declared BEFORE any RUN that uses them)
-ARG APT_MIRROR=mirrors.aliyun.com
+ARG APT_MIRROR=
 ARG HTTP_PROXY
 ARG HTTPS_PROXY
 ARG http_proxy

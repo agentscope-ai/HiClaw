@@ -50,18 +50,18 @@ on:
         default: 'qwen3.5-plus'
 
 env:
-  # Tests that do not require a GitHub token
+  # Tests that do not require a GitHub token, split into two shards for parallel execution
+  # Shard A: LLM interaction tests (sequential dependency: 02 creates alice → 03-06 use alice)
+  # Shard B: Controller/CR tests (independent, no cross-test dependencies)
+  SHARD_A_TESTS: "01 02 03 04 05 06 100"
+  SHARD_B_TESTS: "14 15 17 18 19 20"
   NON_GITHUB_TESTS: "01 02 03 04 05 06 14 15 17 18 19 20 100"
 
 jobs:
-  integration-tests:
+  # Build all images once, shared across test shards
+  build:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
-    permissions:
-      contents: write
-      pull-requests: write
-      actions: read
-
+    timeout-minutes: 30
     steps:
       - name: Free Up Disk Space
         uses: jlumbroso/free-disk-space@main
@@ -82,6 +82,75 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      - name: Build images
+        env:
+          HICLAW_MANAGER_RUNTIME: ${{ inputs.worker_runtime || 'openclaw' }}
+        run: |
+          if [ "${HICLAW_MANAGER_RUNTIME}" = "copaw" ]; then
+            make build-embedded build-manager-copaw build-worker build-copaw-worker \
+              DOCKER_BUILD_ARGS="--build-arg APT_MIRROR="
+          else
+            make build-embedded build-manager build-worker build-copaw-worker \
+              DOCKER_BUILD_ARGS="--build-arg APT_MIRROR="
+          fi
+
+      - name: Save images
+        run: |
+          docker save \
+            $(docker images --format '{{.Repository}}:{{.Tag}}' | grep -E '^hiclaw/' | grep -v '<none>') \
+            | gzip > /tmp/hiclaw-images.tar.gz
+
+      - name: Upload images artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hiclaw-images
+          path: /tmp/hiclaw-images.tar.gz
+          retention-days: 1
+
+  # Run test shards in parallel, each on its own runner with isolated cluster
+  integration-tests:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - shard: llm-interaction
+            filter_env: SHARD_A_TESTS
+          - shard: controller-cr
+            filter_env: SHARD_B_TESTS
+
+    steps:
+      - name: Free Up Disk Space
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: false
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          swap-storage: true
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+
+      - name: Download pre-built images
+        uses: actions/download-artifact@v4
+        with:
+          name: hiclaw-images
+          path: /tmp
+
+      - name: Load images
+        run: gunzip -c /tmp/hiclaw-images.tar.gz | docker load
+
       - name: Install dependencies
         run: sudo apt-get update && sudo apt-get install -y jq curl unzip
 
@@ -94,9 +163,10 @@ jobs:
           HICLAW_MANAGER_RUNTIME: ${{ inputs.worker_runtime || 'openclaw' }}
         run: |
           FILTER="${{ github.event.inputs.test_filter }}"
-          [ -z "$FILTER" ] && FILTER="${NON_GITHUB_TESTS}"
-          make test-embedded \
-            DOCKER_BUILD_ARGS="--build-arg APT_MIRROR=" \
+          if [ -z "$FILTER" ]; then
+            FILTER="${{ env[matrix.filter_env] }}"
+          fi
+          SKIP_BUILD=1 make test-embedded \
             TEST_FILTER="$FILTER"
 
       # ============================================================
@@ -104,7 +174,7 @@ jobs:
       # ============================================================
 
       - name: Download latest release baseline
-        if: github.event_name == 'pull_request_target'
+        if: github.event_name == 'pull_request_target' && matrix.shard == 'llm-interaction'
         continue-on-error: true
         run: |
           mkdir -p baseline-metrics
@@ -124,7 +194,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Generate metrics comparison and post PR comment
-        if: github.event_name == 'pull_request_target'
+        if: github.event_name == 'pull_request_target' && matrix.shard == 'llm-interaction'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -132,7 +202,9 @@ jobs:
 
           # Collect current summary across all tests that ran
           FILTER="${{ github.event.inputs.test_filter }}"
-          [ -z "$FILTER" ] && FILTER="${NON_GITHUB_TESTS}"
+          if [ -z "$FILTER" ]; then
+            FILTER="${{ env[matrix.filter_env] }}"
+          fi
           TEST_NAMES=$(echo "$FILTER" | tr ' ' '\n' | while read n; do
             f=$(ls tests/output/metrics-*${n}*.json 2>/dev/null | head -1)
             [ -n "$f" ] && basename "$f" .json | sed 's/^metrics-//'
@@ -209,7 +281,7 @@ jobs:
             DEBUG_TAIL=$(find "$DEBUG_DIR" -name "*.log" -exec tail -20 {} + 2>/dev/null | tail -80)
           fi
 
-          BODY="## ❌ Integration Tests Failed
+          BODY="## ❌ Integration Tests Failed (${{ matrix.shard }})
 
           **Commit:** ${{ github.event.pull_request.head.sha }}
           **Workflow run:** [#${{ github.run_number }}](${ARTIFACT_URL})
@@ -237,7 +309,7 @@ jobs:
 
           # Update or create comment
           EXISTING=$(gh api "repos/$REPO/issues/$PR_NUM/comments" \
-            --jq '.[] | select(.body | startswith("## ❌ Integration Tests Failed")) | .id' | head -1)
+            --jq '.[] | select(.body | startswith("## ❌ Integration Tests Failed (${{ matrix.shard }})")) | .id' | head -1)
           if [ -n "$EXISTING" ]; then
             gh api --method PATCH "repos/$REPO/issues/comments/$EXISTING" -f body="$BODY"
           else
@@ -255,7 +327,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: test-artifacts-${{ github.sha }}
+          name: test-artifacts-${{ matrix.shard }}-${{ github.sha }}
           path: test-artifacts/
           retention-days: 7
 
@@ -264,7 +336,7 @@ jobs:
       # ============================================================
 
       - name: Generate release baseline
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(github.ref, 'refs/tags/v') && matrix.shard == 'llm-interaction'
         run: |
           source tests/lib/agent-metrics.sh
           TEST_NAMES=$(echo "$NON_GITHUB_TESTS" | tr ' ' '\n' | while read n; do
@@ -276,7 +348,7 @@ jobs:
           cat metrics-baseline.json | jq '{totals: .totals, by_role: .by_role}'
 
       - name: Upload baseline to release
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(github.ref, 'refs/tags/v') && matrix.shard == 'llm-interaction'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -285,7 +357,7 @@ jobs:
           echo "✅ Baseline uploaded to release ${GITHUB_REF_NAME}"
 
       - name: Upload debug log to release
-        if: startsWith(github.ref, 'refs/tags/v') && always()
+        if: startsWith(github.ref, 'refs/tags/v') && matrix.shard == 'llm-interaction' && always()
         continue-on-error: true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -305,7 +377,8 @@ jobs:
         if: always()
         run: |
           echo "### Integration Test Summary" >> $GITHUB_STEP_SUMMARY
-          echo "- Tests: \`$NON_GITHUB_TESTS\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Shard: \`${{ matrix.shard }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Tests: \`${{ env[matrix.filter_env] }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- Worker Runtime: \`${{ inputs.worker_runtime || 'openclaw' }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- Model: \`${{ inputs.model || 'qwen3.5-plus' }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- Install Mode: embedded (make test-embedded)" >> $GITHUB_STEP_SUMMARY

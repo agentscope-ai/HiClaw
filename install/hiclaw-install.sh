@@ -895,33 +895,40 @@ resolve_image_tags() {
     MANAGER_COPAW_IMAGE="${HICLAW_INSTALL_MANAGER_COPAW_IMAGE:-${HICLAW_REGISTRY}/higress/hiclaw-manager-copaw:${HICLAW_VERSION}}"
     WORKER_IMAGE="${HICLAW_INSTALL_WORKER_IMAGE:-${HICLAW_REGISTRY}/higress/hiclaw-worker:${HICLAW_VERSION}}"
     COPAW_WORKER_IMAGE="${HICLAW_INSTALL_COPAW_WORKER_IMAGE:-${HICLAW_REGISTRY}/higress/hiclaw-copaw-worker:${HICLAW_VERSION}}"
-    # controller: prefer versioned tag, fall back to :latest at pull time
-    # via resolve_controller_image().
-    CONTROLLER_IMAGE="${HICLAW_INSTALL_CONTROLLER_IMAGE:-${HICLAW_REGISTRY}/higress/hiclaw-controller:${HICLAW_VERSION}}"
+    EMBEDDED_IMAGE="${HICLAW_INSTALL_EMBEDDED_IMAGE:-${HICLAW_REGISTRY}/higress/hiclaw-embedded:${HICLAW_VERSION}}"
 }
 
-# Resolve the controller image: try the versioned tag first; if the registry
-# doesn't have it (component didn't exist yet in that release), fall back to :latest.
-# Sets CONTROLLER_IMAGE to the tag that will actually be pulled.
-resolve_controller_image() {
-    # If the user explicitly overrode the image, respect it as-is.
-    [ -n "${HICLAW_INSTALL_CONTROLLER_IMAGE:-}" ] && return 0
+# Resolve the embedded controller image: try the versioned tag first; if the registry
+# doesn't have it (old version without embedded support), set HICLAW_USE_EMBEDDED=0
+# to fall back to the legacy all-in-one manager architecture.
+# Sets EMBEDDED_IMAGE and HICLAW_USE_EMBEDDED.
+resolve_embedded_image() {
+    HICLAW_USE_EMBEDDED=1
 
-    local _versioned="${HICLAW_REGISTRY}/higress/hiclaw-controller:${HICLAW_VERSION}"
-    local _latest="${HICLAW_REGISTRY}/higress/hiclaw-controller:latest"
+    # If the user explicitly overrode the image, respect it as-is.
+    if [ -n "${HICLAW_INSTALL_EMBEDDED_IMAGE:-}" ]; then
+        EMBEDDED_IMAGE="${HICLAW_INSTALL_EMBEDDED_IMAGE}"
+        return 0
+    fi
+
+    local _versioned="${HICLAW_REGISTRY}/higress/hiclaw-embedded:${HICLAW_VERSION}"
+    local _latest="${HICLAW_REGISTRY}/higress/hiclaw-embedded:latest"
 
     # Skip probe when HICLAW_VERSION is "latest" — no point trying the same tag twice.
     if [ "${HICLAW_VERSION}" = "latest" ]; then
-        CONTROLLER_IMAGE="${_latest}"
+        EMBEDDED_IMAGE="${_latest}"
         return 0
     fi
 
     if ${DOCKER_CMD} pull "${_versioned}" >/dev/null 2>&1; then
-        CONTROLLER_IMAGE="${_versioned}"
+        EMBEDDED_IMAGE="${_versioned}"
+    elif ${DOCKER_CMD} pull "${_latest}" >/dev/null 2>&1; then
+        log "embedded ${HICLAW_VERSION} not found, using latest"
+        EMBEDDED_IMAGE="${_latest}"
     else
-        log "controller ${HICLAW_VERSION} not found, using latest"
-        ${DOCKER_CMD} pull "${_latest}" >/dev/null 2>&1 || true
-        CONTROLLER_IMAGE="${_latest}"
+        # No embedded image available — fall back to legacy architecture
+        log "No embedded image available, using legacy all-in-one manager architecture"
+        HICLAW_USE_EMBEDDED=0
     fi
 }
 
@@ -1271,9 +1278,15 @@ should_skip_step() {
             [ "${HICLAW_NON_INTERACTIVE}" = "1" ] && return 0
             [ "${HICLAW_QUICKSTART}" = "1" ] && return 0
             ;;
-        step_e2ee|step_idle|step_docker_proxy)
+        step_e2ee|step_idle)
             [ "${HICLAW_NON_INTERACTIVE}" = "1" ] && return 0
             [ "${HICLAW_QUICKSTART}" = "1" ] && [ "${HICLAW_UPGRADE}" != "1" ] && return 0
+            ;;
+        step_docker_proxy)
+            [ "${HICLAW_NON_INTERACTIVE}" = "1" ] && return 0
+            [ "${HICLAW_QUICKSTART}" = "1" ] && [ "${HICLAW_UPGRADE}" != "1" ] && return 0
+            # Embedded mode handles docker access natively — skip this step
+            [ "${HICLAW_USE_EMBEDDED:-}" = "1" ] && return 0
             ;;
         step_manager_runtime)
             [ "${HICLAW_NON_INTERACTIVE}" = "1" ] && return 0
@@ -2382,6 +2395,9 @@ EOF
         ${DOCKER_CMD} pull "${_img}"
     }
 
+    # Embedded controller image (resolve versioned tag, fallback to latest)
+    resolve_embedded_image
+
     # Manager image is always required (select based on runtime)
     if [ "${HICLAW_MANAGER_RUNTIME}" = "copaw" ]; then
         _pull_image "${MANAGER_COPAW_IMAGE}" "install.image.exists" "install.image.pulling_manager"
@@ -2407,23 +2423,97 @@ EOF
     fi
 
     # During upgrade, also pull the other worker image if containers using it exist locally.
-    # This ensures ALL worker containers get updated, not just the ones matching the selected runtime.
     if [ "${HICLAW_UPGRADE:-0}" = "1" ]; then
         if [ "${HICLAW_DEFAULT_WORKER_RUNTIME}" = "copaw" ]; then
-            # Selected copaw, check if any openclaw worker image exists locally
             if ${DOCKER_CMD} image inspect "${WORKER_IMAGE}" >/dev/null 2>&1; then
                 _pull_image "${WORKER_IMAGE}" "install.image.worker_exists" "install.image.pulling_worker"
             fi
         fi
     fi
 
-    # Resolve and pull controller image (probes versioned tag, falls back to latest)
-    if [ "${HICLAW_DOCKER_PROXY:-0}" = "1" ]; then
-        resolve_controller_image
+    # --- Pre-upgrade: extract Matrix passwords from running old containers ---
+    # Only needed when upgrading FROM old architecture (v1.0.9) TO embedded.
+    # For new-arch-to-new-arch upgrades, credential files already exist with
+    # correct room IDs — we must NOT overwrite them.
+    _creds_tmp=""
+    if [ "${HICLAW_UPGRADE:-0}" = "1" ] && [ "${HICLAW_USE_EMBEDDED}" = "1" ]; then
+        # Detect if upgrading from old arch: old arch has no hiclaw-controller container
+        # (or has it as a docker-proxy only, not embedded). Check if the existing
+        # hiclaw-controller is an embedded image (has supervisord) or just a proxy.
+        _is_old_arch=0
+        if ! ${DOCKER_CMD} ps -a --format '{{.Names}}' 2>/dev/null | grep -q "^hiclaw-controller$"; then
+            _is_old_arch=1
+        elif ${DOCKER_CMD} ps -a --format '{{.Names}} {{.Image}}' 2>/dev/null | grep "^hiclaw-controller " | grep -qv "embedded"; then
+            _is_old_arch=1
+        fi
+
+        if [ "${_is_old_arch}" = "1" ]; then
+        _creds_tmp=$(mktemp -d)
+
+        # Manager password (stored in container env as HICLAW_MANAGER_PASSWORD)
+        _mgr_pw=$(${DOCKER_CMD} inspect hiclaw-manager --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null | grep '^HICLAW_MANAGER_PASSWORD=' | cut -d= -f2-)
+        # Manager admin DM room ID: login as admin, find DM room with @manager
+        _mgr_room=""
+        if [ -n "${_mgr_pw}" ]; then
+            _admin_pw=$(grep HICLAW_ADMIN_PASSWORD "${HICLAW_ENV_FILE:-${HOME}/hiclaw-manager.env}" 2>/dev/null | cut -d= -f2-)
+            _admin_user=$(grep HICLAW_ADMIN_USER "${HICLAW_ENV_FILE:-${HOME}/hiclaw-manager.env}" 2>/dev/null | cut -d= -f2-)
+            _admin_user="${_admin_user:-admin}"
+            _matrix_domain=$(grep HICLAW_MATRIX_DOMAIN "${HICLAW_ENV_FILE:-${HOME}/hiclaw-manager.env}" 2>/dev/null | cut -d= -f2-)
+            if [ -n "${_admin_pw}" ]; then
+                _admin_token=$(${DOCKER_CMD} exec hiclaw-manager curl -sf -X POST http://127.0.0.1:6167/_matrix/client/v3/login \
+                    -H "Content-Type: application/json" \
+                    -d '{"type":"m.login.password","identifier":{"type":"m.id.user","user":"'"${_admin_user}"'"},"password":"'"${_admin_pw}"'"}' 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin).get('access_token',''))" 2>/dev/null || true)
+                if [ -n "${_admin_token}" ]; then
+                    _mgr_room=$(${DOCKER_CMD} exec hiclaw-manager curl -sf -X GET \
+                        -H "Authorization: Bearer ${_admin_token}" \
+                        "http://127.0.0.1:6167/_matrix/client/v3/joined_rooms" 2>/dev/null | python3 -c "
+import sys,json,subprocess
+rooms = json.load(sys.stdin).get('joined_rooms',[])
+for room_id in rooms:
+    enc = room_id.replace('!','%21')
+    members = json.loads(subprocess.check_output([
+        'docker','exec','hiclaw-manager','curl','-sf','-X','GET',
+        '-H','Authorization: Bearer ${_admin_token}',
+        'http://127.0.0.1:6167/_matrix/client/v3/rooms/'+enc+'/members'
+    ]).decode()).get('chunk',[])
+    member_ids = [m['state_key'] for m in members]
+    if any('manager' in m and 'admin' not in m.split(':')[0] for m in member_ids):
+        if len(member_ids) <= 3:
+            print(room_id)
+            break
+" 2>/dev/null || true)
+                fi
+            fi
+            cat > "${_creds_tmp}/default.env" <<CREDEOF
+WORKER_PASSWORD="${_mgr_pw}"
+WORKER_MINIO_PASSWORD="$(openssl rand -hex 24)"
+WORKER_GATEWAY_KEY="${HICLAW_MANAGER_GATEWAY_KEY}"
+WORKER_ROOM_ID="${_mgr_room}"
+CREDEOF
+            log "Extracted Manager Matrix password${_mgr_room:+ and room ID}"
+        fi
+
+        # Worker passwords and room IDs from workers-registry.json
+        if [ -f "${HICLAW_WORKSPACE_DIR}/workers-registry.json" ]; then
+            _worker_names=$(python3 -c "import json; d=json.load(open('${HICLAW_WORKSPACE_DIR}/workers-registry.json')); print(' '.join(d.get('workers',{}).keys()))" 2>/dev/null || true)
+            for _wname in ${_worker_names}; do
+                _wpw=$(${DOCKER_CMD} exec hiclaw-manager cat "/root/hiclaw-fs/agents/${_wname}/credentials/matrix/password" 2>/dev/null || true)
+                _wroom=$(python3 -c "import json; d=json.load(open('${HICLAW_WORKSPACE_DIR}/workers-registry.json')); print(d.get('workers',{}).get('${_wname}',{}).get('room_id',''))" 2>/dev/null || true)
+                if [ -n "${_wpw}" ]; then
+                    cat > "${_creds_tmp}/${_wname}.env" <<CREDEOF
+WORKER_PASSWORD="${_wpw}"
+WORKER_MINIO_PASSWORD="$(openssl rand -hex 24)"
+WORKER_GATEWAY_KEY="$(openssl rand -hex 32)"
+WORKER_ROOM_ID="${_wroom}"
+CREDEOF
+                    log "Extracted ${_wname} Matrix password${_wroom:+ and room ID}"
+                fi
+            done
+        fi
+        fi  # _is_old_arch
     fi
 
-    # Stop and remove existing containers (deferred from upgrade detection
-    # so that all configuration is collected and images are pulled first)
+    # --- Stop and remove existing containers ---
     if ${DOCKER_CMD} ps -a --format '{{.Names}}' | grep -q "^hiclaw-controller$"; then
         ${DOCKER_CMD} stop hiclaw-controller 2>/dev/null || true
         ${DOCKER_CMD} rm hiclaw-controller 2>/dev/null || true
@@ -2434,8 +2524,7 @@ EOF
         ${DOCKER_CMD} rm hiclaw-manager 2>/dev/null || true
     fi
 
-    # Stop and remove worker containers saved during upgrade detection
-    # (Manager IP changes on restart, so workers must be recreated)
+    # Stop and remove worker containers (controller will recreate via CR reconciliation)
     if [ -n "${UPGRADE_EXISTING_WORKERS:-}" ]; then
         log "$(msg install.existing.stopping_workers)"
         for w in ${UPGRADE_EXISTING_WORKERS}; do
@@ -2445,92 +2534,302 @@ EOF
         done
     fi
 
-    # Run Manager container
+    # Clean up legacy containers (e.g. hiclaw-docker-proxy from v1.0.x)
+    for _legacy in $(${DOCKER_CMD} ps -a --format '{{.Names}}' 2>/dev/null | grep -E '^hiclaw-' | grep -vE "^(hiclaw-controller|hiclaw-manager|hiclaw-worker-)" || true); do
+        log "Removing legacy container: ${_legacy}"
+        ${DOCKER_CMD} stop "${_legacy}" 2>/dev/null || true
+        ${DOCKER_CMD} rm -f "${_legacy}" 2>/dev/null || true
+    done
+
+    # --- Upgrade: inject extracted credentials into data volume ---
+    # Only needed for old-arch upgrades (credential files were extracted above).
+    if [ -n "${_creds_tmp}" ] && [ -d "${_creds_tmp}" ] && [ -n "$(ls -A "${_creds_tmp}" 2>/dev/null)" ]; then
+        local _cleanup_ctr="hiclaw-upgrade-cleanup"
+        ${DOCKER_CMD} rm -f "${_cleanup_ctr}" 2>/dev/null || true
+        ${DOCKER_CMD} run --rm --name "${_cleanup_ctr}" \
+            --entrypoint sh \
+            -v "${HICLAW_DATA_DIR}:/data" \
+            -v "${_creds_tmp}:/creds:ro" \
+            "${EMBEDDED_IMAGE}" -c '
+                rm -rf /data/worker-creds
+                mkdir -p /data/worker-creds
+                cp /creds/*.env /data/worker-creds/ 2>/dev/null || true
+                chmod 600 /data/worker-creds/*.env 2>/dev/null || true
+            ' 2>/dev/null && log "Injected credentials for upgrade" || log "Warning: credential injection failed, continuing"
+        rm -rf "${_creds_tmp}"
+    fi
+
+    # --- Start containers ---
     log "$(msg install.starting_manager)"
 
-    # Ensure hiclaw-net Docker network exists; Manager joins it so workers can reach
-    # Manager services via Docker DNS (using the network aliases added below).
-    NETWORK_ARGS=""
-    NETWORK_ALIAS_ARGS=""
-    if [ -n "${CONTAINER_SOCK:-}" ] || [ "${HICLAW_DOCKER_PROXY:-0}" = "1" ]; then
-        ${DOCKER_CMD} network inspect hiclaw-net >/dev/null 2>&1 || ${DOCKER_CMD} network create hiclaw-net
-        NETWORK_ARGS="--network hiclaw-net"
-        # Workers hardcode these three internal domains to reach manager services,
-        # so they must always be network aliases regardless of user domain config.
-        NETWORK_ALIAS_ARGS="--network-alias matrix-local.hiclaw.io --network-alias aigw-local.hiclaw.io --network-alias fs-local.hiclaw.io"
-        # Also alias any *-local.hiclaw.io user-configured domains that differ from the fixed ones above.
-        for _domain in "${HICLAW_MATRIX_CLIENT_DOMAIN}" "${HICLAW_CONSOLE_DOMAIN}"; do
-            if [[ "${_domain}" == *-local.hiclaw.io ]]; then
-                NETWORK_ALIAS_ARGS="${NETWORK_ALIAS_ARGS} --network-alias ${_domain}"
-            fi
-        done
-    fi
-
-    # Start Docker API proxy if enabled (security layer between Manager and Docker daemon)
-    PROXY_ARGS=""
-    if [ "${HICLAW_DOCKER_PROXY:-0}" = "1" ] && [ -n "${CONTAINER_SOCK:-}" ]; then
-        local _proxy_image="${CONTROLLER_IMAGE}"
-        log "Starting Docker API proxy..."
-        ${DOCKER_CMD} run -d \
-            --name hiclaw-controller \
-            --network hiclaw-net \
-            -v "${CONTAINER_SOCK}:/var/run/docker.sock" \
-            --security-opt label=disable \
-            -e HICLAW_WORKER_IMAGE="${WORKER_IMAGE}" \
-            -e HICLAW_COPAW_WORKER_IMAGE="${COPAW_WORKER_IMAGE}" \
-            ${HICLAW_PROXY_ALLOWED_REGISTRIES:+-e HICLAW_PROXY_ALLOWED_REGISTRIES="${HICLAW_PROXY_ALLOWED_REGISTRIES}"} \
-            --restart unless-stopped \
-            "${_proxy_image}"
-        PROXY_ARGS="-e HICLAW_CONTROLLER_URL=http://hiclaw-controller:8090"
-        SOCKET_MOUNT_ARGS=""  # Manager no longer needs direct socket access
-    fi
-
-    # Build port binding args (127.0.0.1 prefix for local-only mode)
+    # Build port binding args
     if [ "${HICLAW_LOCAL_ONLY:-1}" = "1" ]; then
         _port_prefix="127.0.0.1:"
     else
         _port_prefix=""
     fi
-    # shellcheck disable=SC2086
-    ${DOCKER_CMD} run -d \
-        --name hiclaw-manager \
-        --env-file "${ENV_FILE}" \
-        -e HOME=/root/manager-workspace \
-        -w /root/manager-workspace \
-        -e HOST_ORIGINAL_HOME="${HICLAW_HOST_SHARE_DIR}" \
-        -e HICLAW_MANAGER_RUNTIME="${HICLAW_MANAGER_RUNTIME:-openclaw}" \
-        ${JVM_ARGS:+-e JVM_ARGS="${JVM_ARGS}"} \
-        ${YOLO_ARGS} \
-        ${TZ_ARGS} \
-        ${SOCKET_MOUNT_ARGS} \
-        ${NETWORK_ARGS} \
-        ${NETWORK_ALIAS_ARGS} \
-        ${PROXY_ARGS} \
-        -p "${_port_prefix}${HICLAW_PORT_GATEWAY}:8080" \
-        -p "${_port_prefix}${HICLAW_PORT_CONSOLE}:8001" \
-        -p "${_port_prefix}${HICLAW_PORT_ELEMENT_WEB:-18088}:8088" \
-        -p "127.0.0.1:${HICLAW_PORT_MANAGER_CONSOLE:-18888}:18888" \
-        ${DATA_MOUNT_ARGS} \
-        ${WORKSPACE_MOUNT_ARGS} \
-        ${HOST_SHARE_MOUNT_ARGS} \
-        --restart unless-stopped \
-        "$([ "${HICLAW_MANAGER_RUNTIME}" = "copaw" ] && echo "${MANAGER_COPAW_IMAGE}" || echo "${MANAGER_IMAGE}")"
-    unset _port_prefix
 
-    # Wait for Manager agent to be ready
-    wait_manager_ready "hiclaw-manager"
+    # Ensure hiclaw-net Docker network exists
+    ${DOCKER_CMD} network inspect hiclaw-net >/dev/null 2>&1 || ${DOCKER_CMD} network create hiclaw-net
 
-    # Wait for Matrix server to be ready
-    wait_matrix_ready "hiclaw-manager"
-
-    # Post-install verification (non-fatal: warnings only)
-    local _verify_script
-    _verify_script="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hiclaw-verify.sh"
-    if [ -f "${_verify_script}" ]; then
-        bash "${_verify_script}" "hiclaw-manager" || {
-            log "WARNING: Some post-install checks failed. Re-run: bash install/hiclaw-verify.sh"
-        }
+    if [ "${HICLAW_USE_EMBEDDED}" != "1" ] && [ "${HICLAW_UPGRADE:-0}" = "1" ]; then
+        # Check if current installation is embedded — downgrade to legacy is not supported
+        if ${DOCKER_CMD} ps -a --format '{{.Names}} {{.Image}}' 2>/dev/null | grep "^hiclaw-controller " | grep -q "embedded"; then
+            error "Downgrade from embedded architecture to legacy version (${HICLAW_VERSION}) is not supported."
+            error "Please use 'make uninstall-embedded' first, then do a clean install of the target version."
+            exit 1
+        fi
     fi
+
+    if [ "${HICLAW_USE_EMBEDDED}" = "1" ]; then
+        # ============================================================
+        # New architecture: embedded controller + auto-created manager
+        # ============================================================
+
+        # Internal port: 8080 (Higress gateway inside the container).
+        local _internal_gw_port=8080
+        local _matrix_domain="${HICLAW_MATRIX_DOMAIN:-matrix-local.hiclaw.io:${HICLAW_PORT_GATEWAY}}"
+        local _aigw_domain="${HICLAW_AI_GATEWAY_DOMAIN:-aigw-local.hiclaw.io}"
+        # Ensure internal gateway port is present (container-internal traffic uses 8080)
+        case "${_aigw_domain}" in *:*) ;; *) _aigw_domain="${_aigw_domain}:${_internal_gw_port}" ;; esac
+        local _fs_domain="${HICLAW_FS_DOMAIN:-fs-local.hiclaw.io}"
+        case "${_fs_domain}" in *:*) ;; *) _fs_domain="${_fs_domain}:${_internal_gw_port}" ;; esac
+
+        # Controller env args
+        local _ctrl_env_args=(
+            -e "HICLAW_ADMIN_USER=${HICLAW_ADMIN_USER}"
+            -e "HICLAW_ADMIN_PASSWORD=${HICLAW_ADMIN_PASSWORD}"
+            -e "HICLAW_MANAGER_PASSWORD=${HICLAW_MANAGER_PASSWORD}"
+            -e "HICLAW_REGISTRATION_TOKEN=${HICLAW_REGISTRATION_TOKEN}"
+            -e "HICLAW_MINIO_USER=${HICLAW_MINIO_USER}"
+            -e "HICLAW_MINIO_PASSWORD=${HICLAW_MINIO_PASSWORD}"
+            -e "HICLAW_LLM_PROVIDER=${HICLAW_LLM_PROVIDER}"
+            -e "HICLAW_LLM_API_KEY=${HICLAW_LLM_API_KEY}"
+            -e "HICLAW_DEFAULT_MODEL=${HICLAW_DEFAULT_MODEL}"
+            -e "HICLAW_MANAGER_GATEWAY_KEY=${HICLAW_MANAGER_GATEWAY_KEY}"
+            -e "HICLAW_MANAGER_RUNTIME=${HICLAW_MANAGER_RUNTIME:-openclaw}"
+            -e "HICLAW_MANAGER_IMAGE=$([ "${HICLAW_MANAGER_RUNTIME}" = "copaw" ] && echo "${MANAGER_COPAW_IMAGE}" || echo "${MANAGER_IMAGE}")"
+            -e "HICLAW_WORKER_IMAGE=${WORKER_IMAGE}"
+            -e "HICLAW_COPAW_WORKER_IMAGE=${COPAW_WORKER_IMAGE}"
+            -e "HICLAW_MATRIX_DOMAIN=${_matrix_domain}"
+            -e "HICLAW_ELEMENT_HOMESERVER_URL=http://127.0.0.1:${HICLAW_PORT_GATEWAY}"
+            -e "HICLAW_MATRIX_URL=http://127.0.0.1:6167"
+            -e "HICLAW_MATRIX_E2EE=${HICLAW_MATRIX_E2EE:-0}"
+            -e "HICLAW_MINIO_ENDPOINT=http://127.0.0.1:9000"
+            -e "HICLAW_MINIO_BUCKET=hiclaw-storage"
+            -e "HICLAW_STORAGE_PREFIX=hiclaw/hiclaw-storage"
+            -e "HICLAW_FS_ENDPOINT=http://127.0.0.1:9000"
+            -e "HICLAW_AI_GATEWAY_URL=http://${_aigw_domain}"
+            -e "HICLAW_CONTROLLER_URL=http://hiclaw-controller:8090"
+            -e "HICLAW_DOCKER_NETWORK=hiclaw-net"
+            -e "HICLAW_WORKSPACE_DIR=${HICLAW_WORKSPACE_DIR}"
+            -e "HICLAW_HOST_SHARE_DIR=${HICLAW_HOST_SHARE_DIR}"
+            -e "HICLAW_MANAGER_ENABLED=true"
+            -e "HICLAW_PORT_MANAGER_CONSOLE=${HICLAW_PORT_MANAGER_CONSOLE:-18888}"
+        )
+
+        # Timezone
+        if [ -n "${HICLAW_TIMEZONE:-}" ]; then
+            _ctrl_env_args+=(-e "TZ=${HICLAW_TIMEZONE}")
+        fi
+
+        # Yolo mode
+        if [ "${HICLAW_YOLO:-}" = "1" ]; then
+            _ctrl_env_args+=(-e "HICLAW_YOLO=1")
+        fi
+
+        # Optional: GitHub token
+        if [ -n "${HICLAW_GITHUB_TOKEN:-}" ]; then
+            _ctrl_env_args+=(-e "HICLAW_GITHUB_TOKEN=${HICLAW_GITHUB_TOKEN}")
+        fi
+
+        # Optional: embedding model
+        if [ -n "${HICLAW_EMBEDDING_MODEL:-}" ]; then
+            _ctrl_env_args+=(-e "HICLAW_EMBEDDING_MODEL=${HICLAW_EMBEDDING_MODEL}")
+        fi
+
+        # Optional: OpenAI-compatible base URL
+        if [ -n "${HICLAW_OPENAI_BASE_URL:-}" ]; then
+            _ctrl_env_args+=(-e "HICLAW_OPENAI_BASE_URL=${HICLAW_OPENAI_BASE_URL}")
+        fi
+
+        # Optional: language
+        if [ -n "${HICLAW_LANGUAGE:-}" ]; then
+            _ctrl_env_args+=(-e "HICLAW_LANGUAGE=${HICLAW_LANGUAGE}")
+        fi
+
+        # shellcheck disable=SC2086
+        ${DOCKER_CMD} run -d \
+            --name hiclaw-controller \
+            --network hiclaw-net \
+            --network-alias matrix-local.hiclaw.io \
+            --network-alias aigw-local.hiclaw.io \
+            --network-alias fs-local.hiclaw.io \
+            "${_ctrl_env_args[@]}" \
+            -v "${CONTAINER_SOCK}:/var/run/docker.sock" \
+            --security-opt label=disable \
+            -v "${HICLAW_DATA_DIR}:/data" \
+            -v "${HICLAW_WORKSPACE_DIR}:/root/hiclaw-fs/agents/manager" \
+            -p "${_port_prefix}${HICLAW_PORT_GATEWAY}:8080" \
+            -p "${_port_prefix}${HICLAW_PORT_CONSOLE}:8001" \
+            -p "${_port_prefix}${HICLAW_PORT_ELEMENT_WEB:-18088}:8088" \
+            --restart unless-stopped \
+            "${EMBEDDED_IMAGE}"
+
+        log "Embedded controller started: hiclaw-controller"
+
+        # Wait for infrastructure inside the controller container
+        _wait_for_url() {
+            local url="$1" ctr="$2" max_wait="${3:-120}" desc="${4:-service}"
+            local elapsed=0
+            log "Waiting for ${desc}..."
+            while [ $elapsed -lt $max_wait ]; do
+                if ${DOCKER_CMD} exec "${ctr}" curl -sf "${url}" >/dev/null 2>&1; then
+                    log "${desc} is ready (${elapsed}s)"
+                    return 0
+                fi
+                sleep 2
+                elapsed=$((elapsed + 2))
+            done
+            log "ERROR: ${desc} not ready after ${max_wait}s"
+            return 1
+        }
+
+        _wait_for_url "http://127.0.0.1:6167/_tuwunel/server_version" hiclaw-controller 120 "Tuwunel (Matrix)" || exit 1
+        _wait_for_url "http://127.0.0.1:9000/minio/health/live" hiclaw-controller 60 "MinIO" || exit 1
+        _wait_for_url "http://127.0.0.1:8080/status" hiclaw-controller 120 "Higress Gateway" || exit 1
+
+        # Wait for controller to create Manager Agent container
+        log "Waiting for Manager Agent container..."
+        local _mgr_wait=0
+        local _mgr_max=300
+        while [ $_mgr_wait -lt $_mgr_max ]; do
+            if ${DOCKER_CMD} ps --format '{{.Names}}' 2>/dev/null | grep -q "^hiclaw-manager$"; then
+                log "Manager Agent container detected (${_mgr_wait}s)"
+                break
+            fi
+            sleep 3
+            _mgr_wait=$((_mgr_wait + 3))
+        done
+        if [ $_mgr_wait -ge $_mgr_max ]; then
+            log "ERROR: Manager Agent container not created after ${_mgr_max}s"
+            log "Controller logs:"
+            ${DOCKER_CMD} exec hiclaw-controller tail -30 /var/log/hiclaw/hiclaw-controller-error.log 2>/dev/null || true
+            exit 1
+        fi
+
+        # Wait for Manager Agent to be running
+        log "Waiting for Manager Agent to start..."
+        local _agent_wait=0
+        while [ $_agent_wait -lt 120 ]; do
+            local _state
+            _state=$(${DOCKER_CMD} inspect --format '{{.State.Status}}' hiclaw-manager 2>/dev/null || echo "missing")
+            if [ "${_state}" = "running" ]; then
+                log "Manager Agent is running"
+                break
+            fi
+            sleep 2
+            _agent_wait=$((_agent_wait + 2))
+        done
+
+        # Enable yolo mode in agent if requested
+        if [ "${HICLAW_YOLO:-}" = "1" ]; then
+            ${DOCKER_CMD} exec hiclaw-manager touch /root/manager-workspace/yolo-mode 2>/dev/null || true
+        fi
+
+    else
+        # ============================================================
+        # Legacy architecture: all-in-one manager container
+        # ============================================================
+
+        NETWORK_ARGS="--network hiclaw-net"
+        NETWORK_ALIAS_ARGS="--network-alias matrix-local.hiclaw.io --network-alias aigw-local.hiclaw.io --network-alias fs-local.hiclaw.io"
+        for _domain in "${HICLAW_MATRIX_CLIENT_DOMAIN:-}" "${HICLAW_CONSOLE_DOMAIN:-}"; do
+            if [ -n "${_domain}" ] && [[ "${_domain}" == *-local.hiclaw.io ]]; then
+                NETWORK_ALIAS_ARGS="${NETWORK_ALIAS_ARGS} --network-alias ${_domain}"
+            fi
+        done
+
+        # Start Docker API proxy if enabled (security layer between Manager and Docker daemon)
+        PROXY_ARGS=""
+        if [ "${HICLAW_DOCKER_PROXY:-1}" = "1" ] && [ -n "${CONTAINER_SOCK:-}" ]; then
+            local _proxy_image="${HICLAW_REGISTRY}/higress/hiclaw-docker-proxy:${HICLAW_VERSION}"
+            # Try versioned tag, fallback to latest
+            if ! ${DOCKER_CMD} image inspect "${_proxy_image}" >/dev/null 2>&1; then
+                ${DOCKER_CMD} pull "${_proxy_image}" 2>/dev/null || {
+                    _proxy_image="${HICLAW_REGISTRY}/higress/hiclaw-docker-proxy:latest"
+                    ${DOCKER_CMD} pull "${_proxy_image}" 2>/dev/null || true
+                }
+            fi
+            if ${DOCKER_CMD} image inspect "${_proxy_image}" >/dev/null 2>&1; then
+                log "Starting Docker API proxy..."
+                ${DOCKER_CMD} run -d \
+                    --name hiclaw-docker-proxy \
+                    --network hiclaw-net \
+                    -v "${CONTAINER_SOCK}:/var/run/docker.sock" \
+                    --security-opt label=disable \
+                    -e HICLAW_WORKER_IMAGE="${WORKER_IMAGE}" \
+                    -e HICLAW_COPAW_WORKER_IMAGE="${COPAW_WORKER_IMAGE}" \
+                    ${HICLAW_PROXY_ALLOWED_REGISTRIES:+-e HICLAW_PROXY_ALLOWED_REGISTRIES="${HICLAW_PROXY_ALLOWED_REGISTRIES}"} \
+                    --restart unless-stopped \
+                    "${_proxy_image}"
+                PROXY_ARGS="-e HICLAW_CONTROLLER_URL=http://hiclaw-docker-proxy:2375 -e HICLAW_CONTAINER_API=http://hiclaw-docker-proxy:2375"
+                SOCKET_MOUNT_ARGS=""
+            fi
+        fi
+
+        # Pass host timezone to container
+        TZ_ARGS=""
+        if [ -n "${HICLAW_TIMEZONE:-}" ]; then
+            TZ_ARGS="-e TZ=${HICLAW_TIMEZONE}"
+        fi
+
+        YOLO_ARGS=""
+        if [ "${HICLAW_YOLO:-}" = "1" ]; then
+            YOLO_ARGS="-e HICLAW_YOLO=1"
+        fi
+
+        # shellcheck disable=SC2086
+        ${DOCKER_CMD} run -d \
+            --name hiclaw-manager \
+            --env-file "${ENV_FILE}" \
+            -e HOME=/root/manager-workspace \
+            -w /root/manager-workspace \
+            -e HOST_ORIGINAL_HOME="${HICLAW_HOST_SHARE_DIR}" \
+            -e HICLAW_MANAGER_RUNTIME="${HICLAW_MANAGER_RUNTIME:-openclaw}" \
+            ${JVM_ARGS:+-e JVM_ARGS="${JVM_ARGS}"} \
+            ${YOLO_ARGS} \
+            ${TZ_ARGS} \
+            ${SOCKET_MOUNT_ARGS} \
+            ${NETWORK_ARGS} \
+            ${NETWORK_ALIAS_ARGS} \
+            ${PROXY_ARGS} \
+            -p "${_port_prefix}${HICLAW_PORT_GATEWAY}:8080" \
+            -p "${_port_prefix}${HICLAW_PORT_CONSOLE}:8001" \
+            -p "${_port_prefix}${HICLAW_PORT_ELEMENT_WEB:-18088}:8088" \
+            -p "127.0.0.1:${HICLAW_PORT_MANAGER_CONSOLE:-18888}:18888" \
+            ${DATA_MOUNT_ARGS} \
+            ${WORKSPACE_MOUNT_ARGS} \
+            ${HOST_SHARE_MOUNT_ARGS} \
+            --restart unless-stopped \
+            "$([ "${HICLAW_MANAGER_RUNTIME}" = "copaw" ] && echo "${MANAGER_COPAW_IMAGE}" || echo "${MANAGER_IMAGE}")"
+
+        # Wait for Manager agent to be ready
+        wait_manager_ready "hiclaw-manager"
+
+        # Wait for Matrix server to be ready
+        wait_matrix_ready "hiclaw-manager"
+
+        # Post-install verification (non-fatal: warnings only)
+        local _verify_script
+        _verify_script="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hiclaw-verify.sh"
+        if [ -f "${_verify_script}" ]; then
+            bash "${_verify_script}" "hiclaw-manager" || {
+                log "WARNING: Some post-install checks failed. Re-run: bash install/hiclaw-verify.sh"
+            }
+        fi
+    fi
+    unset _port_prefix
 
     log ""
     log "$(msg success.title)"
@@ -2575,8 +2874,10 @@ EOF
     log ""
     log "$(msg success.other_consoles)"
     log "$(msg success.higress_console "${HICLAW_PORT_CONSOLE}" "${HICLAW_ADMIN_USER}" "${HICLAW_ADMIN_PASSWORD}")"
-    log "$(msg success.manager_console "${HICLAW_PORT_MANAGER_CONSOLE:-18888}")"
-    log "$(msg success.manager_console_gateway "${HICLAW_ADMIN_USER}" "${HICLAW_ADMIN_PASSWORD}")"
+    if [ "${HICLAW_USE_EMBEDDED}" != "1" ]; then
+        log "$(msg success.manager_console "${HICLAW_PORT_MANAGER_CONSOLE:-18888}")"
+        log "$(msg success.manager_console_gateway "${HICLAW_ADMIN_USER}" "${HICLAW_ADMIN_PASSWORD}")"
+    fi
     log ""
     log "$(msg success.switch_llm.title)"
     log "$(msg success.switch_llm.hint)"

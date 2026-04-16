@@ -11,8 +11,8 @@
 #
 # Build args:
 #   HIGRESS_REGISTRY  - base image registry for mc (MinIO Client)
-#   APT_MIRROR        - Debian mirror (default: mirrors.aliyun.com)
-#   PIP_INDEX_URL     - PyPI mirror (default: Aliyun)
+#   APT_MIRROR        - Debian mirror (default: empty; set to mirrors.aliyun.com for China)
+#   PIP_INDEX_URL     - PyPI mirror (default: official pypi.org)
 #   LITE_COPAW_REPO   - lite CoPaw git repo URL
 #   LITE_COPAW_COMMIT - lite CoPaw git commit hash
 # ============================================================
