@@ -1,4 +1,4 @@
-name: Controller Tests
+name: HiClaw Controller Tests
 
 on:
   pull_request:

@@ -111,6 +111,14 @@ func (r *WorkerReconciler) reconcileNormal(ctx context.Context, s *workerScope) 
 	r.reconcileExpose(ctx, s)
 	r.reconcileLegacy(ctx, s)
 
+	w := s.worker
+	logger := log.FromContext(ctx)
+	if w.Status.ObservedGeneration == 0 {
+		logger.Info("worker created", "name", w.Name, "roomID", w.Status.RoomID)
+	} else if w.Generation != w.Status.ObservedGeneration {
+		logger.Info("worker updated", "name", w.Name)
+	}
+
 	return reconcile.Result{RequeueAfter: reconcileInterval}, nil
 }
 
@@ -176,7 +184,10 @@ func (r *WorkerReconciler) SetupWithManager(mgr ctrl.Manager) error {
 						return nil
 					}
 					return []reconcile.Request{
-						{NamespacedName: client.ObjectKey{Name: workerName}},
+						{NamespacedName: client.ObjectKey{
+							Name:      workerName,
+							Namespace: obj.GetNamespace(),
+						}},
 					}
 				}),
 				builder.WithPredicates(podLifecyclePredicates()),
