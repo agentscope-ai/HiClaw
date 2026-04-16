@@ -43,7 +43,6 @@ func createWorkerCmd() *cobra.Command {
 		team        string
 		role        string
 		outputFmt   string
-		noWait      bool
 		waitTimeout time.Duration
 	)
 
@@ -108,15 +107,6 @@ func createWorkerCmd() *cobra.Command {
 				return fmt.Errorf("create worker: %w", err)
 			}
 
-			if noWait {
-				if outputFmt == "json" {
-					printJSON(createResp)
-				} else {
-					fmt.Printf("worker/%s created\n", name)
-				}
-				return nil
-			}
-
 			finalStatus, err := waitForWorkerReady(client, name, waitTimeout)
 			if err != nil {
 				return err
@@ -145,7 +135,6 @@ func createWorkerCmd() *cobra.Command {
 	cmd.Flags().StringVar(&team, "team", "", "Team name (assigns worker to a team)")
 	cmd.Flags().StringVar(&role, "role", "", "Role within team (team_leader|worker)")
 	cmd.Flags().StringVarP(&outputFmt, "output", "o", "", "Output format (json)")
-	cmd.Flags().BoolVar(&noWait, "no-wait", false, "Return after the Worker CR is created instead of waiting for runtime readiness")
 	cmd.Flags().DurationVar(&waitTimeout, "wait-timeout", 3*time.Minute, "Maximum time to wait for the Worker to report Ready")
 	return cmd
 }

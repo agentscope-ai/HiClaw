@@ -4,33 +4,19 @@ HiClaw — {{ .Chart.Name }} / {{ .Release.Name }}
 
 Namespace: {{ include "hiclaw.namespace" . }}
 
-1. Wait for all components:
+1. Access services via Higress Gateway:
 
-   kubectl wait --for=condition=available deployment --all \
-     -n {{ include "hiclaw.namespace" . }} --timeout=300s
+   kubectl port-forward svc/higress-gateway 18080:80 -n {{ include "hiclaw.namespace" . }}
 
-2. Access Element Web (IM UI):
+   Element Web (IM login): http://localhost:18080
 
-   kubectl port-forward svc/{{ include "hiclaw.elementWeb.fullname" . }} 8080:{{ .Values.elementWeb.service.port }} \
-     -n {{ include "hiclaw.namespace" . }}
-
-   Then open: http://localhost:8080
-
-3. Login with admin credentials:
+2. Login with admin credentials:
 
    Username: {{ .Values.credentials.adminUser }}
    Password: (the password you set in credentials.adminPassword)
 
-4. Manager Agent (created by controller via Manager CRD):
+3. Access Higress Console (gateway management):
 
-   kubectl get managers -n {{ include "hiclaw.namespace" . }}
+   kubectl port-forward svc/higress-console 18081:8080 -n {{ include "hiclaw.namespace" . }}
 
-   Infrastructure endpoints:
-   Matrix:       {{ include "hiclaw.matrix.internalURL" . }}
-   Controller:   {{ include "hiclaw.controller.internalURL" . }}
-   AI Gateway:   {{ include "hiclaw.gateway.internalURL" . }}
-
-5. View logs:
-
-   kubectl logs -f deployment/{{ include "hiclaw.controller.fullname" . }} -n {{ include "hiclaw.namespace" . }}
-   kubectl logs -f $(kubectl get pods -l hiclaw.io/manager -n {{ include "hiclaw.namespace" . }} -o name | head -1) -n {{ include "hiclaw.namespace" . }}
+   Then open: http://localhost:18081, same Username and Password as step 2

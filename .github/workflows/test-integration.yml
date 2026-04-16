@@ -37,31 +37,36 @@ on:
         required: false
         default: ''
       worker_runtime:
-        description: 'Worker runtime to use'
+        description: 'Worker runtime to use (both = run openclaw and copaw in parallel)'
         required: false
         type: choice
         options:
+          - both
           - openclaw
           - copaw
-        default: 'openclaw'
+        default: 'both'
       model:
         description: 'LLM model to use'
         required: false
         default: 'qwen3.5-plus'
 
 env:
-  # Tests that do not require a GitHub token, split into two shards for parallel execution
+  # Tests that do not require a GitHub token, split into four shards for parallel execution
   # Shard A: LLM interaction tests (sequential dependency: 02 creates alice → 03-06 use alice)
-  # Shard B: Controller/CR tests (independent, no cross-test dependencies)
-  SHARD_A_TESTS: "01 02 03 04 05 06 100"
-  SHARD_B_TESTS: "14 15 17 18 19 20"
-  NON_GITHUB_TESTS: "01 02 03 04 05 06 14 15 17 18 19 20 100"
+  # Shard B: LLM interaction tests 2 (task assignment with LLM)
+  # Shard C: Controller/CR tests (independent, no cross-test dependencies)
+  # Shard D: Controller/CR tests 2 (team project DAG)
+  SHARD_A_TESTS: "01 02 03 04 05 06"
+  SHARD_B_TESTS: "14"
+  SHARD_C_TESTS: "15 17 18 19 20 100"
+  SHARD_D_TESTS: "21"
+  NON_GITHUB_TESTS: "01 02 03 04 05 06 14 15 17 18 19 20 21 100"
 
 jobs:
-  # Build all images once, shared across test shards
-  build:
+  # Step 1: Build the shared base image (hiclaw-controller)
+  build-base:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 15
     steps:
       - name: Free Up Disk Space
         uses: jlumbroso/free-disk-space@main
@@ -82,34 +87,80 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build images
-        env:
-          HICLAW_MANAGER_RUNTIME: ${{ inputs.worker_runtime || 'openclaw' }}
-        run: |
-          if [ "${HICLAW_MANAGER_RUNTIME}" = "copaw" ]; then
-            make build-embedded build-manager-copaw build-worker build-copaw-worker \
-              DOCKER_BUILD_ARGS="--build-arg APT_MIRROR="
-          else
-            make build-embedded build-manager build-worker build-copaw-worker \
-              DOCKER_BUILD_ARGS="--build-arg APT_MIRROR="
-          fi
+      - name: Build hiclaw-controller
+        run: make build-hiclaw-controller DOCKER_BUILD_ARGS="--build-arg APT_MIRROR="
 
-      - name: Save images
+      - name: Save image
         run: |
-          docker save \
-            $(docker images --format '{{.Repository}}:{{.Tag}}' | grep -E '^hiclaw/' | grep -v '<none>') \
-            | gzip > /tmp/hiclaw-images.tar.gz
+          docker save hiclaw/hiclaw-controller:latest | gzip > /tmp/hiclaw-controller.tar.gz
 
-      - name: Upload images artifact
+      - name: Upload image
         uses: actions/upload-artifact@v4
         with:
-          name: hiclaw-images
-          path: /tmp/hiclaw-images.tar.gz
+          name: image-controller
+          path: /tmp/hiclaw-controller.tar.gz
           retention-days: 1
 
-  # Run test shards in parallel, each on its own runner with isolated cluster
+  # Step 2: Build downstream images in parallel (all depend on hiclaw-controller)
+  build-images:
+    needs: build-base
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [embedded, manager, manager-copaw, worker, copaw-worker]
+    steps:
+      - name: Free Up Disk Space
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: false
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          swap-storage: true
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Download controller image
+        uses: actions/download-artifact@v4
+        with:
+          name: image-controller
+          path: /tmp
+
+      - name: Load controller image
+        run: gunzip -c /tmp/hiclaw-controller.tar.gz | docker load
+
+      - name: Build image
+        run: make build-${{ matrix.target }} DOCKER_BUILD_ARGS="--build-arg APT_MIRROR="
+
+      - name: Save image
+        run: |
+          docker save \
+            $(docker images --format '{{.Repository}}:{{.Tag}}' | grep -E '^hiclaw/' | grep -v '<none>' | grep -v 'hiclaw-controller') \
+            | gzip > /tmp/hiclaw-${{ matrix.target }}.tar.gz
+
+      - name: Upload image
+        uses: actions/upload-artifact@v4
+        with:
+          name: image-${{ matrix.target }}
+          path: /tmp/hiclaw-${{ matrix.target }}.tar.gz
+          retention-days: 1
+
+  # Step 3: Run test shards in parallel, each on its own runner with isolated cluster
   integration-tests:
-    needs: build
+    needs: build-images
+    if: >-
+      inputs.worker_runtime == '' || inputs.worker_runtime == 'both'
+      || inputs.worker_runtime == matrix.runtime
     runs-on: ubuntu-latest
     timeout-minutes: 90
     permissions:
@@ -122,8 +173,28 @@ jobs:
         include:
           - shard: llm-interaction
             filter_env: SHARD_A_TESTS
-          - shard: controller-cr
+            runtime: openclaw
+          - shard: llm-interaction-2
             filter_env: SHARD_B_TESTS
+            runtime: openclaw
+          - shard: controller-cr
+            filter_env: SHARD_C_TESTS
+            runtime: openclaw
+          - shard: controller-cr-2
+            filter_env: SHARD_D_TESTS
+            runtime: openclaw
+          - shard: llm-interaction
+            filter_env: SHARD_A_TESTS
+            runtime: copaw
+          - shard: llm-interaction-2
+            filter_env: SHARD_B_TESTS
+            runtime: copaw
+          - shard: controller-cr
+            filter_env: SHARD_C_TESTS
+            runtime: copaw
+          - shard: controller-cr-2
+            filter_env: SHARD_D_TESTS
+            runtime: copaw
 
     steps:
       - name: Free Up Disk Space
@@ -142,14 +213,17 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
 
-      - name: Download pre-built images
+      - name: Download all images
         uses: actions/download-artifact@v4
         with:
-          name: hiclaw-images
-          path: /tmp
+          pattern: image-*
+          path: /tmp/images
 
       - name: Load images
-        run: gunzip -c /tmp/hiclaw-images.tar.gz | docker load
+        run: |
+          for f in /tmp/images/image-*/*.tar.gz; do
+            gunzip -c "$f" | docker load
+          done
 
       - name: Install dependencies
         run: sudo apt-get update && sudo apt-get install -y jq curl unzip
@@ -160,7 +234,7 @@ jobs:
           HICLAW_LLM_API_KEY: ${{ secrets.HICLAW_LLM_API_KEY }}
           HICLAW_LLM_PROVIDER: qwen
           HICLAW_DEFAULT_MODEL: ${{ inputs.model || 'qwen3.5-plus' }}
-          HICLAW_MANAGER_RUNTIME: ${{ inputs.worker_runtime || 'openclaw' }}
+          HICLAW_MANAGER_RUNTIME: ${{ matrix.runtime }}
         run: |
           FILTER="${{ github.event.inputs.test_filter }}"
           if [ -z "$FILTER" ]; then
@@ -174,7 +248,7 @@ jobs:
       # ============================================================
 
       - name: Download latest release baseline
-        if: github.event_name == 'pull_request_target' && matrix.shard == 'llm-interaction'
+        if: github.event_name == 'pull_request_target' && matrix.shard == 'llm-interaction' && matrix.runtime == 'openclaw'
         continue-on-error: true
         run: |
           mkdir -p baseline-metrics
@@ -194,7 +268,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Generate metrics comparison and post PR comment
-        if: github.event_name == 'pull_request_target' && matrix.shard == 'llm-interaction'
+        if: github.event_name == 'pull_request_target' && matrix.shard == 'llm-interaction' && matrix.runtime == 'openclaw'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -281,7 +355,7 @@ jobs:
             DEBUG_TAIL=$(find "$DEBUG_DIR" -name "*.log" -exec tail -20 {} + 2>/dev/null | tail -80)
           fi
 
-          BODY="## ❌ Integration Tests Failed (${{ matrix.shard }})
+          BODY="## ❌ Integration Tests Failed (${{ matrix.shard }} / ${{ matrix.runtime }})
 
           **Commit:** ${{ github.event.pull_request.head.sha }}
           **Workflow run:** [#${{ github.run_number }}](${ARTIFACT_URL})
@@ -309,7 +383,7 @@ jobs:
 
           # Update or create comment
           EXISTING=$(gh api "repos/$REPO/issues/$PR_NUM/comments" \
-            --jq '.[] | select(.body | startswith("## ❌ Integration Tests Failed (${{ matrix.shard }})")) | .id' | head -1)
+            --jq '.[] | select(.body | startswith("## ❌ Integration Tests Failed (${{ matrix.shard }} / ${{ matrix.runtime }})")) | .id' | head -1)
           if [ -n "$EXISTING" ]; then
             gh api --method PATCH "repos/$REPO/issues/comments/$EXISTING" -f body="$BODY"
           else
@@ -327,7 +401,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: test-artifacts-${{ matrix.shard }}-${{ github.sha }}
+          name: test-artifacts-${{ matrix.shard }}-${{ matrix.runtime }}-${{ github.sha }}
           path: test-artifacts/
           retention-days: 7
 
@@ -336,7 +410,7 @@ jobs:
       # ============================================================
 
       - name: Generate release baseline
-        if: startsWith(github.ref, 'refs/tags/v') && matrix.shard == 'llm-interaction'
+        if: startsWith(github.ref, 'refs/tags/v') && matrix.shard == 'llm-interaction' && matrix.runtime == 'openclaw'
         run: |
           source tests/lib/agent-metrics.sh
           TEST_NAMES=$(echo "$NON_GITHUB_TESTS" | tr ' ' '\n' | while read n; do
@@ -348,7 +422,7 @@ jobs:
           cat metrics-baseline.json | jq '{totals: .totals, by_role: .by_role}'
 
       - name: Upload baseline to release
-        if: startsWith(github.ref, 'refs/tags/v') && matrix.shard == 'llm-interaction'
+        if: startsWith(github.ref, 'refs/tags/v') && matrix.shard == 'llm-interaction' && matrix.runtime == 'openclaw'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -357,7 +431,7 @@ jobs:
           echo "✅ Baseline uploaded to release ${GITHUB_REF_NAME}"
 
       - name: Upload debug log to release
-        if: startsWith(github.ref, 'refs/tags/v') && matrix.shard == 'llm-interaction' && always()
+        if: startsWith(github.ref, 'refs/tags/v') && matrix.shard == 'llm-interaction' && matrix.runtime == 'openclaw' && always()
         continue-on-error: true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -379,7 +453,7 @@ jobs:
           echo "### Integration Test Summary" >> $GITHUB_STEP_SUMMARY
           echo "- Shard: \`${{ matrix.shard }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- Tests: \`${{ env[matrix.filter_env] }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- Worker Runtime: \`${{ inputs.worker_runtime || 'openclaw' }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Worker Runtime: \`${{ matrix.runtime }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- Model: \`${{ inputs.model || 'qwen3.5-plus' }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- Install Mode: embedded (make test-embedded)" >> $GITHUB_STEP_SUMMARY
 

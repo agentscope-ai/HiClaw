@@ -589,7 +589,10 @@ func (r *ManagerReconciler) SetupWithManager(mgr ctrl.Manager) error {
 						return nil
 					}
 					return []reconcile.Request{
-						{NamespacedName: client.ObjectKey{Name: managerName}},
+						{NamespacedName: client.ObjectKey{
+							Name:      managerName,
+							Namespace: obj.GetNamespace(),
+						}},
 					}
 				}),
 			)

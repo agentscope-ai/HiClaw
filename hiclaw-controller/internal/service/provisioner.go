@@ -130,6 +130,10 @@ func (p *Provisioner) MatrixUserID(name string) string {
 	return p.matrix.UserID(name)
 }
 
+func (p *Provisioner) DeactivateMatrixUser(ctx context.Context, workerName string) error {
+	return p.matrix.DeactivateUser(ctx, workerName)
+}
+
 // ProvisionWorker executes the full infrastructure setup for a new worker:
 // credentials, Matrix account, MinIO user, Matrix room, Gateway consumer.
 func (p *Provisioner) ProvisionWorker(ctx context.Context, req WorkerProvisionRequest) (*WorkerProvisionResult, error) {

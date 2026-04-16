@@ -2,10 +2,11 @@ package gateway
 
 // Config holds connection parameters for an AI gateway.
 type Config struct {
-	ConsoleURL    string // gateway console API, e.g. http://127.0.0.1:8001
-	AdminUser     string // console login username
-	AdminPassword string // console login password
-	PilotURL      string // istiod debug API, e.g. http://127.0.0.1:15014 (embedded mode only)
+	ConsoleURL                string // gateway console API, e.g. http://127.0.0.1:8001
+	AdminUser                 string // console login username
+	AdminPassword             string // console login password
+	AllowDefaultAdminFallback bool   // embedded bootstrap only: recover from all-in-one default admin/admin
+	PilotURL                  string // istiod debug API, e.g. http://127.0.0.1:15014 (embedded mode only)
 }
 
 // ConsumerRequest describes a gateway consumer to create.
@@ -47,7 +48,7 @@ type AIProviderRequest struct {
 	Name     string // provider name, e.g. "qwen"
 	Type     string // provider type, e.g. "qwen", "openai"
 	Tokens   []string
-	Protocol string            // e.g. "openai/v1"
+	Protocol string                 // e.g. "openai/v1"
 	Raw      map[string]interface{} // provider-specific raw config
 }
 

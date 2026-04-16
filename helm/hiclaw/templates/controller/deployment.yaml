@@ -71,13 +71,6 @@ spec:
             {{- if eq .Values.gateway.provider "higress" }}
             - name: HICLAW_AI_GATEWAY_ADMIN_URL
               value: {{ include "hiclaw.gateway.adminURL" . | quote }}
-            - name: HICLAW_HIGRESS_ADMIN_USER
-              value: {{ .Values.credentials.higressAdminUser | default "admin" | quote }}
-            - name: HICLAW_HIGRESS_ADMIN_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "hiclaw.gateway.adminSecretName" . }}
-                  key: {{ include "hiclaw.gateway.adminPasswordKey" . }}
             - name: HICLAW_AI_GATEWAY_URL
               value: {{ include "hiclaw.gateway.internalURL" . | quote }}
             {{- end }}

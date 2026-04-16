@@ -21,8 +21,6 @@ credentials:
   llmProvider: "qwen"
   defaultModel: "qwen3.5-plus"
   controllerApiKey: ""       # Controller auth key (auto-generated if empty)
-  higressAdminUser: "admin"    # Higress console admin username
-  higressAdminPassword: "admin" # Higress console admin password
 
 # ── Matrix ────────────────────────────────────────────────────────────────
 matrix:
@@ -107,24 +105,22 @@ higress:
       httpPort: 80
       httpsPort: 443
       service:
-        type: NodePort
+        type: ClusterIP
         ports:
           - name: http2
             port: 80
             protocol: TCP
             targetPort: 80
-            nodePort: 30080
           - name: https
             port: 443
             protocol: TCP
             targetPort: 443
-            nodePort: 30443
     controller:
       replicas: 1
       image: higress
   higress-console:
     admin:
-      password: "admin"
+      password: ""   # leave empty — controller initializes via /system/init using credentials.adminPassword
 
 # ── Controller (CRD reconciler + worker lifecycle + gateway + credentials) ─
 controller:

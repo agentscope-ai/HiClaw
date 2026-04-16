@@ -117,11 +117,11 @@ func (i *Initializer) Run(ctx context.Context) error {
 // waitForOSS polls MinIO/OSS until the bucket is accessible.
 func (i *Initializer) waitForOSS(ctx context.Context) error {
 	if bm, ok := i.OSS.(oss.BucketManager); ok {
-		return retry(ctx, 3*time.Second, 120*time.Second, func() error {
+		return retry(ctx, 3*time.Second, 5*time.Minute, func() error {
 			return bm.EnsureBucket(ctx)
 		})
 	}
-	return retry(ctx, 3*time.Second, 120*time.Second, func() error {
+	return retry(ctx, 3*time.Second, 5*time.Minute, func() error {
 		_, err := i.OSS.ListObjects(ctx, "")
 		return err
 	})
@@ -147,7 +147,7 @@ func (i *Initializer) ensureOSSStructure(ctx context.Context) error {
 
 // waitForMatrix polls the Matrix server until it responds.
 func (i *Initializer) waitForMatrix(ctx context.Context) error {
-	return retry(ctx, 3*time.Second, 120*time.Second, func() error {
+	return retry(ctx, 3*time.Second, 5*time.Minute, func() error {
 		_, err := i.Matrix.Login(ctx, "__healthcheck__", "invalid")
 		if err != nil && isMatrixConnError(err) {
 			return err
@@ -167,7 +167,7 @@ func (i *Initializer) registerAdmin(ctx context.Context) error {
 
 // waitForGateway polls the Higress Console until it responds.
 func (i *Initializer) waitForGateway(ctx context.Context) error {
-	return retry(ctx, 3*time.Second, 120*time.Second, func() error {
+	return retry(ctx, 3*time.Second, 5*time.Minute, func() error {
 		return i.Gateway.Healthy(ctx)
 	})
 }

@@ -33,6 +33,26 @@ export METRICS_THRESHOLD_WORKER_TOKENS_OUTPUT="${METRICS_THRESHOLD_WORKER_TOKENS
 export TEST_OUTPUT_DIR="${TEST_OUTPUT_DIR:-${PROJECT_ROOT:-.}/tests/output}"
 
 # ============================================================
+# Runtime-aware Session Path Detection
+# ============================================================
+
+# Detect session directory for a given container based on its runtime.
+# Usage: _detect_session_dir <container> <base_workspace_dir>
+# Output: session directory path (e.g. /root/manager-workspace/.openclaw/agents/main/sessions)
+_detect_session_dir() {
+    local container="$1"
+    local base_dir="$2"
+    local runtime
+    runtime=$(docker exec "$container" printenv HICLAW_MANAGER_RUNTIME 2>/dev/null || echo "openclaw")
+
+    if [ "$runtime" = "copaw" ]; then
+        echo "${base_dir}/.copaw/sessions"
+    else
+        echo "${base_dir}/.openclaw/agents/main/sessions"
+    fi
+}
+
+# ============================================================
 # Session JSONL Parsing
 # ============================================================
 
@@ -155,7 +175,8 @@ wait_for_worker_session_stable() {
     local stable_seconds="${2:-5}"
     local max_wait="${3:-120}"
     local container="hiclaw-worker-${worker}"
-    local session_dir="/root/hiclaw-fs/agents/${worker}/.openclaw/agents/main/sessions"
+    local session_dir
+    session_dir=$(_detect_session_dir "$container" "/root/hiclaw-fs/agents/${worker}")
 
     if ! docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^${container}$"; then
         log_info "Worker '${worker}' container not running, skipping session wait" >&2
@@ -201,7 +222,8 @@ wait_for_session_stable() {
     local stable_seconds="${1:-5}"
     local max_wait="${2:-60}"
     local manager_container="${TEST_AGENT_CONTAINER:-${TEST_CONTROLLER_CONTAINER:-hiclaw-manager}}"
-    local manager_session_dir="/root/manager-workspace/.openclaw/agents/main/sessions"
+    local manager_session_dir
+    manager_session_dir=$(_detect_session_dir "$manager_container" "/root/manager-workspace")
 
     log_info "Waiting for Manager session to stabilize (up to ${max_wait}s)..." >&2
 
@@ -248,7 +270,8 @@ snapshot_baseline() {
     local workers=("$@")
 
     local manager_container="${TEST_AGENT_CONTAINER:-${TEST_CONTROLLER_CONTAINER:-hiclaw-manager}}"
-    local manager_session_dir="/root/manager-workspace/.openclaw/agents/main/sessions"
+    local manager_session_dir
+    manager_session_dir=$(_detect_session_dir "$manager_container" "/root/manager-workspace")
 
     local snapshot_result='{"offsets": {}}'
 
@@ -269,7 +292,8 @@ snapshot_baseline() {
     # Snapshot all Worker session files
     for worker in "${workers[@]}"; do
         local worker_container="hiclaw-worker-${worker}"
-        local worker_session_dir="/root/hiclaw-fs/agents/${worker}/.openclaw/agents/main/sessions"
+        local worker_session_dir
+        worker_session_dir=$(_detect_session_dir "$worker_container" "/root/hiclaw-fs/agents/${worker}")
 
         if ! docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^${worker_container}$"; then
             continue
@@ -383,7 +407,8 @@ collect_delta_metrics() {
     local workers=("$@")
 
     local manager_container="${TEST_AGENT_CONTAINER:-${TEST_CONTROLLER_CONTAINER:-hiclaw-manager}}"
-    local manager_session_dir="/root/manager-workspace/.openclaw/agents/main/sessions"
+    local manager_session_dir
+    manager_session_dir=$(_detect_session_dir "$manager_container" "/root/manager-workspace")
 
     # Initialize result structure
     local delta_result='{"test_name": "'"${test_name}"'", "timestamp": "'"$(date -Iseconds)"'", "agents": {}, "totals": {"llm_calls": 0, "tokens": {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0, "total": 0}, "timing": {"duration_seconds": 0}}}'
@@ -402,7 +427,8 @@ collect_delta_metrics() {
     # Collect Worker deltas
     for worker in "${workers[@]}"; do
         local worker_container="hiclaw-worker-${worker}"
-        local worker_session_dir="/root/hiclaw-fs/agents/${worker}/.openclaw/agents/main/sessions"
+        local worker_session_dir
+        worker_session_dir=$(_detect_session_dir "$worker_container" "/root/hiclaw-fs/agents/${worker}")
 
         log_info "Collecting Worker '${worker}' delta metrics..." >&2
 
@@ -450,8 +476,9 @@ collect_test_metrics() {
     local workers=("$@")
     
     local manager_container="${TEST_AGENT_CONTAINER:-${TEST_CONTROLLER_CONTAINER:-hiclaw-manager}}"
-    local manager_session_dir="/root/manager-workspace/.openclaw/agents/main/sessions"
-    
+    local manager_session_dir
+    manager_session_dir=$(_detect_session_dir "$manager_container" "/root/manager-workspace")
+
     # Initialize result structure
     local cumulative_result='{"test_name": "'"${test_name}"'", "timestamp": "'"$(date -Iseconds)"'", "agents": {}, "totals": {"llm_calls": 0, "tokens": {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0, "total": 0}, "timing": {"duration_seconds": 0}}}'
     
@@ -474,7 +501,8 @@ collect_test_metrics() {
     # Collect Worker metrics
     for worker in "${workers[@]}"; do
         local worker_container="hiclaw-worker-${worker}"
-        local worker_session_dir="/root/hiclaw-fs/agents/${worker}/.openclaw/agents/main/sessions"
+        local worker_session_dir
+        worker_session_dir=$(_detect_session_dir "$worker_container" "/root/hiclaw-fs/agents/${worker}")
         
         log_info "Collecting Worker '${worker}' metrics..." >&2
         

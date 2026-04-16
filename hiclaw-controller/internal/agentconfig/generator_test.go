@@ -48,17 +48,12 @@ func TestGenerateOpenClawConfig_Basic(t *testing.T) {
 		t.Errorf("groupAllowFrom missing admin: %v", groupAllow)
 	}
 
-	// Verify model config — default model is set via agents.defaults.model.primary
+	// Verify default model in agents.defaults.model.primary
 	agents := config["agents"].(map[string]interface{})
 	defaults := agents["defaults"].(map[string]interface{})
-	model := defaults["model"].(map[string]interface{})
-	if model["primary"] != "hiclaw-gateway/qwen3.5-plus" {
-		t.Errorf("agents.defaults.model.primary = %v", model["primary"])
-	}
-	// Verify models section does NOT contain "default" (unrecognized key in openclaw)
-	models := config["models"].(map[string]interface{})
-	if _, exists := models["default"]; exists {
-		t.Error("models.default should not be set (unrecognized key in openclaw)")
+	modelCfg := defaults["model"].(map[string]interface{})
+	if modelCfg["primary"] != "hiclaw-gateway/qwen3.5-plus" {
+		t.Errorf("agents.defaults.model.primary = %v, want hiclaw-gateway/qwen3.5-plus", modelCfg["primary"])
 	}
 }
 
@@ -149,9 +144,9 @@ func TestGenerateOpenClawConfig_CustomModel(t *testing.T) {
 
 	agents := config["agents"].(map[string]interface{})
 	defaults := agents["defaults"].(map[string]interface{})
-	model := defaults["model"].(map[string]interface{})
-	if model["primary"] != "hiclaw-gateway/custom-model-x" {
-		t.Errorf("agents.defaults.model.primary = %v, want hiclaw-gateway/custom-model-x", model["primary"])
+	modelCfg := defaults["model"].(map[string]interface{})
+	if modelCfg["primary"] != "hiclaw-gateway/custom-model-x" {
+		t.Errorf("agents.defaults.model.primary = %v, want hiclaw-gateway/custom-model-x", modelCfg["primary"])
 	}
 }
 

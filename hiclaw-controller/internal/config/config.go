@@ -172,10 +172,11 @@ func LoadConfig() *Config {
 
 		AuthAudience: envOrDefault("HICLAW_AUTH_AUDIENCE", "hiclaw-controller"),
 
-		HigressBaseURL:       envOrDefault("HICLAW_AI_GATEWAY_ADMIN_URL", "http://127.0.0.1:8001"),
-		HigressCookieFile:    os.Getenv("HIGRESS_COOKIE_FILE"),
-		HigressAdminUser:     firstNonEmpty(os.Getenv("HICLAW_HIGRESS_ADMIN_USER"), envOrDefault("HICLAW_ADMIN_USER", "admin")),
-		HigressAdminPassword: firstNonEmpty(os.Getenv("HICLAW_HIGRESS_ADMIN_PASSWORD"), envOrDefault("HICLAW_ADMIN_PASSWORD", "admin")),
+		HigressBaseURL:    envOrDefault("HICLAW_AI_GATEWAY_ADMIN_URL", "http://127.0.0.1:8001"),
+		HigressCookieFile: os.Getenv("HIGRESS_COOKIE_FILE"),
+		// Higress and Matrix share the same admin credentials.
+		HigressAdminUser:     envOrDefault("HICLAW_ADMIN_USER", "admin"),
+		HigressAdminPassword: envOrDefault("HICLAW_ADMIN_PASSWORD", "admin"),
 
 		WorkerBackend: firstNonEmpty(
 			os.Getenv("HICLAW_WORKER_BACKEND"),
@@ -458,9 +459,10 @@ func (c *Config) MatrixConfig() matrix.Config {
 
 func (c *Config) GatewayConfig() gateway.Config {
 	cfg := gateway.Config{
-		ConsoleURL:    c.HigressBaseURL,
-		AdminUser:     c.HigressAdminUser,
-		AdminPassword: c.HigressAdminPassword,
+		ConsoleURL:                c.HigressBaseURL,
+		AdminUser:                 c.HigressAdminUser,
+		AdminPassword:             c.HigressAdminPassword,
+		AllowDefaultAdminFallback: c.KubeMode == "embedded",
 	}
 	if c.KubeMode == "embedded" {
 		cfg.PilotURL = "http://127.0.0.1:15014"
@@ -495,8 +497,6 @@ func (c *Config) ManagerAgentEnv() map[string]string {
 	setIfNonEmpty("HICLAW_ADMIN_USER", c.MatrixAdminUser)
 	setIfNonEmpty("HICLAW_ADMIN_PASSWORD", c.MatrixAdminPassword)
 	setIfNonEmpty("HICLAW_REGISTRATION_TOKEN", c.MatrixRegistrationToken)
-	setIfNonEmpty("HICLAW_HIGRESS_ADMIN_USER", c.HigressAdminUser)
-	setIfNonEmpty("HICLAW_HIGRESS_ADMIN_PASSWORD", c.HigressAdminPassword)
 	setIfNonEmpty("HICLAW_AI_GATEWAY_ADMIN_URL", c.HigressBaseURL)
 	setIfNonEmpty("HICLAW_MATRIX_URL", c.WorkerEnv.MatrixURL)
 	setIfNonEmpty("HICLAW_AI_GATEWAY_URL", c.WorkerEnv.AIGatewayURL)
