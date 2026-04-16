@@ -206,6 +206,7 @@ func (c *HigressClient) modifyAIRoutes(ctx context.Context, consumerName string,
 	}
 
 	const maxRetries = 5
+	var errs []string
 
 	for _, raw := range listResp.Data {
 		var routeInfo struct {
@@ -215,6 +216,7 @@ func (c *HigressClient) modifyAIRoutes(ctx context.Context, consumerName string,
 			continue
 		}
 
+		var routeErr error
 		for attempt := 0; attempt < maxRetries; attempt++ {
 			if err := ctx.Err(); err != nil {
 				return err
@@ -222,7 +224,19 @@ func (c *HigressClient) modifyAIRoutes(ctx context.Context, consumerName string,
 
 			routeBody, sc, err := c.doJSON(ctx, http.MethodGet,
 				"/v1/ai/routes/"+routeInfo.Name, nil)
-			if err != nil || sc != http.StatusOK {
+			if err != nil {
+				routeErr = fmt.Errorf("get AI route %s: %w", routeInfo.Name, err)
+				break
+			}
+			if sc == http.StatusUnauthorized || sc == http.StatusForbidden {
+				// Session expired; doJSON already cleared cookies.
+				// Retry — next doJSON call will re-authenticate.
+				routeErr = fmt.Errorf("get AI route %s: HTTP %d (session expired, retrying)", routeInfo.Name, sc)
+				time.Sleep(time.Second)
+				continue
+			}
+			if sc != http.StatusOK {
+				routeErr = fmt.Errorf("get AI route %s: HTTP %d", routeInfo.Name, sc)
 				break
 			}
 
@@ -230,6 +244,7 @@ func (c *HigressClient) modifyAIRoutes(ctx context.Context, consumerName string,
 				Data json.RawMessage `json:"data"`
 			}
 			if err := json.Unmarshal(routeBody, &routeResp); err != nil {
+				routeErr = fmt.Errorf("decode AI route %s: %w", routeInfo.Name, err)
 				break
 			}
 			routeData := routeResp.Data
@@ -239,6 +254,7 @@ func (c *HigressClient) modifyAIRoutes(ctx context.Context, consumerName string,
 
 			var route map[string]interface{}
 			if err := json.Unmarshal(routeData, &route); err != nil {
+				routeErr = fmt.Errorf("decode AI route %s body: %w", routeInfo.Name, err)
 				break
 			}
 
@@ -269,19 +285,36 @@ func (c *HigressClient) modifyAIRoutes(ctx context.Context, consumerName string,
 			_, sc, err = c.doJSON(ctx, http.MethodPut,
 				"/v1/ai/routes/"+routeInfo.Name, route)
 			if err != nil {
+				routeErr = fmt.Errorf("put AI route %s: %w", routeInfo.Name, err)
 				break
 			}
 			if sc == http.StatusOK {
+				routeErr = nil
 				break
 			}
 			if sc == http.StatusConflict {
+				routeErr = fmt.Errorf("put AI route %s: conflict after %d retries", routeInfo.Name, maxRetries)
 				time.Sleep(time.Duration(rand.Intn(3)+1) * time.Second)
 				continue
 			}
+			if sc == http.StatusUnauthorized || sc == http.StatusForbidden {
+				// Session expired between GET and PUT; doJSON already cleared
+				// cookies. Retry the full GET+PUT cycle with a fresh session.
+				routeErr = fmt.Errorf("put AI route %s: HTTP %d (session expired, retrying)", routeInfo.Name, sc)
+				time.Sleep(time.Second)
+				continue
+			}
+			routeErr = fmt.Errorf("put AI route %s: HTTP %d", routeInfo.Name, sc)
 			break
+		}
+		if routeErr != nil {
+			errs = append(errs, routeErr.Error())
 		}
 	}
 
+	if len(errs) > 0 {
+		return fmt.Errorf("modifyAIRoutes: %s", strings.Join(errs, "; "))
+	}
 	return nil
 }
 
@@ -543,6 +576,9 @@ func (c *HigressClient) ensureStaticServiceSource(ctx context.Context, name, add
 func (c *HigressClient) ensureRoute(ctx context.Context, name string, domains []string, serviceName string, port int, pathPrefix string) error {
 	if pathPrefix == "" {
 		pathPrefix = "/"
+	}
+	if domains == nil {
+		domains = []string{}
 	}
 	body := map[string]interface{}{
 		"name":    name,

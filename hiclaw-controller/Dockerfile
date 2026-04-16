@@ -44,4 +44,10 @@ COPY --from=builder /hiclaw /usr/local/bin/hiclaw
 COPY --from=kube-bin /kube-apiserver /usr/local/bin/kube-apiserver
 COPY config/crd/ /opt/hiclaw/config/crd/
 
+# Agent template files (builtin skills, AGENTS.md, HEARTBEAT.md, etc.)
+# Used by Deployer to push builtin worker config to OSS.
+# Build context "agent" must be provided via --build-context agent=<path-to-manager/agent>
+COPY --from=agent worker-agent/ /opt/hiclaw/agent/worker-agent/
+COPY --from=agent team-leader-agent/ /opt/hiclaw/agent/team-leader-agent/
+
 ENTRYPOINT ["hiclaw-controller"]

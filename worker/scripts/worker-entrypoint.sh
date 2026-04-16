@@ -97,6 +97,71 @@ ln -sfn "${HOME}/skills" "${HOME}/.agents/skills"
 log "Worker config pulled successfully"
 
 # ============================================================
+# Step 2b: DebugWorker mode detection
+# ============================================================
+DEBUG_CONFIG="${WORKSPACE}/debug-config.json"
+if [ -f "${DEBUG_CONFIG}" ]; then
+    log "DebugWorker mode detected"
+
+    # Parse targets from debug-config.json
+    HICLAW_DEBUG_TARGETS=$(jq -r '.targets | join(",")' "${DEBUG_CONFIG}")
+    export HICLAW_DEBUG_TARGETS
+
+    # Pull each target workspace (read-only snapshots)
+    # Retry with backoff: the DebugWorker's OSS policy may not include
+    # read-only target access until the controller updates it after the
+    # child Worker reaches Running phase.
+    DEBUG_TARGETS_DIR="${HICLAW_ROOT}/debug-targets"
+    mkdir -p "${DEBUG_TARGETS_DIR}"
+    _debug_sync_ok=false
+    for _attempt in 1 2 3 4 5 6; do
+        _all_ok=true
+        for target in $(echo "${HICLAW_DEBUG_TARGETS}" | tr ',' ' '); do
+            mkdir -p "${DEBUG_TARGETS_DIR}/${target}"
+            ensure_mc_credentials 2>/dev/null || true
+            if ! mc mirror "${HICLAW_STORAGE_PREFIX}/agents/${target}/" \
+                "${DEBUG_TARGETS_DIR}/${target}/" --overwrite 2>/dev/null; then
+                _all_ok=false
+            fi
+        done
+        if [ "${_all_ok}" = "true" ]; then
+            _debug_sync_ok=true
+            break
+        fi
+        log "Target workspace sync failed (attempt ${_attempt}/6), retrying in 10s (waiting for OSS policy update)..."
+        sleep 10
+    done
+    if [ "${_debug_sync_ok}" = "false" ]; then
+        log "WARNING: Some target workspaces could not be synced after retries. The debug-analysis skill can retry via sync-workspace.sh."
+    fi
+
+    # Create symlink from workspace for easy access
+    ln -sfn "${DEBUG_TARGETS_DIR}" "${WORKSPACE}/debug-targets"
+
+    # Export MatrixCredential env vars for debug-analysis skill scripts
+    MATRIX_USER_ID=$(jq -r '.matrixCredential.userID // empty' "${DEBUG_CONFIG}")
+    MATRIX_ACCESS_TOKEN=$(jq -r '.matrixCredential.accessToken // empty' "${DEBUG_CONFIG}")
+    if [ -n "${MATRIX_USER_ID}" ]; then
+        export HICLAW_DEBUG_MATRIX_USER_ID="${MATRIX_USER_ID}"
+        export HICLAW_DEBUG_MATRIX_ACCESS_TOKEN="${MATRIX_ACCESS_TOKEN}"
+        log "Matrix debug credentials loaded for user: ${MATRIX_USER_ID}"
+    fi
+
+    log "DebugWorker targets mounted at ${DEBUG_TARGETS_DIR}"
+
+    # Pull hiclaw source code from OSS if available
+    HICLAW_SOURCE_DIR="/root/debug/hiclaw-source"
+    if mc ls "${HICLAW_STORAGE_PREFIX}/agents/${WORKER_NAME}/hiclaw-source/" >/dev/null 2>&1; then
+        log "Pulling hiclaw source code from OSS..."
+        mkdir -p "${HICLAW_SOURCE_DIR}"
+        mc mirror "${HICLAW_STORAGE_PREFIX}/agents/${WORKER_NAME}/hiclaw-source/" \
+            "${HICLAW_SOURCE_DIR}/" --overwrite 2>/dev/null || true
+        ln -sfn "${HICLAW_SOURCE_DIR}" "${WORKSPACE}/hiclaw-source"
+        log "HiClaw source code available at ${HICLAW_SOURCE_DIR}"
+    fi
+fi
+
+# ============================================================
 # Optional: ensure diagnostics-otel npm dependencies are present
 # When CMS metrics are enabled, generate-worker-config.sh injects
 # diagnostics-otel into openclaw.json.  The plugin ships with
@@ -320,6 +385,23 @@ if [ -n "${HICLAW_CONTROLLER_URL:-}" ]; then
         hiclaw worker report-ready
     ) &
     log "Background readiness reporter started (PID: $!)"
+fi
+
+# ============================================================
+# Step 5d: DebugWorker target workspace periodic sync
+# ============================================================
+if [ -n "${HICLAW_DEBUG_TARGETS:-}" ]; then
+(
+    while true; do
+        sleep 300
+        ensure_mc_credentials 2>/dev/null || true
+        for target in $(echo "${HICLAW_DEBUG_TARGETS}" | tr ',' ' '); do
+            mc mirror "${HICLAW_STORAGE_PREFIX}/agents/${target}/" \
+                "${HICLAW_ROOT}/debug-targets/${target}/" --overwrite 2>/dev/null || true
+        done
+    done
+) &
+    log "DebugWorker periodic target sync started (every 5m, PID: $!)"
 fi
 
 exec openclaw gateway run --verbose --force

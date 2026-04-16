@@ -89,7 +89,22 @@ storage:
     auth:
       rootUser: "minioadmin"
       rootPassword: "minioadmin"
-  oss: {}
+    bucketName: "hiclaw-storage"
+  external:
+    endpoint: ""
+    bucket: ""
+    accessKey: ""
+    secretKey: ""
+
+# ── AI Gateway ────────────────────────────────────────────────────────────
+# type: higress | external
+aiGateway:
+  type: higress
+  higress:
+    enabled: true             # controls Higress subchart deployment
+  external:
+    gatewayUrl: ""            # external gateway URL (e.g., Alibaba Cloud APIG)
+    consoleUrl: ""
 
 # ── Higress subchart values (passed directly to the higress dependency) ───
 # `gateway.higress.enabled` is the materialized condition flag. The actual

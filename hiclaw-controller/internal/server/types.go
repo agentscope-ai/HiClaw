@@ -237,3 +237,33 @@ type WorkerLifecycleResponse struct {
 	Name  string `json:"name"`
 	Phase string `json:"phase"`
 }
+
+// --- DebugWorker API types ---
+
+type CreateDebugWorkerRequest struct {
+	Name             string         `json:"name,omitempty"`
+	Model            string         `json:"model,omitempty"`
+	Runtime          string         `json:"runtime,omitempty"`
+	Targets          []string       `json:"targets,omitempty"`
+	MatrixCredential *MatrixCredReq `json:"matrixCredential,omitempty"`
+	AllowedUsers     []string       `json:"allowedUsers,omitempty"`
+	HiclawVersion    string         `json:"hiclawVersion,omitempty"`
+}
+
+type MatrixCredReq struct {
+	UserID      string `json:"userID"`
+	AccessToken string `json:"accessToken"`
+}
+
+type DebugWorkerResponse struct {
+	Name    string   `json:"name"`
+	Phase   string   `json:"phase"`
+	Model   string   `json:"model,omitempty"`
+	Targets []string `json:"targets,omitempty"`
+	Message string   `json:"message,omitempty"`
+}
+
+type DebugWorkerListResponse struct {
+	DebugWorkers []DebugWorkerResponse `json:"debugWorkers"`
+	Total        int                   `json:"total"`
+}

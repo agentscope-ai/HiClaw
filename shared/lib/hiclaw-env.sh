@@ -38,8 +38,9 @@ fi
 HICLAW_MATRIX_URL="${HICLAW_MATRIX_URL:-http://127.0.0.1:6167}"
 HICLAW_AI_GATEWAY_URL="${HICLAW_AI_GATEWAY_URL:-http://${HICLAW_AI_GATEWAY_DOMAIN:-aigw-local.hiclaw.io}:8080}"
 HICLAW_FS_BUCKET="${HICLAW_FS_BUCKET:-hiclaw-storage}"
+if [ -z "${HICLAW_STORAGE_PREFIX:-}" ]; then
 HICLAW_STORAGE_PREFIX="${HICLAW_STORAGE_PREFIX:-hiclaw/${HICLAW_FS_BUCKET}}"
-
+fi
 # ── Credential management ────────────────────────────────────────────────────
 # In cloud mode, provides ensure_mc_credentials() for STS token refresh.
 # In local mode, ensure_mc_credentials() is a no-op.

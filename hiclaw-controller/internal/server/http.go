@@ -77,6 +77,12 @@ func NewHTTPServer(addr string, deps ServerDeps) *HTTPServer {
 	mux.Handle("PUT /api/v1/managers/{name}", mw.RequireAuthz(authpkg.ActionUpdate, "manager", nameFn)(http.HandlerFunc(rh.UpdateManager)))
 	mux.Handle("DELETE /api/v1/managers/{name}", mw.RequireAuthz(authpkg.ActionDelete, "manager", nameFn)(http.HandlerFunc(rh.DeleteManager)))
 
+	// DebugWorkers
+	mux.Handle("POST /api/v1/debugworkers", mw.RequireAuthz(authpkg.ActionCreate, "debugworker", nil)(http.HandlerFunc(rh.CreateDebugWorker)))
+	mux.Handle("GET /api/v1/debugworkers", mw.RequireAuthz(authpkg.ActionList, "debugworker", nil)(http.HandlerFunc(rh.ListDebugWorkers)))
+	mux.Handle("GET /api/v1/debugworkers/{name}", mw.RequireAuthz(authpkg.ActionGet, "debugworker", nameFn)(http.HandlerFunc(rh.GetDebugWorker)))
+	mux.Handle("DELETE /api/v1/debugworkers/{name}", mw.RequireAuthz(authpkg.ActionDelete, "debugworker", nameFn)(http.HandlerFunc(rh.DeleteDebugWorker)))
+
 	// --- Package upload ---
 	ph := NewPackageHandler(deps.OSS)
 	mux.Handle("POST /api/v1/packages", mw.RequireAuthz(authpkg.ActionCreate, "worker", nil)(http.HandlerFunc(ph.Upload)))

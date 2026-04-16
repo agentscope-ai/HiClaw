@@ -264,3 +264,49 @@ type ManagerList struct {
 	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []Manager `json:"items"`
 }
+
+// +genclient
+// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+
+// DebugWorker creates a temporary Worker to diagnose issues with target Workers.
+// It delegates to a standard Worker CRD internally and adds debug-analysis capabilities.
+type DebugWorker struct {
+	metav1.TypeMeta   `json:",inline"`
+	metav1.ObjectMeta `json:"metadata,omitempty"`
+	Spec              DebugWorkerSpec   `json:"spec"`
+	Status            DebugWorkerStatus `json:"status,omitempty"`
+}
+
+type DebugWorkerSpec struct {
+	Model            string             `json:"model"`
+	Runtime          string             `json:"runtime,omitempty"`          // openclaw | copaw (default: openclaw)
+	Image            string             `json:"image,omitempty"`            // custom Docker image
+	Targets          []string           `json:"targets"`                    // target Worker names to debug
+	MatrixCredential *MatrixCredential  `json:"matrixCredential,omitempty"` // credentials for Matrix message export
+	HiclawVersion    string             `json:"hiclawVersion,omitempty"`    // hiclaw code version (for source reference)
+	AccessControl    DebugAccessControl `json:"accessControl,omitempty"`    // access restrictions
+}
+
+// MatrixCredential holds credentials for authenticating to the Matrix server.
+type MatrixCredential struct {
+	UserID      string `json:"userID"`      // Matrix user ID (@user:domain)
+	AccessToken string `json:"accessToken"` // Matrix access token (syt_xxx)
+}
+
+// DebugAccessControl restricts who can interact with the DebugWorker.
+type DebugAccessControl struct {
+	AllowedUsers []string `json:"allowedUsers,omitempty"` // Matrix user IDs allowed to interact
+}
+
+type DebugWorkerStatus struct {
+	Phase   string `json:"phase,omitempty"`   // Pending/Running/Failed
+	Message string `json:"message,omitempty"` // Human-readable status message
+}
+
+// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+
+type DebugWorkerList struct {
+	metav1.TypeMeta `json:",inline"`
+	metav1.ListMeta `json:"metadata,omitempty"`
+	Items           []DebugWorker `json:"items"`
+}

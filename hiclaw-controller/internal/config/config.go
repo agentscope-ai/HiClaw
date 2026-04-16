@@ -126,6 +126,8 @@ type WorkerEnvDefaults struct {
 	MatrixDomain  string
 	FSEndpoint    string
 	FSBucket      string
+	MinIOEndpoint string
+	MinIOBucket   string
 	StoragePrefix string
 	ControllerURL string
 	AIGatewayURL  string
@@ -246,6 +248,8 @@ func LoadConfig() *Config {
 			MatrixDomain:  envOrDefault("HICLAW_MATRIX_DOMAIN", "matrix-local.hiclaw.io:8080"),
 			FSEndpoint:    os.Getenv("HICLAW_FS_ENDPOINT"),
 			FSBucket:      envOrDefault("HICLAW_FS_BUCKET", "hiclaw-storage"),
+			MinIOEndpoint: os.Getenv("HICLAW_MINIO_ENDPOINT"),
+			MinIOBucket:   os.Getenv("HICLAW_MINIO_BUCKET"),
 			StoragePrefix: envOrDefault("HICLAW_STORAGE_PREFIX", "hiclaw/hiclaw-storage"),
 			ControllerURL: os.Getenv("HICLAW_CONTROLLER_URL"),
 			AIGatewayURL:  envOrDefault("HICLAW_AI_GATEWAY_URL", "http://aigw-local.hiclaw.io:8080"),
@@ -299,6 +303,12 @@ func (c *Config) AgentFSDir() string {
 // WorkerAgentDir returns the source directory for builtin worker agent files.
 func (c *Config) WorkerAgentDir() string {
 	return envOrDefault("HICLAW_WORKER_AGENT_DIR", "/opt/hiclaw/agent/worker-agent")
+}
+
+// SourceRepoURL returns the GitHub repository URL for downloading hiclaw source code.
+// Used by DebugWorkerReconciler to push source code to OSS for cross-referencing.
+func (c *Config) SourceRepoURL() string {
+	return envOrDefault("HICLAW_SOURCE_REPO_URL", "https://github.com/higress-group/hiclaw")
 }
 
 // ManagerConfigPath returns the path to the Manager Agent's openclaw.json (embedded mode).

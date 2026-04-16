@@ -65,6 +65,14 @@ func (a *Authorizer) authorizeTeamLeader(caller *CallerIdentity, req AuthzReques
 	case "worker":
 		return a.authorizeTeamLeaderWorkerAction(caller, req)
 
+	case "debugworker":
+		switch req.Action {
+		case ActionCreate, ActionGet, ActionList, ActionDelete:
+			return nil
+		default:
+			return deny(caller, req)
+		}
+
 	case "team":
 		if req.Action == ActionGet || req.Action == ActionList {
 			return nil

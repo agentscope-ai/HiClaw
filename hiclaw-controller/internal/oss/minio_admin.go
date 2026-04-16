@@ -64,7 +64,7 @@ func (c *MinIOAdminClient) EnsurePolicy(ctx context.Context, req PolicyRequest) 
 		bucket = c.config.Bucket
 	}
 
-	policy := c.buildWorkerPolicy(req.WorkerName, bucket, req.TeamName)
+	policy := c.buildWorkerPolicy(req.WorkerName, bucket, req.TeamName, req.ReadOnlyPrefixes)
 	policyJSON, err := json.MarshalIndent(policy, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal policy: %w", err)
@@ -121,7 +121,7 @@ type s3PolicyStatement struct {
 	Condition map[string]interface{} `json:"Condition,omitempty"`
 }
 
-func (c *MinIOAdminClient) buildWorkerPolicy(workerName, bucket, teamName string) s3Policy {
+func (c *MinIOAdminClient) buildWorkerPolicy(workerName, bucket, teamName string, readOnlyPrefixes []string) s3Policy {
 	listPrefixes := []string{
 		fmt.Sprintf("agents/%s", workerName),
 		fmt.Sprintf("agents/%s/*", workerName),
@@ -143,25 +143,48 @@ func (c *MinIOAdminClient) buildWorkerPolicy(workerName, bucket, teamName string
 		)
 	}
 
-	return s3Policy{
-		Version: "2012-10-17",
-		Statement: []s3PolicyStatement{
-			{
-				Effect:   "Allow",
-				Action:   []string{"s3:ListBucket"},
-				Resource: []string{fmt.Sprintf("arn:aws:s3:::%s", bucket)},
-				Condition: map[string]interface{}{
-					"StringLike": map[string]interface{}{
-						"s3:prefix": listPrefixes,
-					},
+	statements := []s3PolicyStatement{
+		{
+			Effect:   "Allow",
+			Action:   []string{"s3:ListBucket"},
+			Resource: []string{fmt.Sprintf("arn:aws:s3:::%s", bucket)},
+			Condition: map[string]interface{}{
+				"StringLike": map[string]interface{}{
+					"s3:prefix": listPrefixes,
 				},
 			},
-			{
-				Effect:   "Allow",
-				Action:   []string{"s3:GetObject", "s3:PutObject", "s3:DeleteObject"},
-				Resource: rwResources,
-			},
 		},
+		{
+			Effect:   "Allow",
+			Action:   []string{"s3:GetObject", "s3:PutObject", "s3:DeleteObject"},
+			Resource: rwResources,
+		},
+	}
+
+	// Add read-only access for additional prefixes (e.g. DebugWorker target workspaces)
+	if len(readOnlyPrefixes) > 0 {
+		var roResources []string
+		for _, prefix := range readOnlyPrefixes {
+			roResources = append(roResources, fmt.Sprintf("arn:aws:s3:::%s/%s/*", bucket, prefix))
+			// Also add to list prefixes so ListBucket works
+			listPrefixes = append(listPrefixes, prefix, prefix+"/*")
+		}
+		// Update the ListBucket condition with expanded prefixes
+		statements[0].Condition = map[string]interface{}{
+			"StringLike": map[string]interface{}{
+				"s3:prefix": listPrefixes,
+			},
+		}
+		statements = append(statements, s3PolicyStatement{
+			Effect:   "Allow",
+			Action:   []string{"s3:GetObject"},
+			Resource: roResources,
+		})
+	}
+
+	return s3Policy{
+		Version:   "2012-10-17",
+		Statement: statements,
 	}
 }
 

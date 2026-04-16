@@ -19,7 +19,8 @@ type MirrorOptions struct {
 
 // PolicyRequest describes a scoped access policy for a worker.
 type PolicyRequest struct {
-	WorkerName string // worker name (used as MinIO username and in path scoping)
-	Bucket     string // bucket name, e.g. "hiclaw-storage"
-	TeamName   string // optional: grants additional access to teams/<teamName>/ prefix
+	WorkerName       string   // worker name (used as MinIO username and in path scoping)
+	Bucket           string   // bucket name, e.g. "hiclaw-storage"
+	TeamName         string   // optional: grants additional access to teams/<teamName>/ prefix
+	ReadOnlyPrefixes []string // optional: grants read-only access to additional prefixes (e.g. "agents/target-worker")
 }

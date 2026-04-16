@@ -64,6 +64,9 @@ func (g *Generator) GenerateOpenClawConfig(req WorkerConfigRequest) ([]byte, err
 			"remote": map[string]interface{}{
 				"token": generateRandomHex(32),
 			},
+			"controlUi": map[string]interface{}{
+				"dangerouslyDisableDeviceAuth": true,
+			},
 		},
 		"channels": map[string]interface{}{
 			"matrix": g.buildMatrixChannelConfig(req, matrixServerURL, matrixDomain, adminMatrixID),

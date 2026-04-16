@@ -777,3 +777,134 @@ func writeK8sError(w http.ResponseWriter, op string, err error) {
 		httputil.WriteError(w, http.StatusInternalServerError, op+": "+err.Error())
 	}
 }
+
+// --- DebugWorkers ---
+
+func (h *ResourceHandler) CreateDebugWorker(w http.ResponseWriter, r *http.Request) {
+	var req CreateDebugWorkerRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		httputil.WriteError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+		return
+	}
+
+	// Auto-fill for team-leaders: look up team members as targets
+	caller := authpkg.CallerFromContext(r.Context())
+	if caller != nil && caller.Role == authpkg.RoleTeamLeader && len(req.Targets) == 0 && caller.Team != "" {
+		var team v1beta1.Team
+		if err := h.client.Get(r.Context(), client.ObjectKey{Name: caller.Team, Namespace: h.namespace}, &team); err == nil {
+			// Add leader + all workers as targets
+			req.Targets = append(req.Targets, team.Spec.Leader.Name)
+			for _, tw := range team.Spec.Workers {
+				req.Targets = append(req.Targets, tw.Name)
+			}
+		}
+		if req.Name == "" {
+			req.Name = "debug-" + caller.Team
+		}
+	}
+
+	if len(req.Targets) == 0 {
+		httputil.WriteError(w, http.StatusBadRequest, "targets is required")
+		return
+	}
+	if req.Name == "" {
+		req.Name = "debug-" + req.Targets[0]
+	}
+	if req.Model == "" {
+		req.Model = "qwen3-235b-a22b"
+	}
+
+	dw := &v1beta1.DebugWorker{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      req.Name,
+			Namespace: h.namespace,
+		},
+		Spec: v1beta1.DebugWorkerSpec{
+			Model:         req.Model,
+			Runtime:       req.Runtime,
+			Targets:       req.Targets,
+			HiclawVersion: req.HiclawVersion,
+		},
+	}
+	if req.MatrixCredential != nil {
+		dw.Spec.MatrixCredential = &v1beta1.MatrixCredential{
+			UserID:      req.MatrixCredential.UserID,
+			AccessToken: req.MatrixCredential.AccessToken,
+		}
+	}
+	if len(req.AllowedUsers) > 0 {
+		dw.Spec.AccessControl = v1beta1.DebugAccessControl{
+			AllowedUsers: req.AllowedUsers,
+		}
+	}
+
+	if err := h.client.Create(r.Context(), dw); err != nil {
+		writeK8sError(w, "create debugworker", err)
+		return
+	}
+
+	httputil.WriteJSON(w, http.StatusCreated, debugWorkerToResponse(dw))
+}
+
+func (h *ResourceHandler) GetDebugWorker(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if name == "" {
+		httputil.WriteError(w, http.StatusBadRequest, "debugworker name is required")
+		return
+	}
+
+	var dw v1beta1.DebugWorker
+	if err := h.client.Get(r.Context(), client.ObjectKey{Name: name, Namespace: h.namespace}, &dw); err != nil {
+		writeK8sError(w, "get debugworker", err)
+		return
+	}
+
+	httputil.WriteJSON(w, http.StatusOK, debugWorkerToResponse(&dw))
+}
+
+func (h *ResourceHandler) ListDebugWorkers(w http.ResponseWriter, r *http.Request) {
+	var list v1beta1.DebugWorkerList
+	if err := h.client.List(r.Context(), &list, client.InNamespace(h.namespace)); err != nil {
+		writeK8sError(w, "list debugworkers", err)
+		return
+	}
+
+	debugWorkers := make([]DebugWorkerResponse, 0, len(list.Items))
+	for i := range list.Items {
+		debugWorkers = append(debugWorkers, debugWorkerToResponse(&list.Items[i]))
+	}
+
+	httputil.WriteJSON(w, http.StatusOK, DebugWorkerListResponse{DebugWorkers: debugWorkers, Total: len(debugWorkers)})
+}
+
+func (h *ResourceHandler) DeleteDebugWorker(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if name == "" {
+		httputil.WriteError(w, http.StatusBadRequest, "debugworker name is required")
+		return
+	}
+
+	dw := &v1beta1.DebugWorker{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: h.namespace},
+	}
+	if err := h.client.Delete(r.Context(), dw); err != nil {
+		writeK8sError(w, "delete debugworker", err)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func debugWorkerToResponse(dw *v1beta1.DebugWorker) DebugWorkerResponse {
+	resp := DebugWorkerResponse{
+		Name:    dw.Name,
+		Phase:   dw.Status.Phase,
+		Model:   dw.Spec.Model,
+		Targets: dw.Spec.Targets,
+		Message: dw.Status.Message,
+	}
+	if resp.Phase == "" {
+		resp.Phase = "Pending"
+	}
+	return resp
+}
