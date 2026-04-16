@@ -47,8 +47,6 @@ func (b *WorkerEnvBuilder) BuildManager(managerName string, prov *ManagerProvisi
 		"HICLAW_MANAGER_PASSWORD":    prov.MatrixPassword,
 		"HICLAW_FS_ACCESS_KEY":       managerName,
 		"HICLAW_FS_SECRET_KEY":       prov.MinIOPassword,
-		"HICLAW_MINIO_ACCESS_KEY":    managerName,
-		"HICLAW_MINIO_SECRET_KEY":    prov.MinIOPassword,
 		"OPENCLAW_DISABLE_BONJOUR":   "1",
 		"OPENCLAW_MDNS_HOSTNAME":     "hiclaw-manager",
 		"HOME":                       "/root/manager-workspace",
@@ -84,7 +82,6 @@ func (b *WorkerEnvBuilder) applyClusterDefaults(env map[string]string) {
 	for k, v := range map[string]string{
 		"HICLAW_MATRIX_DOMAIN":   b.defaults.MatrixDomain,
 		"HICLAW_FS_ENDPOINT":     b.defaults.FSEndpoint,
-		"HICLAW_MINIO_ENDPOINT":  b.defaults.FSEndpoint,
 		"HICLAW_FS_BUCKET":       b.defaults.FSBucket,
 		"HICLAW_STORAGE_PREFIX":  b.defaults.StoragePrefix,
 		"HICLAW_CONTROLLER_URL":  b.defaults.ControllerURL,
