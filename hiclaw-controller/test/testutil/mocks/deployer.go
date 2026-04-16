@@ -110,4 +110,15 @@ func (m *MockDeployer) CleanupOSSData(ctx context.Context, workerName string) er
 	return nil
 }
 
+// CallCounts returns a snapshot of call counts safe for concurrent use.
+func (m *MockDeployer) CallCounts() (deployPkg, writeInline, deployConfig, pushSkills, cleanup int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.Calls.DeployPackage),
+		len(m.Calls.WriteInlineConfigs),
+		len(m.Calls.DeployWorkerConfig),
+		len(m.Calls.PushOnDemandSkills),
+		len(m.Calls.CleanupOSSData)
+}
+
 var _ service.WorkerDeployer = (*MockDeployer)(nil)

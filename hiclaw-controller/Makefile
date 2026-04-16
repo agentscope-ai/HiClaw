@@ -36,7 +36,7 @@ test-unit:
 
 test-integration: setup-envtest
 	KUBEBUILDER_ASSETS="$(KUBEBUILDER_ASSETS)" \
-	go test -tags=integration -count=1 -v -timeout=120s ./test/integration/...
+	go test -tags=integration -race -count=1 -v -timeout=120s ./test/integration/...
 
 test-all: test-unit test-integration
 

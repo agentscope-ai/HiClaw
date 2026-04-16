@@ -57,10 +57,12 @@ func TestWorkerCreate_HappyPath(t *testing.T) {
 	if w.Status.RoomID == "" {
 		t.Error("RoomID should be set after creation")
 	}
-	if len(mockProv.Calls.ProvisionWorker) == 0 {
+	provCount, _, _, _ := mockProv.CallCounts()
+	if provCount == 0 {
 		t.Error("ProvisionWorker should have been called")
 	}
-	if len(mockDeploy.Calls.DeployWorkerConfig) == 0 {
+	_, _, deployConfigCount, _, _ := mockDeploy.CallCounts()
+	if deployConfigCount == 0 {
 		t.Error("DeployWorkerConfig should have been called")
 	}
 }
@@ -125,13 +127,15 @@ func TestWorkerDelete_CleansUpAll(t *testing.T) {
 		return client.IgnoreNotFound(err)
 	})
 
-	if len(mockProv.Calls.DeactivateMatrixUser) == 0 {
+	_, deprovCount, _, deactivateCount := mockProv.CallCounts()
+	if deactivateCount == 0 {
 		t.Error("DeactivateMatrixUser should have been called")
 	}
-	if len(mockProv.Calls.DeprovisionWorker) == 0 {
+	if deprovCount == 0 {
 		t.Error("DeprovisionWorker should have been called")
 	}
-	if len(mockDeploy.Calls.CleanupOSSData) == 0 {
+	_, _, _, _, cleanupCount := mockDeploy.CallCounts()
+	if cleanupCount == 0 {
 		t.Error("CleanupOSSData should have been called")
 	}
 }
@@ -399,24 +403,25 @@ func TestWorkerCreate_Idempotent_NoDoubleProvision(t *testing.T) {
 
 	waitForRunning(t, worker)
 
-	provCountBefore := len(mockProv.Calls.ProvisionWorker)
-	refreshCountBefore := len(mockProv.Calls.RefreshCredentials)
+	provCountBefore, _, refreshCountBefore, _ := mockProv.CallCounts()
 
 	// Trigger another reconcile via annotation update (no spec change)
 	triggerReconcile(t, worker)
 
 	// Wait for the new reconcile to complete — RefreshCredentials count increases
 	assertEventually(t, func() error {
-		if len(mockProv.Calls.RefreshCredentials) <= refreshCountBefore {
+		_, _, refreshCount, _ := mockProv.CallCounts()
+		if refreshCount <= refreshCountBefore {
 			return fmt.Errorf("RefreshCredentials count=%d, want >%d (reconcile not triggered yet)",
-				len(mockProv.Calls.RefreshCredentials), refreshCountBefore)
+				refreshCount, refreshCountBefore)
 		}
 		return nil
 	})
 
-	if len(mockProv.Calls.ProvisionWorker) != provCountBefore {
+	provCountAfter, _, _, _ := mockProv.CallCounts()
+	if provCountAfter != provCountBefore {
 		t.Errorf("ProvisionWorker called %d times, want %d (should not re-provision after Running)",
-			len(mockProv.Calls.ProvisionWorker), provCountBefore)
+			provCountAfter, provCountBefore)
 	}
 }
 
@@ -581,10 +586,12 @@ func TestWorkerDelete_ProvisionFailed_StillCleans(t *testing.T) {
 		return client.IgnoreNotFound(err)
 	})
 
-	if len(mockProv.Calls.DeprovisionWorker) == 0 {
+	_, deprovCount2, _, _ := mockProv.CallCounts()
+	if deprovCount2 == 0 {
 		t.Error("DeprovisionWorker should have been called even for a failed worker")
 	}
-	if len(mockDeploy.Calls.CleanupOSSData) == 0 {
+	_, _, _, _, cleanupCount2 := mockDeploy.CallCounts()
+	if cleanupCount2 == 0 {
 		t.Error("CleanupOSSData should have been called even for a failed worker")
 	}
 }

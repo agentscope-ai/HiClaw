@@ -201,4 +201,14 @@ func (m *MockProvisioner) MatrixUserID(name string) string {
 	return "@" + name + ":localhost"
 }
 
+// CallCounts returns a snapshot of call counts safe for concurrent use.
+func (m *MockProvisioner) CallCounts() (provision, deprovision, refresh, deactivate int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.Calls.ProvisionWorker),
+		len(m.Calls.DeprovisionWorker),
+		len(m.Calls.RefreshCredentials),
+		len(m.Calls.DeactivateMatrixUser)
+}
+
 var _ service.WorkerProvisioner = (*MockProvisioner)(nil)
