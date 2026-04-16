@@ -159,7 +159,7 @@ jobs:
   integration-tests:
     needs: build-images
     if: >-
-      inputs.worker_runtime == '' || inputs.worker_runtime == 'both'
+      !inputs.worker_runtime || inputs.worker_runtime == 'both'
       || inputs.worker_runtime == matrix.runtime
     runs-on: ubuntu-latest
     timeout-minutes: 90
