@@ -21,13 +21,25 @@ func NewMockEnvBuilder() *MockEnvBuilder {
 	return &MockEnvBuilder{}
 }
 
+// Reset clears all Fn overrides and call records.
 func (m *MockEnvBuilder) Reset() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.clearCallsLocked()
+	m.BuildFn = nil
+}
+
+// ClearCalls resets call records only, preserving Fn overrides.
+func (m *MockEnvBuilder) ClearCalls() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.clearCallsLocked()
+}
+
+func (m *MockEnvBuilder) clearCallsLocked() {
 	m.Calls = struct {
 		Build []string
 	}{}
-	m.BuildFn = nil
 }
 
 func (m *MockEnvBuilder) Build(workerName string, prov *service.WorkerProvisionResult) map[string]string {

@@ -31,9 +31,26 @@ func NewMockDeployer() *MockDeployer {
 	return &MockDeployer{}
 }
 
+// Reset clears all Fn overrides and call records.
 func (m *MockDeployer) Reset() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.clearCallsLocked()
+	m.DeployPackageFn = nil
+	m.WriteInlineConfigsFn = nil
+	m.DeployWorkerConfigFn = nil
+	m.PushOnDemandSkillsFn = nil
+	m.CleanupOSSDataFn = nil
+}
+
+// ClearCalls resets call records only, preserving Fn overrides.
+func (m *MockDeployer) ClearCalls() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.clearCallsLocked()
+}
+
+func (m *MockDeployer) clearCallsLocked() {
 	m.Calls = struct {
 		DeployPackage      []string
 		WriteInlineConfigs []string
@@ -41,11 +58,6 @@ func (m *MockDeployer) Reset() {
 		PushOnDemandSkills []string
 		CleanupOSSData     []string
 	}{}
-	m.DeployPackageFn = nil
-	m.WriteInlineConfigsFn = nil
-	m.DeployWorkerConfigFn = nil
-	m.PushOnDemandSkillsFn = nil
-	m.CleanupOSSDataFn = nil
 }
 
 func (m *MockDeployer) DeployPackage(ctx context.Context, workerName string, pkg string, isUpdate bool) error {

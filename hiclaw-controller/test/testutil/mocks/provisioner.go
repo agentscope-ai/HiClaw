@@ -42,9 +42,32 @@ func NewMockProvisioner() *MockProvisioner {
 	return &MockProvisioner{}
 }
 
+// Reset clears all Fn overrides and call records.
 func (m *MockProvisioner) Reset() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.clearCallsLocked()
+	m.ProvisionWorkerFn = nil
+	m.DeprovisionWorkerFn = nil
+	m.RefreshCredentialsFn = nil
+	m.ReconcileMCPAuthFn = nil
+	m.ReconcileExposeFn = nil
+	m.EnsureServiceAccountFn = nil
+	m.DeleteServiceAccountFn = nil
+	m.DeleteCredentialsFn = nil
+	m.RequestSATokenFn = nil
+	m.DeactivateMatrixUserFn = nil
+	m.MatrixUserIDFn = nil
+}
+
+// ClearCalls resets call records only, preserving Fn overrides.
+func (m *MockProvisioner) ClearCalls() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.clearCallsLocked()
+}
+
+func (m *MockProvisioner) clearCallsLocked() {
 	m.Calls = struct {
 		ProvisionWorker      []service.WorkerProvisionRequest
 		DeprovisionWorker    []service.WorkerDeprovisionRequest
@@ -57,17 +80,6 @@ func (m *MockProvisioner) Reset() {
 		RequestSAToken       []string
 		DeactivateMatrixUser []string
 	}{}
-	m.ProvisionWorkerFn = nil
-	m.DeprovisionWorkerFn = nil
-	m.RefreshCredentialsFn = nil
-	m.ReconcileMCPAuthFn = nil
-	m.ReconcileExposeFn = nil
-	m.EnsureServiceAccountFn = nil
-	m.DeleteServiceAccountFn = nil
-	m.DeleteCredentialsFn = nil
-	m.RequestSATokenFn = nil
-	m.DeactivateMatrixUserFn = nil
-	m.MatrixUserIDFn = nil
 }
 
 func (m *MockProvisioner) ProvisionWorker(ctx context.Context, req service.WorkerProvisionRequest) (*service.WorkerProvisionResult, error) {
