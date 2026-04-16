@@ -56,9 +56,10 @@ func (m *MockManagerDeployer) clearCallsLocked() {
 func (m *MockManagerDeployer) DeployPackage(ctx context.Context, name, uri string, isUpdate bool) error {
 	m.mu.Lock()
 	m.Calls.DeployPackage = append(m.Calls.DeployPackage, name)
+	fn := m.DeployPackageFn
 	m.mu.Unlock()
-	if m.DeployPackageFn != nil {
-		return m.DeployPackageFn(ctx, name, uri, isUpdate)
+	if fn != nil {
+		return fn(ctx, name, uri, isUpdate)
 	}
 	return nil
 }
@@ -66,9 +67,10 @@ func (m *MockManagerDeployer) DeployPackage(ctx context.Context, name, uri strin
 func (m *MockManagerDeployer) DeployManagerConfig(ctx context.Context, req service.ManagerDeployRequest) error {
 	m.mu.Lock()
 	m.Calls.DeployManagerConfig = append(m.Calls.DeployManagerConfig, req)
+	fn := m.DeployManagerConfigFn
 	m.mu.Unlock()
-	if m.DeployManagerConfigFn != nil {
-		return m.DeployManagerConfigFn(ctx, req)
+	if fn != nil {
+		return fn(ctx, req)
 	}
 	return nil
 }
@@ -76,9 +78,10 @@ func (m *MockManagerDeployer) DeployManagerConfig(ctx context.Context, req servi
 func (m *MockManagerDeployer) PushOnDemandSkills(ctx context.Context, name string, skills []string) error {
 	m.mu.Lock()
 	m.Calls.PushOnDemandSkills = append(m.Calls.PushOnDemandSkills, name)
+	fn := m.PushOnDemandSkillsFn
 	m.mu.Unlock()
-	if m.PushOnDemandSkillsFn != nil {
-		return m.PushOnDemandSkillsFn(ctx, name, skills)
+	if fn != nil {
+		return fn(ctx, name, skills)
 	}
 	return nil
 }
@@ -86,9 +89,10 @@ func (m *MockManagerDeployer) PushOnDemandSkills(ctx context.Context, name strin
 func (m *MockManagerDeployer) CleanupOSSData(ctx context.Context, name string) error {
 	m.mu.Lock()
 	m.Calls.CleanupOSSData = append(m.Calls.CleanupOSSData, name)
+	fn := m.CleanupOSSDataFn
 	m.mu.Unlock()
-	if m.CleanupOSSDataFn != nil {
-		return m.CleanupOSSDataFn(ctx, name)
+	if fn != nil {
+		return fn(ctx, name)
 	}
 	return nil
 }

@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"fmt"
 
 	v1beta1 "github.com/hiclaw/hiclaw-controller/api/v1beta1"
 	"github.com/hiclaw/hiclaw-controller/internal/backend"
@@ -109,6 +110,9 @@ func (r *ManagerReconciler) Reconcile(ctx context.Context, req reconcile.Request
 func (r *ManagerReconciler) reconcileManagerNormal(ctx context.Context, s *managerScope) (reconcile.Result, error) {
 	if res, err := r.reconcileManagerInfrastructure(ctx, s); err != nil || res.RequeueAfter > 0 {
 		return res, err
+	}
+	if err := r.Provisioner.EnsureManagerServiceAccount(ctx, s.manager.Name); err != nil {
+		return reconcile.Result{}, fmt.Errorf("ServiceAccount: %w", err)
 	}
 	if res, err := r.reconcileManagerConfig(ctx, s); err != nil || res.RequeueAfter > 0 {
 		return res, err

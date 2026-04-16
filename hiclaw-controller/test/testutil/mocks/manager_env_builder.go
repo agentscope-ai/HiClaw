@@ -44,9 +44,10 @@ func (m *MockManagerEnvBuilder) clearCallsLocked() {
 func (m *MockManagerEnvBuilder) BuildManager(managerName string, prov *service.ManagerProvisionResult, spec v1beta1.ManagerSpec) map[string]string {
 	m.mu.Lock()
 	m.Calls.BuildManager = append(m.Calls.BuildManager, managerName)
+	fn := m.BuildManagerFn
 	m.mu.Unlock()
-	if m.BuildManagerFn != nil {
-		return m.BuildManagerFn(managerName, prov, spec)
+	if fn != nil {
+		return fn(managerName, prov, spec)
 	}
 	return map[string]string{
 		"HICLAW_MANAGER_NAME": managerName,

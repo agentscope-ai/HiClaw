@@ -52,9 +52,5 @@ func (r *WorkerReconciler) reconcileInfrastructure(ctx context.Context, s *worke
 	w.Status.RoomID = provResult.RoomID
 	s.provResult = provResult
 
-	if err := r.Provisioner.EnsureServiceAccount(ctx, w.Name); err != nil {
-		return reconcile.Result{}, fmt.Errorf("ServiceAccount creation: %w", err)
-	}
-
 	return reconcile.Result{}, nil
 }

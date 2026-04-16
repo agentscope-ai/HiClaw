@@ -51,9 +51,5 @@ func (r *ManagerReconciler) reconcileManagerInfrastructure(ctx context.Context, 
 	m.Status.RoomID = provResult.RoomID
 	s.provResult = provResult
 
-	if err := r.Provisioner.EnsureManagerServiceAccount(ctx, m.Name); err != nil {
-		return reconcile.Result{}, fmt.Errorf("ServiceAccount creation: %w", err)
-	}
-
 	return reconcile.Result{}, nil
 }

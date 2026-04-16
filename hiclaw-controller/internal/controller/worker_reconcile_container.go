@@ -55,6 +55,12 @@ func (r *WorkerReconciler) ensureContainerPresent(ctx context.Context, s *worker
 		return reconcile.Result{}, fmt.Errorf("query container status: %w", err)
 	}
 
+	// TODO(hot-reload): All spec changes trigger container recreation because
+	// agents only load config at startup (no hot-reload). When agent-side config
+	// hot-reload is implemented (file watcher / Matrix reload command / webhook),
+	// introduce a podSpecHash annotation to distinguish pod-affecting fields
+	// (Image, Runtime, Model) from config-only fields (Skills, McpServers, Soul,
+	// Agents, Package) and skip recreation for config-only changes.
 	specChanged := w.Generation != w.Status.ObservedGeneration
 
 	switch result.Status {

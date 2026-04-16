@@ -85,9 +85,10 @@ func (m *MockProvisioner) clearCallsLocked() {
 func (m *MockProvisioner) ProvisionWorker(ctx context.Context, req service.WorkerProvisionRequest) (*service.WorkerProvisionResult, error) {
 	m.mu.Lock()
 	m.Calls.ProvisionWorker = append(m.Calls.ProvisionWorker, req)
+	fn := m.ProvisionWorkerFn
 	m.mu.Unlock()
-	if m.ProvisionWorkerFn != nil {
-		return m.ProvisionWorkerFn(ctx, req)
+	if fn != nil {
+		return fn(ctx, req)
 	}
 	return &service.WorkerProvisionResult{
 		MatrixUserID:   "@" + req.Name + ":localhost",
@@ -102,9 +103,10 @@ func (m *MockProvisioner) ProvisionWorker(ctx context.Context, req service.Worke
 func (m *MockProvisioner) DeprovisionWorker(ctx context.Context, req service.WorkerDeprovisionRequest) error {
 	m.mu.Lock()
 	m.Calls.DeprovisionWorker = append(m.Calls.DeprovisionWorker, req)
+	fn := m.DeprovisionWorkerFn
 	m.mu.Unlock()
-	if m.DeprovisionWorkerFn != nil {
-		return m.DeprovisionWorkerFn(ctx, req)
+	if fn != nil {
+		return fn(ctx, req)
 	}
 	return nil
 }
@@ -112,9 +114,10 @@ func (m *MockProvisioner) DeprovisionWorker(ctx context.Context, req service.Wor
 func (m *MockProvisioner) RefreshCredentials(ctx context.Context, workerName string) (*service.RefreshResult, error) {
 	m.mu.Lock()
 	m.Calls.RefreshCredentials = append(m.Calls.RefreshCredentials, workerName)
+	fn := m.RefreshCredentialsFn
 	m.mu.Unlock()
-	if m.RefreshCredentialsFn != nil {
-		return m.RefreshCredentialsFn(ctx, workerName)
+	if fn != nil {
+		return fn(ctx, workerName)
 	}
 	return &service.RefreshResult{
 		MatrixToken:    "mock-token-" + workerName,
@@ -127,9 +130,10 @@ func (m *MockProvisioner) RefreshCredentials(ctx context.Context, workerName str
 func (m *MockProvisioner) ReconcileMCPAuth(ctx context.Context, consumerName string, mcpServers []string) ([]string, error) {
 	m.mu.Lock()
 	m.Calls.ReconcileMCPAuth = append(m.Calls.ReconcileMCPAuth, consumerName)
+	fn := m.ReconcileMCPAuthFn
 	m.mu.Unlock()
-	if m.ReconcileMCPAuthFn != nil {
-		return m.ReconcileMCPAuthFn(ctx, consumerName, mcpServers)
+	if fn != nil {
+		return fn(ctx, consumerName, mcpServers)
 	}
 	return mcpServers, nil
 }
@@ -137,9 +141,10 @@ func (m *MockProvisioner) ReconcileMCPAuth(ctx context.Context, consumerName str
 func (m *MockProvisioner) ReconcileExpose(ctx context.Context, workerName string, desired []v1beta1.ExposePort, current []v1beta1.ExposedPortStatus) ([]v1beta1.ExposedPortStatus, error) {
 	m.mu.Lock()
 	m.Calls.ReconcileExpose = append(m.Calls.ReconcileExpose, workerName)
+	fn := m.ReconcileExposeFn
 	m.mu.Unlock()
-	if m.ReconcileExposeFn != nil {
-		return m.ReconcileExposeFn(ctx, workerName, desired, current)
+	if fn != nil {
+		return fn(ctx, workerName, desired, current)
 	}
 	return nil, nil
 }
@@ -147,9 +152,10 @@ func (m *MockProvisioner) ReconcileExpose(ctx context.Context, workerName string
 func (m *MockProvisioner) EnsureServiceAccount(ctx context.Context, workerName string) error {
 	m.mu.Lock()
 	m.Calls.EnsureServiceAccount = append(m.Calls.EnsureServiceAccount, workerName)
+	fn := m.EnsureServiceAccountFn
 	m.mu.Unlock()
-	if m.EnsureServiceAccountFn != nil {
-		return m.EnsureServiceAccountFn(ctx, workerName)
+	if fn != nil {
+		return fn(ctx, workerName)
 	}
 	return nil
 }
@@ -157,9 +163,10 @@ func (m *MockProvisioner) EnsureServiceAccount(ctx context.Context, workerName s
 func (m *MockProvisioner) DeleteServiceAccount(ctx context.Context, workerName string) error {
 	m.mu.Lock()
 	m.Calls.DeleteServiceAccount = append(m.Calls.DeleteServiceAccount, workerName)
+	fn := m.DeleteServiceAccountFn
 	m.mu.Unlock()
-	if m.DeleteServiceAccountFn != nil {
-		return m.DeleteServiceAccountFn(ctx, workerName)
+	if fn != nil {
+		return fn(ctx, workerName)
 	}
 	return nil
 }
@@ -167,9 +174,10 @@ func (m *MockProvisioner) DeleteServiceAccount(ctx context.Context, workerName s
 func (m *MockProvisioner) DeleteCredentials(ctx context.Context, workerName string) error {
 	m.mu.Lock()
 	m.Calls.DeleteCredentials = append(m.Calls.DeleteCredentials, workerName)
+	fn := m.DeleteCredentialsFn
 	m.mu.Unlock()
-	if m.DeleteCredentialsFn != nil {
-		return m.DeleteCredentialsFn(ctx, workerName)
+	if fn != nil {
+		return fn(ctx, workerName)
 	}
 	return nil
 }
@@ -177,9 +185,10 @@ func (m *MockProvisioner) DeleteCredentials(ctx context.Context, workerName stri
 func (m *MockProvisioner) RequestSAToken(ctx context.Context, workerName string) (string, error) {
 	m.mu.Lock()
 	m.Calls.RequestSAToken = append(m.Calls.RequestSAToken, workerName)
+	fn := m.RequestSATokenFn
 	m.mu.Unlock()
-	if m.RequestSATokenFn != nil {
-		return m.RequestSATokenFn(ctx, workerName)
+	if fn != nil {
+		return fn(ctx, workerName)
 	}
 	return "mock-sa-token-" + workerName, nil
 }
@@ -187,9 +196,10 @@ func (m *MockProvisioner) RequestSAToken(ctx context.Context, workerName string)
 func (m *MockProvisioner) DeactivateMatrixUser(ctx context.Context, workerName string) error {
 	m.mu.Lock()
 	m.Calls.DeactivateMatrixUser = append(m.Calls.DeactivateMatrixUser, workerName)
+	fn := m.DeactivateMatrixUserFn
 	m.mu.Unlock()
-	if m.DeactivateMatrixUserFn != nil {
-		return m.DeactivateMatrixUserFn(ctx, workerName)
+	if fn != nil {
+		return fn(ctx, workerName)
 	}
 	return nil
 }
@@ -209,6 +219,13 @@ func (m *MockProvisioner) CallCounts() (provision, deprovision, refresh, deactiv
 		len(m.Calls.DeprovisionWorker),
 		len(m.Calls.RefreshCredentials),
 		len(m.Calls.DeactivateMatrixUser)
+}
+
+// ServiceAccountCallCounts returns EnsureServiceAccount and DeleteServiceAccount counts.
+func (m *MockProvisioner) ServiceAccountCallCounts() (ensure, delete int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.Calls.EnsureServiceAccount), len(m.Calls.DeleteServiceAccount)
 }
 
 var _ service.WorkerProvisioner = (*MockProvisioner)(nil)

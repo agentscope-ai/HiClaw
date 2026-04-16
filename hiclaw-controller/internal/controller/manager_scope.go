@@ -20,6 +20,9 @@ func computeManagerPhase(m *v1beta1.Manager, reconcileErr error) string {
 		if m.Status.MatrixUserID == "" {
 			return "Failed"
 		}
+		if m.Status.Phase == "" {
+			return "Pending"
+		}
 		return m.Status.Phase
 	}
 	return m.Spec.DesiredState()

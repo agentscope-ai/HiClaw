@@ -84,9 +84,10 @@ func (m *MockManagerProvisioner) clearCallsLocked() {
 func (m *MockManagerProvisioner) ProvisionManager(ctx context.Context, req service.ManagerProvisionRequest) (*service.ManagerProvisionResult, error) {
 	m.mu.Lock()
 	m.Calls.ProvisionManager = append(m.Calls.ProvisionManager, req)
+	fn := m.ProvisionManagerFn
 	m.mu.Unlock()
-	if m.ProvisionManagerFn != nil {
-		return m.ProvisionManagerFn(ctx, req)
+	if fn != nil {
+		return fn(ctx, req)
 	}
 	return &service.ManagerProvisionResult{
 		MatrixUserID:   "@manager:localhost",
@@ -101,9 +102,10 @@ func (m *MockManagerProvisioner) ProvisionManager(ctx context.Context, req servi
 func (m *MockManagerProvisioner) DeprovisionManager(ctx context.Context, name string, mcpServers []string) error {
 	m.mu.Lock()
 	m.Calls.DeprovisionManager = append(m.Calls.DeprovisionManager, name)
+	fn := m.DeprovisionManagerFn
 	m.mu.Unlock()
-	if m.DeprovisionManagerFn != nil {
-		return m.DeprovisionManagerFn(ctx, name, mcpServers)
+	if fn != nil {
+		return fn(ctx, name, mcpServers)
 	}
 	return nil
 }
@@ -111,9 +113,10 @@ func (m *MockManagerProvisioner) DeprovisionManager(ctx context.Context, name st
 func (m *MockManagerProvisioner) RefreshCredentials(ctx context.Context, name string) (*service.RefreshResult, error) {
 	m.mu.Lock()
 	m.Calls.RefreshCredentials = append(m.Calls.RefreshCredentials, name)
+	fn := m.RefreshCredentialsFn
 	m.mu.Unlock()
-	if m.RefreshCredentialsFn != nil {
-		return m.RefreshCredentialsFn(ctx, name)
+	if fn != nil {
+		return fn(ctx, name)
 	}
 	return &service.RefreshResult{
 		MatrixToken:    "mock-token-manager",
@@ -126,9 +129,10 @@ func (m *MockManagerProvisioner) RefreshCredentials(ctx context.Context, name st
 func (m *MockManagerProvisioner) RefreshManagerCredentials(ctx context.Context, managerName string) (*service.RefreshResult, error) {
 	m.mu.Lock()
 	m.Calls.RefreshManagerCredentials = append(m.Calls.RefreshManagerCredentials, managerName)
+	fn := m.RefreshManagerCredentialsFn
 	m.mu.Unlock()
-	if m.RefreshManagerCredentialsFn != nil {
-		return m.RefreshManagerCredentialsFn(ctx, managerName)
+	if fn != nil {
+		return fn(ctx, managerName)
 	}
 	return &service.RefreshResult{
 		MatrixToken:    "mock-token-manager",
@@ -141,9 +145,10 @@ func (m *MockManagerProvisioner) RefreshManagerCredentials(ctx context.Context, 
 func (m *MockManagerProvisioner) EnsureManagerGatewayAuth(ctx context.Context, managerName, gatewayKey string) error {
 	m.mu.Lock()
 	m.Calls.EnsureManagerGatewayAuth = append(m.Calls.EnsureManagerGatewayAuth, managerName)
+	fn := m.EnsureManagerGatewayAuthFn
 	m.mu.Unlock()
-	if m.EnsureManagerGatewayAuthFn != nil {
-		return m.EnsureManagerGatewayAuthFn(ctx, managerName, gatewayKey)
+	if fn != nil {
+		return fn(ctx, managerName, gatewayKey)
 	}
 	return nil
 }
@@ -151,9 +156,10 @@ func (m *MockManagerProvisioner) EnsureManagerGatewayAuth(ctx context.Context, m
 func (m *MockManagerProvisioner) ReconcileMCPAuth(ctx context.Context, consumerName string, mcpServers []string) ([]string, error) {
 	m.mu.Lock()
 	m.Calls.ReconcileMCPAuth = append(m.Calls.ReconcileMCPAuth, consumerName)
+	fn := m.ReconcileMCPAuthFn
 	m.mu.Unlock()
-	if m.ReconcileMCPAuthFn != nil {
-		return m.ReconcileMCPAuthFn(ctx, consumerName, mcpServers)
+	if fn != nil {
+		return fn(ctx, consumerName, mcpServers)
 	}
 	return mcpServers, nil
 }
@@ -161,9 +167,10 @@ func (m *MockManagerProvisioner) ReconcileMCPAuth(ctx context.Context, consumerN
 func (m *MockManagerProvisioner) EnsureManagerServiceAccount(ctx context.Context, managerName string) error {
 	m.mu.Lock()
 	m.Calls.EnsureManagerServiceAccount = append(m.Calls.EnsureManagerServiceAccount, managerName)
+	fn := m.EnsureManagerServiceAccountFn
 	m.mu.Unlock()
-	if m.EnsureManagerServiceAccountFn != nil {
-		return m.EnsureManagerServiceAccountFn(ctx, managerName)
+	if fn != nil {
+		return fn(ctx, managerName)
 	}
 	return nil
 }
@@ -171,9 +178,10 @@ func (m *MockManagerProvisioner) EnsureManagerServiceAccount(ctx context.Context
 func (m *MockManagerProvisioner) DeleteManagerServiceAccount(ctx context.Context, managerName string) error {
 	m.mu.Lock()
 	m.Calls.DeleteManagerServiceAccount = append(m.Calls.DeleteManagerServiceAccount, managerName)
+	fn := m.DeleteManagerServiceAccountFn
 	m.mu.Unlock()
-	if m.DeleteManagerServiceAccountFn != nil {
-		return m.DeleteManagerServiceAccountFn(ctx, managerName)
+	if fn != nil {
+		return fn(ctx, managerName)
 	}
 	return nil
 }
@@ -181,9 +189,10 @@ func (m *MockManagerProvisioner) DeleteManagerServiceAccount(ctx context.Context
 func (m *MockManagerProvisioner) DeleteCredentials(ctx context.Context, name string) error {
 	m.mu.Lock()
 	m.Calls.DeleteCredentials = append(m.Calls.DeleteCredentials, name)
+	fn := m.DeleteCredentialsFn
 	m.mu.Unlock()
-	if m.DeleteCredentialsFn != nil {
-		return m.DeleteCredentialsFn(ctx, name)
+	if fn != nil {
+		return fn(ctx, name)
 	}
 	return nil
 }
@@ -191,9 +200,10 @@ func (m *MockManagerProvisioner) DeleteCredentials(ctx context.Context, name str
 func (m *MockManagerProvisioner) RequestManagerSAToken(ctx context.Context, managerName string) (string, error) {
 	m.mu.Lock()
 	m.Calls.RequestManagerSAToken = append(m.Calls.RequestManagerSAToken, managerName)
+	fn := m.RequestManagerSATokenFn
 	m.mu.Unlock()
-	if m.RequestManagerSATokenFn != nil {
-		return m.RequestManagerSATokenFn(ctx, managerName)
+	if fn != nil {
+		return fn(ctx, managerName)
 	}
 	return "mock-sa-token-manager", nil
 }
@@ -201,9 +211,10 @@ func (m *MockManagerProvisioner) RequestManagerSAToken(ctx context.Context, mana
 func (m *MockManagerProvisioner) DeactivateMatrixUser(ctx context.Context, name string) error {
 	m.mu.Lock()
 	m.Calls.DeactivateMatrixUser = append(m.Calls.DeactivateMatrixUser, name)
+	fn := m.DeactivateMatrixUserFn
 	m.mu.Unlock()
-	if m.DeactivateMatrixUserFn != nil {
-		return m.DeactivateMatrixUserFn(ctx, name)
+	if fn != nil {
+		return fn(ctx, name)
 	}
 	return nil
 }

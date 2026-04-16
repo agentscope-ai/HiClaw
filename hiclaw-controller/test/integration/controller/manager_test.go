@@ -503,14 +503,6 @@ func TestManagerStateChange_SleepAndWake(t *testing.T) {
 func TestManagerPodDeleted_Recreates(t *testing.T) {
 	resetManagerMocks()
 
-	// Use StatusFn to simulate container presence. Manager's containerName
-	// differs from req.Name (managerContainerName mapping), so the mock's
-	// automatic state tracking doesn't work for Manager. We use StatusFn to
-	// control the simulation explicitly.
-	mockMgrBackend.StatusFn = func(_ context.Context, _ string) (*backend.WorkerResult, error) {
-		return &backend.WorkerResult{Status: backend.StatusRunning}, nil
-	}
-
 	mgrName := fixtures.UniqueName("test-mgr-poddel")
 	mgr := fixtures.NewTestManager(mgrName)
 
@@ -518,17 +510,17 @@ func TestManagerPodDeleted_Recreates(t *testing.T) {
 		t.Fatalf("failed to create Manager CR: %v", err)
 	}
 	t.Cleanup(func() {
-		mockMgrBackend.StatusFn = nil
 		_ = k8sClient.Delete(ctx, mgr)
 	})
 
 	waitForManagerRunning(t, mgr)
 
-	// Simulate external pod deletion: switch Status to NotFound
+	// Simulate external pod deletion via the mock's automatic state tracking.
+	// The ContainerName alias (Issue #1 fix) means "hiclaw-manager" is tracked
+	// alongside req.Name, so SimulatePodDeletion works for Manager now.
+	containerName := managerContainerName(mgrName)
+	mockMgrBackend.SimulatePodDeletion(containerName)
 	mockMgrBackend.ClearCalls()
-	mockMgrBackend.StatusFn = func(_ context.Context, _ string) (*backend.WorkerResult, error) {
-		return &backend.WorkerResult{Status: backend.StatusNotFound}, nil
-	}
 
 	triggerManagerReconcile(t, mgr)
 
@@ -656,10 +648,8 @@ func TestManagerCreate_ConfigDeployFailure_KeepsPhase(t *testing.T) {
 	if m.Status.MatrixUserID == "" {
 		t.Error("MatrixUserID should be set (provision succeeded before config failure)")
 	}
-	// computeManagerPhase: MatrixUserID != "" + err → keeps original Phase (empty on first create)
-	// Phase should NOT be "Failed" because infrastructure was provisioned
-	if m.Status.Phase == "Failed" {
-		t.Error("Phase should not be Failed when infrastructure was successfully provisioned")
+	if m.Status.Phase != "Pending" {
+		t.Errorf("Phase=%q, want Pending (infra provisioned but config failed)", m.Status.Phase)
 	}
 	if m.Status.ObservedGeneration != 0 {
 		t.Errorf("ObservedGeneration=%d, want 0 (should not be written on error)", m.Status.ObservedGeneration)
@@ -707,19 +697,16 @@ func TestManagerCreate_ContainerCreateFailure_ReturnsError(t *testing.T) {
 	}
 }
 
-func TestManagerCreate_ServiceAccountFailure_SelfHeals(t *testing.T) {
-	// SA creation failure during initial provisioning doesn't permanently
-	// block the Manager. After the first reconcile writes MatrixUserID to
-	// status, subsequent reconciles take the refresh path, bypassing SA
-	// creation entirely. The Manager reaches Running despite the SA never
-	// being successfully created.
-	//
-	// Known Issue: SA is never retried after recovery. If the SA is
-	// actually required for operation, the Manager runs without it.
+func TestManagerCreate_ServiceAccountFailure_RetriesOnNextReconcile(t *testing.T) {
 	resetManagerMocks()
 
+	saCallCount := 0
 	mockMgrProv.EnsureManagerServiceAccountFn = func(_ context.Context, _ string) error {
-		return fmt.Errorf("simulated SA creation failure")
+		saCallCount++
+		if saCallCount <= 1 {
+			return fmt.Errorf("simulated SA creation failure")
+		}
+		return nil
 	}
 
 	mgrName := fixtures.UniqueName("test-mgr-safail")
@@ -732,17 +719,12 @@ func TestManagerCreate_ServiceAccountFailure_SelfHeals(t *testing.T) {
 		_ = k8sClient.Delete(ctx, mgr)
 	})
 
-	// Manager self-heals: first reconcile fails at SA but writes
-	// MatrixUserID; second reconcile takes refresh path and succeeds.
+	// SA fails on first reconcile, succeeds on retry → Manager reaches Running.
 	waitForManagerRunning(t, mgr)
 
-	provCount, _, _, _ := mockMgrProv.CallCounts()
-	if provCount == 0 {
-		t.Error("ProvisionManager should have been called")
-	}
 	ensureSA, _ := mockMgrProv.ServiceAccountCallCounts()
-	if ensureSA == 0 {
-		t.Error("EnsureManagerServiceAccount should have been attempted at least once")
+	if ensureSA < 2 {
+		t.Errorf("EnsureManagerServiceAccount called %d times, want >=2 (initial failure + retry)", ensureSA)
 	}
 }
 
@@ -875,6 +857,14 @@ func TestManagerUpdate_MCPServersChange_TriggersReauth(t *testing.T) {
 // ---------------------------------------------------------------------------
 // Manager test helpers
 // ---------------------------------------------------------------------------
+
+// managerContainerName mirrors the controller's naming logic for tests.
+func managerContainerName(name string) string {
+	if name == "default" {
+		return "hiclaw-manager"
+	}
+	return "hiclaw-manager-" + name
+}
 
 func waitForManagerRunning(t *testing.T, mgr *v1beta1.Manager) {
 	t.Helper()

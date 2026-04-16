@@ -45,9 +45,10 @@ func (m *MockEnvBuilder) clearCallsLocked() {
 func (m *MockEnvBuilder) Build(workerName string, prov *service.WorkerProvisionResult) map[string]string {
 	m.mu.Lock()
 	m.Calls.Build = append(m.Calls.Build, workerName)
+	fn := m.BuildFn
 	m.mu.Unlock()
-	if m.BuildFn != nil {
-		return m.BuildFn(workerName, prov)
+	if fn != nil {
+		return fn(workerName, prov)
 	}
 	return map[string]string{
 		"HICLAW_WORKER_NAME": workerName,
