@@ -1,8 +1,11 @@
 package main
 
 import (
+	"os"
 	"strings"
 	"testing"
+
+	sigyaml "sigs.k8s.io/yaml"
 )
 
 func TestExpandPackageURI(t *testing.T) {
@@ -117,36 +120,40 @@ func TestValidateWorkerName(t *testing.T) {
 	}
 }
 
-func TestLoadResources_SingleWorker(t *testing.T) {
-	yaml := `apiVersion: hiclaw.io/v1beta1
+// ---------------------------------------------------------------------------
+// YAML parsing tests — exercise splitYAMLDocs + yamlResource unmarshal,
+// which is the pipeline used by applyFromFiles.
+// ---------------------------------------------------------------------------
+
+func TestParseYAML_SingleWorker(t *testing.T) {
+	input := `apiVersion: hiclaw.io/v1beta1
 kind: Worker
 metadata:
   name: alice
 spec:
   model: claude-sonnet-4-6
 `
-	tmpFile := writeTempYAMLForTest(t, yaml)
-	resources, err := loadResources([]string{tmpFile})
-	if err != nil {
-		t.Fatalf("loadResources failed: %v", err)
+	docs := splitYAMLDocs(input)
+	if len(docs) != 1 {
+		t.Fatalf("expected 1 doc, got %d", len(docs))
 	}
-	if len(resources) != 1 {
-		t.Fatalf("expected 1 resource, got %d", len(resources))
+	var res yamlResource
+	if err := sigyaml.Unmarshal([]byte(docs[0]), &res); err != nil {
+		t.Fatalf("unmarshal failed: %v", err)
 	}
-	r := resources[0]
-	if r.Kind != "Worker" {
-		t.Errorf("expected kind Worker, got %s", r.Kind)
+	if res.Kind != "Worker" {
+		t.Errorf("expected kind Worker, got %s", res.Kind)
 	}
-	if r.Name != "alice" {
-		t.Errorf("expected name alice, got %s", r.Name)
+	if res.Metadata.Name != "alice" {
+		t.Errorf("expected name alice, got %s", res.Metadata.Name)
 	}
-	if r.APIVersion != "hiclaw.io/v1beta1" {
-		t.Errorf("expected apiVersion hiclaw.io/v1beta1, got %s", r.APIVersion)
+	if res.APIVersion != "hiclaw.io/v1beta1" {
+		t.Errorf("expected apiVersion hiclaw.io/v1beta1, got %s", res.APIVersion)
 	}
 }
 
-func TestLoadResources_MultiDocument(t *testing.T) {
-	yaml := `apiVersion: hiclaw.io/v1beta1
+func TestParseYAML_MultiDocument(t *testing.T) {
+	input := `apiVersion: hiclaw.io/v1beta1
 kind: Team
 metadata:
   name: alpha-team
@@ -169,27 +176,32 @@ metadata:
 spec:
   model: qwen3.5-plus
 `
-	tmpFile := writeTempYAMLForTest(t, yaml)
-	resources, err := loadResources([]string{tmpFile})
-	if err != nil {
-		t.Fatalf("loadResources failed: %v", err)
+	docs := splitYAMLDocs(input)
+	if len(docs) != 3 {
+		t.Fatalf("expected 3 docs, got %d", len(docs))
 	}
-	if len(resources) != 3 {
-		t.Fatalf("expected 3 resources, got %d", len(resources))
+
+	expected := []struct {
+		kind string
+		name string
+	}{
+		{"Team", "alpha-team"},
+		{"Human", "john"},
+		{"Worker", "bob"},
 	}
-	if resources[0].Kind != "Team" || resources[0].Name != "alpha-team" {
-		t.Errorf("resource 0: expected Team/alpha-team, got %s/%s", resources[0].Kind, resources[0].Name)
-	}
-	if resources[1].Kind != "Human" || resources[1].Name != "john" {
-		t.Errorf("resource 1: expected Human/john, got %s/%s", resources[1].Kind, resources[1].Name)
-	}
-	if resources[2].Kind != "Worker" || resources[2].Name != "bob" {
-		t.Errorf("resource 2: expected Worker/bob, got %s/%s", resources[2].Kind, resources[2].Name)
+	for i, exp := range expected {
+		var res yamlResource
+		if err := sigyaml.Unmarshal([]byte(docs[i]), &res); err != nil {
+			t.Fatalf("doc %d unmarshal failed: %v", i, err)
+		}
+		if res.Kind != exp.kind || res.Metadata.Name != exp.name {
+			t.Errorf("doc %d: expected %s/%s, got %s/%s", i, exp.kind, exp.name, res.Kind, res.Metadata.Name)
+		}
 	}
 }
 
-func TestLoadResources_SkipsEmptyDocs(t *testing.T) {
-	yaml := `---
+func TestParseYAML_SkipsEmptyDocs(t *testing.T) {
+	input := `---
 ---
 apiVersion: hiclaw.io/v1beta1
 kind: Worker
@@ -200,52 +212,56 @@ spec:
 ---
 ---
 `
-	tmpFile := writeTempYAMLForTest(t, yaml)
-	resources, err := loadResources([]string{tmpFile})
-	if err != nil {
-		t.Fatalf("loadResources failed: %v", err)
-	}
-	if len(resources) != 1 {
-		t.Fatalf("expected 1 resource (empty docs skipped), got %d", len(resources))
+	docs := splitYAMLDocs(input)
+	// splitYAMLDocs should only return non-empty docs
+	if len(docs) != 1 {
+		t.Fatalf("expected 1 non-empty doc, got %d", len(docs))
 	}
 }
 
-func TestLoadResources_SkipsMissingName(t *testing.T) {
-	yaml := `apiVersion: hiclaw.io/v1beta1
+func TestParseYAML_MissingNameSkipped(t *testing.T) {
+	input := `apiVersion: hiclaw.io/v1beta1
 kind: Worker
 spec:
   model: test
 `
-	tmpFile := writeTempYAMLForTest(t, yaml)
-	resources, err := loadResources([]string{tmpFile})
-	if err != nil {
-		t.Fatalf("loadResources failed: %v", err)
+	docs := splitYAMLDocs(input)
+	if len(docs) != 1 {
+		t.Fatalf("expected 1 doc, got %d", len(docs))
 	}
-	if len(resources) != 0 {
-		t.Fatalf("expected 0 resources (no name), got %d", len(resources))
+	var res yamlResource
+	if err := sigyaml.Unmarshal([]byte(docs[0]), &res); err != nil {
+		t.Fatalf("unmarshal failed: %v", err)
+	}
+	// applyFromFiles skips resources with empty Name
+	if res.Metadata.Name != "" {
+		t.Fatalf("expected empty name, got %q", res.Metadata.Name)
 	}
 }
 
-func TestLoadResources_SkipsMissingKind(t *testing.T) {
-	yaml := `apiVersion: hiclaw.io/v1beta1
+func TestParseYAML_MissingKindSkipped(t *testing.T) {
+	input := `apiVersion: hiclaw.io/v1beta1
 metadata:
   name: alice
 spec:
   model: test
 `
-	tmpFile := writeTempYAMLForTest(t, yaml)
-	resources, err := loadResources([]string{tmpFile})
-	if err != nil {
-		t.Fatalf("loadResources failed: %v", err)
+	docs := splitYAMLDocs(input)
+	if len(docs) != 1 {
+		t.Fatalf("expected 1 doc, got %d", len(docs))
 	}
-	if len(resources) != 0 {
-		t.Fatalf("expected 0 resources (no kind), got %d", len(resources))
+	var res yamlResource
+	if err := sigyaml.Unmarshal([]byte(docs[0]), &res); err != nil {
+		t.Fatalf("unmarshal failed: %v", err)
+	}
+	// applyFromFiles skips resources with empty Kind
+	if res.Kind != "" {
+		t.Fatalf("expected empty kind, got %q", res.Kind)
 	}
 }
 
-func TestLoadResources_NameInMetadataOnly(t *testing.T) {
-	// "name:" under spec should NOT be picked up as resource name
-	yaml := `apiVersion: hiclaw.io/v1beta1
+func TestParseYAML_NameInMetadataOnly(t *testing.T) {
+	input := `apiVersion: hiclaw.io/v1beta1
 kind: Team
 metadata:
   name: my-team
@@ -255,16 +271,17 @@ spec:
   workers:
     - name: worker-name
 `
-	tmpFile := writeTempYAMLForTest(t, yaml)
-	resources, err := loadResources([]string{tmpFile})
-	if err != nil {
-		t.Fatalf("loadResources failed: %v", err)
+	docs := splitYAMLDocs(input)
+	if len(docs) != 1 {
+		t.Fatalf("expected 1 doc, got %d", len(docs))
 	}
-	if len(resources) != 1 {
-		t.Fatalf("expected 1 resource, got %d", len(resources))
+	var res yamlResource
+	if err := sigyaml.Unmarshal([]byte(docs[0]), &res); err != nil {
+		t.Fatalf("unmarshal failed: %v", err)
 	}
-	if resources[0].Name != "my-team" {
-		t.Errorf("expected name my-team (from metadata), got %s", resources[0].Name)
+	// metadata.name should be "my-team", not confused with spec.leader.name
+	if res.Metadata.Name != "my-team" {
+		t.Errorf("expected name my-team (from metadata), got %s", res.Metadata.Name)
 	}
 }
 
@@ -292,144 +309,8 @@ func TestSplitYAMLDocs(t *testing.T) {
 	}
 }
 
-func TestOrderForApply(t *testing.T) {
-	resources := []resource{
-		{Kind: "Human", Name: "john"},
-		{Kind: "Worker", Name: "alice"},
-		{Kind: "Team", Name: "alpha"},
-		{Kind: "Worker", Name: "bob"},
-		{Kind: "Human", Name: "jane"},
-	}
-
-	ordered := orderForApply(resources)
-
-	// Expected order: Team -> Worker -> Human
-	if ordered[0].Kind != "Team" {
-		t.Errorf("expected first to be Team, got %s", ordered[0].Kind)
-	}
-	if ordered[1].Kind != "Worker" || ordered[2].Kind != "Worker" {
-		t.Errorf("expected workers at positions 1-2, got %s, %s", ordered[1].Kind, ordered[2].Kind)
-	}
-	if ordered[3].Kind != "Human" || ordered[4].Kind != "Human" {
-		t.Errorf("expected humans at positions 3-4, got %s, %s", ordered[3].Kind, ordered[4].Kind)
-	}
-}
-
-func TestWriteTempYAML(t *testing.T) {
-	content := "kind: Worker\nmetadata:\n  name: test"
-	path, err := writeTempYAML(content)
-	if err != nil {
-		t.Fatalf("writeTempYAML failed: %v", err)
-	}
-	if path == "" {
-		t.Fatal("writeTempYAML returned empty path")
-	}
-}
-
-// Helper to create temp YAML file for tests
-func writeTempYAMLForTest(t *testing.T, content string) string {
-	t.Helper()
-	path, err := writeTempYAML(content)
-	if err != nil {
-		t.Fatalf("failed to write temp YAML: %v", err)
-	}
-	t.Cleanup(func() {
-		// os.Remove(path) // uncomment to auto-clean
-		_ = path
-	})
-	return path
-}
-
-func TestExtractPackageField(t *testing.T) {
-	tests := []struct {
-		name     string
-		yaml     string
-		expected string
-	}{
-		{
-			name: "nacos package",
-			yaml: `apiVersion: hiclaw.io/v1beta1
-kind: Worker
-metadata:
-  name: alice
-spec:
-  package: nacos://admin:pass@host:8848/ns/my-spec/v1
-  model: claude-sonnet-4-6
-`,
-			expected: "nacos://admin:pass@host:8848/ns/my-spec/v1",
-		},
-		{
-			name: "http package",
-			yaml: `apiVersion: hiclaw.io/v1beta1
-kind: Worker
-metadata:
-  name: bob
-spec:
-  package: https://example.com/worker.zip
-  model: qwen3.5-plus
-`,
-			expected: "https://example.com/worker.zip",
-		},
-		{
-			name: "no package field",
-			yaml: `apiVersion: hiclaw.io/v1beta1
-kind: Worker
-metadata:
-  name: charlie
-spec:
-  model: qwen3.5-plus
-`,
-			expected: "",
-		},
-		{
-			name: "no spec section",
-			yaml: `apiVersion: hiclaw.io/v1beta1
-kind: Worker
-metadata:
-  name: dave
-`,
-			expected: "",
-		},
-		{
-			name: "package outside spec is ignored",
-			yaml: `apiVersion: hiclaw.io/v1beta1
-kind: Worker
-metadata:
-  name: eve
-  package: should-be-ignored
-spec:
-  model: test
-`,
-			expected: "",
-		},
-		{
-			name: "package in nested section under spec is still found",
-			yaml: `apiVersion: hiclaw.io/v1beta1
-kind: Worker
-metadata:
-  name: frank
-spec:
-  model: test
-  package: nacos://host:8848/ns/spec
-  skills:
-    - github-operations
-`,
-			expected: "nacos://host:8848/ns/spec",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := extractPackageField(tt.yaml)
-			if got != tt.expected {
-				t.Errorf("extractPackageField() = %q, want %q", got, tt.expected)
-			}
-		})
-	}
-}
-
-func TestLoadResources_WorkerWithInlineFields(t *testing.T) {
-	yaml := `apiVersion: hiclaw.io/v1beta1
+func TestParseYAML_WorkerWithInlineFields(t *testing.T) {
+	input := `apiVersion: hiclaw.io/v1beta1
 kind: Worker
 metadata:
   name: alice
@@ -442,33 +323,118 @@ spec:
     # Alice - DevOps Worker
     ## Role
     CI/CD pipeline management
-  agents: |
-    ## Behavior
-    Monitor pipelines proactively
 `
-	tmpFile := writeTempYAMLForTest(t, yaml)
-	resources, err := loadResources([]string{tmpFile})
+	docs := splitYAMLDocs(input)
+	if len(docs) != 1 {
+		t.Fatalf("expected 1 doc, got %d", len(docs))
+	}
+	var res yamlResource
+	if err := sigyaml.Unmarshal([]byte(docs[0]), &res); err != nil {
+		t.Fatalf("unmarshal failed: %v", err)
+	}
+	if res.Kind != "Worker" {
+		t.Errorf("expected kind Worker, got %s", res.Kind)
+	}
+	if res.Metadata.Name != "alice" {
+		t.Errorf("expected name alice, got %s", res.Metadata.Name)
+	}
+	if _, ok := res.Spec["identity"]; !ok {
+		t.Error("spec should contain identity field")
+	}
+	if _, ok := res.Spec["soul"]; !ok {
+		t.Error("spec should contain soul field")
+	}
+}
+
+func TestParseYAML_PackageFieldInSpec(t *testing.T) {
+	tests := []struct {
+		name     string
+		yaml     string
+		wantPkg  string
+	}{
+		{
+			name: "nacos package",
+			yaml: `apiVersion: hiclaw.io/v1beta1
+kind: Worker
+metadata:
+  name: alice
+spec:
+  package: nacos://admin:pass@host:8848/ns/my-spec/v1
+  model: claude-sonnet-4-6
+`,
+			wantPkg: "nacos://admin:pass@host:8848/ns/my-spec/v1",
+		},
+		{
+			name: "http package",
+			yaml: `apiVersion: hiclaw.io/v1beta1
+kind: Worker
+metadata:
+  name: bob
+spec:
+  package: https://example.com/worker.zip
+  model: qwen3.5-plus
+`,
+			wantPkg: "https://example.com/worker.zip",
+		},
+		{
+			name: "no package field",
+			yaml: `apiVersion: hiclaw.io/v1beta1
+kind: Worker
+metadata:
+  name: charlie
+spec:
+  model: qwen3.5-plus
+`,
+			wantPkg: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			docs := splitYAMLDocs(tt.yaml)
+			if len(docs) != 1 {
+				t.Fatalf("expected 1 doc, got %d", len(docs))
+			}
+			var res yamlResource
+			if err := sigyaml.Unmarshal([]byte(docs[0]), &res); err != nil {
+				t.Fatalf("unmarshal failed: %v", err)
+			}
+			got, _ := res.Spec["package"].(string)
+			if got != tt.wantPkg {
+				t.Errorf("spec.package = %q, want %q", got, tt.wantPkg)
+			}
+		})
+	}
+}
+
+func TestApplyFromFiles_Integration(t *testing.T) {
+	// Verify applyFromFiles reads and parses a real temp file without panicking.
+	// It will fail on the HTTP call, but we can verify the file-reading + parsing path.
+	content := `apiVersion: hiclaw.io/v1beta1
+kind: Worker
+metadata:
+  name: alice
+spec:
+  model: test
+`
+	tmpFile, err := os.CreateTemp("", "hiclaw-test-*.yaml")
 	if err != nil {
-		t.Fatalf("loadResources failed: %v", err)
+		t.Fatalf("create temp file: %v", err)
 	}
-	if len(resources) != 1 {
-		t.Fatalf("expected 1 resource, got %d", len(resources))
+	defer os.Remove(tmpFile.Name())
+	if _, err := tmpFile.WriteString(content); err != nil {
+		t.Fatalf("write temp file: %v", err)
 	}
-	r := resources[0]
-	if r.Kind != "Worker" {
-		t.Errorf("expected kind Worker, got %s", r.Kind)
+	tmpFile.Close()
+
+	// applyFromFiles will fail when trying to reach the controller API,
+	// but it should get past file reading and YAML parsing without error.
+	err = applyFromFiles([]string{tmpFile.Name()})
+	// We expect an HTTP error, not a parse error
+	if err == nil {
+		t.Fatal("expected error from API call, got nil")
 	}
-	if r.Name != "alice" {
-		t.Errorf("expected name alice, got %s", r.Name)
-	}
-	// Verify the raw YAML preserves inline fields
-	if !strings.Contains(r.Raw, "identity:") {
-		t.Error("raw YAML should contain identity field")
-	}
-	if !strings.Contains(r.Raw, "soul:") {
-		t.Error("raw YAML should contain soul field")
-	}
-	if !strings.Contains(r.Raw, "agents:") {
-		t.Error("raw YAML should contain agents field")
+	if strings.Contains(err.Error(), "read ") || strings.Contains(err.Error(), "parse YAML") {
+		t.Fatalf("expected API error, got file/parse error: %v", err)
 	}
 }

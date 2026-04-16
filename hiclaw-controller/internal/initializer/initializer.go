@@ -11,6 +11,7 @@ import (
 	v1beta1 "github.com/hiclaw/hiclaw-controller/api/v1beta1"
 	"github.com/hiclaw/hiclaw-controller/internal/gateway"
 	"github.com/hiclaw/hiclaw-controller/internal/matrix"
+	"github.com/hiclaw/hiclaw-controller/internal/migration"
 	"github.com/hiclaw/hiclaw-controller/internal/oss"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -30,6 +31,7 @@ type Config struct {
 	AdminPassword  string
 	Namespace      string
 	IsEmbedded     bool // embedded mode: use static service sources for local services
+	AgentFSDir     string // local filesystem root for agent workspaces (embedded mode)
 
 	// Gateway initialization
 	LLMProvider   string // e.g. "qwen", "openai"
@@ -94,6 +96,20 @@ func (i *Initializer) Run(ctx context.Context) error {
 		logger.Info("Manager CR ensured", "name", "default")
 	}
 
+	// Migrate v1.0.9 registry data to CRs (embedded mode only)
+	if i.Config.IsEmbedded {
+		migrator := &migration.Migrator{
+			OSS:          i.OSS,
+			RestCfg:      i.RestCfg,
+			Namespace:    i.Config.Namespace,
+			DefaultModel: i.Config.ManagerModel,
+			AgentFSDir:   i.Config.AgentFSDir,
+		}
+		if err := migrator.Run(ctx); err != nil {
+			logger.Error(err, "registry migration failed (non-fatal, continuing)")
+		}
+	}
+
 	logger.Info("cluster initialization complete")
 	return nil
 }
@@ -101,11 +117,11 @@ func (i *Initializer) Run(ctx context.Context) error {
 // waitForOSS polls MinIO/OSS until the bucket is accessible.
 func (i *Initializer) waitForOSS(ctx context.Context) error {
 	if bm, ok := i.OSS.(oss.BucketManager); ok {
-		return retry(ctx, 3*time.Second, 120*time.Second, func() error {
+		return retry(ctx, 3*time.Second, 5*time.Minute, func() error {
 			return bm.EnsureBucket(ctx)
 		})
 	}
-	return retry(ctx, 3*time.Second, 120*time.Second, func() error {
+	return retry(ctx, 3*time.Second, 5*time.Minute, func() error {
 		_, err := i.OSS.ListObjects(ctx, "")
 		return err
 	})
@@ -131,7 +147,7 @@ func (i *Initializer) ensureOSSStructure(ctx context.Context) error {
 
 // waitForMatrix polls the Matrix server until it responds.
 func (i *Initializer) waitForMatrix(ctx context.Context) error {
-	return retry(ctx, 3*time.Second, 120*time.Second, func() error {
+	return retry(ctx, 3*time.Second, 5*time.Minute, func() error {
 		_, err := i.Matrix.Login(ctx, "__healthcheck__", "invalid")
 		if err != nil && isMatrixConnError(err) {
 			return err
@@ -151,7 +167,7 @@ func (i *Initializer) registerAdmin(ctx context.Context) error {
 
 // waitForGateway polls the Higress Console until it responds.
 func (i *Initializer) waitForGateway(ctx context.Context) error {
-	return retry(ctx, 3*time.Second, 120*time.Second, func() error {
+	return retry(ctx, 3*time.Second, 5*time.Minute, func() error {
 		return i.Gateway.Healthy(ctx)
 	})
 }

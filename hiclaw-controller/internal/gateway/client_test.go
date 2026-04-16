@@ -8,8 +8,24 @@ import (
 	"testing"
 )
 
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
+
+func newGatewayTestClient(handler http.HandlerFunc) *http.Client {
+	return &http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+			return rec.Result(), nil
+		}),
+	}
+}
+
 func TestEnsureConsumer_Created(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	client := newGatewayTestClient(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/system/init":
 			w.WriteHeader(http.StatusOK)
@@ -23,13 +39,12 @@ func TestEnsureConsumer_Created(t *testing.T) {
 			w.WriteHeader(http.StatusNotFound)
 		}
 	}))
-	defer server.Close()
 
 	c := NewHigressClient(Config{
-		ConsoleURL:    server.URL,
+		ConsoleURL:    "http://higress.test",
 		AdminUser:     "admin",
 		AdminPassword: "admin",
-	}, server.Client())
+	}, client)
 
 	result, err := c.EnsureConsumer(context.Background(), ConsumerRequest{
 		Name:          "worker-alice",
@@ -47,7 +62,7 @@ func TestEnsureConsumer_Created(t *testing.T) {
 }
 
 func TestEnsureConsumer_Exists(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	client := newGatewayTestClient(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/system/init":
 			w.WriteHeader(http.StatusOK)
@@ -60,9 +75,8 @@ func TestEnsureConsumer_Exists(t *testing.T) {
 			w.WriteHeader(http.StatusNotFound)
 		}
 	}))
-	defer server.Close()
 
-	c := NewHigressClient(Config{ConsoleURL: server.URL}, server.Client())
+	c := NewHigressClient(Config{ConsoleURL: "http://higress.test"}, client)
 	result, err := c.EnsureConsumer(context.Background(), ConsumerRequest{
 		Name:          "worker-bob",
 		CredentialKey: "key-xyz",
@@ -76,8 +90,10 @@ func TestEnsureConsumer_Exists(t *testing.T) {
 }
 
 func TestAuthorizeAIRoutes(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	client := newGatewayTestClient(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.URL.Path == "/system/init":
+			w.WriteHeader(http.StatusOK)
 		case r.URL.Path == "/session/login":
 			http.SetCookie(w, &http.Cookie{Name: "session", Value: "test"})
 			w.WriteHeader(http.StatusOK)
@@ -110,9 +126,8 @@ func TestAuthorizeAIRoutes(t *testing.T) {
 			w.WriteHeader(http.StatusOK)
 		}
 	}))
-	defer server.Close()
 
-	c := NewHigressClient(Config{ConsoleURL: server.URL}, server.Client())
+	c := NewHigressClient(Config{ConsoleURL: "http://higress.test"}, client)
 	if err := c.AuthorizeAIRoutes(context.Background(), "worker-alice"); err != nil {
 		t.Fatalf("AuthorizeAIRoutes: %v", err)
 	}
@@ -120,8 +135,10 @@ func TestAuthorizeAIRoutes(t *testing.T) {
 
 func TestExposePort(t *testing.T) {
 	var calledDomain, calledSvcSrc, calledRoute bool
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	client := newGatewayTestClient(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.URL.Path == "/system/init":
+			w.WriteHeader(http.StatusOK)
 		case r.URL.Path == "/session/login":
 			http.SetCookie(w, &http.Cookie{Name: "session", Value: "test"})
 			w.WriteHeader(http.StatusOK)
@@ -138,9 +155,8 @@ func TestExposePort(t *testing.T) {
 			w.WriteHeader(http.StatusOK)
 		}
 	}))
-	defer server.Close()
 
-	c := NewHigressClient(Config{ConsoleURL: server.URL}, server.Client())
+	c := NewHigressClient(Config{ConsoleURL: "http://higress.test"}, client)
 	err := c.ExposePort(context.Background(), PortExposeRequest{
 		WorkerName: "alice",
 		Port:       3000,
@@ -156,7 +172,7 @@ func TestExposePort(t *testing.T) {
 
 func TestSessionReauth(t *testing.T) {
 	loginCount := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	client := newGatewayTestClient(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/system/init":
 			w.WriteHeader(http.StatusOK)
@@ -174,9 +190,8 @@ func TestSessionReauth(t *testing.T) {
 			w.WriteHeader(http.StatusNotFound)
 		}
 	}))
-	defer server.Close()
 
-	c := NewHigressClient(Config{ConsoleURL: server.URL}, server.Client())
+	c := NewHigressClient(Config{ConsoleURL: "http://higress.test"}, client)
 
 	// First call triggers 401 which clears cookies
 	c.EnsureConsumer(context.Background(), ConsumerRequest{Name: "test", CredentialKey: "k"})
@@ -185,5 +200,76 @@ func TestSessionReauth(t *testing.T) {
 
 	if loginCount < 2 {
 		t.Errorf("expected at least 2 logins after 401, got %d", loginCount)
+	}
+}
+
+func TestEnsureConsumer_EmbeddedFallbackConvergesPassword(t *testing.T) {
+	currentPassword := "admin"
+	changePasswordCalled := false
+	loginPasswords := []string{}
+
+	client := newGatewayTestClient(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/system/init":
+			w.WriteHeader(http.StatusOK)
+		case "/session/login":
+			var body map[string]string
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatalf("decode login body: %v", err)
+			}
+			loginPasswords = append(loginPasswords, body["password"])
+			if body["username"] == "admin" && body["password"] == currentPassword {
+				http.SetCookie(w, &http.Cookie{Name: "session", Value: "test"})
+				w.WriteHeader(http.StatusOK)
+				return
+			}
+			w.WriteHeader(http.StatusUnauthorized)
+		case "/user/changePassword":
+			var body map[string]string
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatalf("decode changePassword body: %v", err)
+			}
+			if body["oldPassword"] != "admin" || body["newPassword"] != "target-secret" {
+				t.Fatalf("unexpected changePassword payload: %+v", body)
+			}
+			changePasswordCalled = true
+			currentPassword = body["newPassword"]
+			w.WriteHeader(http.StatusOK)
+		case "/v1/consumers":
+			w.WriteHeader(http.StatusOK)
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+
+	c := NewHigressClient(Config{
+		ConsoleURL:                "http://higress.test",
+		AdminUser:                 "admin",
+		AdminPassword:             "target-secret",
+		AllowDefaultAdminFallback: true,
+	}, client)
+
+	result, err := c.EnsureConsumer(context.Background(), ConsumerRequest{
+		Name:          "worker-alice",
+		CredentialKey: "key-abc-123",
+	})
+	if err != nil {
+		t.Fatalf("EnsureConsumer: %v", err)
+	}
+	if result.Status != "created" {
+		t.Errorf("Status = %q, want created", result.Status)
+	}
+	if !changePasswordCalled {
+		t.Fatal("expected changePassword to be called after embedded fallback login")
+	}
+	if currentPassword != "target-secret" {
+		t.Fatalf("currentPassword = %q, want target-secret", currentPassword)
+	}
+	if len(loginPasswords) != 3 {
+		t.Fatalf("expected 3 login attempts, got %d (%v)", len(loginPasswords), loginPasswords)
+	}
+	if loginPasswords[0] != "target-secret" || loginPasswords[1] != "admin" || loginPasswords[2] != "target-secret" {
+		t.Fatalf("unexpected login password sequence: %v", loginPasswords)
 	}
 }

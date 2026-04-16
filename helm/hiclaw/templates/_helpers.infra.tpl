@@ -47,14 +47,6 @@ materialized condition flag.
 {{- if and (eq .Values.gateway.provider "higress") (eq .Values.gateway.mode "managed") -}}true{{- else -}}false{{- end -}}
 {{- end }}
 
-{{- define "hiclaw.gateway.adminSecretName" -}}
-{{- if and (eq .Values.gateway.provider "higress") (eq .Values.gateway.mode "managed") -}}higress-console{{- end -}}
-{{- end }}
-
-{{- define "hiclaw.gateway.adminPasswordKey" -}}
-{{- if and (eq .Values.gateway.provider "higress") (eq .Values.gateway.mode "managed") -}}adminPassword{{- end -}}
-{{- end }}
-
 {{- define "hiclaw.storage.endpoint" -}}
 {{- if and (eq .Values.storage.provider "minio") (eq .Values.storage.mode "managed") -}}
 {{- include "hiclaw.minio.internalURL" . -}}

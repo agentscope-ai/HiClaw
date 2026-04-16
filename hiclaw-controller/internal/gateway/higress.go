@@ -6,10 +6,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"math/rand"
 	"net/http"
 	"strings"
-	"log"
 	"sync"
 	"time"
 )
@@ -48,8 +48,6 @@ func (c *HigressClient) ensureSession(ctx context.Context) error {
 
 	// Initialize admin account on first boot (idempotent — succeeds if already initialized).
 	// Higress Console requires /system/init before login works.
-	// Race note: the Higress all-in-one base image may auto-initialize with admin/admin
-	// before we get here. We retry init to win the race when possible.
 	initBody := fmt.Sprintf(`{"adminUser":{"name":%q,"password":%q,"displayName":%q}}`,
 		c.config.AdminUser, c.config.AdminPassword, c.config.AdminUser)
 	initReq, err := http.NewRequestWithContext(ctx, http.MethodPost,
@@ -65,37 +63,81 @@ func (c *HigressClient) ensureSession(ctx context.Context) error {
 	}
 	initResp.Body.Close()
 
-	// Try login with configured password first, then fallback to default admin/admin
-	// (Higress all-in-one may have auto-initialized with default credentials).
-	passwords := []string{c.config.AdminPassword}
-	if c.config.AdminPassword != "admin" {
-		passwords = append(passwords, "admin")
+	// Steady state should use the configured password. Embedded all-in-one boot
+	// may briefly win the race and initialize itself with the upstream default
+	// admin/admin before HiClaw reaches /system/init. In that bootstrap-only
+	// case, recover with admin/admin once, converge the password, then re-login
+	// with the configured credentials.
+	if err := c.loginLocked(ctx, c.config.AdminUser, c.config.AdminPassword); err == nil {
+		return nil
+	} else if !c.config.AllowDefaultAdminFallback || c.config.AdminUser != "admin" || c.config.AdminPassword == "admin" {
+		return err
 	}
 
-	for _, pw := range passwords {
-		body := fmt.Sprintf(`{"username":%q,"password":%q}`, c.config.AdminUser, pw)
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-			c.config.ConsoleURL+"/session/login",
-			strings.NewReader(body))
-		if err != nil {
-			return err
-		}
-		req.Header.Set("Content-Type", "application/json")
-
-		resp, err := c.http.Do(req)
-		if err != nil {
-			return fmt.Errorf("higress login: %w", err)
-		}
-
-		if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusCreated {
-			c.cookies = resp.Cookies()
-			resp.Body.Close()
-			return nil
-		}
-		resp.Body.Close()
+	if err := c.loginLocked(ctx, "admin", "admin"); err != nil {
+		return fmt.Errorf("higress login with configured credentials failed; fallback admin/admin login also failed: %w", err)
 	}
 
-	return fmt.Errorf("higress login: all credential attempts failed")
+	if err := c.changePasswordLocked(ctx, "admin", c.config.AdminPassword); err != nil {
+		return fmt.Errorf("higress default admin/admin login succeeded but password convergence failed: %w", err)
+	}
+
+	c.cookies = nil
+	if err := c.loginLocked(ctx, c.config.AdminUser, c.config.AdminPassword); err != nil {
+		return fmt.Errorf("higress password converged but relogin with configured credentials failed: %w", err)
+	}
+	return nil
+}
+
+func (c *HigressClient) loginLocked(ctx context.Context, username, password string) error {
+	body := fmt.Sprintf(`{"username":%q,"password":%q}`, username, password)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		c.config.ConsoleURL+"/session/login",
+		strings.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("higress login: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusCreated {
+		c.cookies = resp.Cookies()
+		return nil
+	}
+
+	return fmt.Errorf("higress login failed for user %q: HTTP %d (check higress-console state/secret)", username, resp.StatusCode)
+}
+
+func (c *HigressClient) changePasswordLocked(ctx context.Context, oldPassword, newPassword string) error {
+	body := fmt.Sprintf(`{"oldPassword":%q,"newPassword":%q}`, oldPassword, newPassword)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		c.config.ConsoleURL+"/user/changePassword",
+		strings.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	for _, cookie := range c.cookies {
+		req.AddCookie(cookie)
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("higress change password: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusCreated {
+		return nil
+	}
+
+	respBody, _ := io.ReadAll(resp.Body)
+	return fmt.Errorf("higress change password failed: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
 }
 
 func (c *HigressClient) EnsureConsumer(ctx context.Context, req ConsumerRequest) (*ConsumerResult, error) {

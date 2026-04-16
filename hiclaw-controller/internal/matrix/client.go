@@ -34,6 +34,11 @@ type Client interface {
 	// Login obtains an access token for an existing user.
 	Login(ctx context.Context, username, password string) (string, error)
 
+	// DeactivateUser permanently deactivates a Matrix account via the
+	// Synapse Admin API. The user will no longer be able to log in.
+	// Message history is preserved (erase=false).
+	DeactivateUser(ctx context.Context, username string) error
+
 	// UserID builds a full Matrix user ID from a localpart.
 	UserID(localpart string) string
 }
@@ -268,6 +273,29 @@ func (c *TuwunelClient) SendMessage(ctx context.Context, roomID, token, body str
 	}
 	if statusCode != http.StatusOK && statusCode != http.StatusCreated {
 		return fmt.Errorf("send message to %s: HTTP %d", roomID, statusCode)
+	}
+	return nil
+}
+
+func (c *TuwunelClient) DeactivateUser(ctx context.Context, username string) error {
+	token, err := c.ensureAdminToken(ctx)
+	if err != nil {
+		return fmt.Errorf("deactivate user %s: %w", username, err)
+	}
+	userID := c.UserID(username)
+	body := map[string]interface{}{"erase": false}
+
+	statusCode, err := c.doJSON(ctx, http.MethodPost,
+		fmt.Sprintf("/_synapse/admin/v1/deactivate/%s", encodeRoomID(userID)),
+		token, body, nil)
+	if err != nil {
+		return fmt.Errorf("deactivate user %s: %w", username, err)
+	}
+	if statusCode == http.StatusNotFound {
+		return nil
+	}
+	if statusCode != http.StatusOK {
+		return fmt.Errorf("deactivate user %s: HTTP %d", username, statusCode)
 	}
 	return nil
 }

@@ -220,6 +220,55 @@ _setup_manager_identity() {
         return 0
     }
 
+    # Verify Gateway consumer and AI route authorization before sending messages
+    log "Verifying Gateway authorization for Manager..."
+    local _gw_ready=false _gw_elapsed=0
+    local _console_url="http://${TEST_MANAGER_HOST}:${TEST_CONSOLE_PORT:-18001}"
+    local _gw_url="http://${TEST_MANAGER_HOST}:${TEST_GATEWAY_PORT:-18080}"
+    local _cookie_file="/tmp/higress-test-cookie-$$"
+    local _mgr_key
+    _mgr_key=$(grep HICLAW_MANAGER_GATEWAY_KEY "${HICLAW_ENV_FILE:-${HOME}/hiclaw-manager.env}" 2>/dev/null | cut -d= -f2-)
+    while [ "${_gw_elapsed}" -lt 60 ]; do
+        # Login to Higress console and check manager consumer
+        curl -sf -X POST "${_console_url}/session/login" \
+            -H 'Content-Type: application/json' \
+            -c "${_cookie_file}" \
+            -d '{"username":"'"${TEST_ADMIN_USER}"'","password":"'"${TEST_ADMIN_PASSWORD}"'"}' >/dev/null 2>&1 || true
+        if curl -sf "${_console_url}/v1/consumers" -b "${_cookie_file}" 2>/dev/null | grep -q '"manager"'; then
+            if [ -n "${_mgr_key}" ]; then
+                # Test actual LLM call through gateway with a minimal chat completion request
+                local _gw_resp _gw_code
+                _gw_resp=$(curl -s -w "\n%{http_code}" \
+                    -X POST "${_gw_url}/v1/chat/completions" \
+                    -H "Authorization: Bearer ${_mgr_key}" \
+                    -H "Content-Type: application/json" \
+                    -d '{"model":"'"${HICLAW_DEFAULT_MODEL:-qwen3.5-plus}"'","messages":[{"role":"user","content":"hi"}],"max_tokens":1}' 2>/dev/null || echo -e "\n000")
+                _gw_code=$(echo "${_gw_resp}" | tail -1)
+                if [ "${_gw_code}" = "200" ]; then
+                    _gw_ready=true
+                    break
+                elif [ "${_gw_code}" != "401" ] && [ "${_gw_code}" != "403" ]; then
+                    # Non-auth error (e.g. 400, 500) — gateway auth is working, model may just be wrong
+                    log "Gateway returned HTTP ${_gw_code} (non-auth error, authorization is working)"
+                    _gw_ready=true
+                    break
+                fi
+                log "Gateway returned HTTP ${_gw_code}, retrying... (${_gw_elapsed}s/60s)"
+            fi
+        fi
+        sleep 2
+        _gw_elapsed=$((_gw_elapsed + 2))
+    done
+    rm -f "${_cookie_file}"
+    if [ "${_gw_ready}" != "true" ]; then
+        local _last_body
+        _last_body=$(echo "${_gw_resp}" | sed '$d')
+        error "Gateway authorization not ready after 60s (HTTP ${_gw_code})"
+        error "Response: ${_last_body}"
+        exit 1
+    fi
+    log "Gateway authorization verified"
+
     # Send identity setup message
     matrix_send_message "${admin_token}" "${dm_room}" \
         "Here is my identity configuration for you:

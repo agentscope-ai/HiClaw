@@ -281,8 +281,8 @@ fi
 # Cloud (aliyun) mode: skip entirely (Higress managed externally)
 # ============================================================
 _HIGRESS_CONSOLE_URL=""
-_HIGRESS_USER="${HICLAW_HIGRESS_ADMIN_USER:-${HICLAW_ADMIN_USER}}"
-_HIGRESS_PASS="${HICLAW_HIGRESS_ADMIN_PASSWORD:-${HICLAW_ADMIN_PASSWORD}}"
+_HIGRESS_USER="${HICLAW_ADMIN_USER}"
+_HIGRESS_PASS="${HICLAW_ADMIN_PASSWORD}"
 if [ "${HICLAW_RUNTIME}" = "k8s" ]; then
     log "K8s mode: skipping Higress initialization (handled by controller)"
 elif [ "${HICLAW_RUNTIME}" != "aliyun" ]; then
