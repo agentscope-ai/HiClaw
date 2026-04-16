@@ -31,7 +31,7 @@ func TestMinIOClient_FullPathNoLeadingSlash(t *testing.T) {
 func TestMinIOAdminClient_BuildWorkerPolicy(t *testing.T) {
 	c := NewMinIOAdminClient(Config{Bucket: "hiclaw-storage"})
 
-	policy := c.buildWorkerPolicy("worker-1", "hiclaw-storage", "team-dev")
+	policy := c.buildWorkerPolicy("worker-1", "hiclaw-storage", "team-dev", false)
 
 	if policy.Version != "2012-10-17" {
 		t.Errorf("Version = %q", policy.Version)
@@ -72,13 +72,54 @@ func TestMinIOAdminClient_BuildWorkerPolicy(t *testing.T) {
 func TestMinIOAdminClient_BuildWorkerPolicyNoTeam(t *testing.T) {
 	c := NewMinIOAdminClient(Config{Bucket: "hiclaw-storage"})
 
-	policy := c.buildWorkerPolicy("worker-solo", "hiclaw-storage", "")
+	policy := c.buildWorkerPolicy("worker-solo", "hiclaw-storage", "", false)
 
 	rwStmt := policy.Statement[1]
 	for _, r := range rwStmt.Resource {
 		if r == "arn:aws:s3:::hiclaw-storage/teams/*" {
 			t.Error("solo worker should not have team resource")
 		}
+		if r == "arn:aws:s3:::hiclaw-storage/manager/*" {
+			t.Error("non-manager worker should not have manager resource")
+		}
+	}
+}
+
+func TestMinIOAdminClient_BuildManagerPolicy(t *testing.T) {
+	c := NewMinIOAdminClient(Config{Bucket: "hiclaw-storage"})
+
+	policy := c.buildWorkerPolicy("default", "hiclaw-storage", "", true)
+
+	if len(policy.Statement) != 2 {
+		t.Fatalf("expected 2 statements, got %d", len(policy.Statement))
+	}
+
+	// Verify manager prefix in list conditions
+	listStmt := policy.Statement[0]
+	condition := listStmt.Condition["StringLike"].(map[string]interface{})
+	prefixes := condition["s3:prefix"].([]string)
+	hasManager := false
+	for _, p := range prefixes {
+		if p == "manager" || p == "manager/*" {
+			hasManager = true
+			break
+		}
+	}
+	if !hasManager {
+		t.Errorf("expected manager prefix in list conditions: %v", prefixes)
+	}
+
+	// Verify manager resource in RW statement
+	rwStmt := policy.Statement[1]
+	hasManagerResource := false
+	for _, r := range rwStmt.Resource {
+		if r == "arn:aws:s3:::hiclaw-storage/manager/*" {
+			hasManagerResource = true
+			break
+		}
+	}
+	if !hasManagerResource {
+		t.Errorf("expected manager resource in RW statement: %v", rwStmt.Resource)
 	}
 }
 

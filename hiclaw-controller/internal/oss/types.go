@@ -22,4 +22,5 @@ type PolicyRequest struct {
 	WorkerName string // worker name (used as MinIO username and in path scoping)
 	Bucket     string // bucket name, e.g. "hiclaw-storage"
 	TeamName   string // optional: grants additional access to teams/<teamName>/ prefix
+	IsManager  bool   // when true, grants additional access to manager/ prefix for workspace sync
 }

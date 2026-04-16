@@ -161,6 +161,7 @@ if [ "${HICLAW_RUNTIME}" = "k8s" ]; then
     log "Configuring mc alias for cluster MinIO..."
     mc alias set hiclaw "${HICLAW_FS_ENDPOINT}" "${HICLAW_FS_ACCESS_KEY}" "${HICLAW_FS_SECRET_KEY}"
     log "Syncing workspace from MinIO..."
+    mc mirror "${HICLAW_STORAGE_PREFIX}/manager/" /root/manager-workspace/ --overwrite 2>/dev/null || true
     mc mirror "${HICLAW_STORAGE_PREFIX}/" "${HICLAW_FS}/" --overwrite 2>/dev/null || true
     ln -sfn "${HICLAW_FS}" /root/manager-workspace/hiclaw-fs
     touch "${HICLAW_FS}/.initialized"

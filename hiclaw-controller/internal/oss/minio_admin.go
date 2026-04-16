@@ -64,7 +64,7 @@ func (c *MinIOAdminClient) EnsurePolicy(ctx context.Context, req PolicyRequest) 
 		bucket = c.config.Bucket
 	}
 
-	policy := c.buildWorkerPolicy(req.WorkerName, bucket, req.TeamName)
+	policy := c.buildWorkerPolicy(req.WorkerName, bucket, req.TeamName, req.IsManager)
 	policyJSON, err := json.MarshalIndent(policy, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal policy: %w", err)
@@ -121,7 +121,7 @@ type s3PolicyStatement struct {
 	Condition map[string]interface{} `json:"Condition,omitempty"`
 }
 
-func (c *MinIOAdminClient) buildWorkerPolicy(workerName, bucket, teamName string) s3Policy {
+func (c *MinIOAdminClient) buildWorkerPolicy(workerName, bucket, teamName string, isManager bool) s3Policy {
 	listPrefixes := []string{
 		fmt.Sprintf("agents/%s", workerName),
 		fmt.Sprintf("agents/%s/*", workerName),
@@ -131,6 +131,16 @@ func (c *MinIOAdminClient) buildWorkerPolicy(workerName, bucket, teamName string
 	rwResources := []string{
 		fmt.Sprintf("arn:aws:s3:::%s/agents/%s/*", bucket, workerName),
 		fmt.Sprintf("arn:aws:s3:::%s/shared/*", bucket),
+	}
+
+	if isManager {
+		listPrefixes = append(listPrefixes,
+			"manager",
+			"manager/*",
+		)
+		rwResources = append(rwResources,
+			fmt.Sprintf("arn:aws:s3:::%s/manager/*", bucket),
+		)
 	}
 
 	if teamName != "" {
