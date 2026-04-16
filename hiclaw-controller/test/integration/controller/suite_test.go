@@ -33,10 +33,17 @@ var (
 	ctx       context.Context
 	cancel    context.CancelFunc
 
+	// Worker mocks
 	mockProv    *mocks.MockProvisioner
 	mockDeploy  *mocks.MockDeployer
 	mockBackend *mocks.MockWorkerBackend
 	mockEnv     *mocks.MockEnvBuilder
+
+	// Manager mocks
+	mockMgrProv    *mocks.MockManagerProvisioner
+	mockMgrDeploy  *mocks.MockManagerDeployer
+	mockMgrBackend *mocks.MockWorkerBackend
+	mockMgrEnv     *mocks.MockManagerEnvBuilder
 )
 
 func TestMain(m *testing.M) {
@@ -67,27 +74,49 @@ func TestMain(m *testing.M) {
 		panic(fmt.Sprintf("failed to create k8s client: %v", err))
 	}
 
-	// Wire up mocks
+	// Wire up Worker mocks
 	mockProv = mocks.NewMockProvisioner()
 	mockDeploy = mocks.NewMockDeployer()
 	mockBackend = mocks.NewMockWorkerBackend()
 	mockEnv = mocks.NewMockEnvBuilder()
 
-	backendRegistry := backend.NewRegistry(
+	workerBackendRegistry := backend.NewRegistry(
 		[]backend.WorkerBackend{mockBackend},
 		nil,
 	)
 
-	reconciler := &controller.WorkerReconciler{
+	workerReconciler := &controller.WorkerReconciler{
 		Client:      mgr.GetClient(),
 		Provisioner: mockProv,
 		Deployer:    mockDeploy,
-		Backend:     backendRegistry,
+		Backend:     workerBackendRegistry,
 		EnvBuilder:  mockEnv,
 		Legacy:      nil,
 	}
-	if err := reconciler.SetupWithManager(mgr); err != nil {
+	if err := workerReconciler.SetupWithManager(mgr); err != nil {
 		panic(fmt.Sprintf("failed to setup WorkerReconciler: %v", err))
+	}
+
+	// Wire up Manager mocks
+	mockMgrProv = mocks.NewMockManagerProvisioner()
+	mockMgrDeploy = mocks.NewMockManagerDeployer()
+	mockMgrBackend = mocks.NewMockWorkerBackend()
+	mockMgrEnv = mocks.NewMockManagerEnvBuilder()
+
+	mgrBackendRegistry := backend.NewRegistry(
+		[]backend.WorkerBackend{mockMgrBackend},
+		nil,
+	)
+
+	managerReconciler := &controller.ManagerReconciler{
+		Client:      mgr.GetClient(),
+		Provisioner: mockMgrProv,
+		Deployer:    mockMgrDeploy,
+		Backend:     mgrBackendRegistry,
+		EnvBuilder:  mockMgrEnv,
+	}
+	if err := managerReconciler.SetupWithManager(mgr); err != nil {
+		panic(fmt.Sprintf("failed to setup ManagerReconciler: %v", err))
 	}
 
 	go func() {
@@ -117,6 +146,14 @@ func resetMocks() {
 	mockDeploy.Reset()
 	mockBackend.Reset()
 	mockEnv.Reset()
+}
+
+// resetManagerMocks resets all Manager mock call records and Fn overrides.
+func resetManagerMocks() {
+	mockMgrProv.Reset()
+	mockMgrDeploy.Reset()
+	mockMgrBackend.Reset()
+	mockMgrEnv.Reset()
 }
 
 // suppress unused import for v1beta1
