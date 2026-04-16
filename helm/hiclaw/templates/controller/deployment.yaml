@@ -8,7 +8,7 @@ metadata:
   labels:
     {{- include "hiclaw.component.labels" $comp | nindent 4 }}
 spec:
-  replicas: 1
+  replicas: {{ .Values.controller.replicaCount | default 1 }}
   selector:
     matchLabels:
       {{- include "hiclaw.component.selectorLabels" $comp | nindent 6 }}

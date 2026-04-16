@@ -124,6 +124,7 @@ higress:
 
 # ── Controller (CRD reconciler + worker lifecycle + gateway + credentials) ─
 controller:
+  replicaCount: 1               # increase for HA with leader election
   image:
     repository: higress-registry.cn-hangzhou.cr.aliyuncs.com/higress/hiclaw-controller
     tag: ""                   # defaults to global.imageTag

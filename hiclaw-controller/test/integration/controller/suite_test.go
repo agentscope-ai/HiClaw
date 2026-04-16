@@ -15,6 +15,7 @@ import (
 	"github.com/hiclaw/hiclaw-controller/test/testutil"
 	"github.com/hiclaw/hiclaw-controller/test/testutil/mocks"
 	"go.uber.org/zap/zapcore"
+	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
@@ -29,6 +30,7 @@ const (
 
 var (
 	testEnv   *envtest.Environment
+	restCfg   *rest.Config // shared with leaderelection_test.go
 	k8sClient client.Client
 	ctx       context.Context
 	cancel    context.CancelFunc
@@ -43,7 +45,8 @@ func TestMain(m *testing.M) {
 	testEnv = testutil.NewTestEnv()
 	scheme := testutil.Scheme()
 
-	cfg, err := testEnv.Start()
+	var err error
+	restCfg, err = testEnv.Start()
 	if err != nil {
 		panic(fmt.Sprintf("failed to start envtest: %v", err))
 	}
@@ -51,7 +54,7 @@ func TestMain(m *testing.M) {
 	ctx, cancel = context.WithCancel(context.Background())
 	ctrl.SetLogger(zap.New(zap.UseDevMode(true), zap.Level(zapcore.InfoLevel)))
 
-	mgr, err := ctrl.NewManager(cfg, ctrl.Options{
+	mgr, err := ctrl.NewManager(restCfg, ctrl.Options{
 		Scheme: scheme,
 		Metrics: metricsserver.Options{
 			BindAddress: "0", // disable metrics server in tests
@@ -62,7 +65,7 @@ func TestMain(m *testing.M) {
 	}
 
 	// Create a cacheless client so tests always read the latest state.
-	k8sClient, err = client.New(cfg, client.Options{Scheme: scheme})
+	k8sClient, err = client.New(restCfg, client.Options{Scheme: scheme})
 	if err != nil {
 		panic(fmt.Sprintf("failed to create k8s client: %v", err))
 	}
