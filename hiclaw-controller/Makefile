@@ -1,4 +1,4 @@
-.PHONY: build build-controller build-cli clean test test-unit test-integration test-all
+.PHONY: build build-controller build-cli clean test test-unit test-integration test-all generate
 
 # --- Build ---
 
@@ -39,6 +39,17 @@ test-integration: setup-envtest
 	go test -tags=integration -race -count=1 -v -timeout=120s ./test/integration/...
 
 test-all: test-unit test-integration
+
+# --- Code generation ---
+
+CONTROLLER_GEN ?= $(GOBIN)/controller-gen
+CONTROLLER_GEN_VERSION ?= v0.15.0
+
+generate: $(CONTROLLER_GEN)
+	$(CONTROLLER_GEN) object:headerFile=/dev/null paths=./api/...
+
+$(CONTROLLER_GEN):
+	go install sigs.k8s.io/controller-tools/cmd/controller-gen@$(CONTROLLER_GEN_VERSION)
 
 # --- Tools ---
 

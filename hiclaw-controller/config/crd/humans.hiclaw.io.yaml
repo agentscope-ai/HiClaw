@@ -14,33 +14,41 @@ spec:
           properties:
             spec:
               type: object
-              required: [displayName, permissionLevel]
+              required: [displayName]
               properties:
                 displayName:
                   type: string
                 email:
                   type: string
                   format: email
-                permissionLevel:
-                  type: integer
-                  minimum: 1
-                  maximum: 3
-                  description: "1=Admin equivalent, 2=Team-scoped, 3=Worker-only (inclusive)"
-                accessibleTeams:
-                  type: array
-                  items:
-                    type: string
-                  description: Teams this human can access (L2)
-                accessibleWorkers:
-                  type: array
-                  items:
-                    type: string
-                  description: Standalone workers this human can access (L2/L3)
                 note:
                   type: string
+                superAdmin:
+                  type: boolean
+                  description: "When true, grants access to every Team and Worker. Must not be set together with teamAccess/workerAccess."
+                teamAccess:
+                  type: array
+                  description: "Per-team access declarations (replaces accessibleTeams and Team.spec.admin)."
+                  items:
+                    type: object
+                    required: [team, role]
+                    properties:
+                      team:
+                        type: string
+                      role:
+                        type: string
+                        enum: [admin, member]
+                workerAccess:
+                  type: array
+                  description: "Direct worker-level access (replaces accessibleWorkers)."
+                  items:
+                    type: string
             status:
               type: object
               properties:
+                observedGeneration:
+                  type: integer
+                  format: int64
                 phase:
                   type: string
                   enum: [Pending, Active, Failed]
@@ -57,15 +65,35 @@ spec:
                   type: boolean
                 message:
                   type: string
+                conditions:
+                  type: array
+                  items:
+                    type: object
+                    required: [type, status, lastTransitionTime, reason, message]
+                    properties:
+                      type:
+                        type: string
+                      status:
+                        type: string
+                      observedGeneration:
+                        type: integer
+                        format: int64
+                      lastTransitionTime:
+                        type: string
+                        format: date-time
+                      reason:
+                        type: string
+                      message:
+                        type: string
       subresources:
         status: {}
       additionalPrinterColumns:
         - name: Display Name
           type: string
           jsonPath: .spec.displayName
-        - name: Level
-          type: integer
-          jsonPath: .spec.permissionLevel
+        - name: SuperAdmin
+          type: boolean
+          jsonPath: .spec.superAdmin
         - name: Phase
           type: string
           jsonPath: .status.phase

@@ -30,16 +30,16 @@
 
 ## Stage 1: API Types 与 CRD Schema
 
-- [ ] **5. Rewrite hiclaw-controller/api/v1beta1/types.go**
+- [x] **5. Rewrite hiclaw-controller/api/v1beta1/types.go**
     - Worker: add `Role`, `TeamRef`; status add `TeamRef`, `Conditions`
     - Team: remove `Leader`, `Workers`, `Admin`; add `Heartbeat`, `WorkerIdleTimeout`; rewrite status with observations
     - Human: remove `PermissionLevel`, `AccessibleTeams`, `AccessibleWorkers`; add `SuperAdmin`, `TeamAccess`, `WorkerAccess`
     - Add: `TeamHeartbeatSpec`, `TeamLeaderObservation`, `TeamMemberObservation`, `TeamAdminObservation`, `TeamAccessEntry`
     - Remove: `LeaderSpec`, `TeamWorkerSpec`, `TeamAdminSpec`, `TeamLeaderHeartbeatSpec`
-- [ ] **6. Regenerate zz_generated.deepcopy.go** (`make generate`)
-- [ ] **7. Rewrite config/crd/workers.hiclaw.io.yaml** with new fields + printer columns
-- [ ] **8. Rewrite config/crd/teams.hiclaw.io.yaml** removing leader/workers/admin
-- [ ] **9. Rewrite config/crd/humans.hiclaw.io.yaml** with new fields
+- [x] **6. Regenerate zz_generated.deepcopy.go** (`make generate` — added generate target to Makefile)
+- [x] **7. Rewrite config/crd/workers.hiclaw.io.yaml** with new fields + printer columns
+- [x] **8. Rewrite config/crd/teams.hiclaw.io.yaml** removing leader/workers/admin
+- [x] **9. Rewrite config/crd/humans.hiclaw.io.yaml** with new fields
 
 ---
 
@@ -184,7 +184,9 @@
 
 [2026-04-17] - planner - Planning phase completed, ready for execution - PENDING APPROVAL - Awaiting "ENTER EXECUTE MODE" signal
 
-[2026-04-17_Batch-1] - executor - Stage 0 完成 (Items 3-4): 为 team-worker-proposal.md 添加 SUPERSEDED banner, 为 team-worker-ownership-issues.md 添加 RESOLVED banner - UNCONFIRMED - 两份旧文档顶部均指向新方案文档 team-refactor-plan.md
+[2026-04-17_Batch-1] - executor - Stage 0 完成 (Items 3-4): 为 team-worker-proposal.md 添加 SUPERSEDED banner, 为 team-worker-ownership-issues.md 添加 RESOLVED banner - SUCCESSFUL - committed as 5ae23f3
+
+[2026-04-17_Batch-2] - executor - Stage 1 完成 (Items 5-9): 重写 api/v1beta1/types.go (新增 Worker.Role/TeamRef, Team 瘦身, Human teamAccess/workerAccess/superAdmin), 在 Makefile 添加 generate target 并重新生成 zz_generated.deepcopy.go, 重写 3 份 CRD YAML - UNCONFIRMED - api 包编译通过且无 lint 错误。项目其他包预期会编译失败，待 Stage 2-11 修复。
 
 <!-- END EXECUTION LOG -->
 
@@ -199,7 +201,7 @@
 ## 完成度统计
 
 - Stage 0 (Docs)：4 / 4
-- Stage 1 (API Types)：0 / 5
+- Stage 1 (API Types)：5 / 5
 - Stage 2 (Service)：0 / 4
 - Stage 3 (Webhook)：0 / 5
 - Stage 4 (Team Reconciler)：0 / 10
@@ -213,4 +215,4 @@
 - Stage 12 (Integration Tests)：0 / 5
 - Stage 13 (Docs & Validation)：0 / 11
 
-**Total: 4 / 80**
+**Total: 9 / 80**

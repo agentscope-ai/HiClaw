@@ -14,7 +14,7 @@ spec:
           properties:
             spec:
               type: object
-              required: [leader, workers]
+              description: "Team is a pure coordination CR. It does not embed Worker specs. Members are observed via list of Worker CRs with spec.teamRef matching this Team's name; admins are observed via list of Human CRs with teamAccess entries."
               properties:
                 description:
                   type: string
@@ -23,7 +23,7 @@ spec:
                   description: "Whether team workers can @mention each other in group rooms (default: true)"
                 channelPolicy:
                   type: object
-                  description: "Team-wide communication policy overrides (applied to all members)"
+                  description: "Team-wide communication policy defaults (merged into per-worker effective policy)"
                   properties:
                     groupAllowExtra:
                       type: array
@@ -41,134 +41,24 @@ spec:
                       type: array
                       items:
                         type: string
-                admin:
+                heartbeat:
                   type: object
-                  description: "Team-specific admin (human). Has admin authority within this team."
+                  description: "Leader heartbeat configuration"
                   properties:
-                    name:
+                    enabled:
+                      type: boolean
+                    every:
                       type: string
-                      description: "Human name (must exist in humans-registry)"
-                    matrixUserId:
-                      type: string
-                      description: "Matrix user ID (e.g. @john:domain)"
-                leader:
-                  type: object
-                  required: [name]
-                  properties:
-                    name:
-                      type: string
-                    model:
-                      type: string
-                    identity:
-                      type: string
-                    soul:
-                      type: string
-                    agents:
-                      type: string
-                    package:
-                      type: string
-                    heartbeat:
-                      type: object
-                      properties:
-                        enabled:
-                          type: boolean
-                        every:
-                          type: string
-                    workerIdleTimeout:
-                      type: string
-                    state:
-                      type: string
-                      enum: [Running, Sleeping, Stopped]
-                      description: "Desired lifecycle state for the team leader (default: Running)"
-                    channelPolicy:
-                      type: object
-                      properties:
-                        groupAllowExtra:
-                          type: array
-                          items:
-                            type: string
-                        groupDenyExtra:
-                          type: array
-                          items:
-                            type: string
-                        dmAllowExtra:
-                          type: array
-                          items:
-                            type: string
-                        dmDenyExtra:
-                          type: array
-                          items:
-                            type: string
-                workers:
-                  type: array
-                  items:
-                    type: object
-                    required: [name]
-                    properties:
-                      name:
-                        type: string
-                      model:
-                        type: string
-                      runtime:
-                        type: string
-                        enum: [openclaw, copaw]
-                      image:
-                        type: string
-                      identity:
-                        type: string
-                      soul:
-                        type: string
-                      agents:
-                        type: string
-                      skills:
-                        type: array
-                        items:
-                          type: string
-                      mcpServers:
-                        type: array
-                        items:
-                          type: string
-                      package:
-                        type: string
-                      expose:
-                        type: array
-                        description: Ports to expose via Higress gateway
-                        items:
-                          type: object
-                          required: [port]
-                          properties:
-                            port:
-                              type: integer
-                            protocol:
-                              type: string
-                              enum: [http, grpc]
-                              default: http
-                      channelPolicy:
-                        type: object
-                        properties:
-                          groupAllowExtra:
-                            type: array
-                            items:
-                              type: string
-                          groupDenyExtra:
-                            type: array
-                            items:
-                              type: string
-                          dmAllowExtra:
-                            type: array
-                            items:
-                              type: string
-                          dmDenyExtra:
-                            type: array
-                            items:
-                              type: string
-                      state:
-                        type: string
-                        enum: [Running, Sleeping, Stopped]
-                        description: "Desired lifecycle state for this team worker (default: Running)"
+                      description: "Heartbeat interval, e.g. 15m, 1h (Go duration format)"
+                workerIdleTimeout:
+                  type: string
+                  description: "Idle timeout for team workers, e.g. 720m (Go duration format)"
             status:
               type: object
               properties:
+                observedGeneration:
+                  type: integer
+                  format: int64
                 phase:
                   type: string
                   enum: [Pending, Active, Degraded, Failed]
@@ -176,30 +66,78 @@ spec:
                   type: string
                 leaderDMRoomID:
                   type: string
-                leaderReady:
-                  type: boolean
-                readyWorkers:
+                leader:
+                  type: object
+                  description: "Observed team leader (nil if no leader or multiple leaders detected)"
+                  properties:
+                    name:
+                      type: string
+                    matrixUserID:
+                      type: string
+                    ready:
+                      type: boolean
+                members:
+                  type: array
+                  description: "Observed team_worker Workers (ordered by name)"
+                  items:
+                    type: object
+                    properties:
+                      name:
+                        type: string
+                      role:
+                        type: string
+                      matrixUserID:
+                        type: string
+                      ready:
+                        type: boolean
+                admins:
+                  type: array
+                  description: "Observed Humans with teamAccess[].role=admin targeting this Team"
+                  items:
+                    type: object
+                    properties:
+                      humanName:
+                        type: string
+                      matrixUserID:
+                        type: string
+                totalMembers:
                   type: integer
-                totalWorkers:
+                readyMembers:
                   type: integer
                 message:
                   type: string
-                workerExposedPorts:
-                  type: object
-                  description: Exposed ports per worker name
-                  x-kubernetes-preserve-unknown-fields: true
+                conditions:
+                  type: array
+                  items:
+                    type: object
+                    required: [type, status, lastTransitionTime, reason, message]
+                    properties:
+                      type:
+                        type: string
+                      status:
+                        type: string
+                      observedGeneration:
+                        type: integer
+                        format: int64
+                      lastTransitionTime:
+                        type: string
+                        format: date-time
+                      reason:
+                        type: string
+                      message:
+                        type: string
       subresources:
         status: {}
       additionalPrinterColumns:
         - name: Leader
           type: string
-          jsonPath: .spec.leader.name
-        - name: Workers
+          jsonPath: .status.leader.name
+        - name: Members
           type: integer
-          jsonPath: .status.totalWorkers
+          jsonPath: .status.totalMembers
         - name: Ready
           type: integer
-          jsonPath: .status.readyWorkers
+          jsonPath: .status.readyMembers
         - name: Phase
           type: string
           jsonPath: .status.phase
