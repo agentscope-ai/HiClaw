@@ -55,26 +55,28 @@
 
 ## Stage 3: Webhook Package
 
-- [ ] **14. Create internal/webhook/webhook.go** (dispatcher + RegisterWithManager)
-- [ ] **15. Create internal/webhook/worker_validator.go**
-- [ ] **16. Create internal/webhook/team_validator.go**
-- [ ] **17. Create internal/webhook/human_validator.go**
-- [ ] **18. Add webhook validator tests** (worker/team/human `_test.go`)
+- [x] **14. Create internal/webhook/webhook.go** (Validators aggregate + RegisterWithManager)
+- [x] **15. Create internal/webhook/worker_validator.go**
+- [x] **16. Create internal/webhook/team_validator.go**
+- [x] **17. Create internal/webhook/human_validator.go**
+- [x] **18. Add webhook validator tests** (worker/team/human `_test.go`) — 30 table-driven cases all passing
+- [x] **18.5 (supporting)**: Added internal/webhook/validators.go with shared helpers (validateDNSLabel, validateDuration, validateStringEnum, aggregateErrors)
 
 ---
 
 ## Stage 4: TeamReconciler 重写
 
-- [ ] **19. Delete old team_controller.go**
-- [ ] **20. Create new team_controller.go** (main loop + SetupWithManager with Watches)
-- [ ] **21. Create team_scope.go**
-- [ ] **22. Create team_phase.go**
-- [ ] **23. Create team_reconcile_members.go**
-- [ ] **24. Create team_reconcile_admins.go**
-- [ ] **25. Create team_reconcile_rooms.go**
-- [ ] **26. Create team_reconcile_storage.go**
-- [ ] **27. Create team_reconcile_legacy.go**
-- [ ] **28. Create team_reconcile_delete.go** (no Worker deletion)
+- [x] **19. Delete old team_controller.go** (completed via overwrite with new content)
+- [x] **20. Create new team_controller.go** (Reconcile loop + defer-patch status + SetupWithManager with Watches(Worker) + Watches(Human) + mappers + predicates)
+- [x] **21. Create team_scope.go** (teamScope: team, patchBase, leader, members, multipleLeader, admins)
+- [x] **22. Create team_phase.go** (computeTeamPhase + effectivePeerMentions helper)
+- [x] **23. Create team_reconcile_members.go** (reconcileMembers + projectMembers/Leader + countReady + setCondition helper)
+- [x] **24. Create team_reconcile_admins.go** (reconcileAdmins → Team.status.admins)
+- [x] **25. Create team_reconcile_rooms.go** (reconcileRooms → EnsureTeamRooms + ReconcileTeamRoomMembership with desired sets)
+- [x] **26. Create team_reconcile_storage.go** (reconcileStorage non-critical)
+- [x] **27. Create team_reconcile_legacy.go** (teams-registry entry derived from status, nil-safe)
+- [x] **28. Create team_reconcile_delete.go** (CleanupTeamInfra + registry remove + finalizer; **no Worker deletion**)
+- [x] **28.5 (supporting)**: Deleted obsolete team_controller_test.go (tested removed helpers leaderHeartbeatEvery / summarizeTeamWorkerReadiness; replaced by integration tests in Stage 12)
 
 ---
 
@@ -189,7 +191,11 @@
 
 [2026-04-17_Batch-2] - executor - Stage 1 完成 (Items 5-9): 重写 api/v1beta1/types.go (新增 Worker.Role/TeamRef, Team 瘦身, Human teamAccess/workerAccess/superAdmin), 在 Makefile 添加 generate target 并重新生成 zz_generated.deepcopy.go, 重写 3 份 CRD YAML - SUCCESSFUL - committed as d99f5b1
 
-[2026-04-17_Batch-3] - executor - Stage 2 完成 (Items 10-13 + 支持改动): 扩展 matrix.Client (InviteRoom/KickRoom/ListRoomMembers); provisioner.go 重命名 ProvisionTeamRooms 为 EnsureTeamRooms 并新增 ReconcileTeamRoomMembership/CleanupTeamInfra/EnsureTeamStorage(移自 Deployer), ProvisionerConfig 新增 OSS 字段; deployer.go 移除 InjectCoordinationContext/CoordinationDeployRequest/EnsureTeamStorage 并新增 WriteLeaderCoordinationContext/LeaderCoordinationRequest; 新建 observer.go 实现 TeamObserver (ListTeamMembers/ListTeamAdmins) + WorkerObservation/HumanObservation 投影类型; 重写 interfaces.go 新增 TeamProvisioner/TeamObserver 接口 + 编译时满足性检查; app.go 向 Provisioner 传递 OSS 客户端 - UNCONFIRMED - api + matrix + service 三包全部编译通过无 lint 错误; controller/server/cmd 包预期编译失败 (待 Stage 4-11 修复)
+[2026-04-17_Batch-3] - executor - Stage 2 完成 (Items 10-13 + 支持改动): 扩展 matrix.Client (InviteRoom/KickRoom/ListRoomMembers); provisioner.go 重命名 ProvisionTeamRooms 为 EnsureTeamRooms 并新增 ReconcileTeamRoomMembership/CleanupTeamInfra/EnsureTeamStorage(移自 Deployer), ProvisionerConfig 新增 OSS 字段; deployer.go 移除 InjectCoordinationContext/CoordinationDeployRequest/EnsureTeamStorage 并新增 WriteLeaderCoordinationContext/LeaderCoordinationRequest; 新建 observer.go 实现 TeamObserver (ListTeamMembers/ListTeamAdmins) + WorkerObservation/HumanObservation 投影类型; 重写 interfaces.go 新增 TeamProvisioner/TeamObserver 接口 + 编译时满足性检查; app.go 向 Provisioner 传递 OSS 客户端 - SUCCESSFUL - committed as bf91b87
+
+[2026-04-17_Batch-4] - executor - Stage 3 完成 (Items 14-18): 新建 internal/webhook 包; validators.go (共享 helpers: validateDNSLabel/validateDuration/validateStringEnum/aggregateErrors); worker_validator.go (WorkerValidator: role/teamRef 一致性 + runtime enum + state enum + DNS-1123 + leader 唯一性 peer check 通过 label selector); team_validator.go (heartbeat/workerIdleTimeout duration + DNS-1123); human_validator.go (superAdmin 排斥 teamAccess/workerAccess + teamAccess role enum + team 唯一性 + 必填校验); webhook.go (Validators 聚合结构 + RegisterWithManager 用于 incluster 模式 ValidatingWebhook); 3 份 table-driven 测试共 30 个 case 全部通过 - SUCCESSFUL - committed as a0b898a
+
+[2026-04-17_Batch-5] - executor - Stage 4 完成 (Items 19-28): TeamReconciler 从 582 行旧单文件完全重写为 9 个 phase-based declarative 文件, 严格对齐 Worker/Manager reconciler 重构后的范式; team_controller.go (Reconcile 主循环 + patchBase + defer-patch status + ObservedGeneration 仅成功时写 + SetupWithManager 挂接 Watches(Worker, workerToTeamsMapper+workerTeamRefPredicates) 和 Watches(Human, humanToTeamsMapper+humanTeamAccessPredicates)); team_scope.go (teamScope 结构); team_phase.go (computeTeamPhase 基于 leader/rooms/multipleLeader 综合判定 Pending/Active/Degraded/Failed + effectivePeerMentions 默认值); team_reconcile_members.go (list Workers 分类 leader/workers, 检测 0/1/2+ leader, 写 LeaderResolved/NoLeader/MultipleLeaders/MembersHealthy conditions, 投影 Team.status.leader/members, setCondition 通用 upsert 工具); team_reconcile_admins.go (list Humans 过滤 teamAccess role=admin → Team.status.admins); team_reconcile_rooms.go (EnsureTeamRooms + ReconcileTeamRoomMembership with desired sets for Team Room + Leader DM Room, LeaderNotReady/TeamRoomReady conditions); team_reconcile_storage.go (非关键 EnsureTeamStorage 调用); team_reconcile_legacy.go (teams-registry 条目从 scope 观察派生而非 spec, nil-safe); team_reconcile_delete.go (finalizer path 只清理 CleanupTeamInfra + legacy registry, 永不删除 Worker CR); 删除过时 team_controller_test.go (测试移除的 helpers) - UNCONFIRMED - 9 份新文件全部编译干净无 lint 错误; controller 包剩余 4 个编译错误全部在 human_controller.go 是 Stage 5 scope
 
 <!-- END EXECUTION LOG -->
 
@@ -206,8 +212,8 @@
 - Stage 0 (Docs)：4 / 4
 - Stage 1 (API Types)：5 / 5
 - Stage 2 (Service)：4 / 4
-- Stage 3 (Webhook)：0 / 5
-- Stage 4 (Team Reconciler)：0 / 10
+- Stage 3 (Webhook)：5 / 5
+- Stage 4 (Team Reconciler)：10 / 10
 - Stage 5 (Human Reconciler)：0 / 7
 - Stage 6 (Worker Reconciler)：0 / 5
 - Stage 7 (Manager Reconciler)：0 / 4
@@ -218,4 +224,4 @@
 - Stage 12 (Integration Tests)：0 / 5
 - Stage 13 (Docs & Validation)：0 / 11
 
-**Total: 13 / 80**
+**Total: 28 / 80**
