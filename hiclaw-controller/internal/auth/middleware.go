@@ -131,7 +131,7 @@ func (m *Middleware) resolveResourceTeam(ctx context.Context, kind, name string)
 	if err := m.k8s.Get(ctx, key, &worker); err != nil {
 		return ""
 	}
-	return worker.Annotations["hiclaw.io/team"]
+	return worker.Labels[v1beta1.LabelTeam]
 }
 
 func (m *Middleware) authenticateAndEnrich(r *http.Request) (*CallerIdentity, bool) {

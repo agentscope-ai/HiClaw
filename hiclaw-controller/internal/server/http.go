@@ -9,6 +9,7 @@ import (
 	"github.com/hiclaw/hiclaw-controller/internal/gateway"
 	"github.com/hiclaw/hiclaw-controller/internal/oss"
 	"github.com/hiclaw/hiclaw-controller/internal/proxy"
+	hiclawwebhook "github.com/hiclaw/hiclaw-controller/internal/webhook"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
@@ -21,6 +22,7 @@ type ServerDeps struct {
 	OSS        oss.StorageClient
 	STS        *credentials.STSService
 	AuthMw     *authpkg.Middleware
+	Validators *hiclawwebhook.Validators
 	KubeMode   string
 	Namespace  string
 	SocketPath string // Docker proxy (embedded only)
@@ -47,7 +49,7 @@ func NewHTTPServer(addr string, deps ServerDeps) *HTTPServer {
 	mux.Handle("GET /api/v1/version", mw.Authenticate(http.HandlerFunc(sh.Version)))
 
 	// --- Declarative resource CRUD ---
-	rh := NewResourceHandler(deps.Client, deps.Namespace)
+	rh := NewResourceHandler(deps.Client, deps.Namespace, deps.Validators)
 	nameFn := authpkg.NameFromPath
 
 	// Workers
@@ -68,6 +70,7 @@ func NewHTTPServer(addr string, deps ServerDeps) *HTTPServer {
 	mux.Handle("POST /api/v1/humans", mw.RequireAuthz(authpkg.ActionCreate, "human", nil)(http.HandlerFunc(rh.CreateHuman)))
 	mux.Handle("GET /api/v1/humans", mw.RequireAuthz(authpkg.ActionList, "human", nil)(http.HandlerFunc(rh.ListHumans)))
 	mux.Handle("GET /api/v1/humans/{name}", mw.RequireAuthz(authpkg.ActionGet, "human", nameFn)(http.HandlerFunc(rh.GetHuman)))
+	mux.Handle("PUT /api/v1/humans/{name}", mw.RequireAuthz(authpkg.ActionUpdate, "human", nameFn)(http.HandlerFunc(rh.UpdateHuman)))
 	mux.Handle("DELETE /api/v1/humans/{name}", mw.RequireAuthz(authpkg.ActionDelete, "human", nameFn)(http.HandlerFunc(rh.DeleteHuman)))
 
 	// Managers
@@ -76,6 +79,11 @@ func NewHTTPServer(addr string, deps ServerDeps) *HTTPServer {
 	mux.Handle("GET /api/v1/managers/{name}", mw.RequireAuthz(authpkg.ActionGet, "manager", nameFn)(http.HandlerFunc(rh.GetManager)))
 	mux.Handle("PUT /api/v1/managers/{name}", mw.RequireAuthz(authpkg.ActionUpdate, "manager", nameFn)(http.HandlerFunc(rh.UpdateManager)))
 	mux.Handle("DELETE /api/v1/managers/{name}", mw.RequireAuthz(authpkg.ActionDelete, "manager", nameFn)(http.HandlerFunc(rh.DeleteManager)))
+
+	// --- Bundle endpoints (Stage 10) ---
+	bh := NewBundleHandler(deps.Client, deps.Namespace, deps.Validators)
+	mux.Handle("POST /api/v1/bundles/team", mw.RequireAuthz(authpkg.ActionCreate, "team", nil)(http.HandlerFunc(bh.CreateTeamBundle)))
+	mux.Handle("DELETE /api/v1/bundles/team/{name}", mw.RequireAuthz(authpkg.ActionDelete, "team", nameFn)(http.HandlerFunc(bh.DeleteTeamBundle)))
 
 	// --- Package upload ---
 	ph := NewPackageHandler(deps.OSS)

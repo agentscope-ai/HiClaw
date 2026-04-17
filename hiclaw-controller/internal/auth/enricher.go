@@ -35,17 +35,20 @@ func (e *CREnricher) EnrichIdentity(ctx context.Context, identity *CallerIdentit
 		return nil
 	}
 
-	// Worker / team-leader: look up the Worker CR for role and team.
+	// Worker / team-leader: look up the Worker CR for role and team. The
+	// derived labels hiclaw.io/role and hiclaw.io/team are maintained by
+	// WorkerReconciler.syncWorkerLabels as the source of truth — they
+	// always mirror spec.role / spec.teamRef after the first reconcile.
 	var worker v1beta1.Worker
 	key := client.ObjectKey{Name: identity.Username, Namespace: e.namespace}
 	if err := e.client.Get(ctx, key, &worker); err != nil {
 		return fmt.Errorf("enrich identity: get worker %q: %w", identity.Username, err)
 	}
 
-	if role := worker.Annotations["hiclaw.io/role"]; role == "team_leader" {
+	if role := worker.Labels[v1beta1.LabelRole]; role == v1beta1.WorkerRoleTeamLeader {
 		identity.Role = RoleTeamLeader
 	}
-	if team := worker.Annotations["hiclaw.io/team"]; team != "" {
+	if team := worker.Labels[v1beta1.LabelTeam]; team != "" {
 		identity.Team = team
 	}
 

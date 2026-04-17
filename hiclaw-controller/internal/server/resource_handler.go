@@ -1,25 +1,35 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 
 	v1beta1 "github.com/hiclaw/hiclaw-controller/api/v1beta1"
 	authpkg "github.com/hiclaw/hiclaw-controller/internal/auth"
 	"github.com/hiclaw/hiclaw-controller/internal/httputil"
+	hiclawwebhook "github.com/hiclaw/hiclaw-controller/internal/webhook"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/validation/field"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// ResourceHandler handles declarative CRUD operations on CRs.
+// ResourceHandler handles declarative CRUD operations on CRs. All create /
+// update paths invoke the shared admission validators inline so that
+// embedded mode (which does not run a webhook server) still enforces the
+// same structural invariants as incluster mode.
 type ResourceHandler struct {
-	client    client.Client
-	namespace string
+	client     client.Client
+	namespace  string
+	validators *hiclawwebhook.Validators
 }
 
-func NewResourceHandler(c client.Client, namespace string) *ResourceHandler {
-	return &ResourceHandler{client: c, namespace: namespace}
+// NewResourceHandler constructs a ResourceHandler. The validators argument
+// may be nil in tests that do not exercise the validation path; all handler
+// methods treat a nil Validators (or nested nil sub-validator) as a no-op.
+func NewResourceHandler(c client.Client, namespace string, v *hiclawwebhook.Validators) *ResourceHandler {
+	return &ResourceHandler{client: c, namespace: namespace, validators: v}
 }
 
 // --- Workers ---
@@ -44,6 +54,8 @@ func (h *ResourceHandler) CreateWorker(w http.ResponseWriter, r *http.Request) {
 			Model:         req.Model,
 			Runtime:       req.Runtime,
 			Image:         req.Image,
+			Role:          req.Role,
+			TeamRef:       req.TeamRef,
 			Identity:      req.Identity,
 			Soul:          req.Soul,
 			Agents:        req.Agents,
@@ -56,31 +68,17 @@ func (h *ResourceHandler) CreateWorker(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 
+	// A team-leader caller may only create workers inside their own team,
+	// and only as members. Force-override whatever the client supplied.
 	caller := authpkg.CallerFromContext(r.Context())
 	if caller != nil && caller.Role == authpkg.RoleTeamLeader {
-		req.Team = caller.Team
-		req.Role = "worker"
-		req.TeamLeader = caller.Username
+		worker.Spec.TeamRef = caller.Team
+		worker.Spec.Role = v1beta1.WorkerRoleTeamWorker
 	}
 
-	if req.Team != "" || req.Role != "" || req.TeamLeader != "" {
-		worker.Annotations = make(map[string]string)
-		if req.Team != "" {
-			worker.Annotations["hiclaw.io/team"] = req.Team
-		}
-		if req.Role != "" {
-			worker.Annotations["hiclaw.io/role"] = req.Role
-		}
-		if req.TeamLeader != "" {
-			worker.Annotations["hiclaw.io/team-leader"] = req.TeamLeader
-		}
-		worker.Labels = map[string]string{}
-		if req.Team != "" {
-			worker.Labels["hiclaw.io/team"] = req.Team
-		}
-		if req.Role != "" {
-			worker.Labels["hiclaw.io/role"] = req.Role
-		}
+	if errs := h.validateWorker(r.Context(), worker, nil); len(errs) > 0 {
+		writeValidationError(w, errs)
+		return
 	}
 
 	if err := h.client.Create(r.Context(), worker); err != nil {
@@ -113,7 +111,7 @@ func (h *ResourceHandler) ListWorkers(w http.ResponseWriter, r *http.Request) {
 
 	team := r.URL.Query().Get("team")
 	if team != "" {
-		opts = append(opts, client.MatchingLabels{"hiclaw.io/team": team})
+		opts = append(opts, client.MatchingLabels{v1beta1.LabelTeam: team})
 	}
 
 	if err := h.client.List(r.Context(), &list, opts...); err != nil {
@@ -142,55 +140,68 @@ func (h *ResourceHandler) UpdateWorker(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var worker v1beta1.Worker
-	if err := h.client.Get(r.Context(), client.ObjectKey{Name: name, Namespace: h.namespace}, &worker); err != nil {
+	var existing v1beta1.Worker
+	if err := h.client.Get(r.Context(), client.ObjectKey{Name: name, Namespace: h.namespace}, &existing); err != nil {
 		writeK8sError(w, "get worker for update", err)
 		return
 	}
+	oldWorker := existing.DeepCopy()
+	newWorker := &existing
 
 	if req.Model != "" {
-		worker.Spec.Model = req.Model
+		newWorker.Spec.Model = req.Model
 	}
 	if req.Runtime != "" {
-		worker.Spec.Runtime = req.Runtime
+		newWorker.Spec.Runtime = req.Runtime
 	}
 	if req.Image != "" {
-		worker.Spec.Image = req.Image
+		newWorker.Spec.Image = req.Image
 	}
 	if req.Identity != "" {
-		worker.Spec.Identity = req.Identity
+		newWorker.Spec.Identity = req.Identity
 	}
 	if req.Soul != "" {
-		worker.Spec.Soul = req.Soul
+		newWorker.Spec.Soul = req.Soul
 	}
 	if req.Agents != "" {
-		worker.Spec.Agents = req.Agents
+		newWorker.Spec.Agents = req.Agents
 	}
 	if req.Skills != nil {
-		worker.Spec.Skills = req.Skills
+		newWorker.Spec.Skills = req.Skills
 	}
 	if req.McpServers != nil {
-		worker.Spec.McpServers = req.McpServers
+		newWorker.Spec.McpServers = req.McpServers
 	}
 	if req.Package != "" {
-		worker.Spec.Package = req.Package
+		newWorker.Spec.Package = req.Package
 	}
 	if req.Expose != nil {
-		worker.Spec.Expose = req.Expose
+		newWorker.Spec.Expose = req.Expose
 	}
 	if req.ChannelPolicy != nil {
-		worker.Spec.ChannelPolicy = req.ChannelPolicy
+		newWorker.Spec.ChannelPolicy = req.ChannelPolicy
 	}
 	if req.State != nil {
-		worker.Spec.State = req.State
+		newWorker.Spec.State = req.State
+	}
+	if req.Role != "" {
+		newWorker.Spec.Role = req.Role
+	}
+	if req.TeamRef != nil {
+		newWorker.Spec.TeamRef = *req.TeamRef
 	}
 
-	if err := h.client.Update(r.Context(), &worker); err != nil {
+	if errs := h.validateWorker(r.Context(), newWorker, oldWorker); len(errs) > 0 {
+		writeValidationError(w, errs)
+		return
+	}
+
+	if err := h.client.Update(r.Context(), newWorker); err != nil {
 		writeK8sError(w, "update worker", err)
 		return
 	}
 
-	httputil.WriteJSON(w, http.StatusOK, workerToResponse(&worker))
+	httputil.WriteJSON(w, http.StatusOK, workerToResponse(newWorker))
 }
 
 func (h *ResourceHandler) DeleteWorker(w http.ResponseWriter, r *http.Request) {
@@ -223,10 +234,6 @@ func (h *ResourceHandler) CreateTeam(w http.ResponseWriter, r *http.Request) {
 		httputil.WriteError(w, http.StatusBadRequest, "name is required")
 		return
 	}
-	if req.Leader.Name == "" {
-		httputil.WriteError(w, http.StatusBadRequest, "leader.name is required")
-		return
-	}
 
 	team := &v1beta1.Team{
 		ObjectMeta: metav1.ObjectMeta{
@@ -234,41 +241,17 @@ func (h *ResourceHandler) CreateTeam(w http.ResponseWriter, r *http.Request) {
 			Namespace: h.namespace,
 		},
 		Spec: v1beta1.TeamSpec{
-			Description:   req.Description,
-			Admin:         req.Admin,
-			PeerMentions:  req.PeerMentions,
-			ChannelPolicy: req.ChannelPolicy,
-			Leader: v1beta1.LeaderSpec{
-				Name:              req.Leader.Name,
-				Model:             req.Leader.Model,
-				Identity:          req.Leader.Identity,
-				Soul:              req.Leader.Soul,
-				Agents:            req.Leader.Agents,
-				Package:           req.Leader.Package,
-				Heartbeat:         toHeartbeatSpec(req.Leader.Heartbeat),
-				WorkerIdleTimeout: req.Leader.WorkerIdleTimeout,
-				ChannelPolicy:     req.Leader.ChannelPolicy,
-				State:             req.Leader.State,
-			},
+			Description:       req.Description,
+			PeerMentions:      req.PeerMentions,
+			ChannelPolicy:     req.ChannelPolicy,
+			Heartbeat:         req.Heartbeat,
+			WorkerIdleTimeout: req.WorkerIdleTimeout,
 		},
 	}
 
-	for _, tw := range req.Workers {
-		team.Spec.Workers = append(team.Spec.Workers, v1beta1.TeamWorkerSpec{
-			Name:          tw.Name,
-			Model:         tw.Model,
-			Runtime:       tw.Runtime,
-			Image:         tw.Image,
-			Identity:      tw.Identity,
-			Soul:          tw.Soul,
-			Agents:        tw.Agents,
-			Skills:        tw.Skills,
-			McpServers:    tw.McpServers,
-			Package:       tw.Package,
-			Expose:        tw.Expose,
-			ChannelPolicy: tw.ChannelPolicy,
-			State:         tw.State,
-		})
+	if errs := h.validateTeam(r.Context(), team, nil); len(errs) > 0 {
+		writeValidationError(w, errs)
+		return
 	}
 
 	if err := h.client.Create(r.Context(), team); err != nil {
@@ -323,79 +306,41 @@ func (h *ResourceHandler) UpdateTeam(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var team v1beta1.Team
-	if err := h.client.Get(r.Context(), client.ObjectKey{Name: name, Namespace: h.namespace}, &team); err != nil {
+	var existing v1beta1.Team
+	if err := h.client.Get(r.Context(), client.ObjectKey{Name: name, Namespace: h.namespace}, &existing); err != nil {
 		writeK8sError(w, "get team for update", err)
 		return
 	}
+	oldTeam := existing.DeepCopy()
+	newTeam := &existing
 
 	if req.Description != "" {
-		team.Spec.Description = req.Description
-	}
-	if req.Admin != nil {
-		team.Spec.Admin = req.Admin
+		newTeam.Spec.Description = req.Description
 	}
 	if req.PeerMentions != nil {
-		team.Spec.PeerMentions = req.PeerMentions
+		newTeam.Spec.PeerMentions = req.PeerMentions
 	}
 	if req.ChannelPolicy != nil {
-		team.Spec.ChannelPolicy = req.ChannelPolicy
+		newTeam.Spec.ChannelPolicy = req.ChannelPolicy
 	}
-	if req.Leader != nil {
-		if req.Leader.Model != "" {
-			team.Spec.Leader.Model = req.Leader.Model
-		}
-		if req.Leader.Identity != "" {
-			team.Spec.Leader.Identity = req.Leader.Identity
-		}
-		if req.Leader.Soul != "" {
-			team.Spec.Leader.Soul = req.Leader.Soul
-		}
-		if req.Leader.Agents != "" {
-			team.Spec.Leader.Agents = req.Leader.Agents
-		}
-		if req.Leader.Package != "" {
-			team.Spec.Leader.Package = req.Leader.Package
-		}
-		if req.Leader.Heartbeat != nil {
-			team.Spec.Leader.Heartbeat = toHeartbeatSpec(req.Leader.Heartbeat)
-		}
-		if req.Leader.WorkerIdleTimeout != "" {
-			team.Spec.Leader.WorkerIdleTimeout = req.Leader.WorkerIdleTimeout
-		}
-		if req.Leader.ChannelPolicy != nil {
-			team.Spec.Leader.ChannelPolicy = req.Leader.ChannelPolicy
-		}
-		if req.Leader.State != nil {
-			team.Spec.Leader.State = req.Leader.State
-		}
+	if req.Heartbeat != nil {
+		newTeam.Spec.Heartbeat = req.Heartbeat
 	}
-	if req.Workers != nil {
-		team.Spec.Workers = nil
-		for _, tw := range req.Workers {
-			team.Spec.Workers = append(team.Spec.Workers, v1beta1.TeamWorkerSpec{
-				Name:          tw.Name,
-				Model:         tw.Model,
-				Runtime:       tw.Runtime,
-				Image:         tw.Image,
-				Identity:      tw.Identity,
-				Soul:          tw.Soul,
-				Agents:        tw.Agents,
-				Skills:        tw.Skills,
-				McpServers:    tw.McpServers,
-				Package:       tw.Package,
-				Expose:        tw.Expose,
-				ChannelPolicy: tw.ChannelPolicy,
-			})
-		}
+	if req.WorkerIdleTimeout != "" {
+		newTeam.Spec.WorkerIdleTimeout = req.WorkerIdleTimeout
 	}
 
-	if err := h.client.Update(r.Context(), &team); err != nil {
+	if errs := h.validateTeam(r.Context(), newTeam, oldTeam); len(errs) > 0 {
+		writeValidationError(w, errs)
+		return
+	}
+
+	if err := h.client.Update(r.Context(), newTeam); err != nil {
 		writeK8sError(w, "update team", err)
 		return
 	}
 
-	httputil.WriteJSON(w, http.StatusOK, teamToResponse(&team))
+	httputil.WriteJSON(w, http.StatusOK, teamToResponse(newTeam))
 }
 
 func (h *ResourceHandler) DeleteTeam(w http.ResponseWriter, r *http.Request) {
@@ -435,13 +380,18 @@ func (h *ResourceHandler) CreateHuman(w http.ResponseWriter, r *http.Request) {
 			Namespace: h.namespace,
 		},
 		Spec: v1beta1.HumanSpec{
-			DisplayName:       req.DisplayName,
-			Email:             req.Email,
-			PermissionLevel:   req.PermissionLevel,
-			AccessibleTeams:   req.AccessibleTeams,
-			AccessibleWorkers: req.AccessibleWorkers,
-			Note:              req.Note,
+			DisplayName:  req.DisplayName,
+			Email:        req.Email,
+			Note:         req.Note,
+			SuperAdmin:   req.SuperAdmin,
+			TeamAccess:   req.TeamAccess,
+			WorkerAccess: req.WorkerAccess,
 		},
+	}
+
+	if errs := h.validateHuman(r.Context(), human, nil); len(errs) > 0 {
+		writeValidationError(w, errs)
+		return
 	}
 
 	if err := h.client.Create(r.Context(), human); err != nil {
@@ -481,6 +431,59 @@ func (h *ResourceHandler) ListHumans(w http.ResponseWriter, r *http.Request) {
 	}
 
 	httputil.WriteJSON(w, http.StatusOK, HumanListResponse{Humans: humans, Total: len(humans)})
+}
+
+func (h *ResourceHandler) UpdateHuman(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if name == "" {
+		httputil.WriteError(w, http.StatusBadRequest, "human name is required")
+		return
+	}
+
+	var req UpdateHumanRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		httputil.WriteError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+		return
+	}
+
+	var existing v1beta1.Human
+	if err := h.client.Get(r.Context(), client.ObjectKey{Name: name, Namespace: h.namespace}, &existing); err != nil {
+		writeK8sError(w, "get human for update", err)
+		return
+	}
+	oldHuman := existing.DeepCopy()
+	newHuman := &existing
+
+	if req.DisplayName != "" {
+		newHuman.Spec.DisplayName = req.DisplayName
+	}
+	if req.Email != "" {
+		newHuman.Spec.Email = req.Email
+	}
+	if req.Note != "" {
+		newHuman.Spec.Note = req.Note
+	}
+	if req.SuperAdmin != nil {
+		newHuman.Spec.SuperAdmin = *req.SuperAdmin
+	}
+	if req.TeamAccess != nil {
+		newHuman.Spec.TeamAccess = req.TeamAccess
+	}
+	if req.WorkerAccess != nil {
+		newHuman.Spec.WorkerAccess = req.WorkerAccess
+	}
+
+	if errs := h.validateHuman(r.Context(), newHuman, oldHuman); len(errs) > 0 {
+		writeValidationError(w, errs)
+		return
+	}
+
+	if err := h.client.Update(r.Context(), newHuman); err != nil {
+		writeK8sError(w, "update human", err)
+		return
+	}
+
+	httputil.WriteJSON(w, http.StatusOK, humanToResponse(newHuman))
 }
 
 func (h *ResourceHandler) DeleteHuman(w http.ResponseWriter, r *http.Request) {
@@ -654,6 +657,29 @@ func (h *ResourceHandler) DeleteManager(w http.ResponseWriter, r *http.Request) 
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// --- Inline validator wrappers ---
+
+func (h *ResourceHandler) validateWorker(ctx context.Context, newW, oldW *v1beta1.Worker) field.ErrorList {
+	if h.validators == nil || h.validators.Worker == nil {
+		return nil
+	}
+	return h.validators.Worker.ValidateWorker(ctx, newW, oldW)
+}
+
+func (h *ResourceHandler) validateTeam(ctx context.Context, newT, oldT *v1beta1.Team) field.ErrorList {
+	if h.validators == nil || h.validators.Team == nil {
+		return nil
+	}
+	return h.validators.Team.ValidateTeam(ctx, newT, oldT)
+}
+
+func (h *ResourceHandler) validateHuman(ctx context.Context, newH, oldH *v1beta1.Human) field.ErrorList {
+	if h.validators == nil || h.validators.Human == nil {
+		return nil
+	}
+	return h.validators.Human.ValidateHuman(ctx, newH, oldH)
+}
+
 // --- Conversion helpers ---
 
 func workerToResponse(w *v1beta1.Worker) WorkerResponse {
@@ -668,13 +694,11 @@ func workerToResponse(w *v1beta1.Worker) WorkerResponse {
 		MatrixUserID:   w.Status.MatrixUserID,
 		RoomID:         w.Status.RoomID,
 		Message:        w.Status.Message,
+		Role:           w.Spec.EffectiveRole(),
+		TeamRef:        w.Spec.TeamRef,
 	}
 	if resp.Phase == "" {
 		resp.Phase = "Pending"
-	}
-	if w.Annotations != nil {
-		resp.Team = w.Annotations["hiclaw.io/team"]
-		resp.Role = w.Annotations["hiclaw.io/role"]
 	}
 	for _, ep := range w.Status.ExposedPorts {
 		resp.ExposedPorts = append(resp.ExposedPorts, ExposedPortInfo{Port: ep.Port, Domain: ep.Domain})
@@ -687,48 +711,37 @@ func teamToResponse(t *v1beta1.Team) TeamResponse {
 		Name:              t.Name,
 		Phase:             t.Status.Phase,
 		Description:       t.Spec.Description,
-		LeaderName:        t.Spec.Leader.Name,
-		LeaderHeartbeat:   t.Spec.Leader.Heartbeat,
-		WorkerIdleTimeout: t.Spec.Leader.WorkerIdleTimeout,
+		Heartbeat:         t.Spec.Heartbeat,
+		WorkerIdleTimeout: t.Spec.WorkerIdleTimeout,
 		TeamRoomID:        t.Status.TeamRoomID,
 		LeaderDMRoomID:    t.Status.LeaderDMRoomID,
-		LeaderReady:       t.Status.LeaderReady,
-		ReadyWorkers:      t.Status.ReadyWorkers,
-		TotalWorkers:      t.Status.TotalWorkers,
+		TotalMembers:      t.Status.TotalMembers,
+		ReadyMembers:      t.Status.ReadyMembers,
 		Message:           t.Status.Message,
 	}
 	if resp.Phase == "" {
 		resp.Phase = "Pending"
 	}
-	for _, w := range t.Spec.Workers {
-		resp.WorkerNames = append(resp.WorkerNames, w.Name)
+	if t.Status.Leader != nil {
+		resp.LeaderName = t.Status.Leader.Name
+		resp.LeaderMatrixUserID = t.Status.Leader.MatrixUserID
+		resp.LeaderReady = t.Status.Leader.Ready
 	}
-	if t.Status.WorkerExposedPorts != nil {
-		resp.WorkerExposedPorts = make(map[string][]ExposedPortInfo)
-		for wn, ports := range t.Status.WorkerExposedPorts {
-			for _, p := range ports {
-				resp.WorkerExposedPorts[wn] = append(resp.WorkerExposedPorts[wn], ExposedPortInfo{Port: p.Port, Domain: p.Domain})
-			}
-		}
+	for _, m := range t.Status.Members {
+		resp.Members = append(resp.Members, TeamMemberInfo{
+			Name:         m.Name,
+			Role:         m.Role,
+			MatrixUserID: m.MatrixUserID,
+			Ready:        m.Ready,
+		})
+	}
+	for _, a := range t.Status.Admins {
+		resp.Admins = append(resp.Admins, TeamAdminInfo{
+			HumanName:    a.HumanName,
+			MatrixUserID: a.MatrixUserID,
+		})
 	}
 	return resp
-}
-
-func toHeartbeatSpec(req *TeamLeaderHeartbeatRequest) *v1beta1.TeamLeaderHeartbeatSpec {
-	if req == nil {
-		return nil
-	}
-
-	spec := &v1beta1.TeamLeaderHeartbeatSpec{
-		Every: req.Every,
-	}
-	if req.Enabled != nil {
-		spec.Enabled = *req.Enabled
-	}
-	if !spec.Enabled && spec.Every == "" {
-		return nil
-	}
-	return spec
 }
 
 func managerToResponse(m *v1beta1.Manager) ManagerResponse {
@@ -755,9 +768,13 @@ func humanToResponse(h *v1beta1.Human) HumanResponse {
 		Name:            h.Name,
 		Phase:           h.Status.Phase,
 		DisplayName:     h.Spec.DisplayName,
+		Email:           h.Spec.Email,
 		MatrixUserID:    h.Status.MatrixUserID,
 		InitialPassword: h.Status.InitialPassword,
 		Rooms:           h.Status.Rooms,
+		SuperAdmin:      h.Spec.SuperAdmin,
+		TeamAccess:      h.Spec.TeamAccess,
+		WorkerAccess:    h.Spec.WorkerAccess,
 		Message:         h.Status.Message,
 	}
 	if resp.Phase == "" {
@@ -776,4 +793,10 @@ func writeK8sError(w http.ResponseWriter, op string, err error) {
 	default:
 		httputil.WriteError(w, http.StatusInternalServerError, op+": "+err.Error())
 	}
+}
+
+// writeValidationError renders an admission-style field.ErrorList as a
+// single 400 response with the aggregated error string.
+func writeValidationError(w http.ResponseWriter, errs field.ErrorList) {
+	httputil.WriteError(w, http.StatusBadRequest, "validation failed: "+errs.ToAggregate().Error())
 }

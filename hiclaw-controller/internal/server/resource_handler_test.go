@@ -10,6 +10,7 @@ import (
 
 	v1beta1 "github.com/hiclaw/hiclaw-controller/api/v1beta1"
 	authpkg "github.com/hiclaw/hiclaw-controller/internal/auth"
+	hiclawwebhook "github.com/hiclaw/hiclaw-controller/internal/webhook"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -18,9 +19,13 @@ import (
 func TestCreateWorkerForTeamLeaderForcesTeamContext(t *testing.T) {
 	scheme := newServerTestScheme(t)
 	k8sClient := fake.NewClientBuilder().WithScheme(scheme).Build()
-	handler := NewResourceHandler(k8sClient, "default")
+	validators := hiclawwebhook.NewValidators(k8sClient)
+	handler := NewResourceHandler(k8sClient, "default", validators)
 
-	body := []byte(`{"name":"alpha-temp","model":"qwen3.5-plus","team":"other-team","role":"team_leader","teamLeader":"wrong-lead"}`)
+	// The caller is team-leader of alpha-team. Even though the request body
+	// asks for a team_leader role in other-team, the handler must force the
+	// new Worker into the caller's own team as a plain team_worker.
+	body := []byte(`{"name":"alpha-temp","model":"qwen3.5-plus","teamRef":"other-team","role":"team_leader"}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/workers", bytes.NewReader(body))
 	req = req.WithContext(context.WithValue(req.Context(), authpkg.CallerKeyForTest(), &authpkg.CallerIdentity{
 		Role:     authpkg.RoleTeamLeader,
@@ -40,30 +45,29 @@ func TestCreateWorkerForTeamLeaderForcesTeamContext(t *testing.T) {
 		t.Fatalf("get worker: %v", err)
 	}
 
-	if got := worker.Annotations["hiclaw.io/team"]; got != "alpha-team" {
-		t.Fatalf("expected team annotation alpha-team, got %q", got)
+	if got := worker.Spec.TeamRef; got != "alpha-team" {
+		t.Fatalf("expected spec.teamRef alpha-team, got %q", got)
 	}
-	if got := worker.Annotations["hiclaw.io/role"]; got != "worker" {
-		t.Fatalf("expected role annotation worker, got %q", got)
+	if got := worker.Spec.Role; got != v1beta1.WorkerRoleTeamWorker {
+		t.Fatalf("expected spec.role team_worker, got %q", got)
 	}
-	if got := worker.Annotations["hiclaw.io/team-leader"]; got != "alpha-lead" {
-		t.Fatalf("expected team leader annotation alpha-lead, got %q", got)
+	// Annotation-based wiring is gone — the reconciler syncs labels from spec.
+	if got := worker.Annotations["hiclaw.io/team"]; got != "" {
+		t.Fatalf("expected no team annotation, got %q", got)
 	}
 }
 
-func TestCreateAndUpdateTeamLeaderRuntimeConfig(t *testing.T) {
+func TestCreateAndUpdateTeamRuntimeConfig(t *testing.T) {
 	scheme := newServerTestScheme(t)
 	k8sClient := fake.NewClientBuilder().WithScheme(scheme).Build()
-	handler := NewResourceHandler(k8sClient, "default")
+	validators := hiclawwebhook.NewValidators(k8sClient)
+	handler := NewResourceHandler(k8sClient, "default", validators)
 
 	createBody := []byte(`{
 		"name":"alpha-team",
-		"leader":{
-			"name":"alpha-lead",
-			"heartbeat":{"enabled":true,"every":"30m"},
-			"workerIdleTimeout":"12h"
-		},
-		"workers":[]
+		"description":"alpha",
+		"heartbeat":{"enabled":true,"every":"30m"},
+		"workerIdleTimeout":"12h"
 	}`)
 	createReq := httptest.NewRequest(http.MethodPost, "/api/v1/teams", bytes.NewReader(createBody))
 	createRec := httptest.NewRecorder()
@@ -76,18 +80,16 @@ func TestCreateAndUpdateTeamLeaderRuntimeConfig(t *testing.T) {
 	if err := k8sClient.Get(context.Background(), client.ObjectKey{Name: "alpha-team", Namespace: "default"}, &created); err != nil {
 		t.Fatalf("get created team: %v", err)
 	}
-	if created.Spec.Leader.Heartbeat == nil || !created.Spec.Leader.Heartbeat.Enabled || created.Spec.Leader.Heartbeat.Every != "30m" {
-		t.Fatalf("unexpected heartbeat config after create: %#v", created.Spec.Leader.Heartbeat)
+	if created.Spec.Heartbeat == nil || !created.Spec.Heartbeat.Enabled || created.Spec.Heartbeat.Every != "30m" {
+		t.Fatalf("unexpected heartbeat config after create: %#v", created.Spec.Heartbeat)
 	}
-	if created.Spec.Leader.WorkerIdleTimeout != "12h" {
-		t.Fatalf("expected worker idle timeout 12h, got %q", created.Spec.Leader.WorkerIdleTimeout)
+	if created.Spec.WorkerIdleTimeout != "12h" {
+		t.Fatalf("expected worker idle timeout 12h, got %q", created.Spec.WorkerIdleTimeout)
 	}
 
 	updateBody := []byte(`{
-		"leader":{
-			"heartbeat":{"enabled":true,"every":"45m"},
-			"workerIdleTimeout":"24h"
-		}
+		"heartbeat":{"enabled":true,"every":"45m"},
+		"workerIdleTimeout":"24h"
 	}`)
 	updateReq := httptest.NewRequest(http.MethodPut, "/api/v1/teams/alpha-team", bytes.NewReader(updateBody))
 	updateReq.SetPathValue("name", "alpha-team")
@@ -101,19 +103,19 @@ func TestCreateAndUpdateTeamLeaderRuntimeConfig(t *testing.T) {
 	if err := k8sClient.Get(context.Background(), client.ObjectKey{Name: "alpha-team", Namespace: "default"}, &updated); err != nil {
 		t.Fatalf("get updated team: %v", err)
 	}
-	if updated.Spec.Leader.Heartbeat == nil || updated.Spec.Leader.Heartbeat.Every != "45m" {
-		t.Fatalf("unexpected heartbeat config after update: %#v", updated.Spec.Leader.Heartbeat)
+	if updated.Spec.Heartbeat == nil || updated.Spec.Heartbeat.Every != "45m" {
+		t.Fatalf("unexpected heartbeat config after update: %#v", updated.Spec.Heartbeat)
 	}
-	if updated.Spec.Leader.WorkerIdleTimeout != "24h" {
-		t.Fatalf("expected worker idle timeout 24h, got %q", updated.Spec.Leader.WorkerIdleTimeout)
+	if updated.Spec.WorkerIdleTimeout != "24h" {
+		t.Fatalf("expected worker idle timeout 24h, got %q", updated.Spec.WorkerIdleTimeout)
 	}
 
 	var resp TeamResponse
 	if err := json.Unmarshal(updateRec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if resp.LeaderHeartbeat == nil || resp.LeaderHeartbeat.Every != "45m" {
-		t.Fatalf("unexpected response heartbeat: %#v", resp.LeaderHeartbeat)
+	if resp.Heartbeat == nil || resp.Heartbeat.Every != "45m" {
+		t.Fatalf("unexpected response heartbeat: %#v", resp.Heartbeat)
 	}
 	if resp.WorkerIdleTimeout != "24h" {
 		t.Fatalf("expected response worker idle timeout 24h, got %q", resp.WorkerIdleTimeout)
