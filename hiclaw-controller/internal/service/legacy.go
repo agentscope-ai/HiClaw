@@ -328,14 +328,17 @@ func (l *LegacyCompat) RemoveFromWorkersRegistry(workerName string) error {
 // --- Teams Registry ---
 
 // TeamRegistryEntry describes a team entry in teams-registry.json.
+// Admins is plural to match the new N-admins model (Human.teamAccess with
+// role=admin). Registry consumers (Manager Agent skill scripts) must be
+// updated in lockstep when this shape changes.
 type TeamRegistryEntry struct {
-	Name            string          `json:"-"`
-	Leader          string          `json:"leader"`
-	Workers         []string        `json:"workers"`
-	TeamRoomID      string          `json:"team_room_id"`
-	LeaderDMRoomID  string          `json:"leader_dm_room_id,omitempty"`
-	Admin           *TeamAdminEntry `json:"admin,omitempty"`
-	CreatedAt       string          `json:"created_at,omitempty"`
+	Name           string           `json:"-"`
+	Leader         string           `json:"leader"`
+	Workers        []string         `json:"workers"`
+	TeamRoomID     string           `json:"team_room_id"`
+	LeaderDMRoomID string           `json:"leader_dm_room_id,omitempty"`
+	Admins         []TeamAdminEntry `json:"admins,omitempty"`
+	CreatedAt      string           `json:"created_at,omitempty"`
 }
 
 type TeamAdminEntry struct {
@@ -410,13 +413,24 @@ func (l *LegacyCompat) RemoveFromTeamsRegistry(ctx context.Context, teamName str
 // --- Humans Registry ---
 
 // HumanRegistryEntry describes a human entry in humans-registry.json.
+// Reflects the post-refactor HumanSpec directly: SuperAdmin / TeamAccess /
+// WorkerAccess replace the legacy PermissionLevel + AccessibleTeams fields.
+// Registry consumers (Manager Agent skill scripts) must be updated in
+// lockstep when this shape changes.
 type HumanRegistryEntry struct {
-	Name            string   `json:"-"`
-	MatrixUserID    string   `json:"matrix_user_id"`
-	DisplayName     string   `json:"display_name"`
-	PermissionLevel int      `json:"permission_level"`
-	AccessibleTeams []string `json:"accessible_teams,omitempty"`
-	CreatedAt       string   `json:"created_at,omitempty"`
+	Name         string            `json:"-"`
+	MatrixUserID string            `json:"matrix_user_id"`
+	DisplayName  string            `json:"display_name"`
+	SuperAdmin   bool              `json:"super_admin,omitempty"`
+	TeamAccess   []HumanTeamAccess `json:"team_access,omitempty"`
+	WorkerAccess []string          `json:"worker_access,omitempty"`
+	CreatedAt    string            `json:"created_at,omitempty"`
+}
+
+// HumanTeamAccess mirrors v1beta1.TeamAccessEntry in the registry JSON.
+type HumanTeamAccess struct {
+	Team string `json:"team"`
+	Role string `json:"role"`
 }
 
 type humansRegistry struct {

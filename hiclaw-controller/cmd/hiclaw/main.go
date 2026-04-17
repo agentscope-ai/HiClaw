@@ -24,6 +24,7 @@ Environment variables:
 	rootCmd.AddCommand(getCmd())
 	rootCmd.AddCommand(updateCmd())
 	rootCmd.AddCommand(deleteCmd())
+	rootCmd.AddCommand(promoteCmd())
 	rootCmd.AddCommand(workerCmd())
 	rootCmd.AddCommand(statusCmd())
 	rootCmd.AddCommand(versionCmd())

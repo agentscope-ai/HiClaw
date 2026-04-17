@@ -33,11 +33,14 @@ func (r *TeamReconciler) reconcileLegacy(ctx context.Context, s *teamScope) {
 		leaderName = s.leader.Name
 	}
 
-	var admin *service.TeamAdminEntry
+	var admins []service.TeamAdminEntry
 	if len(s.admins) > 0 {
-		admin = &service.TeamAdminEntry{
-			Name:         s.admins[0].Name,
-			MatrixUserID: s.admins[0].MatrixUserID,
+		admins = make([]service.TeamAdminEntry, 0, len(s.admins))
+		for _, a := range s.admins {
+			admins = append(admins, service.TeamAdminEntry{
+				Name:         a.Name,
+				MatrixUserID: a.MatrixUserID,
+			})
 		}
 	}
 
@@ -47,7 +50,7 @@ func (r *TeamReconciler) reconcileLegacy(ctx context.Context, s *teamScope) {
 		Workers:        workerNames,
 		TeamRoomID:     t.Status.TeamRoomID,
 		LeaderDMRoomID: t.Status.LeaderDMRoomID,
-		Admin:          admin,
+		Admins:         admins,
 	}
 	if err := r.Legacy.UpdateTeamsRegistry(entry); err != nil {
 		logger.Error(err, "teams-registry update failed (non-fatal)", "team", t.Name)

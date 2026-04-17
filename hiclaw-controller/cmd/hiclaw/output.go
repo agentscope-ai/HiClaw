@@ -56,3 +56,56 @@ func or(s, fallback string) string {
 	}
 	return s
 }
+
+// boolDisplay returns trueStr when b is true, falseStr otherwise. Used for
+// table columns and detail rows where a bool should render as a short
+// human-readable string rather than "true"/"false".
+func boolDisplay(b bool, trueStr, falseStr string) string {
+	if b {
+		return trueStr
+	}
+	return falseStr
+}
+
+// joinTeamAccess renders Human teamAccess entries as "team:role" joined by
+// ", " for compact detail-line output.
+func joinTeamAccess(entries []teamAccessEntry) string {
+	if len(entries) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(entries))
+	for _, e := range entries {
+		parts = append(parts, fmt.Sprintf("%s:%s", e.Team, e.Role))
+	}
+	return strings.Join(parts, ", ")
+}
+
+// printBundleResponse prints one line per bundle item and returns true if
+// any item represents a hard failure (status "error" or "invalid"). Items
+// with status "not_found" that carry Warning=true are shown but do not
+// count toward fatal.
+func printBundleResponse(resp *bundleResponseWire) bool {
+	if resp == nil || len(resp.Items) == 0 {
+		return false
+	}
+	fatal := false
+	for _, it := range resp.Items {
+		label := fmt.Sprintf("%s/%s", it.Kind, it.Name)
+		if it.Name == "" {
+			label = it.Kind
+		}
+		warnTag := ""
+		if it.Warning {
+			warnTag = " (warning)"
+		}
+		msgTag := ""
+		if it.Message != "" {
+			msgTag = " — " + it.Message
+		}
+		fmt.Printf("%s: %s%s%s\n", label, it.Status, warnTag, msgTag)
+		if it.Status == "error" || it.Status == "invalid" {
+			fatal = true
+		}
+	}
+	return fatal
+}

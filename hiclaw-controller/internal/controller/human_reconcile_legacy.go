@@ -8,11 +8,11 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
-// reconcileHumanLegacy writes a humans-registry.json entry for backward
-// compatibility with older Manager agent skills that still consult it.
-// Legacy PermissionLevel and AccessibleTeams fields are synthesised from
-// the new spec so the registry shape stays stable until Stage 11 reshapes
-// it. Non-critical: Legacy nil / disabled short-circuits; errors logged.
+// reconcileHumanLegacy writes a humans-registry.json entry for the Manager
+// Agent skill scripts to consult. The registry shape mirrors the new
+// HumanSpec directly (SuperAdmin / TeamAccess / WorkerAccess); skill
+// scripts are updated in lockstep (see docs/design team-refactor Stage 13).
+// Non-critical: Legacy nil / disabled short-circuits; errors logged.
 func (r *HumanReconciler) reconcileHumanLegacy(ctx context.Context, s *humanScope) {
 	if r.Legacy == nil || !r.Legacy.Enabled() {
 		return
@@ -21,47 +21,31 @@ func (r *HumanReconciler) reconcileHumanLegacy(ctx context.Context, s *humanScop
 	h := s.human
 
 	entry := service.HumanRegistryEntry{
-		Name:            h.Name,
-		MatrixUserID:    h.Status.MatrixUserID,
-		DisplayName:     h.Spec.DisplayName,
-		PermissionLevel: syntheticPermissionLevel(h.Spec),
-		AccessibleTeams: syntheticAccessibleTeams(h.Spec),
+		Name:         h.Name,
+		MatrixUserID: h.Status.MatrixUserID,
+		DisplayName:  h.Spec.DisplayName,
+		SuperAdmin:   h.Spec.SuperAdmin,
+		TeamAccess:   convertTeamAccess(h.Spec.TeamAccess),
+		WorkerAccess: append([]string(nil), h.Spec.WorkerAccess...),
 	}
 	if err := r.Legacy.UpdateHumansRegistry(entry); err != nil {
 		logger.Error(err, "humans-registry update failed (non-fatal)", "human", h.Name)
 	}
 }
 
-// syntheticPermissionLevel maps the new access declarations back to the
-// legacy 1/2/3 scheme used by the registry JSON.
-//
-//   - superAdmin         → 1 (full access)
-//   - any admin teamAccess → 2 (team-scoped)
-//   - any teamAccess / workerAccess → 2 (team-scoped; kept coarse-grained
-//     to avoid a new level; workerAccess is represented out-of-band)
-//   - empty spec         → 3 (worker-level default)
-func syntheticPermissionLevel(spec v1beta1.HumanSpec) int {
-	if spec.SuperAdmin {
-		return 1
-	}
-	if len(spec.TeamAccess) > 0 {
-		return 2
-	}
-	if len(spec.WorkerAccess) > 0 {
-		return 3
-	}
-	return 3
-}
-
-// syntheticAccessibleTeams returns the list of team names the Human
-// declares teamAccess for, regardless of admin vs member role.
-func syntheticAccessibleTeams(spec v1beta1.HumanSpec) []string {
-	if len(spec.TeamAccess) == 0 {
+// convertTeamAccess projects the CR-level TeamAccessEntry list into the
+// registry-level HumanTeamAccess list. Empty input yields nil so the
+// JSON serializer can omit the key.
+func convertTeamAccess(in []v1beta1.TeamAccessEntry) []service.HumanTeamAccess {
+	if len(in) == 0 {
 		return nil
 	}
-	out := make([]string, 0, len(spec.TeamAccess))
-	for _, entry := range spec.TeamAccess {
-		out = append(out, entry.Team)
+	out := make([]service.HumanTeamAccess, 0, len(in))
+	for _, entry := range in {
+		out = append(out, service.HumanTeamAccess{
+			Team: entry.Team,
+			Role: string(entry.Role),
+		})
 	}
 	return out
 }

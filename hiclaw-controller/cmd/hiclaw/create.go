@@ -1,7 +1,9 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"regexp"
@@ -54,7 +56,8 @@ func createWorkerCmd() *cobra.Command {
   hiclaw create worker --name alice --model qwen3.5-plus
   hiclaw create worker --name alice --soul-file /path/to/SOUL.md --skills github-operations
   hiclaw create worker --name bob --model claude-sonnet-4-6 --mcp-servers github -o json
-  hiclaw create worker --name charlie --runtime copaw --expose 8080,3000`,
+  hiclaw create worker --name charlie --runtime copaw --expose 8080,3000
+  hiclaw create worker --name alpha-dev --role team_worker --team alpha`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if name == "" {
 				return fmt.Errorf("--name is required")
@@ -89,7 +92,7 @@ func createWorkerCmd() *cobra.Command {
 			setIfNotEmpty(req, "identity", identity)
 			setIfNotEmpty(req, "soul", soul)
 			setIfNotEmpty(req, "package", packageURI)
-			setIfNotEmpty(req, "team", team)
+			setIfNotEmpty(req, "teamRef", team)
 			setIfNotEmpty(req, "role", role)
 			if skills != "" {
 				req["skills"] = splitCSV(skills)
@@ -132,8 +135,8 @@ func createWorkerCmd() *cobra.Command {
 	cmd.Flags().StringVar(&mcpServers, "mcp-servers", "", "Comma-separated MCP servers")
 	cmd.Flags().StringVar(&packageURI, "package", "", "Package URI (nacos://, http://, oss://) or shorthand")
 	cmd.Flags().StringVar(&expose, "expose", "", "Comma-separated ports to expose (e.g. 8080,3000)")
-	cmd.Flags().StringVar(&team, "team", "", "Team name (assigns worker to a team)")
-	cmd.Flags().StringVar(&role, "role", "", "Role within team (team_leader|worker)")
+	cmd.Flags().StringVar(&team, "team", "", "Team name (sets spec.teamRef)")
+	cmd.Flags().StringVar(&role, "role", "", "Worker role (standalone|team_leader|team_worker)")
 	cmd.Flags().StringVarP(&outputFmt, "output", "o", "", "Output format (json)")
 	cmd.Flags().DurationVar(&waitTimeout, "wait-timeout", 3*time.Minute, "Maximum time to wait for the Worker to report Ready")
 	return cmd
@@ -205,8 +208,49 @@ func renderWorkerStatusSummary(resp *workerResp) string {
 }
 
 // ---------------------------------------------------------------------------
-// create team
+// create team — calls POST /api/v1/bundles/team (TeamBundleRequest).
+//
+// Server-side the bundle endpoint creates Team CR, Leader Worker CR, each
+// Member Worker CR, and patches Human.teamAccess for every --admins entry.
+// It always responds with 207 Multi-Status carrying per-resource outcomes
+// (or 400 with validation items when the dry-run pass fails). This CLI
+// decodes the body uniformly via decodeBundleResponse and prints it.
 // ---------------------------------------------------------------------------
+
+// workerItem is a single parsed entry from --workers CSV.
+type workerItem struct {
+	Name  string
+	Model string // empty → fallback to --worker-model
+}
+
+// parseWorkersCSV accepts a comma-separated list where each entry is either
+// "name" or "name:model". A trailing ":" with an empty model is treated as
+// "no override" (equivalent to bare "name"). Empty segments are skipped so
+// that a trailing comma does not create a phantom member.
+func parseWorkersCSV(raw string) ([]workerItem, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil
+	}
+	var out []workerItem
+	for _, piece := range strings.Split(raw, ",") {
+		piece = strings.TrimSpace(piece)
+		if piece == "" {
+			continue
+		}
+		nameAndModel := strings.SplitN(piece, ":", 2)
+		name := strings.TrimSpace(nameAndModel[0])
+		if name == "" {
+			return nil, fmt.Errorf("invalid --workers entry %q: missing name", piece)
+		}
+		model := ""
+		if len(nameAndModel) == 2 {
+			model = strings.TrimSpace(nameAndModel[1])
+		}
+		out = append(out, workerItem{Name: name, Model: model})
+	}
+	return out, nil
+}
 
 func createTeamCmd() *cobra.Command {
 	var (
@@ -216,18 +260,28 @@ func createTeamCmd() *cobra.Command {
 		leaderHeartbeatEvery string
 		workerIdleTimeout    string
 		workers              string
+		workerModelDefault   string
+		admins               string
 		description          string
 	)
 
 	cmd := &cobra.Command{
 		Use:   "team",
 		Short: "Create a Team",
-		Long: `Create a new Team resource with a leader and optional workers.
+		Long: `Create a new Team together with its Leader and Member Workers in one call.
 
-  hiclaw create team --name alpha --leader-name alpha-lead
+The command targets POST /api/v1/bundles/team; the controller creates the
+Team CR, the Leader Worker CR, each Member Worker CR, and patches the
+specified Admin Humans to include this team in their teamAccess list. A
+207 Multi-Status response surfaces per-resource outcomes.
+
+  hiclaw create team --name alpha --leader-name alpha-lead --leader-model claude-sonnet-4-6
   hiclaw create team --name alpha --leader-name alpha-lead --workers alice,bob
-  hiclaw create team --name alpha --leader-name alpha-lead --leader-model claude-sonnet-4-6 --description "Frontend team"
-  hiclaw create team --name alpha --leader-name alpha-lead --leader-heartbeat-every 30m --worker-idle-timeout 12h`,
+  hiclaw create team --name alpha --leader-name alpha-lead \
+      --workers alpha-dev:claude-sonnet-4-6,alpha-qa:qwen3.5-plus \
+      --admins zhangsan --description "Frontend team"
+  hiclaw create team --name alpha --leader-name alpha-lead \
+      --leader-heartbeat-every 30m --worker-idle-timeout 12h`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if name == "" {
 				return fmt.Errorf("--name is required")
@@ -236,40 +290,59 @@ func createTeamCmd() *cobra.Command {
 				return fmt.Errorf("--leader-name is required")
 			}
 
+			workerItems, err := parseWorkersCSV(workers)
+			if err != nil {
+				return err
+			}
+
 			leader := map[string]interface{}{
 				"name": leaderName,
 			}
-			if leaderModel != "" {
-				leader["model"] = leaderModel
+			setIfNotEmpty(leader, "model", leaderModel)
+
+			workerList := make([]map[string]interface{}, 0, len(workerItems))
+			for _, w := range workerItems {
+				entry := map[string]interface{}{"name": w.Name}
+				model := w.Model
+				if model == "" {
+					model = workerModelDefault
+				}
+				setIfNotEmpty(entry, "model", model)
+				workerList = append(workerList, entry)
 			}
+
+			req := map[string]interface{}{
+				"name":   name,
+				"leader": leader,
+			}
+			if len(workerList) > 0 {
+				req["workers"] = workerList
+			}
+			setIfNotEmpty(req, "description", description)
+			setIfNotEmpty(req, "workerIdleTimeout", workerIdleTimeout)
 			if leaderHeartbeatEvery != "" {
-				leader["heartbeat"] = map[string]interface{}{
+				req["heartbeat"] = map[string]interface{}{
 					"enabled": true,
 					"every":   leaderHeartbeatEvery,
 				}
 			}
-			setIfNotEmpty(leader, "workerIdleTimeout", workerIdleTimeout)
-
-			workerList := []interface{}{}
-			if workers != "" {
-				for _, w := range splitCSV(workers) {
-					workerList = append(workerList, map[string]interface{}{"name": w})
-				}
+			if adminList := splitCSV(admins); len(adminList) > 0 {
+				req["admins"] = adminList
 			}
-
-			req := map[string]interface{}{
-				"name":    name,
-				"leader":  leader,
-				"workers": workerList,
-			}
-			setIfNotEmpty(req, "description", description)
 
 			client := NewAPIClient()
-			var resp map[string]interface{}
-			if err := client.DoJSON("POST", "/api/v1/teams", req, &resp); err != nil {
+			resp, statusCode, err := doBundleRequest(client, "POST", "/api/v1/bundles/team", req)
+			if err != nil {
 				return fmt.Errorf("create team: %w", err)
 			}
-			fmt.Printf("team/%s created\n", name)
+
+			fatal := printBundleResponse(resp)
+			if fatal {
+				if statusCode == 400 {
+					return fmt.Errorf("team bundle rejected (HTTP %d): validation failed", statusCode)
+				}
+				return fmt.Errorf("team bundle partially failed (HTTP %d)", statusCode)
+			}
 			return nil
 		},
 	}
@@ -279,24 +352,96 @@ func createTeamCmd() *cobra.Command {
 	cmd.Flags().StringVar(&leaderModel, "leader-model", "", "Leader LLM model")
 	cmd.Flags().StringVar(&leaderHeartbeatEvery, "leader-heartbeat-every", "", "Leader heartbeat interval (e.g. 30m)")
 	cmd.Flags().StringVar(&workerIdleTimeout, "worker-idle-timeout", "", "Idle timeout before the leader may sleep workers (e.g. 12h)")
-	cmd.Flags().StringVar(&workers, "workers", "", "Comma-separated worker names")
+	cmd.Flags().StringVar(&workers, "workers", "", "Comma-separated worker specs (name or name:model)")
+	cmd.Flags().StringVar(&workerModelDefault, "worker-model", "", "Default model for --workers entries without inline :model")
+	cmd.Flags().StringVar(&admins, "admins", "", "Comma-separated Human names to grant team admin access")
 	cmd.Flags().StringVar(&description, "description", "", "Team description")
 	return cmd
+}
+
+// doBundleRequest issues a bundle endpoint call and decodes the response
+// body regardless of whether the status is 207 (normal) or 400 (dry-run
+// validation failure). Both status codes carry a BundleResponse payload,
+// so the caller uniformly prints the per-item outcome and decides whether
+// the overall call should be considered fatal.
+func doBundleRequest(client *APIClient, method, path string, body interface{}) (*bundleResponseWire, int, error) {
+	resp, err := client.Do(method, path, body)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, resp.StatusCode, fmt.Errorf("read response: %w", err)
+	}
+
+	switch {
+	case resp.StatusCode == 207 || resp.StatusCode == 400:
+		var br bundleResponseWire
+		if len(respBody) > 0 {
+			if err := json.Unmarshal(respBody, &br); err != nil {
+				return nil, resp.StatusCode, fmt.Errorf("decode bundle response: %w", err)
+			}
+		}
+		return &br, resp.StatusCode, nil
+	case resp.StatusCode >= 200 && resp.StatusCode < 300:
+		return &bundleResponseWire{}, resp.StatusCode, nil
+	default:
+		msg := strings.TrimSpace(string(respBody))
+		var errResp struct {
+			Error string `json:"error"`
+		}
+		if json.Unmarshal(respBody, &errResp) == nil && errResp.Error != "" {
+			msg = errResp.Error
+		}
+		return nil, resp.StatusCode, &APIError{StatusCode: resp.StatusCode, Message: msg}
+	}
 }
 
 // ---------------------------------------------------------------------------
 // create human
 // ---------------------------------------------------------------------------
 
+// parseTeamAccessCSV turns "alpha:admin,beta:member" into []{team, role}.
+// Every entry must contain a colon; role must be admin|member.
+func parseTeamAccessCSV(raw string) ([]map[string]string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil
+	}
+	var out []map[string]string
+	for _, piece := range strings.Split(raw, ",") {
+		piece = strings.TrimSpace(piece)
+		if piece == "" {
+			continue
+		}
+		parts := strings.SplitN(piece, ":", 2)
+		if len(parts) != 2 {
+			return nil, fmt.Errorf("invalid --team-access entry %q: expected name:role", piece)
+		}
+		team := strings.TrimSpace(parts[0])
+		role := strings.TrimSpace(parts[1])
+		if team == "" {
+			return nil, fmt.Errorf("invalid --team-access entry %q: missing team name", piece)
+		}
+		if role != "admin" && role != "member" {
+			return nil, fmt.Errorf("invalid --team-access entry %q: role must be admin or member", piece)
+		}
+		out = append(out, map[string]string{"team": team, "role": role})
+	}
+	return out, nil
+}
+
 func createHumanCmd() *cobra.Command {
 	var (
-		name              string
-		displayName       string
-		email             string
-		permissionLevel   int
-		accessibleTeams   string
-		accessibleWorkers string
-		note              string
+		name         string
+		displayName  string
+		email        string
+		note         string
+		superAdmin   bool
+		teamAccess   string
+		workerAccess string
 	)
 
 	cmd := &cobra.Command{
@@ -305,7 +450,9 @@ func createHumanCmd() *cobra.Command {
 		Long: `Create a new Human resource (Matrix account + room access).
 
   hiclaw create human --name bob --display-name "Bob Chen"
-  hiclaw create human --name alice --display-name "Alice" --email alice@example.com --permission-level 50`,
+  hiclaw create human --name alice --display-name "Alice" --email alice@example.com --super-admin
+  hiclaw create human --name carol --display-name "Carol" --team-access alpha:admin,beta:member
+  hiclaw create human --name dave --display-name "Dave" --worker-access w1,w2`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if name == "" {
 				return fmt.Errorf("--name is required")
@@ -314,18 +461,30 @@ func createHumanCmd() *cobra.Command {
 				return fmt.Errorf("--display-name is required")
 			}
 
+			teamAccessList, err := parseTeamAccessCSV(teamAccess)
+			if err != nil {
+				return err
+			}
+			workerAccessList := splitCSV(workerAccess)
+
+			if superAdmin && (len(teamAccessList) > 0 || len(workerAccessList) > 0) {
+				return fmt.Errorf("--super-admin cannot be combined with --team-access or --worker-access")
+			}
+
 			req := map[string]interface{}{
-				"name":            name,
-				"displayName":     displayName,
-				"permissionLevel": permissionLevel,
+				"name":        name,
+				"displayName": displayName,
 			}
 			setIfNotEmpty(req, "email", email)
 			setIfNotEmpty(req, "note", note)
-			if accessibleTeams != "" {
-				req["accessibleTeams"] = splitCSV(accessibleTeams)
+			if superAdmin {
+				req["superAdmin"] = true
 			}
-			if accessibleWorkers != "" {
-				req["accessibleWorkers"] = splitCSV(accessibleWorkers)
+			if len(teamAccessList) > 0 {
+				req["teamAccess"] = teamAccessList
+			}
+			if len(workerAccessList) > 0 {
+				req["workerAccess"] = workerAccessList
 			}
 
 			client := NewAPIClient()
@@ -341,10 +500,10 @@ func createHumanCmd() *cobra.Command {
 	cmd.Flags().StringVar(&name, "name", "", "Human username (required)")
 	cmd.Flags().StringVar(&displayName, "display-name", "", "Display name (required)")
 	cmd.Flags().StringVar(&email, "email", "", "Email address")
-	cmd.Flags().IntVar(&permissionLevel, "permission-level", 0, "Permission level (0-100)")
-	cmd.Flags().StringVar(&accessibleTeams, "accessible-teams", "", "Comma-separated team names")
-	cmd.Flags().StringVar(&accessibleWorkers, "accessible-workers", "", "Comma-separated worker names")
 	cmd.Flags().StringVar(&note, "note", "", "Note for the Human user")
+	cmd.Flags().BoolVar(&superAdmin, "super-admin", false, "Grant global super-admin access (mutually exclusive with --team-access/--worker-access)")
+	cmd.Flags().StringVar(&teamAccess, "team-access", "", "Comma-separated team access entries (name:admin|member)")
+	cmd.Flags().StringVar(&workerAccess, "worker-access", "", "Comma-separated worker names for direct access")
 	return cmd
 }
 

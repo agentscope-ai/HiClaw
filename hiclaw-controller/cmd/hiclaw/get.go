@@ -35,7 +35,7 @@ func getWorkersCmd() *cobra.Command {
 
   hiclaw get workers
   hiclaw get workers alice
-  hiclaw get workers --team alpha-team
+  hiclaw get workers --team alpha
   hiclaw get workers alice -o json`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -70,14 +70,15 @@ func getWorkersCmd() *cobra.Command {
 				fmt.Println("No workers found.")
 				return nil
 			}
-			headers := []string{"NAME", "PHASE", "MODEL", "TEAM", "RUNTIME"}
+			headers := []string{"NAME", "PHASE", "MODEL", "TEAM", "ROLE", "RUNTIME"}
 			var rows [][]string
 			for _, w := range resp.Workers {
 				rows = append(rows, []string{
 					w.Name,
 					or(w.Phase, "Pending"),
 					w.Model,
-					or(w.Team, "-"),
+					or(w.TeamRef, "-"),
+					or(w.Role, "-"),
 					or(w.Runtime, "openclaw"),
 				})
 			}
@@ -104,8 +105,8 @@ func getTeamsCmd() *cobra.Command {
 		Long: `List all Teams or get a specific Team by name.
 
   hiclaw get teams
-  hiclaw get teams alpha-team
-  hiclaw get teams alpha-team -o json`,
+  hiclaw get teams alpha
+  hiclaw get teams alpha -o json`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			client := NewAPIClient()
@@ -135,15 +136,15 @@ func getTeamsCmd() *cobra.Command {
 				fmt.Println("No teams found.")
 				return nil
 			}
-			headers := []string{"NAME", "PHASE", "LEADER", "WORKERS", "READY"}
+			headers := []string{"NAME", "PHASE", "LEADER", "MEMBERS", "READY"}
 			var rows [][]string
 			for _, t := range resp.Teams {
-				ready := fmt.Sprintf("%d/%d", t.ReadyWorkers, t.TotalWorkers)
+				ready := fmt.Sprintf("%d/%d", t.ReadyMembers, t.TotalMembers)
 				rows = append(rows, []string{
 					t.Name,
 					or(t.Phase, "Pending"),
-					t.LeaderName,
-					strings.Join(t.WorkerNames, ","),
+					or(t.LeaderName, "-"),
+					strings.Join(memberNames(t.Members), ","),
 					ready,
 				})
 			}
@@ -200,13 +201,14 @@ func getHumansCmd() *cobra.Command {
 				fmt.Println("No humans found.")
 				return nil
 			}
-			headers := []string{"NAME", "PHASE", "DISPLAY-NAME", "MATRIX-ID"}
+			headers := []string{"NAME", "PHASE", "DISPLAY-NAME", "SUPER-ADMIN", "MATRIX-ID"}
 			var rows [][]string
 			for _, h := range resp.Humans {
 				rows = append(rows, []string{
 					h.Name,
 					or(h.Phase, "Pending"),
 					h.DisplayName,
+					boolDisplay(h.SuperAdmin, "yes", "-"),
 					or(h.MatrixUserID, "-"),
 				})
 			}
@@ -296,7 +298,7 @@ type workerResp struct {
 	MatrixUserID   string `json:"matrixUserID,omitempty"`
 	RoomID         string `json:"roomID,omitempty"`
 	Message        string `json:"message,omitempty"`
-	Team           string `json:"team,omitempty"`
+	TeamRef        string `json:"teamRef,omitempty"`
 	Role           string `json:"role,omitempty"`
 }
 
@@ -306,19 +308,33 @@ type workerListResp struct {
 }
 
 type teamResp struct {
-	Name              string             `json:"name"`
-	Phase             string             `json:"phase"`
-	Description       string             `json:"description,omitempty"`
-	LeaderName        string             `json:"leaderName"`
-	LeaderHeartbeat   *teamHeartbeatResp `json:"leaderHeartbeat,omitempty"`
-	WorkerIdleTimeout string             `json:"workerIdleTimeout,omitempty"`
-	TeamRoomID        string             `json:"teamRoomID,omitempty"`
-	LeaderDMRoomID    string             `json:"leaderDMRoomID,omitempty"`
-	LeaderReady       bool               `json:"leaderReady"`
-	ReadyWorkers      int                `json:"readyWorkers"`
-	TotalWorkers      int                `json:"totalWorkers"`
-	Message           string             `json:"message,omitempty"`
-	WorkerNames       []string           `json:"workerNames,omitempty"`
+	Name               string             `json:"name"`
+	Phase              string             `json:"phase"`
+	Description        string             `json:"description,omitempty"`
+	Heartbeat          *teamHeartbeatResp `json:"heartbeat,omitempty"`
+	WorkerIdleTimeout  string             `json:"workerIdleTimeout,omitempty"`
+	TeamRoomID         string             `json:"teamRoomID,omitempty"`
+	LeaderDMRoomID     string             `json:"leaderDMRoomID,omitempty"`
+	LeaderName         string             `json:"leaderName,omitempty"`
+	LeaderMatrixUserID string             `json:"leaderMatrixUserID,omitempty"`
+	LeaderReady        bool               `json:"leaderReady"`
+	Members            []teamMemberInfo   `json:"members,omitempty"`
+	Admins             []teamAdminInfo    `json:"admins,omitempty"`
+	TotalMembers       int                `json:"totalMembers,omitempty"`
+	ReadyMembers       int                `json:"readyMembers,omitempty"`
+	Message            string             `json:"message,omitempty"`
+}
+
+type teamMemberInfo struct {
+	Name         string `json:"name"`
+	Role         string `json:"role"`
+	MatrixUserID string `json:"matrixUserID,omitempty"`
+	Ready        bool   `json:"ready"`
+}
+
+type teamAdminInfo struct {
+	HumanName    string `json:"humanName"`
+	MatrixUserID string `json:"matrixUserID,omitempty"`
 }
 
 type teamHeartbeatResp struct {
@@ -332,13 +348,22 @@ type teamListResp struct {
 }
 
 type humanResp struct {
-	Name            string   `json:"name"`
-	Phase           string   `json:"phase"`
-	DisplayName     string   `json:"displayName"`
-	MatrixUserID    string   `json:"matrixUserID,omitempty"`
-	InitialPassword string   `json:"initialPassword,omitempty"`
-	Rooms           []string `json:"rooms,omitempty"`
-	Message         string   `json:"message,omitempty"`
+	Name            string            `json:"name"`
+	Phase           string            `json:"phase"`
+	DisplayName     string            `json:"displayName"`
+	Email           string            `json:"email,omitempty"`
+	MatrixUserID    string            `json:"matrixUserID,omitempty"`
+	InitialPassword string            `json:"initialPassword,omitempty"`
+	Rooms           []string          `json:"rooms,omitempty"`
+	SuperAdmin      bool              `json:"superAdmin,omitempty"`
+	TeamAccess      []teamAccessEntry `json:"teamAccess,omitempty"`
+	WorkerAccess    []string          `json:"workerAccess,omitempty"`
+	Message         string            `json:"message,omitempty"`
+}
+
+type teamAccessEntry struct {
+	Team string `json:"team"`
+	Role string `json:"role"`
 }
 
 type humanListResp struct {
@@ -363,6 +388,20 @@ type managerListResp struct {
 	Total    int           `json:"total"`
 }
 
+// bundleResponseWire matches the server's BundleResponse shape; used by
+// createTeamCmd / deleteTeamCmd to decode 207 and 400 responses uniformly.
+type bundleResponseWire struct {
+	Items []bundleItemResp `json:"items"`
+}
+
+type bundleItemResp struct {
+	Kind    string `json:"kind"`
+	Name    string `json:"name"`
+	Status  string `json:"status"`
+	Message string `json:"message,omitempty"`
+	Warning bool   `json:"warning,omitempty"`
+}
+
 // ---------------------------------------------------------------------------
 // Detail formatters
 // ---------------------------------------------------------------------------
@@ -375,7 +414,7 @@ func workerDetail(w workerResp) []KeyValue {
 		{"Runtime", or(w.Runtime, "openclaw")},
 		{"ContainerState", w.ContainerState},
 		{"Image", w.Image},
-		{"Team", w.Team},
+		{"TeamRef", w.TeamRef},
 		{"Role", w.Role},
 		{"MatrixUserID", w.MatrixUserID},
 		{"RoomID", w.RoomID},
@@ -389,11 +428,13 @@ func teamDetail(t teamResp) []KeyValue {
 		{"Phase", or(t.Phase, "Pending")},
 		{"Description", t.Description},
 		{"Leader", t.LeaderName},
-		{"LeaderHeartbeat", teamHeartbeatText(t.LeaderHeartbeat)},
+		{"LeaderMatrixUserID", t.LeaderMatrixUserID},
+		{"LeaderHeartbeat", teamHeartbeatText(t.Heartbeat)},
 		{"WorkerIdleTimeout", t.WorkerIdleTimeout},
 		{"LeaderReady", strconv.FormatBool(t.LeaderReady)},
-		{"Workers", strings.Join(t.WorkerNames, ", ")},
-		{"ReadyWorkers", fmt.Sprintf("%d/%d", t.ReadyWorkers, t.TotalWorkers)},
+		{"Members", joinTeamMembers(t.Members)},
+		{"ReadyMembers", fmt.Sprintf("%d/%d", t.ReadyMembers, t.TotalMembers)},
+		{"Admins", joinTeamAdmins(t.Admins)},
 		{"TeamRoomID", t.TeamRoomID},
 		{"LeaderDMRoomID", t.LeaderDMRoomID},
 		{"Message", t.Message},
@@ -418,6 +459,10 @@ func humanDetail(h humanResp) []KeyValue {
 		{"Name", h.Name},
 		{"Phase", or(h.Phase, "Pending")},
 		{"DisplayName", h.DisplayName},
+		{"Email", h.Email},
+		{"SuperAdmin", boolDisplay(h.SuperAdmin, "yes", "no")},
+		{"TeamAccess", joinTeamAccess(h.TeamAccess)},
+		{"WorkerAccess", strings.Join(h.WorkerAccess, ", ")},
 		{"MatrixUserID", h.MatrixUserID},
 		{"InitialPassword", h.InitialPassword},
 		{"Rooms", strings.Join(h.Rooms, ", ")},
@@ -437,4 +482,45 @@ func managerDetail(m managerResp) []KeyValue {
 		{"Version", m.Version},
 		{"Message", m.Message},
 	}
+}
+
+// memberNames returns just the Name field of each member, preserving order.
+func memberNames(members []teamMemberInfo) []string {
+	out := make([]string, 0, len(members))
+	for _, m := range members {
+		out = append(out, m.Name)
+	}
+	return out
+}
+
+// joinTeamMembers formats members as "name(role, ready)" joined by ", ".
+func joinTeamMembers(members []teamMemberInfo) string {
+	if len(members) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(members))
+	for _, m := range members {
+		readiness := "not-ready"
+		if m.Ready {
+			readiness = "ready"
+		}
+		parts = append(parts, fmt.Sprintf("%s(%s, %s)", m.Name, m.Role, readiness))
+	}
+	return strings.Join(parts, ", ")
+}
+
+// joinTeamAdmins formats admins as "humanName[@matrixID]" joined by ", ".
+func joinTeamAdmins(admins []teamAdminInfo) string {
+	if len(admins) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(admins))
+	for _, a := range admins {
+		if a.MatrixUserID != "" {
+			parts = append(parts, fmt.Sprintf("%s@%s", a.HumanName, a.MatrixUserID))
+			continue
+		}
+		parts = append(parts, a.HumanName)
+	}
+	return strings.Join(parts, ", ")
 }

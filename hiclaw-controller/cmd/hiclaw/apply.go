@@ -299,7 +299,7 @@ func applyWorkerParams(name, model, runtime, image, identity, soul, soulFile,
 	setIfNotEmpty(req, "identity", identity)
 	setIfNotEmpty(req, "soul", soul)
 	setIfNotEmpty(req, "package", packageURI)
-	setIfNotEmpty(req, "team", team)
+	setIfNotEmpty(req, "teamRef", team)
 	setIfNotEmpty(req, "role", role)
 	if skills != "" {
 		req["skills"] = splitCSV(skills)
