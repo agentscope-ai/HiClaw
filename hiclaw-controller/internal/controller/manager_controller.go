@@ -49,6 +49,11 @@ type ManagerReconciler struct {
 	EnvBuilder       service.ManagerEnvBuilderI
 	ManagerResources *backend.ResourceRequirements
 	EmbeddedConfig   *ManagerEmbeddedConfig // non-nil in embedded mode only
+
+	// ResolveImage returns the default Manager image for a given runtime. When
+	// a Manager CR's spec.image is empty, the reconciler uses this to select a
+	// runtime-appropriate fallback. May be nil in tests; callers must handle that.
+	ResolveImage func(runtime string) string
 }
 
 func (r *ManagerReconciler) Reconcile(ctx context.Context, req reconcile.Request) (retres reconcile.Result, reterr error) {

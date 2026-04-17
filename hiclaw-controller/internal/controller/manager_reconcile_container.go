@@ -147,10 +147,20 @@ func (r *ManagerReconciler) createManagerContainer(ctx context.Context, s *manag
 	managerEnv := r.EnvBuilder.BuildManager(m.Name, prov, m.Spec)
 	containerName := managerContainerName(m.Name)
 	saName := authpkg.SAName(authpkg.RoleManager, m.Name)
+
+	image := m.Spec.Image
+	if image == "" && r.ResolveImage != nil {
+		image = r.ResolveImage(m.Spec.Runtime)
+	}
+	if image == "" {
+		logger.Info("manager image unresolved; backend may fall back to worker image",
+			"manager", m.Name, "runtime", m.Spec.Runtime)
+	}
+
 	createReq := backend.CreateRequest{
 		Name:               m.Name,
 		ContainerName:      containerName,
-		Image:              m.Spec.Image,
+		Image:              image,
 		Runtime:            m.Spec.Runtime,
 		Env:                managerEnv,
 		ServiceAccountName: saName,

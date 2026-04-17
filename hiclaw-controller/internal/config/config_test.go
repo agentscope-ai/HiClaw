@@ -1,12 +1,15 @@
 package config
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/hiclaw/hiclaw-controller/internal/backend"
+)
 
 func TestLoadConfigAppliesManagerSpec(t *testing.T) {
 	t.Setenv("HICLAW_MANAGER_SPEC", `{
 		"model":"qwen-max",
 		"runtime":"copaw",
-		"image":"hiclaw/manager:test",
 		"resources":{
 			"requests":{"cpu":"750m","memory":"1536Mi"},
 			"limits":{"cpu":"3","memory":"5Gi"}
@@ -21,9 +24,6 @@ func TestLoadConfigAppliesManagerSpec(t *testing.T) {
 	}
 	if cfg.ManagerRuntime != "copaw" {
 		t.Fatalf("ManagerRuntime = %q, want %q", cfg.ManagerRuntime, "copaw")
-	}
-	if cfg.ManagerImage != "hiclaw/manager:test" {
-		t.Fatalf("ManagerImage = %q, want %q", cfg.ManagerImage, "hiclaw/manager:test")
 	}
 	if cfg.K8sManagerCPURequest != "750m" {
 		t.Fatalf("K8sManagerCPURequest = %q, want %q", cfg.K8sManagerCPURequest, "750m")
@@ -175,4 +175,70 @@ func TestManagerAgentEnvForwardsAbstractInfraEnv(t *testing.T) {
 			t.Fatalf("unexpected legacy env %s in ManagerAgentEnv", legacyKey)
 		}
 	}
+}
+
+func TestConfigResolveManagerImage(t *testing.T) {
+	t.Run("env set, dispatches by runtime", func(t *testing.T) {
+		t.Setenv("HICLAW_MANAGER_IMAGE", "hiclaw/manager:oc")
+		t.Setenv("HICLAW_COPAW_MANAGER_IMAGE", "hiclaw/manager:cp")
+
+		cfg := LoadConfig()
+
+		if got := cfg.ResolveManagerImage(backend.RuntimeOpenClaw); got != "hiclaw/manager:oc" {
+			t.Fatalf("ResolveManagerImage(openclaw) = %q, want %q", got, "hiclaw/manager:oc")
+		}
+		if got := cfg.ResolveManagerImage(backend.RuntimeCopaw); got != "hiclaw/manager:cp" {
+			t.Fatalf("ResolveManagerImage(copaw) = %q, want %q", got, "hiclaw/manager:cp")
+		}
+		if got := cfg.ResolveManagerImage(""); got != "hiclaw/manager:oc" {
+			t.Fatalf("ResolveManagerImage(\"\") = %q, want openclaw default %q", got, "hiclaw/manager:oc")
+		}
+	})
+
+	t.Run("no env, no hardcoded default", func(t *testing.T) {
+		// Explicitly clear so the test doesn't depend on the host environment.
+		t.Setenv("HICLAW_MANAGER_IMAGE", "")
+		t.Setenv("HICLAW_COPAW_MANAGER_IMAGE", "")
+
+		cfg := LoadConfig()
+		if got := cfg.ResolveManagerImage(backend.RuntimeOpenClaw); got != "" {
+			t.Fatalf("ResolveManagerImage(openclaw) = %q, want empty (no env, no default)", got)
+		}
+		if got := cfg.ResolveManagerImage(backend.RuntimeCopaw); got != "" {
+			t.Fatalf("ResolveManagerImage(copaw) = %q, want empty (no env, no default)", got)
+		}
+	})
+}
+
+func TestConfigResolveWorkerImage(t *testing.T) {
+	t.Run("env set, dispatches by runtime", func(t *testing.T) {
+		t.Setenv("HICLAW_WORKER_IMAGE", "hiclaw/worker:oc")
+		t.Setenv("HICLAW_COPAW_WORKER_IMAGE", "hiclaw/worker:cp")
+
+		cfg := LoadConfig()
+
+		if got := cfg.ResolveWorkerImage(backend.RuntimeOpenClaw); got != "hiclaw/worker:oc" {
+			t.Fatalf("ResolveWorkerImage(openclaw) = %q, want %q", got, "hiclaw/worker:oc")
+		}
+		if got := cfg.ResolveWorkerImage(backend.RuntimeCopaw); got != "hiclaw/worker:cp" {
+			t.Fatalf("ResolveWorkerImage(copaw) = %q, want %q", got, "hiclaw/worker:cp")
+		}
+		if got := cfg.ResolveWorkerImage(""); got != "hiclaw/worker:oc" {
+			t.Fatalf("ResolveWorkerImage(\"\") = %q, want openclaw default %q", got, "hiclaw/worker:oc")
+		}
+	})
+
+	t.Run("no env, legacy hardcoded defaults", func(t *testing.T) {
+		// Explicitly clear so the test doesn't depend on the host environment.
+		t.Setenv("HICLAW_WORKER_IMAGE", "")
+		t.Setenv("HICLAW_COPAW_WORKER_IMAGE", "")
+
+		cfg := LoadConfig()
+		if got := cfg.ResolveWorkerImage(backend.RuntimeOpenClaw); got != "hiclaw/worker-agent:latest" {
+			t.Fatalf("ResolveWorkerImage(openclaw) = %q, want legacy default %q", got, "hiclaw/worker-agent:latest")
+		}
+		if got := cfg.ResolveWorkerImage(backend.RuntimeCopaw); got != "hiclaw/copaw-worker:latest" {
+			t.Fatalf("ResolveWorkerImage(copaw) = %q, want legacy default %q", got, "hiclaw/copaw-worker:latest")
+		}
+	})
 }

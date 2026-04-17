@@ -47,14 +47,6 @@ app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 {{- end }}
 
 {{/*
-Image tag: defaults to global.imageTag.
-Usage: include "hiclaw.imageTag" (dict "tag" .Values.foo.image.tag "global" .Values.global)
-*/}}
-{{- define "hiclaw.imageTag" -}}
-{{- default .global.imageTag .tag }}
-{{- end }}
-
-{{/*
 Shared runtime Secret name.
 */}}
 {{- define "hiclaw.secretName" -}}
@@ -145,21 +137,39 @@ app.kubernetes.io/component: {{ .component }}
 {{- end }}
 {{- end }}
 
-{{/* ── Manager image helper (used by controller to create Manager CR) ──── */}}
+{{/* ── Manager image helpers (used by controller to create Manager CR) ─── */}}
 
+{{/*
+Resolve Manager image by runtime. Dispatch to the openclaw or copaw variant
+based on .Values.manager.runtime (defaults to "openclaw").
+*/}}
 {{- define "hiclaw.manager.image" -}}
-{{- $tag := default .Values.global.imageTag .Values.manager.image.tag }}
-{{- printf "%s:%s" .Values.manager.image.repository $tag }}
+{{- $runtime := .Values.manager.runtime | default "openclaw" -}}
+{{- if eq $runtime "copaw" -}}
+{{- include "hiclaw.manager.copawImage" . -}}
+{{- else -}}
+{{- include "hiclaw.manager.openclawImage" . -}}
+{{- end -}}
+{{- end }}
+
+{{- define "hiclaw.manager.openclawImage" -}}
+{{- $tag := .Values.manager.defaultImage.openclaw.tag | default .Values.global.imageTag | default .Chart.AppVersion -}}
+{{- printf "%s:%s" .Values.manager.defaultImage.openclaw.repository $tag -}}
+{{- end }}
+
+{{- define "hiclaw.manager.copawImage" -}}
+{{- $tag := .Values.manager.defaultImage.copaw.tag | default .Values.global.imageTag | default .Chart.AppVersion -}}
+{{- printf "%s:%s" .Values.manager.defaultImage.copaw.repository $tag -}}
 {{- end }}
 
 {{/* ── Worker image helpers ────────────────────────────────────────────── */}}
 
 {{- define "hiclaw.worker.openclawImage" -}}
-{{- $tag := default .Values.global.imageTag .Values.worker.defaultImage.openclaw.tag }}
-{{- printf "%s:%s" .Values.worker.defaultImage.openclaw.repository $tag }}
+{{- $tag := .Values.worker.defaultImage.openclaw.tag | default .Values.global.imageTag | default .Chart.AppVersion -}}
+{{- printf "%s:%s" .Values.worker.defaultImage.openclaw.repository $tag -}}
 {{- end }}
 
 {{- define "hiclaw.worker.copawImage" -}}
-{{- $tag := default .Values.global.imageTag .Values.worker.defaultImage.copaw.tag }}
-{{- printf "%s:%s" .Values.worker.defaultImage.copaw.repository $tag }}
+{{- $tag := .Values.worker.defaultImage.copaw.tag | default .Values.global.imageTag | default .Chart.AppVersion -}}
+{{- printf "%s:%s" .Values.worker.defaultImage.copaw.repository $tag -}}
 {{- end }}

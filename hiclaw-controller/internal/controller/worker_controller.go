@@ -36,6 +36,11 @@ type WorkerReconciler struct {
 	Backend     *backend.Registry
 	EnvBuilder  service.WorkerEnvBuilderI
 	Legacy      *service.LegacyCompat // nil in incluster mode
+
+	// ResolveImage returns the default Worker image for a given runtime. When
+	// a Worker CR's spec.image is empty, the reconciler uses this to select a
+	// runtime-appropriate fallback. May be nil in tests; callers must handle that.
+	ResolveImage func(runtime string) string
 }
 
 func (r *WorkerReconciler) Reconcile(ctx context.Context, req reconcile.Request) (retres reconcile.Result, reterr error) {

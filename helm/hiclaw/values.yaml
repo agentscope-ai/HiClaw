@@ -8,7 +8,8 @@
 global:
   namespace: ""  # defaults to .Release.Namespace
   imageRegistry: higress-registry.cn-hangzhou.cr.aliyuncs.com/higress
-  imageTag: "v1.0.9"
+  # imageTag is intentionally unset; image helpers fall back to Chart.AppVersion.
+  # Set this to override every component's image tag in one place.
 
 imagePullSecrets: []
 
@@ -127,7 +128,7 @@ controller:
   replicaCount: 1               # increase for HA with leader election
   image:
     repository: higress-registry.cn-hangzhou.cr.aliyuncs.com/higress/hiclaw-controller
-    tag: ""                   # defaults to global.imageTag
+    tag: ""                   # defaults to Chart.AppVersion
     pullPolicy: IfNotPresent
   service:
     type: ClusterIP
@@ -156,9 +157,13 @@ manager:
   enabled: true                 # create Manager CR during cluster initialization
   model: ""                     # LLM model; defaults to credentials.defaultModel
   runtime: "openclaw"           # openclaw | copaw
-  image:
-    repository: higress-registry.cn-hangzhou.cr.aliyuncs.com/higress/hiclaw-manager
-    tag: ""                     # defaults to global.imageTag
+  defaultImage:
+    openclaw:
+      repository: higress-registry.cn-hangzhou.cr.aliyuncs.com/higress/hiclaw-manager
+      tag: ""                   # defaults to Chart.AppVersion
+    copaw:
+      repository: higress-registry.cn-hangzhou.cr.aliyuncs.com/higress/hiclaw-copaw-manager
+      tag: ""                   # defaults to Chart.AppVersion
   resources:
     requests:
       cpu: 500m
@@ -191,10 +196,10 @@ worker:
   defaultImage:
     openclaw:
       repository: higress-registry.cn-hangzhou.cr.aliyuncs.com/higress/hiclaw-worker
-      tag: ""                 # defaults to global.imageTag
+      tag: ""                 # defaults to Chart.AppVersion
     copaw:
       repository: higress-registry.cn-hangzhou.cr.aliyuncs.com/higress/hiclaw-copaw-worker
-      tag: ""                 # defaults to global.imageTag
+      tag: ""                 # defaults to Chart.AppVersion
   defaultRuntime: "openclaw"
   resources:
     requests:

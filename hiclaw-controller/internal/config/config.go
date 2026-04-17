@@ -60,11 +60,16 @@ type Config struct {
 	K8sWorkerCPU    string
 	K8sWorkerMemory string
 
+	// Worker default images (shared by Docker and K8s backends)
+	WorkerImage      string
+	CopawWorkerImage string
+
 	// Manager deployment (Initializer creates the Manager CR if enabled)
 	ManagerEnabled          bool
 	ManagerModel            string
 	ManagerRuntime          string
 	ManagerImage            string
+	CopawManagerImage       string
 	K8sManagerCPURequest    string
 	K8sManagerMemoryRequest string
 	K8sManagerCPU           string
@@ -198,10 +203,14 @@ func LoadConfig() *Config {
 		K8sWorkerCPU:    envOrDefault("HICLAW_K8S_WORKER_CPU", "1000m"),
 		K8sWorkerMemory: envOrDefault("HICLAW_K8S_WORKER_MEMORY", "2Gi"),
 
+		WorkerImage:      envOrDefault("HICLAW_WORKER_IMAGE", "hiclaw/worker-agent:latest"),
+		CopawWorkerImage: envOrDefault("HICLAW_COPAW_WORKER_IMAGE", "hiclaw/copaw-worker:latest"),
+
 		ManagerEnabled:          envOrDefault("HICLAW_MANAGER_ENABLED", "true") == "true",
 		ManagerModel:            firstNonEmpty(os.Getenv("HICLAW_MANAGER_MODEL"), envOrDefault("HICLAW_DEFAULT_MODEL", "qwen3.5-plus")),
 		ManagerRuntime:          envOrDefault("HICLAW_MANAGER_RUNTIME", "openclaw"),
 		ManagerImage:            os.Getenv("HICLAW_MANAGER_IMAGE"),
+		CopawManagerImage:       os.Getenv("HICLAW_COPAW_MANAGER_IMAGE"),
 		K8sManagerCPURequest:    envOrDefault("HICLAW_K8S_MANAGER_CPU_REQUEST", "500m"),
 		K8sManagerMemoryRequest: envOrDefault("HICLAW_K8S_MANAGER_MEMORY_REQUEST", "1Gi"),
 		K8sManagerCPU:           envOrDefault("HICLAW_K8S_MANAGER_CPU", "2"),
@@ -321,11 +330,30 @@ func (c *Config) ManagerResources() *backend.ResourceRequirements {
 	}
 }
 
+// ResolveManagerImage returns the default Manager image for the given runtime.
+// Used by ManagerReconciler as a fallback when the Manager CR's spec.image is empty.
+// Returns an empty string if no image is configured for the requested runtime.
+func (c *Config) ResolveManagerImage(runtime string) string {
+	if runtime == backend.RuntimeCopaw {
+		return c.CopawManagerImage
+	}
+	return c.ManagerImage
+}
+
+// ResolveWorkerImage returns the default Worker image for the given runtime.
+// Used by WorkerReconciler as a fallback when the Worker CR's spec.image is empty.
+func (c *Config) ResolveWorkerImage(runtime string) string {
+	if runtime == backend.RuntimeCopaw {
+		return c.CopawWorkerImage
+	}
+	return c.WorkerImage
+}
+
 func (c *Config) DockerConfig() backend.DockerConfig {
 	return backend.DockerConfig{
 		SocketPath:       c.SocketPath,
-		WorkerImage:      envOrDefault("HICLAW_WORKER_IMAGE", "hiclaw/worker-agent:latest"),
-		CopawWorkerImage: envOrDefault("HICLAW_COPAW_WORKER_IMAGE", "hiclaw/copaw-worker:latest"),
+		WorkerImage:      c.WorkerImage,
+		CopawWorkerImage: c.CopawWorkerImage,
 		DefaultNetwork:   envOrDefault("HICLAW_DOCKER_NETWORK", "hiclaw-net"),
 	}
 }
@@ -352,8 +380,8 @@ func (c *Config) STSConfig() credentials.STSConfig {
 func (c *Config) K8sConfig() backend.K8sConfig {
 	return backend.K8sConfig{
 		Namespace:        c.K8sNamespace,
-		WorkerImage:      envOrDefault("HICLAW_WORKER_IMAGE", "hiclaw/worker-agent:latest"),
-		CopawWorkerImage: envOrDefault("HICLAW_COPAW_WORKER_IMAGE", "hiclaw/copaw-worker:latest"),
+		WorkerImage:      c.WorkerImage,
+		CopawWorkerImage: c.CopawWorkerImage,
 		WorkerCPU:        c.K8sWorkerCPU,
 		WorkerMemory:     c.K8sWorkerMemory,
 	}
@@ -401,9 +429,12 @@ func applyManagerSpec(cfg *Config, specJSON string) error {
 	if spec.Runtime != "" {
 		cfg.ManagerRuntime = spec.Runtime
 	}
-	if spec.Image != "" {
-		cfg.ManagerImage = spec.Image
-	}
+	// Note: spec.Image is intentionally ignored. The Manager image is resolved
+	// from HICLAW_{MANAGER,COPAW_MANAGER}_IMAGE envs via Config.ResolveManagerImage,
+	// so that runtime dispatch stays consistent (applying spec.Image here would
+	// overwrite cfg.ManagerImage with the copaw image when runtime=copaw).
+	// The Image field on managerSpecEnv is kept for backward-compatible JSON
+	// deserialization of legacy SPEC payloads.
 	if spec.Resources.Requests.CPU != "" {
 		cfg.K8sManagerCPURequest = spec.Resources.Requests.CPU
 	}

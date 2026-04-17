@@ -1,5 +1,5 @@
 {{- $comp := dict "root" . "component" "controller" }}
-{{- $tag := include "hiclaw.imageTag" (dict "tag" .Values.controller.image.tag "global" .Values.global) }}
+{{- $tag := .Values.controller.image.tag | default .Values.global.imageTag | default .Chart.AppVersion }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -50,6 +50,10 @@ spec:
               value: {{ include "hiclaw.worker.openclawImage" . | quote }}
             - name: HICLAW_COPAW_WORKER_IMAGE
               value: {{ include "hiclaw.worker.copawImage" . | quote }}
+            - name: HICLAW_MANAGER_IMAGE
+              value: {{ include "hiclaw.manager.openclawImage" . | quote }}
+            - name: HICLAW_COPAW_MANAGER_IMAGE
+              value: {{ include "hiclaw.manager.copawImage" . | quote }}
             - name: TZ
               value: {{ .Values.controller.timezone | quote }}
             - name: HICLAW_FS_ENDPOINT

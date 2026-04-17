@@ -77,11 +77,17 @@ materialized condition flag.
 {{- if and (eq .Values.storage.provider "minio") (eq .Values.storage.mode "managed") -}}MINIO_ROOT_PASSWORD{{- end -}}
 {{- end }}
 
+{{/*
+Manager CR spec payload. The image is intentionally omitted: the controller
+resolves the Manager image from HICLAW_{MANAGER,COPAW_MANAGER}_IMAGE env vars
+(runtime-dispatched by Config.ResolveManagerImage) rather than embedding it in
+this SPEC envelope, which would otherwise overwrite cfg.ManagerImage and break
+the openclaw/copaw dispatch invariant.
+*/}}
 {{- define "hiclaw.manager.spec" -}}
 {{- $spec := dict
   "model" (.Values.manager.model | default .Values.credentials.defaultModel)
   "runtime" (.Values.manager.runtime | default "openclaw")
-  "image" (include "hiclaw.manager.image" .)
   "resources" .Values.manager.resources
 -}}
 {{- $spec | toJson -}}

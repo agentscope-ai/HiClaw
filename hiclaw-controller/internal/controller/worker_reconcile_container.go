@@ -151,9 +151,15 @@ func (r *WorkerReconciler) createWorkerContainer(ctx context.Context, s *workerS
 
 	workerEnv := r.EnvBuilder.Build(w.Name, prov)
 	saName := authpkg.SAName(authpkg.RoleWorker, w.Name)
+
+	image := w.Spec.Image
+	if image == "" && r.ResolveImage != nil {
+		image = r.ResolveImage(w.Spec.Runtime)
+	}
+
 	createReq := backend.CreateRequest{
 		Name:               w.Name,
-		Image:              w.Spec.Image,
+		Image:              image,
 		Runtime:            w.Spec.Runtime,
 		Env:                workerEnv,
 		ServiceAccountName: saName,
