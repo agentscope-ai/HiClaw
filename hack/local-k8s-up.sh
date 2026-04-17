@@ -17,6 +17,7 @@
 #   HICLAW_SKIP_KIND            Skip kind cluster creation (default: 0)
 #   HICLAW_SKIP_BUILD           Skip local image build (default: 0, set to 1 to use remote images)
 #   HICLAW_BUILD_K8S_IMAGE      Build lightweight k8s manager image instead of all-in-one (default: 0)
+#   HICLAW_MANAGER_RUNTIME      Manager runtime: openclaw | copaw (default: openclaw)
 #
 # Usage:
 #   HICLAW_LLM_API_KEY=sk-xxx ./hack/local-k8s-up.sh
@@ -67,9 +68,11 @@ fi
 # ── Step 2: Build & load local images ──────────────────────────────────────
 
 MANAGER_IMAGE="hiclaw/manager:local"
+COPAW_MANAGER_IMAGE="hiclaw/copaw-manager:local"
 CONTROLLER_IMAGE="hiclaw/hiclaw-controller:local"
 WORKER_IMAGE="hiclaw/worker-agent:local"
 COPAW_WORKER_IMAGE="hiclaw/copaw-worker:local"
+MANAGER_RUNTIME="${HICLAW_MANAGER_RUNTIME:-openclaw}"
 HELM_IMAGE_OVERRIDES=""
 
 if [ "$SKIP_BUILD" = "0" ]; then
@@ -94,6 +97,12 @@ if [ "$SKIP_BUILD" = "0" ]; then
             -f "${PROJECT_ROOT}/manager/Dockerfile" "${PROJECT_ROOT}"
     fi
 
+    # CoPaw Manager
+    log "Building copaw manager image..."
+    docker build -t "$COPAW_MANAGER_IMAGE" \
+        --build-arg HICLAW_CONTROLLER_IMAGE="$CONTROLLER_IMAGE" \
+        -f "${PROJECT_ROOT}/manager/Dockerfile.copaw" "${PROJECT_ROOT}"
+
     # Worker images (openclaw + copaw)
     log "Building worker image (openclaw)..."
     docker build -t "$WORKER_IMAGE" \
@@ -110,6 +119,7 @@ if [ "$SKIP_BUILD" = "0" ]; then
 
     log "Loading images into kind cluster..."
     kind load docker-image "$MANAGER_IMAGE" --name "$CLUSTER_NAME"
+    kind load docker-image "$COPAW_MANAGER_IMAGE" --name "$CLUSTER_NAME"
     kind load docker-image "$CONTROLLER_IMAGE" --name "$CLUSTER_NAME"
     kind load docker-image "$WORKER_IMAGE" --name "$CLUSTER_NAME"
     kind load docker-image "$COPAW_WORKER_IMAGE" --name "$CLUSTER_NAME"
@@ -133,7 +143,9 @@ if [ "$SKIP_BUILD" = "0" ]; then
         kind load docker-image "$img" --name "$CLUSTER_NAME"
     done
 
-    HELM_IMAGE_OVERRIDES="--set manager.image.repository=hiclaw/manager --set manager.image.tag=local --set manager.image.pullPolicy=Never"
+    HELM_IMAGE_OVERRIDES="--set manager.runtime=${MANAGER_RUNTIME}"
+    HELM_IMAGE_OVERRIDES="${HELM_IMAGE_OVERRIDES} --set manager.defaultImage.openclaw.repository=hiclaw/manager --set manager.defaultImage.openclaw.tag=local"
+    HELM_IMAGE_OVERRIDES="${HELM_IMAGE_OVERRIDES} --set manager.defaultImage.copaw.repository=hiclaw/copaw-manager --set manager.defaultImage.copaw.tag=local"
     HELM_IMAGE_OVERRIDES="${HELM_IMAGE_OVERRIDES} --set controller.image.repository=hiclaw/hiclaw-controller --set controller.image.tag=local --set controller.image.pullPolicy=Never"
     HELM_IMAGE_OVERRIDES="${HELM_IMAGE_OVERRIDES} --set worker.defaultImage.openclaw.repository=hiclaw/worker-agent --set worker.defaultImage.openclaw.tag=local"
     HELM_IMAGE_OVERRIDES="${HELM_IMAGE_OVERRIDES} --set worker.defaultImage.copaw.repository=hiclaw/copaw-worker --set worker.defaultImage.copaw.tag=local"
