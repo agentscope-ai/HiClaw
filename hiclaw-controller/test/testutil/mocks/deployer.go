@@ -12,18 +12,20 @@ import (
 type MockDeployer struct {
 	mu sync.Mutex
 
-	DeployPackageFn      func(ctx context.Context, workerName string, pkg string, isUpdate bool) error
-	WriteInlineConfigsFn func(workerName string, spec v1beta1.WorkerSpec) error
-	DeployWorkerConfigFn func(ctx context.Context, req service.WorkerDeployRequest) error
-	PushOnDemandSkillsFn func(ctx context.Context, workerName string, skills []string) error
-	CleanupOSSDataFn     func(ctx context.Context, workerName string) error
+	DeployPackageFn                  func(ctx context.Context, workerName string, pkg string, isUpdate bool) error
+	WriteInlineConfigsFn             func(workerName string, spec v1beta1.WorkerSpec) error
+	DeployWorkerConfigFn             func(ctx context.Context, req service.WorkerDeployRequest) error
+	WriteLeaderCoordinationContextFn func(ctx context.Context, req service.LeaderCoordinationRequest) error
+	PushOnDemandSkillsFn             func(ctx context.Context, workerName string, skills []string) error
+	CleanupOSSDataFn                 func(ctx context.Context, workerName string) error
 
 	Calls struct {
-		DeployPackage      []string
-		WriteInlineConfigs []string
-		DeployWorkerConfig []service.WorkerDeployRequest
-		PushOnDemandSkills []string
-		CleanupOSSData     []string
+		DeployPackage                  []string
+		WriteInlineConfigs             []string
+		DeployWorkerConfig             []service.WorkerDeployRequest
+		WriteLeaderCoordinationContext []service.LeaderCoordinationRequest
+		PushOnDemandSkills             []string
+		CleanupOSSData                 []string
 	}
 }
 
@@ -39,6 +41,7 @@ func (m *MockDeployer) Reset() {
 	m.DeployPackageFn = nil
 	m.WriteInlineConfigsFn = nil
 	m.DeployWorkerConfigFn = nil
+	m.WriteLeaderCoordinationContextFn = nil
 	m.PushOnDemandSkillsFn = nil
 	m.CleanupOSSDataFn = nil
 }
@@ -52,11 +55,12 @@ func (m *MockDeployer) ClearCalls() {
 
 func (m *MockDeployer) clearCallsLocked() {
 	m.Calls = struct {
-		DeployPackage      []string
-		WriteInlineConfigs []string
-		DeployWorkerConfig []service.WorkerDeployRequest
-		PushOnDemandSkills []string
-		CleanupOSSData     []string
+		DeployPackage                  []string
+		WriteInlineConfigs             []string
+		DeployWorkerConfig             []service.WorkerDeployRequest
+		WriteLeaderCoordinationContext []service.LeaderCoordinationRequest
+		PushOnDemandSkills             []string
+		CleanupOSSData                 []string
 	}{}
 }
 
@@ -86,6 +90,21 @@ func (m *MockDeployer) DeployWorkerConfig(ctx context.Context, req service.Worke
 	m.mu.Lock()
 	m.Calls.DeployWorkerConfig = append(m.Calls.DeployWorkerConfig, req)
 	fn := m.DeployWorkerConfigFn
+	m.mu.Unlock()
+	if fn != nil {
+		return fn(ctx, req)
+	}
+	return nil
+}
+
+// WriteLeaderCoordinationContext is invoked from Worker reconciler's
+// reconcileLeaderBroadcast phase for role=team_leader Workers. The mock
+// records each call so tests can assert on team name, room IDs, and
+// member/admin lists passed downstream.
+func (m *MockDeployer) WriteLeaderCoordinationContext(ctx context.Context, req service.LeaderCoordinationRequest) error {
+	m.mu.Lock()
+	m.Calls.WriteLeaderCoordinationContext = append(m.Calls.WriteLeaderCoordinationContext, req)
+	fn := m.WriteLeaderCoordinationContextFn
 	m.mu.Unlock()
 	if fn != nil {
 		return fn(ctx, req)
@@ -124,6 +143,15 @@ func (m *MockDeployer) CallCounts() (deployPkg, writeInline, deployConfig, pushS
 		len(m.Calls.DeployWorkerConfig),
 		len(m.Calls.PushOnDemandSkills),
 		len(m.Calls.CleanupOSSData)
+}
+
+// LeaderBroadcastCallCount returns the number of WriteLeaderCoordinationContext
+// invocations, exposed as a first-class metric since leader broadcast is a
+// new phase introduced by the Stage 6 refactor.
+func (m *MockDeployer) LeaderBroadcastCallCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.Calls.WriteLeaderCoordinationContext)
 }
 
 var _ service.WorkerDeployer = (*MockDeployer)(nil)

@@ -8,10 +8,15 @@ import (
 	"github.com/hiclaw/hiclaw-controller/internal/service"
 )
 
-// MockProvisioner implements service.WorkerProvisioner for testing.
+// MockProvisioner implements service.WorkerProvisioner AND
+// service.TeamProvisioner for testing. The real *service.Provisioner
+// satisfies both interfaces so the mock mirrors that shape; tests can
+// wire the same MockProvisioner into both WorkerReconciler and
+// TeamReconciler without additional plumbing.
 type MockProvisioner struct {
 	mu sync.Mutex
 
+	// WorkerProvisioner overrides.
 	ProvisionWorkerFn      func(ctx context.Context, req service.WorkerProvisionRequest) (*service.WorkerProvisionResult, error)
 	DeprovisionWorkerFn    func(ctx context.Context, req service.WorkerDeprovisionRequest) error
 	RefreshCredentialsFn   func(ctx context.Context, workerName string) (*service.RefreshResult, error)
@@ -24,17 +29,27 @@ type MockProvisioner struct {
 	DeactivateMatrixUserFn func(ctx context.Context, workerName string) error
 	MatrixUserIDFn         func(name string) string
 
+	// TeamProvisioner overrides.
+	EnsureTeamRoomsFn              func(ctx context.Context, req service.TeamRoomsRequest) (*service.TeamRoomsResult, error)
+	ReconcileTeamRoomMembershipFn  func(ctx context.Context, req service.TeamRoomMembershipRequest) error
+	EnsureTeamStorageFn            func(ctx context.Context, teamName string) error
+	CleanupTeamInfraFn             func(ctx context.Context, req service.TeamCleanupRequest) error
+
 	Calls struct {
-		ProvisionWorker      []service.WorkerProvisionRequest
-		DeprovisionWorker    []service.WorkerDeprovisionRequest
-		RefreshCredentials   []string
-		ReconcileMCPAuth     []string
-		ReconcileExpose      []string
-		EnsureServiceAccount []string
-		DeleteServiceAccount []string
-		DeleteCredentials    []string
-		RequestSAToken       []string
-		DeactivateMatrixUser []string
+		ProvisionWorker             []service.WorkerProvisionRequest
+		DeprovisionWorker           []service.WorkerDeprovisionRequest
+		RefreshCredentials          []string
+		ReconcileMCPAuth            []string
+		ReconcileExpose             []string
+		EnsureServiceAccount        []string
+		DeleteServiceAccount        []string
+		DeleteCredentials           []string
+		RequestSAToken              []string
+		DeactivateMatrixUser        []string
+		EnsureTeamRooms             []service.TeamRoomsRequest
+		ReconcileTeamRoomMembership []service.TeamRoomMembershipRequest
+		EnsureTeamStorage           []string
+		CleanupTeamInfra            []service.TeamCleanupRequest
 	}
 }
 
@@ -58,6 +73,10 @@ func (m *MockProvisioner) Reset() {
 	m.RequestSATokenFn = nil
 	m.DeactivateMatrixUserFn = nil
 	m.MatrixUserIDFn = nil
+	m.EnsureTeamRoomsFn = nil
+	m.ReconcileTeamRoomMembershipFn = nil
+	m.EnsureTeamStorageFn = nil
+	m.CleanupTeamInfraFn = nil
 }
 
 // ClearCalls resets call records only, preserving Fn overrides.
@@ -69,16 +88,20 @@ func (m *MockProvisioner) ClearCalls() {
 
 func (m *MockProvisioner) clearCallsLocked() {
 	m.Calls = struct {
-		ProvisionWorker      []service.WorkerProvisionRequest
-		DeprovisionWorker    []service.WorkerDeprovisionRequest
-		RefreshCredentials   []string
-		ReconcileMCPAuth     []string
-		ReconcileExpose      []string
-		EnsureServiceAccount []string
-		DeleteServiceAccount []string
-		DeleteCredentials    []string
-		RequestSAToken       []string
-		DeactivateMatrixUser []string
+		ProvisionWorker             []service.WorkerProvisionRequest
+		DeprovisionWorker           []service.WorkerDeprovisionRequest
+		RefreshCredentials          []string
+		ReconcileMCPAuth            []string
+		ReconcileExpose             []string
+		EnsureServiceAccount        []string
+		DeleteServiceAccount        []string
+		DeleteCredentials           []string
+		RequestSAToken              []string
+		DeactivateMatrixUser        []string
+		EnsureTeamRooms             []service.TeamRoomsRequest
+		ReconcileTeamRoomMembership []service.TeamRoomMembershipRequest
+		EnsureTeamStorage           []string
+		CleanupTeamInfra            []service.TeamCleanupRequest
 	}{}
 }
 
@@ -228,4 +251,85 @@ func (m *MockProvisioner) ServiceAccountCallCounts() (ensure, delete int) {
 	return len(m.Calls.EnsureServiceAccount), len(m.Calls.DeleteServiceAccount)
 }
 
-var _ service.WorkerProvisioner = (*MockProvisioner)(nil)
+// --- TeamProvisioner interface ---
+
+// EnsureTeamRooms is the mock for the EnsureTeamRooms method. Default
+// returns a deterministic pair of room IDs derived from the team name
+// so tests can assert on them without wiring a custom Fn.
+func (m *MockProvisioner) EnsureTeamRooms(ctx context.Context, req service.TeamRoomsRequest) (*service.TeamRoomsResult, error) {
+	m.mu.Lock()
+	m.Calls.EnsureTeamRooms = append(m.Calls.EnsureTeamRooms, req)
+	fn := m.EnsureTeamRoomsFn
+	m.mu.Unlock()
+	if fn != nil {
+		return fn(ctx, req)
+	}
+	teamRoomID := req.ExistingTeamRoomID
+	if teamRoomID == "" {
+		teamRoomID = "!team-" + req.TeamName + ":localhost"
+	}
+	leaderDMRoomID := req.ExistingLeaderDMRoomID
+	if leaderDMRoomID == "" {
+		leaderDMRoomID = "!leader-dm-" + req.TeamName + ":localhost"
+	}
+	return &service.TeamRoomsResult{
+		TeamRoomID:     teamRoomID,
+		LeaderDMRoomID: leaderDMRoomID,
+	}, nil
+}
+
+// ReconcileTeamRoomMembership records the desired membership diff for the
+// team and leader DM rooms. Default implementation is a no-op.
+func (m *MockProvisioner) ReconcileTeamRoomMembership(ctx context.Context, req service.TeamRoomMembershipRequest) error {
+	m.mu.Lock()
+	m.Calls.ReconcileTeamRoomMembership = append(m.Calls.ReconcileTeamRoomMembership, req)
+	fn := m.ReconcileTeamRoomMembershipFn
+	m.mu.Unlock()
+	if fn != nil {
+		return fn(ctx, req)
+	}
+	return nil
+}
+
+// EnsureTeamStorage records the team shared-storage ensure call.
+func (m *MockProvisioner) EnsureTeamStorage(ctx context.Context, teamName string) error {
+	m.mu.Lock()
+	m.Calls.EnsureTeamStorage = append(m.Calls.EnsureTeamStorage, teamName)
+	fn := m.EnsureTeamStorageFn
+	m.mu.Unlock()
+	if fn != nil {
+		return fn(ctx, teamName)
+	}
+	return nil
+}
+
+// CleanupTeamInfra records team finalizer cleanup. Workers are intentionally
+// not touched by this call — the refactor moved cascading Worker deletion
+// out of the TeamReconciler and into the REST API bundle layer.
+func (m *MockProvisioner) CleanupTeamInfra(ctx context.Context, req service.TeamCleanupRequest) error {
+	m.mu.Lock()
+	m.Calls.CleanupTeamInfra = append(m.Calls.CleanupTeamInfra, req)
+	fn := m.CleanupTeamInfraFn
+	m.mu.Unlock()
+	if fn != nil {
+		return fn(ctx, req)
+	}
+	return nil
+}
+
+// TeamCallCounts returns the number of team-scope infra calls. Useful
+// when asserting that TeamReconciler ran its phases the expected
+// number of times.
+func (m *MockProvisioner) TeamCallCounts() (ensureRooms, membership, ensureStorage, cleanup int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.Calls.EnsureTeamRooms),
+		len(m.Calls.ReconcileTeamRoomMembership),
+		len(m.Calls.EnsureTeamStorage),
+		len(m.Calls.CleanupTeamInfra)
+}
+
+var (
+	_ service.WorkerProvisioner = (*MockProvisioner)(nil)
+	_ service.TeamProvisioner   = (*MockProvisioner)(nil)
+)
