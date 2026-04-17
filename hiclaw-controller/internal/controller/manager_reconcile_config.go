@@ -37,13 +37,14 @@ func (r *ManagerReconciler) reconcileManagerConfig(ctx context.Context, s *manag
 	}
 
 	if err := r.Deployer.DeployManagerConfig(ctx, service.ManagerDeployRequest{
-		Name:           m.Name,
-		Spec:           m.Spec,
-		MatrixToken:    s.provResult.MatrixToken,
-		GatewayKey:     s.provResult.GatewayKey,
-		MatrixPassword: s.provResult.MatrixPassword,
-		AuthorizedMCPs: authorizedMCPs,
-		IsUpdate:       isUpdate,
+		Name:                m.Name,
+		Spec:                m.Spec,
+		MatrixToken:         s.provResult.MatrixToken,
+		GatewayKey:          s.provResult.GatewayKey,
+		MatrixPassword:      s.provResult.MatrixPassword,
+		AuthorizedMCPs:      authorizedMCPs,
+		GroupAllowFromExtra: s.effectiveAllowFrom,
+		IsUpdate:            isUpdate,
 	}); err != nil {
 		return reconcile.Result{}, fmt.Errorf("deploy manager config: %w", err)
 	}

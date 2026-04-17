@@ -10,6 +10,14 @@ type managerScope struct {
 	manager    *v1beta1.Manager
 	provResult *service.ManagerProvisionResult
 	patchBase  client.Patch
+
+	// effectiveAllowFrom is the authoritative list of Matrix IDs that
+	// should be added to the Manager's groupAllowFrom beyond the default
+	// (Manager + Admin). Populated by reconcileManagerAllowFrom by
+	// listing standalone + team_leader Workers and superAdmin Humans;
+	// consumed by reconcileManagerConfig through the deployer's
+	// ChannelPolicy.GroupAllowExtra / DmAllowExtra channel.
+	effectiveAllowFrom []string
 }
 
 // computeManagerPhase determines the Manager status phase based on reconcile outcome.

@@ -337,14 +337,22 @@ func (d *Deployer) CleanupOSSData(ctx context.Context, workerName string) error 
 // --- Manager Config Deployment ---
 
 // ManagerDeployRequest describes a Manager config deployment (create or update).
+//
+// GroupAllowFromExtra is the authoritative list of Matrix IDs (beyond the
+// default Manager + Admin) that should appear in the Manager's
+// groupAllowFrom / dmAllowFrom. Populated by the Manager reconciler's
+// reconcileManagerAllowFrom phase from observed Workers (standalone +
+// team_leader) and Humans (superAdmin). Passed through to the config
+// generator as ChannelPolicy additions.
 type ManagerDeployRequest struct {
-	Name           string
-	Spec           v1beta1.ManagerSpec
-	MatrixToken    string
-	GatewayKey     string
-	MatrixPassword string
-	AuthorizedMCPs []string
-	IsUpdate       bool
+	Name                string
+	Spec                v1beta1.ManagerSpec
+	MatrixToken         string
+	GatewayKey          string
+	MatrixPassword      string
+	AuthorizedMCPs      []string
+	GroupAllowFromExtra []string
+	IsUpdate            bool
 }
 
 // DeployManagerConfig generates and pushes Manager configuration files to OSS.
@@ -355,11 +363,26 @@ func (d *Deployer) DeployManagerConfig(ctx context.Context, req ManagerDeployReq
 	agentPrefix := fmt.Sprintf("agents/%s", req.Name)
 
 	// --- openclaw.json ---
+	//
+	// ChannelPolicy.GroupAllowExtra / DMAllowExtra carry the Matrix IDs
+	// computed by the reconciler (standalone + team_leader Workers,
+	// superAdmin Humans). The generator adds them on top of the base
+	// Manager + Admin allow-from list. Deny lists remain empty here —
+	// subtractive rules are not currently driven by the authoritative
+	// computation and are reserved for explicit admin overrides.
+	var channelPolicy *agentconfig.ChannelPolicy
+	if len(req.GroupAllowFromExtra) > 0 {
+		channelPolicy = &agentconfig.ChannelPolicy{
+			GroupAllowExtra: req.GroupAllowFromExtra,
+			DMAllowExtra:    req.GroupAllowFromExtra,
+		}
+	}
 	configJSON, err := d.agentConfig.GenerateOpenClawConfig(agentconfig.WorkerConfigRequest{
-		WorkerName:  req.Name,
-		MatrixToken: req.MatrixToken,
-		GatewayKey:  req.GatewayKey,
-		ModelName:   req.Spec.Model,
+		WorkerName:    req.Name,
+		MatrixToken:   req.MatrixToken,
+		GatewayKey:    req.GatewayKey,
+		ModelName:     req.Spec.Model,
+		ChannelPolicy: channelPolicy,
 	})
 	if err != nil {
 		return fmt.Errorf("config generation failed: %w", err)

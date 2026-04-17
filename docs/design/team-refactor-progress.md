@@ -105,10 +105,11 @@
 
 ## Stage 7: ManagerReconciler 增量扩展
 
-- [ ] **41. Update manager_controller.go** (Watches Worker+Human, insert reconcileManagerAllowFrom phase)
-- [ ] **42. Create manager_reconcile_allow_from.go**
-- [ ] **43. Update manager_reconcile_config.go** (consume scope.effectiveAllowFrom)
-- [ ] **44. Update manager_scope.go** (add effectiveAllowFrom field)
+- [x] **41. Update manager_controller.go** (Watches Worker via workerToManagersMapper+workerToManagersPredicates; Watches Human via humanToManagersMapper+humanToManagersPredicates that pre-filter non-superAdmin; new phase sequence: infra → allowFrom → SA → config → container; listManagerRequests helper)
+- [x] **42. Create manager_reconcile_allow_from.go** (list Workers filter role∈{standalone, team_leader} with MatrixUserID set; list Humans filter superAdmin with MatrixUserID set; sorted dedup into scope.effectiveAllowFrom)
+- [x] **43. Update manager_reconcile_config.go** (pass scope.effectiveAllowFrom through ManagerDeployRequest.GroupAllowFromExtra)
+- [x] **44. Update manager_scope.go** (effectiveAllowFrom []string field)
+- [x] **44.5 (supporting)**: Extended service.ManagerDeployRequest with GroupAllowFromExtra; DeployManagerConfig builds ChannelPolicy.GroupAllowExtra/DMAllowExtra to layer the authoritative list on top of the base Manager+Admin allow-from
 
 ---
 
@@ -196,7 +197,9 @@
 
 [2026-04-17_Batch-4] - executor - Stage 3 完成 (Items 14-18): 新建 internal/webhook 包; validators.go (共享 helpers: validateDNSLabel/validateDuration/validateStringEnum/aggregateErrors); worker_validator.go (WorkerValidator: role/teamRef 一致性 + runtime enum + state enum + DNS-1123 + leader 唯一性 peer check 通过 label selector); team_validator.go (heartbeat/workerIdleTimeout duration + DNS-1123); human_validator.go (superAdmin 排斥 teamAccess/workerAccess + teamAccess role enum + team 唯一性 + 必填校验); webhook.go (Validators 聚合结构 + RegisterWithManager 用于 incluster 模式 ValidatingWebhook); 3 份 table-driven 测试共 30 个 case 全部通过 - SUCCESSFUL - committed as a0b898a
 
-[2026-04-17_Batch-7] - executor - Stage 6 完成 (Items 36-40): WorkerReconciler 从 annotation 驱动升级为 spec 驱动并扩展 2 个新 phase; worker_scope.go 新增 teamFound/teamName/teamLeaderName/teamLeaderMatrixID/teamLeaderDMRoomID/teamRoomID/teamMemberNames/teamMemberMatrixIDs/teamAdminMatrixIDs/peerMentionsEnabled/effectivePolicy 字段; worker_reconcile_team.go 新增 reconcileTeamMembership phase (Get Team → populate scope + buildEffectivePolicy with role-specific automatic additions); worker_reconcile_leader_broadcast.go 新增 reconcileLeaderBroadcast phase (仅 team_leader 触发 WriteLeaderCoordinationContext); worker_reconcile_config.go 消费 scope.effectivePolicy 替代 w.Spec.ChannelPolicy, 移除 annotation 读取; worker_reconcile_infra.go 使用 spec.Role/TeamRef + resolveTeamLeaderName helper; worker_reconcile_delete.go 使用 spec.Role 判断 isTeamMember; worker_controller.go syncWorkerLabels 开头同步 hiclaw.io/team + hiclaw.io/role label 镜像 spec, 主 reconcileNormal 插入 reconcileTeamMembership/reconcileLeaderBroadcast 两个 phase, SetupWithManager 新增 Watches(Team) 和 Watches(Human) 配合 mapper+predicate, reconcileLegacy 只对 standalone+team_leader 更新 Manager.groupAllowFrom; 移除 roleForAnnotations 废弃 helper - UNCONFIRMED - internal/controller 完整编译 + go vet 通过; 既有 service/matrix/webhook 测试继续全部通过; 剩余破损仅限 server (Stage 10) 和 mocks (Stage 9)
+[2026-04-17_Batch-8] - executor - Stage 7 完成 (Items 41-44): ManagerReconciler 新增 allowFrom 授权计算 phase; manager_scope.go 新增 effectiveAllowFrom []string; 新建 manager_reconcile_allow_from.go (list Workers 过滤 standalone+team_leader; list Humans 过滤 superAdmin; dedup+sort 写入 scope); manager_reconcile_config.go 消费 scope.effectiveAllowFrom 通过新增的 ManagerDeployRequest.GroupAllowFromExtra 字段; manager_controller.go phase 顺序改为 infra → allowFrom → SA → config → container, SetupWithManager 新增 Watches(Worker) + Watches(Human) with mapper + predicate (predicate 预过滤非 superAdmin Human 和 team_worker Worker); service/deployer.go 扩展 ManagerDeployRequest 新增 GroupAllowFromExtra 字段, DeployManagerConfig 将其映射为 ChannelPolicy.GroupAllowExtra+DMAllowExtra 传给 agentconfig 生成器 - UNCONFIRMED - controller + service + matrix + webhook 四个包完整编译+go vet+测试通过; 剩余破损仅限 server (Stage 10) 和 mocks (Stage 9)
+
+[2026-04-17_Batch-7] - executor - Stage 6 完成 (Items 36-40): WorkerReconciler 从 annotation 驱动升级为 spec 驱动并扩展 2 个新 phase - SUCCESSFUL - committed as 742790b worker_scope.go 新增 teamFound/teamName/teamLeaderName/teamLeaderMatrixID/teamLeaderDMRoomID/teamRoomID/teamMemberNames/teamMemberMatrixIDs/teamAdminMatrixIDs/peerMentionsEnabled/effectivePolicy 字段; worker_reconcile_team.go 新增 reconcileTeamMembership phase (Get Team → populate scope + buildEffectivePolicy with role-specific automatic additions); worker_reconcile_leader_broadcast.go 新增 reconcileLeaderBroadcast phase (仅 team_leader 触发 WriteLeaderCoordinationContext); worker_reconcile_config.go 消费 scope.effectivePolicy 替代 w.Spec.ChannelPolicy, 移除 annotation 读取; worker_reconcile_infra.go 使用 spec.Role/TeamRef + resolveTeamLeaderName helper; worker_reconcile_delete.go 使用 spec.Role 判断 isTeamMember; worker_controller.go syncWorkerLabels 开头同步 hiclaw.io/team + hiclaw.io/role label 镜像 spec, 主 reconcileNormal 插入 reconcileTeamMembership/reconcileLeaderBroadcast 两个 phase, SetupWithManager 新增 Watches(Team) 和 Watches(Human) 配合 mapper+predicate, reconcileLegacy 只对 standalone+team_leader 更新 Manager.groupAllowFrom; 移除 roleForAnnotations 废弃 helper - UNCONFIRMED - internal/controller 完整编译 + go vet 通过; 既有 service/matrix/webhook 测试继续全部通过; 剩余破损仅限 server (Stage 10) 和 mocks (Stage 9)
 
 [2026-04-17_Batch-6] - executor - Stage 5 完成 (Items 29-35): HumanReconciler 从老式 switch Phase 模式重写为 phase-based declarative - SUCCESSFUL - committed as 83881f3 human_controller.go (Reconcile + defer-patch + SetupWithManager with Watches(Team, teamToHumansMapper+teamRoomsChangedPredicates) + Watches(Worker, workerToHumansMapper+workerRoomChangedPredicates); mappers list Humans in namespace and filter to those with SuperAdmin/teamAccess/workerAccess relevant to the event); human_scope.go (matrixAccessToken/desiredRooms); human_phase.go (computeHumanPhase: Active/Pending/Failed); human_reconcile_infra.go (EnsureUser with Password=status.InitialPassword seed for idempotent re-login); human_reconcile_rooms.go (computeDesiredRooms: workerAccess → Worker rooms, superAdmin → all Team/Worker rooms, teamAccess → Team Room + admin→LeaderDMRoom + member Worker rooms + leader Worker room for admin; diff with status.Rooms, JoinRoom/LeaveRoom best-effort); human_reconcile_legacy.go (humans-registry with synthesised PermissionLevel + AccessibleTeams for Manager-skill compat); human_reconcile_delete.go (DeactivateUser + registry remove + finalizer) - UNCONFIRMED - internal/controller 包完整编译 + go vet 通过; 既有 service/matrix/webhook 测试全部通过; 剩余破损仅限 server (Stage 10) 和 mocks (Stage 9)
 
@@ -221,7 +224,7 @@
 - Stage 4 (Team Reconciler)：10 / 10
 - Stage 5 (Human Reconciler)：7 / 7
 - Stage 6 (Worker Reconciler)：5 / 5
-- Stage 7 (Manager Reconciler)：0 / 4
+- Stage 7 (Manager Reconciler)：4 / 4
 - Stage 8 (Webhook Wiring)：0 / 3
 - Stage 9 (Mocks/Fixtures)：0 / 7
 - Stage 10 (REST API)：0 / 4
@@ -229,4 +232,4 @@
 - Stage 12 (Integration Tests)：0 / 5
 - Stage 13 (Docs & Validation)：0 / 11
 
-**Total: 40 / 80**
+**Total: 44 / 80**
