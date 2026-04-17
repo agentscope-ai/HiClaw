@@ -45,17 +45,42 @@ type WorkerDeprovisionRequest struct {
 	ExposeSpec   []v1beta1.ExposePort
 }
 
-// TeamRoomRequest describes rooms to create for a team.
-type TeamRoomRequest struct {
-	TeamName       string
-	LeaderName     string
-	WorkerNames    []string
-	AdminSpec      *v1beta1.TeamAdminSpec
-	ExistingRoomID string
+// TeamRoomsRequest describes the Rooms to ensure for a Team.
+//
+// LeaderMatrixID is the Matrix user ID of the team's leader Worker; required
+// because Room creation power-levels depend on it. MemberMatrixIDs are the
+// Matrix user IDs of team_worker Workers. AdminMatrixIDs are the Matrix user
+// IDs of Humans with teamAccess[].role=admin targeting this team.
+// ExistingTeamRoomID / ExistingLeaderDMRoomID make the call idempotent.
+type TeamRoomsRequest struct {
+	TeamName               string
+	LeaderMatrixID         string
+	MemberMatrixIDs        []string
+	AdminMatrixIDs         []string
+	ExistingTeamRoomID     string
+	ExistingLeaderDMRoomID string
 }
 
-// TeamRoomResult contains the created room IDs.
-type TeamRoomResult struct {
+// TeamRoomsResult contains the resolved Team Room IDs.
+type TeamRoomsResult struct {
+	TeamRoomID     string
+	LeaderDMRoomID string
+}
+
+// TeamRoomMembershipRequest describes the desired membership of Team Rooms
+// for ReconcileTeamRoomMembership. The Provisioner lists current members
+// and computes the diff, issuing invite/kick calls to converge.
+type TeamRoomMembershipRequest struct {
+	TeamRoomID           string
+	LeaderDMRoomID       string
+	DesiredTeamMembers   []string // Matrix user IDs for Team Room (leader + workers + admins)
+	DesiredLeaderDMUsers []string // Matrix user IDs for Leader DM Room (leader + admin + team admins)
+}
+
+// TeamCleanupRequest describes the Team infrastructure to clean up when a
+// Team CR is deleted (finalizer path). Worker CRs are not affected.
+type TeamCleanupRequest struct {
+	TeamName       string
 	TeamRoomID     string
 	LeaderDMRoomID string
 }
@@ -74,6 +99,7 @@ type RefreshResult struct {
 type ProvisionerConfig struct {
 	Matrix       matrix.Client
 	Gateway      gateway.Client
+	OSS          oss.StorageClient      // nil-safe; used for team shared storage
 	OSSAdmin     oss.StorageAdminClient // nil in incluster/cloud mode
 	Creds        CredentialStore
 	K8sClient    kubernetes.Interface
@@ -91,10 +117,11 @@ type ProvisionerConfig struct {
 
 // Provisioner orchestrates infrastructure provisioning and deprovisioning
 // for workers and teams: Matrix accounts/rooms, Gateway consumers, MinIO
-// users, K8s ServiceAccounts, and port exposure.
+// users, K8s ServiceAccounts, port exposure, and team shared storage.
 type Provisioner struct {
 	matrix       matrix.Client
 	gateway      gateway.Client
+	oss          oss.StorageClient
 	ossAdmin     oss.StorageAdminClient
 	creds        CredentialStore
 	k8sClient    kubernetes.Interface
@@ -112,6 +139,7 @@ func NewProvisioner(cfg ProvisionerConfig) *Provisioner {
 	return &Provisioner{
 		matrix:            cfg.Matrix,
 		gateway:           cfg.Gateway,
+		oss:               cfg.OSS,
 		ossAdmin:          cfg.OSSAdmin,
 		creds:             cfg.Creds,
 		k8sClient:         cfg.K8sClient,
@@ -382,22 +410,26 @@ func (p *Provisioner) ReconcileMCPAuth(ctx context.Context, consumerName string,
 	return p.gateway.AuthorizeMCPServers(ctx, consumerName, mcpServers)
 }
 
-// ProvisionTeamRooms creates the team room and leader DM room.
-func (p *Provisioner) ProvisionTeamRooms(ctx context.Context, req TeamRoomRequest) (*TeamRoomResult, error) {
+// EnsureTeamRooms creates the Team Room and Leader DM Room idempotently.
+// When ExistingTeamRoomID/ExistingLeaderDMRoomID are non-empty the matrix
+// client short-circuits creation; this method does not perform membership
+// reconciliation — callers should invoke ReconcileTeamRoomMembership after
+// successful room resolution to align invite/join state with the desired
+// member set.
+func (p *Provisioner) EnsureTeamRooms(ctx context.Context, req TeamRoomsRequest) (*TeamRoomsResult, error) {
 	logger := log.FromContext(ctx)
 	managerMatrixID := p.matrix.UserID("manager")
 	adminMatrixID := p.matrix.UserID(p.adminUser)
-	leaderMatrixID := p.matrix.UserID(req.LeaderName)
 
-	// Team Room: Leader + Admin + all Workers
-	teamInvites := []string{adminMatrixID, leaderMatrixID}
-	for _, wn := range req.WorkerNames {
-		teamInvites = append(teamInvites, p.matrix.UserID(wn))
-	}
+	// Team Room: Leader + Admin + all Members + all Team admins
+	teamInvites := dedupStrings(append(
+		[]string{adminMatrixID, req.LeaderMatrixID},
+		append(req.MemberMatrixIDs, req.AdminMatrixIDs...)...,
+	))
 	teamPowerLevels := map[string]int{
-		managerMatrixID: 100,
-		adminMatrixID:   100,
-		leaderMatrixID:  100,
+		managerMatrixID:        100,
+		adminMatrixID:          100,
+		req.LeaderMatrixID:     100,
 	}
 
 	teamRoom, err := p.matrix.CreateRoom(ctx, matrix.CreateRoomRequest{
@@ -405,33 +437,160 @@ func (p *Provisioner) ProvisionTeamRooms(ctx context.Context, req TeamRoomReques
 		Topic:          fmt.Sprintf("Team room for %s", req.TeamName),
 		Invite:         teamInvites,
 		PowerLevels:    teamPowerLevels,
-		ExistingRoomID: req.ExistingRoomID,
+		ExistingRoomID: req.ExistingTeamRoomID,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("team room creation failed: %w", err)
+		return nil, fmt.Errorf("team room ensure failed: %w", err)
 	}
-	logger.Info("team room ready", "roomID", teamRoom.RoomID)
+	logger.Info("team room ready", "teamRoomID", teamRoom.RoomID, "created", teamRoom.Created)
 
-	// Leader DM Room: Leader + Admin (+ optional Team Admin)
-	leaderDMInvites := []string{adminMatrixID, leaderMatrixID}
-	if req.AdminSpec != nil && req.AdminSpec.MatrixUserID != "" {
-		leaderDMInvites = append(leaderDMInvites, req.AdminSpec.MatrixUserID)
-	}
+	// Leader DM Room: Leader + Admin + Team admins (Humans with role=admin)
+	leaderDMInvites := dedupStrings(append(
+		[]string{adminMatrixID, req.LeaderMatrixID},
+		req.AdminMatrixIDs...,
+	))
 	leaderDMRoom, err := p.matrix.CreateRoom(ctx, matrix.CreateRoomRequest{
-		Name:        fmt.Sprintf("Leader DM: %s", req.LeaderName),
-		Topic:       fmt.Sprintf("DM channel for team leader %s", req.LeaderName),
-		Invite:      leaderDMInvites,
-		PowerLevels: teamPowerLevels,
+		Name:           fmt.Sprintf("Leader DM: %s", req.TeamName),
+		Topic:          fmt.Sprintf("DM channel for team leader of %s", req.TeamName),
+		Invite:         leaderDMInvites,
+		PowerLevels:    teamPowerLevels,
+		ExistingRoomID: req.ExistingLeaderDMRoomID,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("leader DM room creation failed: %w", err)
+		return nil, fmt.Errorf("leader DM room ensure failed: %w", err)
 	}
-	logger.Info("leader DM room ready", "roomID", leaderDMRoom.RoomID)
+	logger.Info("leader DM room ready", "leaderDMRoomID", leaderDMRoom.RoomID, "created", leaderDMRoom.Created)
 
-	return &TeamRoomResult{
+	return &TeamRoomsResult{
 		TeamRoomID:     teamRoom.RoomID,
 		LeaderDMRoomID: leaderDMRoom.RoomID,
 	}, nil
+}
+
+// ReconcileTeamRoomMembership aligns the current membership of the Team
+// Room and Leader DM Room with the desired member sets by listing the
+// current members and issuing InviteRoom/KickRoom for the delta.
+// Never kicks the Matrix admin user or the Manager user; also never kicks
+// members without Matrix-style IDs. All errors are joined and returned;
+// callers are expected to treat this as non-fatal (membership may partially
+// converge across multiple reconcile cycles).
+func (p *Provisioner) ReconcileTeamRoomMembership(ctx context.Context, req TeamRoomMembershipRequest) error {
+	logger := log.FromContext(ctx)
+	protected := map[string]bool{
+		p.matrix.UserID("manager"):  true,
+		p.matrix.UserID(p.adminUser): true,
+	}
+	var errs []error
+	if req.TeamRoomID != "" {
+		if err := p.reconcileRoomMembership(ctx, req.TeamRoomID, req.DesiredTeamMembers, protected); err != nil {
+			logger.Error(err, "team room membership diff had errors", "roomID", req.TeamRoomID)
+			errs = append(errs, fmt.Errorf("team room %s: %w", req.TeamRoomID, err))
+		}
+	}
+	if req.LeaderDMRoomID != "" {
+		if err := p.reconcileRoomMembership(ctx, req.LeaderDMRoomID, req.DesiredLeaderDMUsers, protected); err != nil {
+			logger.Error(err, "leader DM room membership diff had errors", "roomID", req.LeaderDMRoomID)
+			errs = append(errs, fmt.Errorf("leader DM room %s: %w", req.LeaderDMRoomID, err))
+		}
+	}
+	if len(errs) == 0 {
+		return nil
+	}
+	return fmt.Errorf("team room membership reconcile: %v", errs)
+}
+
+// reconcileRoomMembership performs the invite/kick diff for a single room.
+func (p *Provisioner) reconcileRoomMembership(ctx context.Context, roomID string, desired []string, protected map[string]bool) error {
+	current, err := p.matrix.ListRoomMembers(ctx, roomID)
+	if err != nil {
+		return fmt.Errorf("list current members: %w", err)
+	}
+	desiredSet := make(map[string]bool, len(desired))
+	for _, mid := range desired {
+		if mid == "" {
+			continue
+		}
+		desiredSet[mid] = true
+	}
+	currentSet := make(map[string]bool, len(current))
+	for _, mid := range current {
+		currentSet[mid] = true
+	}
+
+	var errs []error
+	// Invite: desired but not currently present
+	for mid := range desiredSet {
+		if !currentSet[mid] {
+			if err := p.matrix.InviteRoom(ctx, roomID, mid); err != nil {
+				errs = append(errs, fmt.Errorf("invite %s: %w", mid, err))
+			}
+		}
+	}
+	// Kick: currently present but not desired, skip protected
+	for mid := range currentSet {
+		if desiredSet[mid] || protected[mid] {
+			continue
+		}
+		if err := p.matrix.KickRoom(ctx, roomID, mid, "no longer a team member"); err != nil {
+			errs = append(errs, fmt.Errorf("kick %s: %w", mid, err))
+		}
+	}
+	if len(errs) == 0 {
+		return nil
+	}
+	return fmt.Errorf("%v", errs)
+}
+
+// EnsureTeamStorage creates the shared storage directories for a team.
+// Idempotent; safe to invoke every reconcile. No-op when no OSS client is
+// configured (incluster / cloud mode).
+func (p *Provisioner) EnsureTeamStorage(ctx context.Context, teamName string) error {
+	if p.oss == nil {
+		return nil
+	}
+	prefix := fmt.Sprintf("teams/%s/", teamName)
+	for _, subdir := range []string{"shared/tasks/", "shared/projects/", "shared/knowledge/"} {
+		if err := p.oss.PutObject(ctx, prefix+subdir+".keep", []byte("")); err != nil {
+			return fmt.Errorf("create %s%s: %w", prefix, subdir, err)
+		}
+	}
+	return nil
+}
+
+// CleanupTeamInfra removes Team-level infrastructure on Team CR deletion:
+// team shared storage prefix and best-effort leave Team/Leader DM rooms.
+// Worker CRs are not touched. Individual step failures are logged but do
+// not abort the cleanup chain.
+func (p *Provisioner) CleanupTeamInfra(ctx context.Context, req TeamCleanupRequest) error {
+	logger := log.FromContext(ctx)
+	if p.oss != nil {
+		prefix := fmt.Sprintf("teams/%s/", req.TeamName)
+		if err := p.oss.DeletePrefix(ctx, prefix); err != nil {
+			logger.Error(err, "team storage cleanup failed (non-fatal)", "prefix", prefix)
+		}
+	}
+	// Matrix rooms are persistent; we do not destroy them on Team deletion.
+	// If a Team with the same name is later recreated, reconcile will
+	// re-invite members and bring them back.
+	return nil
+}
+
+// dedupStrings returns the input slice with empty strings removed and
+// duplicate values collapsed, preserving first-seen order.
+func dedupStrings(in []string) []string {
+	if len(in) == 0 {
+		return nil
+	}
+	seen := make(map[string]bool, len(in))
+	out := make([]string, 0, len(in))
+	for _, s := range in {
+		if s == "" || seen[s] {
+			continue
+		}
+		seen[s] = true
+		out = append(out, s)
+	}
+	return out
 }
 
 // DeleteCredentials removes persisted credentials for a worker.

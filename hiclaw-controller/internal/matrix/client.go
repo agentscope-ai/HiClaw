@@ -31,6 +31,18 @@ type Client interface {
 	// SendMessage sends a plain-text message to a room.
 	SendMessage(ctx context.Context, roomID, token, body string) error
 
+	// InviteRoom invites the given Matrix user to a room. Uses admin token.
+	// Idempotent: re-inviting an already-invited/joined user returns nil.
+	InviteRoom(ctx context.Context, roomID, inviteeMatrixID string) error
+
+	// KickRoom removes the given Matrix user from a room. Uses admin token.
+	// Idempotent: kicking a non-member returns nil.
+	KickRoom(ctx context.Context, roomID, targetMatrixID, reason string) error
+
+	// ListRoomMembers returns the Matrix user IDs currently joined or
+	// invited to the room. Uses admin token.
+	ListRoomMembers(ctx context.Context, roomID string) (members []string, err error)
+
 	// Login obtains an access token for an existing user.
 	Login(ctx context.Context, username, password string) (string, error)
 
@@ -255,6 +267,91 @@ func (c *TuwunelClient) LeaveRoom(ctx context.Context, roomID, userToken string)
 		return fmt.Errorf("leave room %s: HTTP %d", roomID, statusCode)
 	}
 	return nil
+}
+
+// InviteRoom invites a user to a room using the admin token.
+// Matrix returns 200 for success. If the user is already in the room,
+// the server returns an error which we translate to nil for idempotency.
+func (c *TuwunelClient) InviteRoom(ctx context.Context, roomID, inviteeMatrixID string) error {
+	token, err := c.ensureAdminToken(ctx)
+	if err != nil {
+		return fmt.Errorf("invite %s to %s: %w", inviteeMatrixID, roomID, err)
+	}
+	encodedRoom := encodeRoomID(roomID)
+	body := map[string]string{"user_id": inviteeMatrixID}
+	statusCode, err := c.doJSON(ctx, http.MethodPost,
+		fmt.Sprintf("/_matrix/client/v3/rooms/%s/invite", encodedRoom),
+		token, body, nil)
+	if err != nil {
+		return fmt.Errorf("invite %s to %s: %w", inviteeMatrixID, roomID, err)
+	}
+	if statusCode == http.StatusOK || statusCode == http.StatusForbidden {
+		// Forbidden typically means already in room — idempotent success.
+		return nil
+	}
+	return fmt.Errorf("invite %s to %s: HTTP %d", inviteeMatrixID, roomID, statusCode)
+}
+
+// KickRoom kicks a user from a room using the admin token. Non-members are
+// treated as success for idempotency.
+func (c *TuwunelClient) KickRoom(ctx context.Context, roomID, targetMatrixID, reason string) error {
+	token, err := c.ensureAdminToken(ctx)
+	if err != nil {
+		return fmt.Errorf("kick %s from %s: %w", targetMatrixID, roomID, err)
+	}
+	encodedRoom := encodeRoomID(roomID)
+	body := map[string]string{"user_id": targetMatrixID}
+	if reason != "" {
+		body["reason"] = reason
+	}
+	statusCode, err := c.doJSON(ctx, http.MethodPost,
+		fmt.Sprintf("/_matrix/client/v3/rooms/%s/kick", encodedRoom),
+		token, body, nil)
+	if err != nil {
+		return fmt.Errorf("kick %s from %s: %w", targetMatrixID, roomID, err)
+	}
+	if statusCode == http.StatusOK || statusCode == http.StatusNotFound {
+		return nil
+	}
+	return fmt.Errorf("kick %s from %s: HTTP %d", targetMatrixID, roomID, statusCode)
+}
+
+// ListRoomMembers returns the Matrix user IDs currently joined or invited to
+// the room, using the admin token. Leavers / banned are filtered out.
+func (c *TuwunelClient) ListRoomMembers(ctx context.Context, roomID string) ([]string, error) {
+	token, err := c.ensureAdminToken(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list members of %s: %w", roomID, err)
+	}
+	encodedRoom := encodeRoomID(roomID)
+	var resp struct {
+		Chunk []struct {
+			Type     string `json:"type"`
+			StateKey string `json:"state_key"`
+			Content  struct {
+				Membership string `json:"membership"`
+			} `json:"content"`
+		} `json:"chunk"`
+	}
+	statusCode, err := c.doJSON(ctx, http.MethodGet,
+		fmt.Sprintf("/_matrix/client/v3/rooms/%s/members", encodedRoom),
+		token, nil, &resp)
+	if err != nil {
+		return nil, fmt.Errorf("list members of %s: %w", roomID, err)
+	}
+	if statusCode != http.StatusOK {
+		return nil, fmt.Errorf("list members of %s: HTTP %d", roomID, statusCode)
+	}
+	members := make([]string, 0, len(resp.Chunk))
+	for _, ev := range resp.Chunk {
+		if ev.Type != "m.room.member" {
+			continue
+		}
+		if ev.Content.Membership == "join" || ev.Content.Membership == "invite" {
+			members = append(members, ev.StateKey)
+		}
+	}
+	return members, nil
 }
 
 func (c *TuwunelClient) SendMessage(ctx context.Context, roomID, token, body string) error {

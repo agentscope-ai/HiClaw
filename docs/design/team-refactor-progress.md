@@ -45,10 +45,11 @@
 
 ## Stage 2: Service 层
 
-- [ ] **10. Update service/interfaces.go**: add TeamProvisioner, TeamObserver; reshape WorkerDeployer (add WriteLeaderCoordinationContext)
-- [ ] **11. Rewrite service/provisioner.go team section**: EnsureTeamRooms, ReconcileTeamRoomMembership, CleanupTeamInfra
-- [ ] **12. Update service/deployer.go**: remove InjectCoordinationContext, add WriteLeaderCoordinationContext
-- [ ] **13. Create service/observer.go** implementing TeamObserver
+- [x] **10. Update service/interfaces.go**: add TeamProvisioner, TeamObserver; reshape WorkerDeployer (add WriteLeaderCoordinationContext)
+- [x] **11. Rewrite service/provisioner.go team section**: EnsureTeamRooms, ReconcileTeamRoomMembership, EnsureTeamStorage (moved from Deployer), CleanupTeamInfra
+- [x] **12. Update service/deployer.go**: remove InjectCoordinationContext + EnsureTeamStorage, add WriteLeaderCoordinationContext
+- [x] **13. Create service/observer.go** implementing TeamObserver + WorkerObservation / HumanObservation
+- [x] **12.5 (supporting)**: Extended matrix.Client with InviteRoom, KickRoom, ListRoomMembers required by ReconcileTeamRoomMembership; updated internal/app/app.go to pass OSS client into Provisioner
 
 ---
 
@@ -186,7 +187,9 @@
 
 [2026-04-17_Batch-1] - executor - Stage 0 完成 (Items 3-4): 为 team-worker-proposal.md 添加 SUPERSEDED banner, 为 team-worker-ownership-issues.md 添加 RESOLVED banner - SUCCESSFUL - committed as 5ae23f3
 
-[2026-04-17_Batch-2] - executor - Stage 1 完成 (Items 5-9): 重写 api/v1beta1/types.go (新增 Worker.Role/TeamRef, Team 瘦身, Human teamAccess/workerAccess/superAdmin), 在 Makefile 添加 generate target 并重新生成 zz_generated.deepcopy.go, 重写 3 份 CRD YAML - UNCONFIRMED - api 包编译通过且无 lint 错误。项目其他包预期会编译失败，待 Stage 2-11 修复。
+[2026-04-17_Batch-2] - executor - Stage 1 完成 (Items 5-9): 重写 api/v1beta1/types.go (新增 Worker.Role/TeamRef, Team 瘦身, Human teamAccess/workerAccess/superAdmin), 在 Makefile 添加 generate target 并重新生成 zz_generated.deepcopy.go, 重写 3 份 CRD YAML - SUCCESSFUL - committed as d99f5b1
+
+[2026-04-17_Batch-3] - executor - Stage 2 完成 (Items 10-13 + 支持改动): 扩展 matrix.Client (InviteRoom/KickRoom/ListRoomMembers); provisioner.go 重命名 ProvisionTeamRooms 为 EnsureTeamRooms 并新增 ReconcileTeamRoomMembership/CleanupTeamInfra/EnsureTeamStorage(移自 Deployer), ProvisionerConfig 新增 OSS 字段; deployer.go 移除 InjectCoordinationContext/CoordinationDeployRequest/EnsureTeamStorage 并新增 WriteLeaderCoordinationContext/LeaderCoordinationRequest; 新建 observer.go 实现 TeamObserver (ListTeamMembers/ListTeamAdmins) + WorkerObservation/HumanObservation 投影类型; 重写 interfaces.go 新增 TeamProvisioner/TeamObserver 接口 + 编译时满足性检查; app.go 向 Provisioner 传递 OSS 客户端 - UNCONFIRMED - api + matrix + service 三包全部编译通过无 lint 错误; controller/server/cmd 包预期编译失败 (待 Stage 4-11 修复)
 
 <!-- END EXECUTION LOG -->
 
@@ -202,7 +205,7 @@
 
 - Stage 0 (Docs)：4 / 4
 - Stage 1 (API Types)：5 / 5
-- Stage 2 (Service)：0 / 4
+- Stage 2 (Service)：4 / 4
 - Stage 3 (Webhook)：0 / 5
 - Stage 4 (Team Reconciler)：0 / 10
 - Stage 5 (Human Reconciler)：0 / 7
@@ -215,4 +218,4 @@
 - Stage 12 (Integration Tests)：0 / 5
 - Stage 13 (Docs & Validation)：0 / 11
 
-**Total: 9 / 80**
+**Total: 13 / 80**

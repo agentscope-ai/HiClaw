@@ -35,17 +35,20 @@ type WorkerDeployRequest struct {
 	IsUpdate bool
 }
 
-// CoordinationDeployRequest describes coordination context injection for a team leader.
-type CoordinationDeployRequest struct {
-	LeaderName        string
-	Role              string
-	TeamName          string
-	TeamRoomID        string
-	LeaderDMRoomID    string
-	HeartbeatEvery    string
-	WorkerIdleTimeout string
-	TeamWorkers       []string
-	TeamAdminID       string
+// LeaderCoordinationRequest describes coordination context to be written
+// into a team_leader Worker's AGENTS.md. This replaces the old
+// CoordinationDeployRequest; unlike the previous design the call is made
+// from WorkerReconciler's reconcileLeaderBroadcast phase (not from
+// TeamReconciler), keeping Team reconciler free of any Worker-scoped writes.
+type LeaderCoordinationRequest struct {
+	LeaderName          string
+	TeamName            string
+	TeamRoomID          string
+	LeaderDMRoomID      string
+	HeartbeatEvery      string
+	WorkerIdleTimeout   string
+	TeamMemberNames     []string
+	TeamAdminMatrixIDs  []string
 }
 
 // --- Deployer ---
@@ -234,18 +237,28 @@ func (d *Deployer) DeployWorkerConfig(ctx context.Context, req WorkerDeployReque
 	return nil
 }
 
-// InjectCoordinationContext writes team coordination context into the leader's AGENTS.md.
-func (d *Deployer) InjectCoordinationContext(ctx context.Context, req CoordinationDeployRequest) error {
+// WriteLeaderCoordinationContext writes team coordination context into a
+// team_leader Worker's AGENTS.md on MinIO. Intended to be invoked from
+// WorkerReconciler's reconcileLeaderBroadcast phase (only when the Worker's
+// role is team_leader). If multiple Team admins exist, the first one is
+// used as the single TeamAdminID for compatibility with the existing
+// agentconfig.CoordinationContext schema.
+func (d *Deployer) WriteLeaderCoordinationContext(ctx context.Context, req LeaderCoordinationRequest) error {
 	leaderAgentPrefix := fmt.Sprintf("agents/%s", req.LeaderName)
 
-	teamWorkers := make([]agentconfig.TeamWorkerInfo, 0, len(req.TeamWorkers))
-	for _, wn := range req.TeamWorkers {
+	teamWorkers := make([]agentconfig.TeamWorkerInfo, 0, len(req.TeamMemberNames))
+	for _, wn := range req.TeamMemberNames {
 		teamWorkers = append(teamWorkers, agentconfig.TeamWorkerInfo{Name: wn})
+	}
+
+	var primaryAdminID string
+	if len(req.TeamAdminMatrixIDs) > 0 {
+		primaryAdminID = req.TeamAdminMatrixIDs[0]
 	}
 
 	coordCtx := agentconfig.CoordinationContext{
 		WorkerName:        req.LeaderName,
-		Role:              req.Role,
+		Role:              v1beta1.WorkerRoleTeamLeader,
 		MatrixDomain:      d.matrixDomain,
 		TeamName:          req.TeamName,
 		TeamRoomID:        req.TeamRoomID,
@@ -253,7 +266,7 @@ func (d *Deployer) InjectCoordinationContext(ctx context.Context, req Coordinati
 		HeartbeatEvery:    req.HeartbeatEvery,
 		WorkerIdleTimeout: req.WorkerIdleTimeout,
 		TeamWorkers:       teamWorkers,
-		TeamAdminID:       req.TeamAdminID,
+		TeamAdminID:       primaryAdminID,
 	}
 
 	existing, _ := d.oss.GetObject(ctx, leaderAgentPrefix+"/AGENTS.md")
@@ -319,17 +332,6 @@ func (d *Deployer) PushOnDemandSkills(ctx context.Context, workerName string, sk
 func (d *Deployer) CleanupOSSData(ctx context.Context, workerName string) error {
 	agentPrefix := fmt.Sprintf("agents/%s/", workerName)
 	return d.oss.DeletePrefix(ctx, agentPrefix)
-}
-
-// EnsureTeamStorage creates the shared storage directories for a team.
-func (d *Deployer) EnsureTeamStorage(ctx context.Context, teamName string) error {
-	prefix := fmt.Sprintf("teams/%s/", teamName)
-	for _, subdir := range []string{"shared/tasks/", "shared/projects/", "shared/knowledge/"} {
-		if err := d.oss.PutObject(ctx, prefix+subdir+".keep", []byte("")); err != nil {
-			return fmt.Errorf("create %s%s: %w", prefix, subdir, err)
-		}
-	}
-	return nil
 }
 
 // --- Manager Config Deployment ---

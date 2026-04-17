@@ -230,6 +230,7 @@ func (a *App) initServiceLayer(_ context.Context) error {
 	a.provisioner = service.NewProvisioner(service.ProvisionerConfig{
 		Matrix:            a.matrix,
 		Gateway:           a.gateway,
+		OSS:               a.oss,
 		OSSAdmin:          a.ossAdmin,
 		Creds:             credStore,
 		K8sClient:         a.k8sClient,
