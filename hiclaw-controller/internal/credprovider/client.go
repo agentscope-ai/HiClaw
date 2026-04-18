@@ -72,8 +72,13 @@ func (c *HTTPClient) Issue(ctx context.Context, req IssueRequest) (*IssueRespons
 	if err := json.Unmarshal(respBody, &out); err != nil {
 		return nil, fmt.Errorf("parse issue response: %w", err)
 	}
-	if out.AccessKeyID == "" || out.AccessKeySecret == "" || out.SecurityToken == "" {
-		return nil, errors.New("credential-provider returned incomplete credentials")
+	// SecurityToken is optional: the production sidecar always returns
+	// an STS triple, but the mock-credential-provider's "passthrough"
+	// mode (and any future static-AK sidecar) returns a raw AK/SK pair
+	// with an empty SecurityToken. Downstream callers honour the empty
+	// token by emitting a 2-tuple MC_HOST_* binding (see oss.buildMCHostEnv).
+	if out.AccessKeyID == "" || out.AccessKeySecret == "" {
+		return nil, errors.New("credential-provider returned incomplete credentials (missing access_key_id or access_key_secret)")
 	}
 	return &out, nil
 }

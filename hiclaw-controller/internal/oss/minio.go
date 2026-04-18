@@ -229,11 +229,28 @@ func (c *MinIOClient) runMC(ctx context.Context, args ...string) (string, error)
 // environment-variable binding. The mc CLI accepts this form as an
 // alternative to persistent ~/.mc/config.json alias entries, and
 // honours the security-token component when present.
+//
+// The credential-provider sidecar is allowed to return a bare hostname
+// (e.g. "oss-cn-hangzhou.aliyuncs.com") without a URL scheme; in that
+// case we default to https so the caller does not have to normalise
+// every response shape.
+//
+// IMPORTANT: mc (tested with RELEASE.2025-08-13) does NOT URL-decode the
+// userinfo segment of MC_HOST_* before using the values. Any percent-
+// encoding applied here is forwarded verbatim into the X-Amz-Security-
+// Token header (and the signed AK/SK), which Alibaba Cloud OSS rejects
+// with InvalidSecurityToken. We therefore pass the triple raw; STS
+// credentials issued by Alibaba Cloud contain only characters (base64
+// alphabet plus "+/=") that Go's url.Parse accepts inside userinfo.
 func buildMCHostEnv(alias string, c Credentials) (string, error) {
 	if c.Endpoint == "" {
 		return "", fmt.Errorf("credential source returned empty endpoint")
 	}
-	u, err := url.Parse(c.Endpoint)
+	endpoint := c.Endpoint
+	if !strings.HasPrefix(endpoint, "http://") && !strings.HasPrefix(endpoint, "https://") {
+		endpoint = "https://" + endpoint
+	}
+	u, err := url.Parse(endpoint)
 	if err != nil {
 		return "", fmt.Errorf("parse endpoint %q: %w", c.Endpoint, err)
 	}
@@ -241,9 +258,9 @@ func buildMCHostEnv(alias string, c Credentials) (string, error) {
 		return "", fmt.Errorf("endpoint %q must include scheme and host", c.Endpoint)
 	}
 
-	userinfo := url.QueryEscape(c.AccessKeyID) + ":" + url.QueryEscape(c.AccessKeySecret)
+	userinfo := c.AccessKeyID + ":" + c.AccessKeySecret
 	if c.SecurityToken != "" {
-		userinfo += ":" + url.QueryEscape(c.SecurityToken)
+		userinfo += ":" + c.SecurityToken
 	}
 	value := fmt.Sprintf("%s://%s@%s", u.Scheme, userinfo, u.Host)
 	return fmt.Sprintf("MC_HOST_%s=%s", alias, value), nil
