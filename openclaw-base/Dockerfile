@@ -10,6 +10,7 @@
 # Build args:
 #   HIGRESS_REGISTRY  - base image registry (default: cn-hangzhou)
 #   APT_MIRROR        - APT mirror host (default: empty; set to mirrors.aliyun.com for China)
+#   OPENCLAW_REPO_URL - OpenClaw git repository URL (default: https://github.com/johnlanni/openclaw.git)
 # ============================================================
 
 ARG HIGRESS_REGISTRY=higress-registry.cn-hangzhou.cr.aliyuncs.com
@@ -24,6 +25,7 @@ ARG HTTPS_PROXY
 ARG http_proxy
 ARG https_proxy
 ARG NPM_REGISTRY=https://registry.npmjs.org/
+ARG OPENCLAW_REPO_URL=https://github.com/johnlanni/openclaw.git
 
 # Set proxy as environment variables to ensure all tools can use them
 ENV HTTP_PROXY=${HTTP_PROXY} \
@@ -52,7 +54,7 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
 # 2. Install dependencies and build
 # 3. Remove unnecessary files (tests, .git, etc.) - keep all node_modules for extensions
 RUN git clone --depth 1 --single-branch -b hiclaw-v1 \
-        https://github.com/johnlanni/openclaw.git /opt/openclaw && \
+        ${OPENCLAW_REPO_URL} /opt/openclaw && \
     cd /opt/openclaw && \
     git fetch --depth 1 origin 86dad1383c12629ad3aa48575f2dd350fc0775d4 && \
     git checkout 86dad1383c12629ad3aa48575f2dd350fc0775d4 && \
