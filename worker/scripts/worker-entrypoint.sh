@@ -152,7 +152,10 @@ log "HOME set to ${HOME} (workspace files will be synced to MinIO)"
 #   Local -> Remote: change-triggered push of Worker-managed content
 #     - Uses find to detect files modified in last 10s; only runs mc mirror when needed
 #     - Avoids mc mirror --watch TOCTOU bug (crashes on atomic ops like npm install)
-#     - Excludes Manager-managed files (openclaw.json, SOUL.md, AGENTS.md, HEARTBEAT.md, mcporter) and caches
+#     - Excludes Manager-managed files (openclaw.json, SOUL.md, AGENTS.md, HEARTBEAT.md, mcporter) and caches.
+#       These files are authoritatively written by the controller/Manager and must never be
+#       pushed back by the Worker — doing so races with controller overrides (e.g. inline
+#       soul/agents applied via `hiclaw apply -f` can be reverted by a stale Worker push).
 #
 #   Remote -> Local: on-demand pull via file-sync skill (triggered by Manager @mention)
 #     + 5-minute fallback pull of Manager-managed paths as safety net
@@ -175,14 +178,6 @@ log "HOME set to ${HOME} (workspace files will be synced to MinIO)"
                 --exclude "SOUL.md" --exclude "AGENTS.md" --exclude "HEARTBEAT.md" 2>&1; then
                 log "WARNING: Local->Remote sync failed"
             fi
-            # Push manager-managed files individually only if locally modified after last pull.
-            # This allows agents to sync their own edits (e.g. personality evolution in SOUL.md)
-            # while preventing stale package content from overwriting controller-pushed inline content.
-            for _mf in SOUL.md AGENTS.md HEARTBEAT.md; do
-                if [ -f "${WORKSPACE}/${_mf}" ] && [ "${WORKSPACE}/${_mf}" -nt "${PULL_MARKER}" ]; then
-                    mc cp "${WORKSPACE}/${_mf}" "${HICLAW_STORAGE_PREFIX}/agents/${WORKER_NAME}/${_mf}" 2>/dev/null || true
-                fi
-            done
         fi
         sleep 5
     done

@@ -40,7 +40,7 @@ FROM ${HICLAW_CONTROLLER_IMAGE} AS hiclaw-controller
 # ============ Final Image: Python 3.11 + Higress all-in-one ============
 # Start from all-in-one (Ubuntu 22.04 with Higress) for gateway support,
 # then install Python runtime. This avoids the ~500MB Node.js/OpenClaw overhead.
-FROM ${HIGRESS_REGISTRY}/higress/all-in-one:sha-d32debd
+FROM ${HIGRESS_REGISTRY}/higress/all-in-one:2.2.1
 
 ARG APT_MIRROR=
 ARG PIP_INDEX_URL=https://pypi.org/simple/

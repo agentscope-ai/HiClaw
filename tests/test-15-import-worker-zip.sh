@@ -246,8 +246,16 @@ else
     log_fail "openclaw.json not found in MinIO"
 fi
 
-# Worker container running
-CONTAINER_RUNNING=$(docker ps --format '{{.Names}}' 2>/dev/null | grep "hiclaw-worker-${TEST_WORKER}" || echo "")
+# Worker container running.
+# The "worker created" log fires as soon as initial reconcile finishes, but the
+# container may be (re)created in a follow-up reconcile if the CR status update
+# bumped ResourceVersion (generation 0 -> 1). Poll for up to 60s to absorb that race.
+CONTAINER_RUNNING=""
+for i in $(seq 1 60); do
+    CONTAINER_RUNNING=$(docker ps --format '{{.Names}}' 2>/dev/null | grep "hiclaw-worker-${TEST_WORKER}$" || echo "")
+    [ -n "${CONTAINER_RUNNING}" ] && break
+    sleep 1
+done
 if [ -n "${CONTAINER_RUNNING}" ]; then
     log_pass "Worker container is running: ${CONTAINER_RUNNING}"
 else
@@ -367,11 +375,17 @@ else
     log_fail "hiclaw delete did not report success"
 fi
 
-sleep 2
-WORKER_AFTER=$(exec_in_agent hiclaw get workers "${TEST_WORKER}" -o json 2>&1 || echo "")
-if echo "${WORKER_AFTER}" | grep -q "not found\|error\|Error"; then
-    log_pass "Worker CR removed after delete"
-elif [ -z "${WORKER_AFTER}" ]; then
+# Wait for CR to be fully removed (finalizer runs container teardown which can take ~10s)
+WORKER_GONE=false
+for i in $(seq 1 60); do
+    WORKER_AFTER=$(exec_in_agent hiclaw get workers "${TEST_WORKER}" -o json 2>&1 || echo "")
+    if echo "${WORKER_AFTER}" | grep -q "not found\|error\|Error" || [ -z "${WORKER_AFTER}" ]; then
+        WORKER_GONE=true
+        break
+    fi
+    sleep 1
+done
+if [ "${WORKER_GONE}" = true ]; then
     log_pass "Worker CR removed after delete"
 else
     log_fail "Worker CR still exists after delete"
