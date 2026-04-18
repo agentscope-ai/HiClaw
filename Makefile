@@ -520,12 +520,13 @@ ifndef SKIP_BUILD
 endif
 	@echo "==> Installing HiClaw (embedded mode)..."
 	HICLAW_NON_INTERACTIVE=1 \
-		HICLAW_EMBEDDED_IMAGE=$(LOCAL_EMBEDDED) \
-		HICLAW_MANAGER_IMAGE=$(if $(filter copaw,$(HICLAW_MANAGER_RUNTIME)),$(LOCAL_MANAGER_COPAW),$(LOCAL_MANAGER)) \
-		HICLAW_WORKER_IMAGE=$(LOCAL_WORKER) \
-		HICLAW_COPAW_WORKER_IMAGE=$(LOCAL_COPAW_WORKER) \
+		HICLAW_INSTALL_EMBEDDED_IMAGE=$(LOCAL_EMBEDDED) \
+		HICLAW_INSTALL_MANAGER_IMAGE=$(LOCAL_MANAGER) \
+		HICLAW_INSTALL_MANAGER_COPAW_IMAGE=$(LOCAL_MANAGER_COPAW) \
+		HICLAW_INSTALL_WORKER_IMAGE=$(LOCAL_WORKER) \
+		HICLAW_INSTALL_COPAW_WORKER_IMAGE=$(LOCAL_COPAW_WORKER) \
 		HICLAW_MATRIX_E2EE=0 \
-		bash ./install/hiclaw-install-embedded.sh
+		bash ./install/hiclaw-install.sh
 
 wait-ready-embedded: ## Wait for embedded-mode services to be ready
 	@echo "==> Waiting for embedded services..."
