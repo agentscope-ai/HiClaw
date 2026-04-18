@@ -63,9 +63,10 @@ func (m *MockDeployer) clearCallsLocked() {
 func (m *MockDeployer) DeployPackage(ctx context.Context, workerName string, pkg string, isUpdate bool) error {
 	m.mu.Lock()
 	m.Calls.DeployPackage = append(m.Calls.DeployPackage, workerName)
+	fn := m.DeployPackageFn
 	m.mu.Unlock()
-	if m.DeployPackageFn != nil {
-		return m.DeployPackageFn(ctx, workerName, pkg, isUpdate)
+	if fn != nil {
+		return fn(ctx, workerName, pkg, isUpdate)
 	}
 	return nil
 }
@@ -73,9 +74,10 @@ func (m *MockDeployer) DeployPackage(ctx context.Context, workerName string, pkg
 func (m *MockDeployer) WriteInlineConfigs(workerName string, spec v1beta1.WorkerSpec) error {
 	m.mu.Lock()
 	m.Calls.WriteInlineConfigs = append(m.Calls.WriteInlineConfigs, workerName)
+	fn := m.WriteInlineConfigsFn
 	m.mu.Unlock()
-	if m.WriteInlineConfigsFn != nil {
-		return m.WriteInlineConfigsFn(workerName, spec)
+	if fn != nil {
+		return fn(workerName, spec)
 	}
 	return nil
 }
@@ -83,9 +85,10 @@ func (m *MockDeployer) WriteInlineConfigs(workerName string, spec v1beta1.Worker
 func (m *MockDeployer) DeployWorkerConfig(ctx context.Context, req service.WorkerDeployRequest) error {
 	m.mu.Lock()
 	m.Calls.DeployWorkerConfig = append(m.Calls.DeployWorkerConfig, req)
+	fn := m.DeployWorkerConfigFn
 	m.mu.Unlock()
-	if m.DeployWorkerConfigFn != nil {
-		return m.DeployWorkerConfigFn(ctx, req)
+	if fn != nil {
+		return fn(ctx, req)
 	}
 	return nil
 }
@@ -93,9 +96,10 @@ func (m *MockDeployer) DeployWorkerConfig(ctx context.Context, req service.Worke
 func (m *MockDeployer) PushOnDemandSkills(ctx context.Context, workerName string, skills []string) error {
 	m.mu.Lock()
 	m.Calls.PushOnDemandSkills = append(m.Calls.PushOnDemandSkills, workerName)
+	fn := m.PushOnDemandSkillsFn
 	m.mu.Unlock()
-	if m.PushOnDemandSkillsFn != nil {
-		return m.PushOnDemandSkillsFn(ctx, workerName, skills)
+	if fn != nil {
+		return fn(ctx, workerName, skills)
 	}
 	return nil
 }
@@ -103,9 +107,10 @@ func (m *MockDeployer) PushOnDemandSkills(ctx context.Context, workerName string
 func (m *MockDeployer) CleanupOSSData(ctx context.Context, workerName string) error {
 	m.mu.Lock()
 	m.Calls.CleanupOSSData = append(m.Calls.CleanupOSSData, workerName)
+	fn := m.CleanupOSSDataFn
 	m.mu.Unlock()
-	if m.CleanupOSSDataFn != nil {
-		return m.CleanupOSSDataFn(ctx, workerName)
+	if fn != nil {
+		return fn(ctx, workerName)
 	}
 	return nil
 }

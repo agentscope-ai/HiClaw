@@ -101,19 +101,24 @@ func (m *MockWorkerBackend) Create(ctx context.Context, req backend.CreateReques
 	fn := m.CreateFn
 	m.mu.Unlock()
 
+	setRunning := func() {
+		m.mu.Lock()
+		m.containerState[req.Name] = backend.StatusRunning
+		if req.ContainerName != "" && req.ContainerName != req.Name {
+			m.containerState[req.ContainerName] = backend.StatusRunning
+		}
+		m.mu.Unlock()
+	}
+
 	if fn != nil {
 		result, err := fn(ctx, req)
 		if err == nil {
-			m.mu.Lock()
-			m.containerState[req.Name] = backend.StatusRunning
-			m.mu.Unlock()
+			setRunning()
 		}
 		return result, err
 	}
 
-	m.mu.Lock()
-	m.containerState[req.Name] = backend.StatusRunning
-	m.mu.Unlock()
+	setRunning()
 	return &backend.WorkerResult{
 		Name:    req.Name,
 		Backend: m.Name(),
@@ -214,9 +219,10 @@ func (m *MockWorkerBackend) Status(ctx context.Context, name string) (*backend.W
 func (m *MockWorkerBackend) List(ctx context.Context) ([]backend.WorkerResult, error) {
 	m.mu.Lock()
 	m.Calls.List++
+	fn := m.ListFn
 	m.mu.Unlock()
-	if m.ListFn != nil {
-		return m.ListFn(ctx)
+	if fn != nil {
+		return fn(ctx)
 	}
 	return nil, nil
 }

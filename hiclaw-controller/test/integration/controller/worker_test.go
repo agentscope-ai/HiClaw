@@ -542,6 +542,41 @@ func TestWorkerStateChange_SimultaneousSpecAndState(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// Phase 5: ServiceAccount retry test
+// ---------------------------------------------------------------------------
+
+func TestWorkerCreate_ServiceAccountFailure_RetriesOnNextReconcile(t *testing.T) {
+	resetMocks()
+
+	saCallCount := 0
+	mockProv.EnsureServiceAccountFn = func(_ context.Context, _ string) error {
+		saCallCount++
+		if saCallCount <= 1 {
+			return fmt.Errorf("simulated SA creation failure")
+		}
+		return nil
+	}
+
+	workerName := fixtures.UniqueName("test-sa-retry")
+	worker := fixtures.NewTestWorker(workerName)
+
+	if err := k8sClient.Create(ctx, worker); err != nil {
+		t.Fatalf("failed to create Worker CR: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = k8sClient.Delete(ctx, worker)
+	})
+
+	// SA fails on first reconcile, succeeds on retry -> Worker reaches Running.
+	waitForRunning(t, worker)
+
+	ensureSA, _ := mockProv.ServiceAccountCallCounts()
+	if ensureSA < 2 {
+		t.Errorf("EnsureServiceAccount called %d times, want >=2 (initial failure + retry)", ensureSA)
+	}
+}
+
+// ---------------------------------------------------------------------------
 // Phase 4: Deletion of a failed worker
 // ---------------------------------------------------------------------------
 

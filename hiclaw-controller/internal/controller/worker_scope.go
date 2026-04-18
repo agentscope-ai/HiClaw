@@ -20,6 +20,9 @@ func computePhase(w *v1beta1.Worker, reconcileErr error) string {
 		if w.Status.MatrixUserID == "" {
 			return "Failed"
 		}
+		if w.Status.Phase == "" {
+			return "Pending"
+		}
 		// TODO: Introduce Status.Conditions (Ready/Provisioned) to surface
 		// transient errors without flipping Phase away from Running. Currently
 		// we keep the old Phase to avoid marking a healthy worker as Failed on

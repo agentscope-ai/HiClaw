@@ -511,6 +511,7 @@ func (p *Provisioner) ProvisionManager(ctx context.Context, req ManagerProvision
 		}
 		if err := p.ossAdmin.EnsurePolicy(ctx, oss.PolicyRequest{
 			WorkerName: managerName,
+			IsManager:  true,
 		}); err != nil {
 			return nil, fmt.Errorf("MinIO policy creation failed: %w", err)
 		}

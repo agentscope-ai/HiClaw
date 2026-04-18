@@ -15,7 +15,7 @@
 ARG HIGRESS_REGISTRY=higress-registry.cn-hangzhou.cr.aliyuncs.com
 
 # Based on all-in-one (Ubuntu 22.04) for layer sharing with Manager
-FROM ${HIGRESS_REGISTRY}/higress/all-in-one:sha-d32debd
+FROM ${HIGRESS_REGISTRY}/higress/all-in-one:2.2.1
 
 # Build args (must be declared BEFORE any RUN that uses them)
 ARG APT_MIRROR=

@@ -90,6 +90,16 @@ func NewK8sBackendWithClient(client K8sCoreClient, config K8sConfig, containerPr
 	}
 }
 
+// WithPrefix returns a shallow copy of the backend with a different container name prefix.
+// The returned backend shares the same client (safe — K8sCoreClient is stateless).
+// Use WithPrefix("") to disable prefix for containers that already have full names
+// (e.g. Manager containers named "hiclaw-manager" rather than "hiclaw-worker-X").
+func (k *K8sBackend) WithPrefix(prefix string) *K8sBackend {
+	cp := *k
+	cp.containerPrefix = prefix
+	return &cp
+}
+
 func (k *K8sBackend) Name() string                   { return "k8s" }
 func (k *K8sBackend) DeploymentMode() string         { return DeployCloud }
 func (k *K8sBackend) NeedsCredentialInjection() bool { return true }

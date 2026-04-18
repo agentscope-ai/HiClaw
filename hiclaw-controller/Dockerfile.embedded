@@ -31,7 +31,7 @@ FROM ${HIGRESS_REGISTRY}/higress/element-web:20260216 AS element-web
 FROM ${HICLAW_CONTROLLER_IMAGE} AS hiclaw-controller
 
 # ============ Final Image: Based on Higress all-in-one ============
-FROM ${HIGRESS_REGISTRY}/higress/all-in-one:sha-d32debd
+FROM ${HIGRESS_REGISTRY}/higress/all-in-one:2.2.1
 
 RUN mkdir -p /var/log/hiclaw
 

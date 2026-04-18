@@ -307,3 +307,93 @@ func TestBuildHostAliases(t *testing.T) {
 		t.Fatalf("expected 2 hostnames, got %d", len(aliases[0].Hostnames))
 	}
 }
+
+func TestK8sWithPrefix(t *testing.T) {
+	managerPod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "hiclaw-manager",
+			Namespace: "hiclaw",
+			Labels: map[string]string{
+				"app":               "hiclaw-manager",
+				"hiclaw.io/manager": "default",
+			},
+		},
+		Status: corev1.PodStatus{Phase: corev1.PodRunning},
+	}
+	b := newTestK8sBackend(managerPod)
+
+	// Original backend (prefix "hiclaw-worker-") should NOT find the manager pod
+	result, err := b.Status(context.Background(), "hiclaw-manager")
+	if err != nil {
+		t.Fatalf("Status failed: %v", err)
+	}
+	if result.Status != StatusNotFound {
+		t.Fatalf("expected not_found with worker prefix, got %s", result.Status)
+	}
+
+	// WithPrefix("") should find it by exact name
+	mb := b.WithPrefix("")
+	result, err = mb.Status(context.Background(), "hiclaw-manager")
+	if err != nil {
+		t.Fatalf("Status failed: %v", err)
+	}
+	if result.Status != StatusRunning {
+		t.Fatalf("expected running with empty prefix, got %s", result.Status)
+	}
+
+	// WithPrefix does not mutate the original backend
+	if b.containerPrefix != "hiclaw-worker-" {
+		t.Fatalf("original prefix mutated: %q", b.containerPrefix)
+	}
+	if mb.containerPrefix != "" {
+		t.Fatalf("new prefix not empty: %q", mb.containerPrefix)
+	}
+}
+
+func TestK8sWithPrefixDelete(t *testing.T) {
+	managerPod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "hiclaw-manager",
+			Namespace: "hiclaw",
+		},
+	}
+	b := newTestK8sBackend(managerPod)
+	mb := b.WithPrefix("")
+
+	if err := mb.Delete(context.Background(), "hiclaw-manager"); err != nil {
+		t.Fatalf("Delete failed: %v", err)
+	}
+
+	result, err := mb.Status(context.Background(), "hiclaw-manager")
+	if err != nil {
+		t.Fatalf("Status after delete failed: %v", err)
+	}
+	if result.Status != StatusNotFound {
+		t.Fatalf("expected not_found after delete, got %s", result.Status)
+	}
+}
+
+func TestK8sWithPrefixStop(t *testing.T) {
+	managerPod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "hiclaw-manager",
+			Namespace: "hiclaw",
+		},
+		Status: corev1.PodStatus{Phase: corev1.PodRunning},
+	}
+	b := newTestK8sBackend(managerPod)
+	mb := b.WithPrefix("")
+
+	// Stop on K8s backend is equivalent to Delete
+	if err := mb.Stop(context.Background(), "hiclaw-manager"); err != nil {
+		t.Fatalf("Stop failed: %v", err)
+	}
+
+	result, err := mb.Status(context.Background(), "hiclaw-manager")
+	if err != nil {
+		t.Fatalf("Status after stop failed: %v", err)
+	}
+	if result.Status != StatusNotFound {
+		t.Fatalf("expected not_found after stop, got %s", result.Status)
+	}
+}

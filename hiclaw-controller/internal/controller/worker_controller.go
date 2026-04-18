@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	v1beta1 "github.com/hiclaw/hiclaw-controller/api/v1beta1"
@@ -101,6 +102,9 @@ func (r *WorkerReconciler) reconcileNormal(ctx context.Context, s *workerScope) 
 	if res, err := r.reconcileInfrastructure(ctx, s); err != nil || res.RequeueAfter > 0 {
 		return res, err
 	}
+	if err := r.Provisioner.EnsureServiceAccount(ctx, s.worker.Name); err != nil {
+		return reconcile.Result{}, fmt.Errorf("ServiceAccount: %w", err)
+	}
 	if res, err := r.reconcileConfig(ctx, s); err != nil || res.RequeueAfter > 0 {
 		return res, err
 	}
@@ -190,7 +194,7 @@ func (r *WorkerReconciler) SetupWithManager(mgr ctrl.Manager) error {
 						}},
 					}
 				}),
-				builder.WithPredicates(podLifecyclePredicates()),
+				builder.WithPredicates(podLifecyclePredicates("hiclaw.io/worker")),
 			)
 		}
 	}
@@ -200,16 +204,18 @@ func (r *WorkerReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 // podLifecyclePredicates filters Pod events to only trigger reconciliation
 // on create, delete, or phase transitions (not every status update).
-func podLifecyclePredicates() predicate.Predicate {
+// labelKey is the pod label used to identify which CR owns the pod
+// (e.g. "hiclaw.io/worker" or "hiclaw.io/manager").
+func podLifecyclePredicates(labelKey string) predicate.Predicate {
 	return predicate.Funcs{
 		CreateFunc: func(e event.CreateEvent) bool {
-			return e.Object.GetLabels()["hiclaw.io/worker"] != ""
+			return e.Object.GetLabels()[labelKey] != ""
 		},
 		DeleteFunc: func(e event.DeleteEvent) bool {
-			return e.Object.GetLabels()["hiclaw.io/worker"] != ""
+			return e.Object.GetLabels()[labelKey] != ""
 		},
 		UpdateFunc: func(e event.UpdateEvent) bool {
-			if e.ObjectNew.GetLabels()["hiclaw.io/worker"] == "" {
+			if e.ObjectNew.GetLabels()[labelKey] == "" {
 				return false
 			}
 			oldPod, ok1 := e.ObjectOld.(*corev1.Pod)
