@@ -99,6 +99,29 @@ export COPAW_WORKING_DIR="${INSTALL_DIR}/${WORKER_NAME}/.copaw"
 # Enable debug logging for troubleshooting
 export COPAW_LOG_LEVEL="${COPAW_LOG_LEVEL:-info}"
 
+# ── CoPaw CMS Plugin Configuration ───────────────────────────────────────────
+# Configure LoongSuite observability plugin if tracing is enabled
+CMS_TRACES_ENABLED="$(echo "${HICLAW_CMS_TRACES_ENABLED:-false}" | tr '[:upper:]' '[:lower:]')"
+if [ "${CMS_TRACES_ENABLED}" = "true" ]; then
+    log "Configuring CoPaw CMS plugin..."
+    LOONGSUITE_DIR="${HOME}/.loongsuite"
+    mkdir -p "${LOONGSUITE_DIR}"
+
+    cat > "${LOONGSUITE_DIR}/bootstrap-config.json" <<EOF
+{
+  "OTEL_EXPORTER_OTLP_ENDPOINT": "${HICLAW_CMS_ENDPOINT}",
+  "OTEL_EXPORTER_OTLP_PROTOCOL": "http/protobuf",
+  "OTEL_EXPORTER_OTLP_HEADERS": "x-arms-license-key=${HICLAW_CMS_LICENSE_KEY},x-arms-project=${HICLAW_CMS_PROJECT},x-cms-workspace=${HICLAW_CMS_WORKSPACE}",
+  "OTEL_SERVICE_NAME": "${HICLAW_CMS_SERVICE_NAME:-hiclaw-worker-${WORKER_NAME}}",
+  "OTEL_SEMCONV_STABILITY_OPT_IN": "http",
+  "OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT": "true",
+  "LOONGSUITE_PYTHON_SITE_BOOTSTRAP": "true"
+}
+EOF
+    log "CoPaw CMS plugin configured at ${LOONGSUITE_DIR}/bootstrap-config.json"
+    export LOONGSUITE_PYTHON_SITE_BOOTSTRAP=true
+fi
+
 # Console port (default 8088, can be overridden via HICLAW_CONSOLE_PORT)
 CONSOLE_PORT="${HICLAW_CONSOLE_PORT:-8088}"
 

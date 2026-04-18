@@ -88,7 +88,14 @@ RUN python -m venv /opt/venv/standard \
     && /opt/venv/standard/bin/pip install --no-cache-dir \
         --index-url "${PIP_INDEX_URL}" \
         --trusted-host "$(echo ${PIP_INDEX_URL} | sed 's|https\?://||;s|/.*||')" \
-        /tmp/copaw-worker/
+        /tmp/copaw-worker/ \
+    && /opt/venv/copaw/bin/pip install --no-cache-dir \
+        "wrapt<2.0" \
+        loongsuite-site-bootstrap \
+        loongsuite-distro \
+        opentelemetry-exporter-otlp \
+        loongsuite-instrumentation-copaw \
+        loongsuite-instrumentation-agentscope
 
 # --- Lite venv: copaw from GitHub fork ---
 RUN python -m venv /opt/venv/lite \
