@@ -380,14 +380,8 @@ func (d *Deployer) DeployManagerConfig(ctx context.Context, req ManagerDeployReq
 func (d *Deployer) prepareAndPushAgentsMD(ctx context.Context, workerName, agentPrefix, role, runtime, teamName, teamLeaderName, teamAdminMatrixID, inlineAgents string) error {
 	builtinPath := filepath.Join(d.builtinAgentDir(role, runtime), "AGENTS.md")
 	builtinContent, err := os.ReadFile(builtinPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			// Fallback: try reading from MinIO shared builtins (incluster mode)
-			ossKey := "shared/builtins/worker/AGENTS.md"
-			builtinContent, _ = d.oss.GetObject(ctx, ossKey)
-		} else {
-			return fmt.Errorf("read builtin AGENTS.md: %w", err)
-		}
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("read builtin AGENTS.md: %w", err)
 	}
 
 	// Priority: inline spec (user intent) > OSS (from package).
@@ -425,24 +419,13 @@ func (d *Deployer) prepareAndPushAgentsMD(ctx context.Context, workerName, agent
 }
 
 // pushBuiltinSkills copies builtin skill directories to the worker's OSS prefix.
-// In embedded mode, skills are read from the local agent template directory.
-// In incluster mode (local dir missing), falls back to copying from MinIO's
-// shared/builtins/worker/skills/ (published by Manager's upgrade-builtins.sh).
+// Skills are read from the local agent template directory baked into the controller image.
 func (d *Deployer) pushBuiltinSkills(ctx context.Context, workerName, agentPrefix, role, runtime string) error {
-	logger := log.FromContext(ctx)
 	skillsDir := filepath.Join(d.builtinAgentDir(role, runtime), "skills")
 	entries, err := os.ReadDir(skillsDir)
 	if err != nil {
 		if os.IsNotExist(err) {
-			// Fallback: mirror from MinIO shared builtins (incluster mode)
-			logger.Info("local builtin skills dir not found, falling back to MinIO shared/builtins/worker/skills/",
-				"skillsDir", skillsDir, "worker", workerName)
-			src := "shared/builtins/worker/skills/"
-			dst := agentPrefix + "/skills/"
-			if err := d.oss.Mirror(ctx, src, dst, oss.MirrorOptions{Overwrite: true}); err != nil {
-				return fmt.Errorf("push builtin skills from shared builtins: %w", err)
-			}
-			return nil
+			return nil // no builtin skills for this role/runtime
 		}
 		return err
 	}
@@ -462,24 +445,15 @@ func (d *Deployer) pushBuiltinSkills(ctx context.Context, workerName, agentPrefi
 }
 
 func (d *Deployer) pushBuiltinTopLevelFiles(ctx context.Context, workerName, agentPrefix, role, runtime string) error {
-	logger := log.FromContext(ctx)
 	agentDir := d.builtinAgentDir(role, runtime)
 	for _, name := range []string{"HEARTBEAT.md"} {
 		src := filepath.Join(agentDir, name)
 		content, err := os.ReadFile(src)
 		if err != nil {
 			if os.IsNotExist(err) {
-				// Fallback: try reading from MinIO shared builtins
-				ossKey := "shared/builtins/worker/" + name
-				remoteContent, ossErr := d.oss.GetObject(ctx, ossKey)
-				if ossErr != nil {
-					logger.V(1).Info("builtin file not found locally or in shared builtins", "name", name)
-					continue
-				}
-				content = remoteContent
-			} else {
-				return err
+				continue
 			}
+			return err
 		}
 		if err := d.oss.PutObject(ctx, agentPrefix+"/"+name, content); err != nil {
 			return err
