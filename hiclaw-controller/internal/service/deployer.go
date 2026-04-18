@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	v1beta1 "github.com/hiclaw/hiclaw-controller/api/v1beta1"
 	"github.com/hiclaw/hiclaw-controller/internal/agentconfig"
@@ -187,7 +188,8 @@ func (d *Deployer) DeployWorkerConfig(ctx context.Context, req WorkerDeployReque
 		if err := d.oss.PutObject(ctx, agentPrefix+"/SOUL.md", soulData); err != nil {
 			logger.Error(err, "SOUL.md push failed (non-fatal)")
 		}
-	} else if !req.IsUpdate {
+	} else if !req.IsUpdate && req.Role != "team_leader" {
+		// Team leaders get SOUL.md from template rendering in InjectCoordinationContext.
 		soulContent := fmt.Sprintf("# %s\n\nYou are %s, an AI worker agent.\n", req.Name, req.Name)
 		if err := d.oss.PutObject(ctx, agentPrefix+"/SOUL.md", []byte(soulContent)); err != nil {
 			logger.Error(err, "SOUL.md push failed (non-fatal)")
@@ -255,7 +257,41 @@ func (d *Deployer) InjectCoordinationContext(ctx context.Context, req Coordinati
 
 	existing, _ := d.oss.GetObject(ctx, leaderAgentPrefix+"/AGENTS.md")
 	injected := agentconfig.InjectCoordinationContext(string(existing), coordCtx)
-	return d.oss.PutObject(ctx, leaderAgentPrefix+"/AGENTS.md", []byte(injected))
+	if err := d.oss.PutObject(ctx, leaderAgentPrefix+"/AGENTS.md", []byte(injected)); err != nil {
+		return err
+	}
+
+	// --- Render SOUL.md from template ---
+	// Team leader uses SOUL.md.tmpl with ${VAR} placeholders; render and push.
+	if err := d.renderAndPushSoulTemplate(ctx, leaderAgentPrefix, req); err != nil {
+		log.FromContext(ctx).Error(err, "SOUL.md template rendering failed (non-fatal)")
+	}
+	return nil
+}
+
+// renderAndPushSoulTemplate reads SOUL.md.tmpl from the builtin team-leader-agent
+// directory, substitutes ${VAR} placeholders, and pushes the result as SOUL.md.
+func (d *Deployer) renderAndPushSoulTemplate(ctx context.Context, agentPrefix string, req CoordinationDeployRequest) error {
+	tmplPath := filepath.Join(d.builtinAgentDir("team_leader", ""), "SOUL.md.tmpl")
+	tmplData, err := os.ReadFile(tmplPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil // no template, nothing to render
+		}
+		return fmt.Errorf("read SOUL.md.tmpl: %w", err)
+	}
+
+	workerNames := make([]string, 0, len(req.TeamWorkers))
+	for _, wn := range req.TeamWorkers {
+		workerNames = append(workerNames, wn)
+	}
+
+	result := string(tmplData)
+	result = strings.ReplaceAll(result, "${TEAM_LEADER_NAME}", req.LeaderName)
+	result = strings.ReplaceAll(result, "${TEAM_NAME}", req.TeamName)
+	result = strings.ReplaceAll(result, "${TEAM_WORKERS}", strings.Join(workerNames, ", "))
+
+	return d.oss.PutObject(ctx, agentPrefix+"/SOUL.md", []byte(result))
 }
 
 // PushOnDemandSkills runs the push-worker-skills.sh script for on-demand skills.
