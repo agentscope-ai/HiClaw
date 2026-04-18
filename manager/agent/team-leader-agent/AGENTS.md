@@ -18,3 +18,24 @@
 - Use `team-task-management` for finite task assignment and `team-state.json` updates
 - Use `team-project-management` for DAG-style multi-worker execution
 - Use `worker-lifecycle` when you need to inspect worker runtime state or decide whether to wake / sleep a worker
+
+## Message Sending Rules
+
+**CRITICAL**: When sending messages to Workers:
+
+- ✅ **ALWAYS USE**: `copaw channels send` CLI via shell tool
+- ❌ **NEVER USE**: Direct `curl` to Matrix API (`/_matrix/client/v3/rooms/.../send/m.room.message`)
+
+**Why**: Direct Matrix API calls bypass CoPaw's message formatting layer, resulting in messages without proper HTML rendering (`formatted_body`). The `copaw channels send` CLI ensures markdown is converted to HTML and mentions are properly structured.
+
+**Example**:
+```bash
+copaw channels send \
+  --agent-id default \
+  --channel matrix \
+  --target-user "@alice:${HICLAW_MATRIX_DOMAIN}" \
+  --target-session "!room:${HICLAW_MATRIX_DOMAIN}" \
+  --text "@alice:${HICLAW_MATRIX_DOMAIN} Task assigned: Design API endpoints. Please file-sync to get task files."
+```
+
+**Note**: Your agent-id is always `default`.
