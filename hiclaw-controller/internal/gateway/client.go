@@ -56,8 +56,4 @@ type Client interface {
 
 	// Healthy returns nil if the gateway console is reachable and authenticated.
 	Healthy(ctx context.Context) error
-
-	// TriggerPush forces an immediate config push to Envoy (embedded mode).
-	// No-op if not applicable.
-	TriggerPush()
 }
