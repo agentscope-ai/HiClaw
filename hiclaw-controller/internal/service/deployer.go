@@ -214,17 +214,17 @@ func (d *Deployer) DeployWorkerConfig(ctx context.Context, req WorkerDeployReque
 	}
 
 	// --- Builtin top-level files (e.g. HEARTBEAT.md for team leaders) ---
-	if err := d.pushBuiltinTopLevelFiles(ctx, req.Name, agentPrefix, req.Role); err != nil {
+	if err := d.pushBuiltinTopLevelFiles(ctx, req.Name, agentPrefix, req.Role, req.Spec.Runtime); err != nil {
 		logger.Error(err, "builtin top-level file sync failed (non-fatal)")
 	}
 
 	// --- AGENTS.md: merge builtin section + inject coordination context ---
-	if err := d.prepareAndPushAgentsMD(ctx, req.Name, agentPrefix, req.Role, req.TeamName, req.TeamLeaderName, req.TeamAdminMatrixID, req.Spec.Agents); err != nil {
+	if err := d.prepareAndPushAgentsMD(ctx, req.Name, agentPrefix, req.Role, req.Spec.Runtime, req.TeamName, req.TeamLeaderName, req.TeamAdminMatrixID, req.Spec.Agents); err != nil {
 		logger.Error(err, "AGENTS.md prepare failed (non-fatal)")
 	}
 
 	// --- Push builtin skills from worker-agent template ---
-	if err := d.pushBuiltinSkills(ctx, req.Name, agentPrefix, req.Role); err != nil {
+	if err := d.pushBuiltinSkills(ctx, req.Name, agentPrefix, req.Role, req.Spec.Runtime); err != nil {
 		logger.Error(err, "builtin skills push failed (non-fatal)")
 	}
 
@@ -370,8 +370,8 @@ func (d *Deployer) DeployManagerConfig(ctx context.Context, req ManagerDeployReq
 
 // prepareAndPushAgentsMD merges the builtin AGENTS.md section and injects
 // coordination context in a single OSS read-write cycle.
-func (d *Deployer) prepareAndPushAgentsMD(ctx context.Context, workerName, agentPrefix, role, teamName, teamLeaderName, teamAdminMatrixID, inlineAgents string) error {
-	builtinPath := filepath.Join(d.builtinAgentDir(role), "AGENTS.md")
+func (d *Deployer) prepareAndPushAgentsMD(ctx context.Context, workerName, agentPrefix, role, runtime, teamName, teamLeaderName, teamAdminMatrixID, inlineAgents string) error {
+	builtinPath := filepath.Join(d.builtinAgentDir(role, runtime), "AGENTS.md")
 	builtinContent, err := os.ReadFile(builtinPath)
 	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("read builtin AGENTS.md: %w", err)
@@ -410,8 +410,8 @@ func (d *Deployer) prepareAndPushAgentsMD(ctx context.Context, workerName, agent
 }
 
 // pushBuiltinSkills copies builtin skill directories from the worker-agent template to OSS.
-func (d *Deployer) pushBuiltinSkills(ctx context.Context, workerName, agentPrefix, role string) error {
-	skillsDir := filepath.Join(d.builtinAgentDir(role), "skills")
+func (d *Deployer) pushBuiltinSkills(ctx context.Context, workerName, agentPrefix, role, runtime string) error {
+	skillsDir := filepath.Join(d.builtinAgentDir(role, runtime), "skills")
 	entries, err := os.ReadDir(skillsDir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -434,8 +434,8 @@ func (d *Deployer) pushBuiltinSkills(ctx context.Context, workerName, agentPrefi
 	return nil
 }
 
-func (d *Deployer) pushBuiltinTopLevelFiles(ctx context.Context, workerName, agentPrefix, role string) error {
-	agentDir := d.builtinAgentDir(role)
+func (d *Deployer) pushBuiltinTopLevelFiles(ctx context.Context, workerName, agentPrefix, role, runtime string) error {
+	agentDir := d.builtinAgentDir(role, runtime)
 	for _, name := range []string{"HEARTBEAT.md"} {
 		src := filepath.Join(agentDir, name)
 		content, err := os.ReadFile(src)
@@ -452,12 +452,15 @@ func (d *Deployer) pushBuiltinTopLevelFiles(ctx context.Context, workerName, age
 	return nil
 }
 
-func (d *Deployer) builtinAgentDir(role string) string {
+func (d *Deployer) builtinAgentDir(role, runtime string) string {
 	baseDir := filepath.Dir(d.workerAgentDir)
 	switch role {
 	case "team_leader":
 		return filepath.Join(baseDir, "team-leader-agent")
 	default:
+		if runtime == "copaw" {
+			return filepath.Join(baseDir, "copaw-worker-agent")
+		}
 		return d.workerAgentDir
 	}
 }
