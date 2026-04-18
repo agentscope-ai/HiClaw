@@ -403,21 +403,23 @@ func (d *Deployer) prepareAndPushAgentsMD(ctx context.Context, workerName, agent
 		content = agentconfig.MergeBuiltinSection(content, string(builtinContent))
 	}
 
-	coordCtx := agentconfig.CoordinationContext{
-		WorkerName:     workerName,
-		MatrixDomain:   d.matrixDomain,
-		TeamName:       teamName,
-		TeamLeaderName: teamLeaderName,
-		TeamAdminID:    teamAdminMatrixID,
+	// Team leaders get their coordination context from TeamReconciler.InjectCoordinationContext
+	// which has the full context (room IDs, worker list). Skip here to avoid overwriting.
+	if role != "team_leader" {
+		coordCtx := agentconfig.CoordinationContext{
+			WorkerName:     workerName,
+			MatrixDomain:   d.matrixDomain,
+			TeamName:       teamName,
+			TeamLeaderName: teamLeaderName,
+			TeamAdminID:    teamAdminMatrixID,
+		}
+		if teamLeaderName != "" {
+			coordCtx.Role = "worker"
+		} else {
+			coordCtx.Role = "standalone"
+		}
+		content = agentconfig.InjectCoordinationContext(content, coordCtx)
 	}
-	if role == "team_leader" {
-		coordCtx.Role = "team_leader"
-	} else if teamLeaderName != "" {
-		coordCtx.Role = "worker"
-	} else {
-		coordCtx.Role = "standalone"
-	}
-	content = agentconfig.InjectCoordinationContext(content, coordCtx)
 
 	return d.oss.PutObject(ctx, agentPrefix+"/AGENTS.md", []byte(content))
 }
