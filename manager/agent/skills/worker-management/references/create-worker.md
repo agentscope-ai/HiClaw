@@ -133,20 +133,7 @@ This command returns ALL workers with their current status. Look for your Worker
 
 1. **Verify Worker is Running**: Use `hiclaw get workers -o json` to confirm `phase` is `"Running"`.
 
-2. **Update workers-registry.json**: Add the new Worker to the registry:
-   ```bash
-   # Read current registry
-   REGISTRY=$(cat /root/hiclaw-fs/workers-registry.json 2>/dev/null || echo '{"workers":[]}')
-
-   # Add new worker entry
-   UPDATED=$(echo "$REGISTRY" | jq --arg name "<NAME>" --arg room "<ROOM_ID>" \
-     '.workers += [{"name": $name, "room_id": $room, "role": "<ROLE>", "created_at": (now|todate)}]')
-
-   # Write back
-   echo "$UPDATED" > /root/hiclaw-fs/workers-registry.json
-   ```
-
-3. **Reply to admin in DM** (do NOT wait for Worker to greet first):
+2. **Reply to admin in DM** (do NOT wait for Worker to greet first):
    ```
    <NAME> is ready. Remember to @mention them when giving tasks.
 

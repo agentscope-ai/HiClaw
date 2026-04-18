@@ -16,3 +16,5 @@ Record image-affecting changes to `manager/`, `worker/`, `openclaw-base/` here b
 
 - chore(manager): drop the `hiclaw-controller` istiod debug push workaround (`GET 127.0.0.1:15014/debug/adsz?push=true`) and its `gateway.Config.PilotURL` plumbing. The original Higress all-in-one image had a bug where Console writes were not promptly pushed to Envoy in embedded mode, so the controller manually kicked istiod after consumer/route updates; this is fixed in the pinned `higress/all-in-one:2.2.1` base, and the manual trigger is no longer needed.
 
+- refactor(manager): remove `workers-registry.json` maintenance from worker-management skill; worker status is now queried via `hiclaw get workers`
+
