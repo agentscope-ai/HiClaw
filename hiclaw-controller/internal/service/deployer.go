@@ -135,16 +135,17 @@ func (d *Deployer) DeployWorkerConfig(ctx context.Context, req WorkerDeployReque
 	// --- Sync local agent files to storage FIRST (base layer) ---
 	// Mirror provides the base: package files, memory, custom skills, etc.
 	// All subsequent PutObject calls overwrite on top with authoritative content.
-	// Exclude files that will be overridden by inline spec content to prevent
-	// the mirror from pushing stale local copies that race with PutObject.
+	//
+	// Always exclude SOUL.md, AGENTS.md, HEARTBEAT.md from the mirror — each
+	// has a dedicated authoritative writer below (PutObject for SOUL.md,
+	// prepareAndPushAgentsMD for AGENTS.md, pushBuiltinTopLevelFiles for
+	// HEARTBEAT.md). Mirroring them here would race with that writer when
+	// reconcile runs more than once: prepareAndPushAgentsMD only updates OSS
+	// (not the local file), so a subsequent reconcile's mirror would push the
+	// stale local copy back over OSS, transiently exposing wrapped-empty or
+	// pre-merge content (the root cause of test-17 flakes).
 	logger.Info("syncing agent files to storage", "name", req.Name)
-	var mirrorExcludes []string
-	if req.Spec.Soul != "" {
-		mirrorExcludes = append(mirrorExcludes, "SOUL.md")
-	}
-	if req.Spec.Agents != "" {
-		mirrorExcludes = append(mirrorExcludes, "AGENTS.md")
-	}
+	mirrorExcludes := []string{"SOUL.md", "AGENTS.md", "HEARTBEAT.md"}
 	if err := d.oss.Mirror(ctx, localAgentDir+"/", agentPrefix+"/", oss.MirrorOptions{Overwrite: true, Exclude: mirrorExcludes}); err != nil {
 		logger.Error(err, "agent file sync failed (non-fatal)")
 	}
