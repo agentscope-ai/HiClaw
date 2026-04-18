@@ -29,8 +29,8 @@ FROM ${HICLAW_CONTROLLER_IMAGE} AS hiclaw-controller
 # ============ Final Image: Python 3.11 ============
 FROM ${HIGRESS_REGISTRY}/higress/python:3.11-slim
 
-ARG APT_MIRROR=mirrors.aliyun.com
-ARG PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
+ARG APT_MIRROR=
+ARG PIP_INDEX_URL=https://pypi.org/simple/
 ARG NPM_REGISTRY=https://registry.npmjs.org/
 
 # ---- System dependencies ----
@@ -42,6 +42,7 @@ RUN if [ -n "${APT_MIRROR}" ]; then \
         libolm-dev \
         libjemalloc2 \
         git curl jq tzdata ca-certificates openssh-client gettext-base procps \
+        nodejs npm \
     && rm -rf /var/lib/apt/lists/*
 
 # jemalloc for memory efficiency
@@ -55,12 +56,6 @@ COPY --from=mc /usr/bin/mc /usr/local/bin/mc
 # hiclaw CLI — for worker/team/human management via controller REST API
 COPY --from=hiclaw-controller /usr/local/bin/hiclaw /usr/local/bin/hiclaw
 
-# ---- Node.js (for mcporter and skills CLI only, not OpenClaw) ----
-# Install Node.js from Debian repository (stable, no external dependencies)
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends nodejs npm && \
-    rm -rf /var/lib/apt/lists/*
-
 RUN npm config set registry ${NPM_REGISTRY} && \
     npm install -g mcporter skills @nacos-group/cli && \
     rm -rf /root/.npm
@@ -70,15 +65,16 @@ RUN python3 -m venv /opt/copaw-venv
 ENV PATH="/opt/copaw-venv/bin:${PATH}"
 
 # ---- Install CoPaw from PyPI ----
+# Use official PyPI for copaw (aliyun mirror may lag behind), aliyun for dependencies
 ARG COPAW_VERSION=1.0.2
 RUN pip install --no-cache-dir \
-        -i "${PIP_INDEX_URL}" \
-        --trusted-host "$(echo ${PIP_INDEX_URL} | sed 's|https\?://||;s|/.*||')" \
+        -i "https://pypi.org/simple/" \
         "copaw==${COPAW_VERSION}" \
         "matrix-nio[e2e]>=0.24.0"
 
 # ---- CoPaw CMS Plugin (observability) ----
 RUN pip install --no-cache-dir \
+        -i "https://pypi.org/simple/" \
         "wrapt<2.0" \
         loongsuite-site-bootstrap \
         loongsuite-distro \
@@ -108,8 +104,7 @@ RUN mkdir -p /tmp/copaw-worker/src/copaw_worker \
 
 # Install copaw-worker package (dependencies only, source overlaid later)
 RUN pip install --no-cache-dir \
-        -i "${PIP_INDEX_URL}" \
-        --trusted-host "$(echo ${PIP_INDEX_URL} | sed 's|https\?://||;s|/.*||')" \
+        -i "https://pypi.org/simple/" \
         /tmp/copaw-worker/
 
 # Overlay real copaw-worker source
