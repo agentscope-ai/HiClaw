@@ -103,6 +103,25 @@ spec:
             {{- /* Credential persistence */}}
             - name: HICLAW_CREDS_DIR
               value: "/data/worker-creds"
+            {{- /* CMS observability (propagated to manager + workers by controller) */}}
+            {{- if .Values.cms.enabled }}
+            - name: HICLAW_CMS_TRACES_ENABLED
+              value: "true"
+            - name: HICLAW_CMS_ENDPOINT
+              value: {{ .Values.cms.endpoint | quote }}
+            - name: HICLAW_CMS_LICENSE_KEY
+              value: {{ .Values.cms.licenseKey | quote }}
+            - name: HICLAW_CMS_PROJECT
+              value: {{ .Values.cms.project | quote }}
+            - name: HICLAW_CMS_WORKSPACE
+              value: {{ .Values.cms.workspace | quote }}
+            - name: HICLAW_CMS_SERVICE_NAME
+              value: {{ .Values.cms.serviceName | default "hiclaw-manager" | quote }}
+            {{- if .Values.cms.metricsEnabled }}
+            - name: HICLAW_CMS_METRICS_ENABLED
+              value: "true"
+            {{- end }}
+            {{- end }}
             {{- range $k, $v := .Values.controller.env }}
             {{- if $v }}
             - name: {{ $k }}

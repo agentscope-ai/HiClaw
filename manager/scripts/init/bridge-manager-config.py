@@ -24,9 +24,6 @@ import sys
 from pathlib import Path
 from typing import Any
 
-# Ensure copaw_worker.bridge is importable
-sys.path.insert(0, "/opt/hiclaw/copaw/src")
-
 from copaw_worker.bridge import bridge_openclaw_to_copaw  # noqa: E402
 
 

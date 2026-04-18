@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	v1beta1 "github.com/hiclaw/hiclaw-controller/api/v1beta1"
 	"github.com/hiclaw/hiclaw-controller/internal/agentconfig"
@@ -188,7 +189,8 @@ func (d *Deployer) DeployWorkerConfig(ctx context.Context, req WorkerDeployReque
 		if err := d.oss.PutObject(ctx, agentPrefix+"/SOUL.md", soulData); err != nil {
 			logger.Error(err, "SOUL.md push failed (non-fatal)")
 		}
-	} else if !req.IsUpdate {
+	} else if !req.IsUpdate && req.Role != "team_leader" {
+		// Team leaders get SOUL.md from template rendering in InjectCoordinationContext.
 		soulContent := fmt.Sprintf("# %s\n\nYou are %s, an AI worker agent.\n", req.Name, req.Name)
 		if err := d.oss.PutObject(ctx, agentPrefix+"/SOUL.md", []byte(soulContent)); err != nil {
 			logger.Error(err, "SOUL.md push failed (non-fatal)")
@@ -215,17 +217,17 @@ func (d *Deployer) DeployWorkerConfig(ctx context.Context, req WorkerDeployReque
 	}
 
 	// --- Builtin top-level files (e.g. HEARTBEAT.md for team leaders) ---
-	if err := d.pushBuiltinTopLevelFiles(ctx, req.Name, agentPrefix, req.Role); err != nil {
+	if err := d.pushBuiltinTopLevelFiles(ctx, req.Name, agentPrefix, req.Role, req.Spec.Runtime); err != nil {
 		logger.Error(err, "builtin top-level file sync failed (non-fatal)")
 	}
 
 	// --- AGENTS.md: merge builtin section + inject coordination context ---
-	if err := d.prepareAndPushAgentsMD(ctx, req.Name, agentPrefix, req.Role, req.TeamName, req.TeamLeaderName, req.TeamAdminMatrixID, req.Spec.Agents); err != nil {
+	if err := d.prepareAndPushAgentsMD(ctx, req.Name, agentPrefix, req.Role, req.Spec.Runtime, req.TeamName, req.TeamLeaderName, req.TeamAdminMatrixID, req.Spec.Agents); err != nil {
 		logger.Error(err, "AGENTS.md prepare failed (non-fatal)")
 	}
 
 	// --- Push builtin skills from worker-agent template ---
-	if err := d.pushBuiltinSkills(ctx, req.Name, agentPrefix, req.Role); err != nil {
+	if err := d.pushBuiltinSkills(ctx, req.Name, agentPrefix, req.Role, req.Spec.Runtime); err != nil {
 		logger.Error(err, "builtin skills push failed (non-fatal)")
 	}
 
@@ -256,19 +258,60 @@ func (d *Deployer) InjectCoordinationContext(ctx context.Context, req Coordinati
 
 	existing, _ := d.oss.GetObject(ctx, leaderAgentPrefix+"/AGENTS.md")
 	injected := agentconfig.InjectCoordinationContext(string(existing), coordCtx)
-	return d.oss.PutObject(ctx, leaderAgentPrefix+"/AGENTS.md", []byte(injected))
+	if err := d.oss.PutObject(ctx, leaderAgentPrefix+"/AGENTS.md", []byte(injected)); err != nil {
+		return err
+	}
+
+	// --- Render SOUL.md from template ---
+	// Team leader uses SOUL.md.tmpl with ${VAR} placeholders; render and push.
+	if err := d.renderAndPushSoulTemplate(ctx, leaderAgentPrefix, req); err != nil {
+		log.FromContext(ctx).Error(err, "SOUL.md template rendering failed (non-fatal)")
+	}
+	return nil
+}
+
+// renderAndPushSoulTemplate reads SOUL.md.tmpl from the builtin team-leader-agent
+// directory, substitutes ${VAR} placeholders, and pushes the result as SOUL.md.
+func (d *Deployer) renderAndPushSoulTemplate(ctx context.Context, agentPrefix string, req CoordinationDeployRequest) error {
+	tmplPath := filepath.Join(d.builtinAgentDir("team_leader", ""), "SOUL.md.tmpl")
+	tmplData, err := os.ReadFile(tmplPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil // no template, nothing to render
+		}
+		return fmt.Errorf("read SOUL.md.tmpl: %w", err)
+	}
+
+	workerNames := make([]string, 0, len(req.TeamWorkers))
+	for _, wn := range req.TeamWorkers {
+		workerNames = append(workerNames, wn)
+	}
+
+	result := string(tmplData)
+	result = strings.ReplaceAll(result, "${TEAM_LEADER_NAME}", req.LeaderName)
+	result = strings.ReplaceAll(result, "${TEAM_NAME}", req.TeamName)
+	result = strings.ReplaceAll(result, "${TEAM_WORKERS}", strings.Join(workerNames, ", "))
+
+	return d.oss.PutObject(ctx, agentPrefix+"/SOUL.md", []byte(result))
 }
 
 // PushOnDemandSkills runs the push-worker-skills.sh script for on-demand skills.
 // No-op if no skills or executor is nil.
+// NOTE: In incluster mode, the script may not exist in the controller container.
+// On-demand skills are then expected to be pushed by the Manager agent via its
+// worker-management skill at runtime.
 func (d *Deployer) PushOnDemandSkills(ctx context.Context, workerName string, skills []string) error {
+	logger := log.FromContext(ctx)
 	if len(skills) == 0 || d.executor == nil {
 		return nil
 	}
-	_, err := d.executor.RunSimple(ctx,
-		"/opt/hiclaw/agent/skills/worker-management/scripts/push-worker-skills.sh",
-		"--worker", workerName, "--no-notify",
-	)
+	scriptPath := "/opt/hiclaw/agent/skills/worker-management/scripts/push-worker-skills.sh"
+	if _, err := os.Stat(scriptPath); os.IsNotExist(err) {
+		logger.Info("push-worker-skills.sh not found (incluster mode), skipping on-demand skill push",
+			"worker", workerName, "skills", skills)
+		return nil
+	}
+	_, err := d.executor.RunSimple(ctx, scriptPath, "--worker", workerName, "--no-notify")
 	return err
 }
 
@@ -371,8 +414,8 @@ func (d *Deployer) DeployManagerConfig(ctx context.Context, req ManagerDeployReq
 
 // prepareAndPushAgentsMD merges the builtin AGENTS.md section and injects
 // coordination context in a single OSS read-write cycle.
-func (d *Deployer) prepareAndPushAgentsMD(ctx context.Context, workerName, agentPrefix, role, teamName, teamLeaderName, teamAdminMatrixID, inlineAgents string) error {
-	builtinPath := filepath.Join(d.builtinAgentDir(role), "AGENTS.md")
+func (d *Deployer) prepareAndPushAgentsMD(ctx context.Context, workerName, agentPrefix, role, runtime, teamName, teamLeaderName, teamAdminMatrixID, inlineAgents string) error {
+	builtinPath := filepath.Join(d.builtinAgentDir(role, runtime), "AGENTS.md")
 	builtinContent, err := os.ReadFile(builtinPath)
 	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("read builtin AGENTS.md: %w", err)
@@ -391,32 +434,35 @@ func (d *Deployer) prepareAndPushAgentsMD(ctx context.Context, workerName, agent
 		content = agentconfig.MergeBuiltinSection(content, string(builtinContent))
 	}
 
-	coordCtx := agentconfig.CoordinationContext{
-		WorkerName:     workerName,
-		MatrixDomain:   d.matrixDomain,
-		TeamName:       teamName,
-		TeamLeaderName: teamLeaderName,
-		TeamAdminID:    teamAdminMatrixID,
+	// Team leaders get their coordination context from TeamReconciler.InjectCoordinationContext
+	// which has the full context (room IDs, worker list). Skip here to avoid overwriting.
+	if role != "team_leader" {
+		coordCtx := agentconfig.CoordinationContext{
+			WorkerName:     workerName,
+			MatrixDomain:   d.matrixDomain,
+			TeamName:       teamName,
+			TeamLeaderName: teamLeaderName,
+			TeamAdminID:    teamAdminMatrixID,
+		}
+		if teamLeaderName != "" {
+			coordCtx.Role = "worker"
+		} else {
+			coordCtx.Role = "standalone"
+		}
+		content = agentconfig.InjectCoordinationContext(content, coordCtx)
 	}
-	if role == "team_leader" {
-		coordCtx.Role = "team_leader"
-	} else if teamLeaderName != "" {
-		coordCtx.Role = "worker"
-	} else {
-		coordCtx.Role = "standalone"
-	}
-	content = agentconfig.InjectCoordinationContext(content, coordCtx)
 
 	return d.oss.PutObject(ctx, agentPrefix+"/AGENTS.md", []byte(content))
 }
 
-// pushBuiltinSkills copies builtin skill directories from the worker-agent template to OSS.
-func (d *Deployer) pushBuiltinSkills(ctx context.Context, workerName, agentPrefix, role string) error {
-	skillsDir := filepath.Join(d.builtinAgentDir(role), "skills")
+// pushBuiltinSkills copies builtin skill directories to the worker's OSS prefix.
+// Skills are read from the local agent template directory baked into the controller image.
+func (d *Deployer) pushBuiltinSkills(ctx context.Context, workerName, agentPrefix, role, runtime string) error {
+	skillsDir := filepath.Join(d.builtinAgentDir(role, runtime), "skills")
 	entries, err := os.ReadDir(skillsDir)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil
+			return nil // no builtin skills for this role/runtime
 		}
 		return err
 	}
@@ -435,8 +481,8 @@ func (d *Deployer) pushBuiltinSkills(ctx context.Context, workerName, agentPrefi
 	return nil
 }
 
-func (d *Deployer) pushBuiltinTopLevelFiles(ctx context.Context, workerName, agentPrefix, role string) error {
-	agentDir := d.builtinAgentDir(role)
+func (d *Deployer) pushBuiltinTopLevelFiles(ctx context.Context, workerName, agentPrefix, role, runtime string) error {
+	agentDir := d.builtinAgentDir(role, runtime)
 	for _, name := range []string{"HEARTBEAT.md"} {
 		src := filepath.Join(agentDir, name)
 		content, err := os.ReadFile(src)
@@ -453,12 +499,15 @@ func (d *Deployer) pushBuiltinTopLevelFiles(ctx context.Context, workerName, age
 	return nil
 }
 
-func (d *Deployer) builtinAgentDir(role string) string {
+func (d *Deployer) builtinAgentDir(role, runtime string) string {
 	baseDir := filepath.Dir(d.workerAgentDir)
 	switch role {
 	case "team_leader":
 		return filepath.Join(baseDir, "team-leader-agent")
 	default:
+		if runtime == "copaw" {
+			return filepath.Join(baseDir, "copaw-worker-agent")
+		}
 		return d.workerAgentDir
 	}
 }

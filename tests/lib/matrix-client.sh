@@ -218,6 +218,39 @@ matrix_wait_for_message_containing() {
     return 1
 }
 
+# Wait until a specific user has joined a room (membership = join)
+# Usage: matrix_wait_for_user_joined <access_token> <room_id> <user_matrix_id> [timeout_seconds]
+# Returns 0 when user has joined, 1 on timeout
+#
+# Use this before sending a message to a user, because `m.room.history_visibility`
+# defaults to "shared" in Matrix — messages sent before the user joined will NOT
+# be visible to them. Worker containers being "running" is not sufficient; the
+# Matrix client inside still needs time to log in and accept the invite.
+matrix_wait_for_user_joined() {
+    local token="$1"
+    local room_id="$2"
+    local user_id="$3"
+    local timeout="${4:-120}"
+    local room_enc
+    room_enc="$(_encode_room_id "${room_id}")"
+    local elapsed=0
+
+    while [ "${elapsed}" -lt "${timeout}" ]; do
+        local members
+        members=$(exec_in_manager curl -sf \
+            "${TEST_MATRIX_DIRECT_URL}/_matrix/client/v3/rooms/${room_enc}/members" \
+            -H "Authorization: Bearer ${token}" 2>/dev/null | \
+            jq -r '.chunk[] | select(.content.membership == "join") | .state_key' 2>/dev/null)
+        if echo "${members}" | grep -qF "${user_id}"; then
+            return 0
+        fi
+        sleep 5
+        elapsed=$((elapsed + 5))
+    done
+
+    return 1
+}
+
 # Create a DM room with another user
 # Usage: matrix_create_dm_room <access_token> <other_user_id>
 # Returns: room_id
