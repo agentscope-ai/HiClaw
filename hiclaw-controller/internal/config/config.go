@@ -115,6 +115,7 @@ type Config struct {
 	CMSLicenseKey     string
 	CMSProject        string
 	CMSWorkspace      string
+	CMSServiceName    string
 
 	// Pre-resolved worker environment defaults (passed to worker containers)
 	WorkerEnv WorkerEnvDefaults
