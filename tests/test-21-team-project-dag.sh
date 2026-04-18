@@ -384,6 +384,34 @@ done
 # Send task from Admin directly in Leader DM
 assert_not_empty "${LEADER_DM}" "Leader DM room exists"
 
+# Container running != Matrix client joined. Default history_visibility is "shared",
+# so if admin sends the task before Leader joins the DM, the Leader never sees it.
+# Wait for Leader to actually join LEADER_DM (and Team Room, so it can coordinate).
+ADMIN_LOGIN_TOKEN=$(matrix_login "${TEST_ADMIN_USER}" "${TEST_ADMIN_PASSWORD}" 2>/dev/null | jq -r '.access_token // empty')
+if [ -z "${ADMIN_LOGIN_TOKEN}" ] || [ "${ADMIN_LOGIN_TOKEN}" = "null" ]; then
+    log_fail "Admin Matrix login failed (cannot verify Leader join)"
+else
+    LEADER_MATRIX_ID="@${TEST_LEADER}:${TEST_MATRIX_DOMAIN}"
+    W1_MATRIX_ID="@${TEST_W1}:${TEST_MATRIX_DOMAIN}"
+    W2_MATRIX_ID="@${TEST_W2}:${TEST_MATRIX_DOMAIN}"
+
+    log_info "Waiting for Leader to join Leader DM..."
+    if matrix_wait_for_user_joined "${ADMIN_LOGIN_TOKEN}" "${LEADER_DM}" "${LEADER_MATRIX_ID}" 180; then
+        log_pass "Leader joined Leader DM"
+    else
+        log_fail "Leader did not join Leader DM within 180s"
+    fi
+
+    log_info "Waiting for Leader and workers to join Team Room..."
+    for uid in "${LEADER_MATRIX_ID}" "${W1_MATRIX_ID}" "${W2_MATRIX_ID}"; do
+        if matrix_wait_for_user_joined "${ADMIN_LOGIN_TOKEN}" "${TEAM_ROOM}" "${uid}" 180; then
+            log_pass "${uid} joined Team Room"
+        else
+            log_fail "${uid} did not join Team Room within 180s"
+        fi
+    done
+fi
+
 exec_in_manager bash -c '
 TOKEN=$(curl -sf -X POST "http://127.0.0.1:6167/_matrix/client/v3/login" \
     -H "Content-Type: application/json" \
