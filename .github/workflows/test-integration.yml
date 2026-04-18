@@ -157,9 +157,9 @@ jobs:
           - shard: controller-cr
             filter_env: SHARD_C_TESTS
             runtime: openclaw
-          - shard: controller-cr-2
-            filter_env: SHARD_D_TESTS
-            runtime: openclaw
+          # controller-cr-2 (test-21 team project DAG) only runs under copaw:
+          # the team controller hardcodes Runtime: "copaw" for both leader and
+          # workers, so running it under the openclaw manager is redundant.
           - shard: llm-interaction
             filter_env: SHARD_A_TESTS
             runtime: copaw
