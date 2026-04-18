@@ -161,34 +161,43 @@ This command returns ALL workers with their current status. Look for your Worker
 
 ## Post-creation
 
-1. **Verify Worker is Running**: Use `hiclaw get workers -o json` to confirm `phase` is `"Running"`.
+`hiclaw create worker` alone does **not** notify the admin. You must complete all three steps below, in this exact order. Do not skip Step 2 — it is the reply the admin DM has been waiting on since they asked you to create the Worker.
 
-2. **Reply to admin in DM** (do NOT wait for Worker to greet first):
-   ```
-   <NAME> is ready. Remember to @mention them when giving tasks.
+### Step 1. Verify Worker is Running
 
-   Note: By default, Workers only accept @mentions from Manager and admin — not from each other. Peer mentions can be enabled explicitly per-project.
-   ```
+```bash
+hiclaw get workers -o json
+```
 
-4. **Send greeting in Worker's Room**:
+Confirm the target Worker's `phase` is `"Running"`. If `"Pending"`, check again shortly. If `"Failed"`, report the `message` field to admin and stop.
 
-   **For CoPaw Manager**:
-   ```bash
-   copaw channels send \
-     --agent-id default \
-     --channel matrix \
-     --target-session "<ROOM_ID>" \
-     --message "@<NAME>:${HICLAW_MATRIX_DOMAIN} You're all set! Please introduce yourself to everyone in this room."
-   ```
+### Step 2. Reply to admin in the DM — THIS IS YOUR FINAL TEXT RESPONSE
 
-   **For OpenClaw Manager**:
-   ```bash
-   openclaw gateway send \
-     --room "<ROOM_ID>" \
-     --message "@<NAME>:${HICLAW_MATRIX_DOMAIN} You're all set! Please introduce yourself to everyone in this room."
-   ```
+This step has no shell command on purpose. The admin is currently in a DM session with you; the reply the test (and the admin) is waiting on is **the text you return at the end of this turn**, not another tool call. Do not use `copaw channels send`, `curl`, or any other messaging CLI for this — those are for group rooms, not admin DMs.
 
-   Use the appropriate command based on your runtime (check `$HICLAW_MANAGER_RUNTIME` environment variable).
+Make sure your final response for this turn contains at least:
+
+```
+<NAME> is ready. Remember to @mention them when giving tasks.
+
+Note: By default, Workers only accept @mentions from Manager and admin — not from each other. Peer mentions can be enabled explicitly per-project.
+```
+
+Failing to emit this reply is the number-one cause of "Manager replied to create … (value is empty or null)" test failures.
+
+### Step 3. Greet the Worker in the Worker's Room
+
+After Step 2's reply is prepared, greet the Worker via the helper script. It auto-detects your runtime and handles all shell escaping, flag naming, and the `@<name>:${HICLAW_MATRIX_DOMAIN}` mention format, so you do not have to build the command by hand:
+
+```bash
+bash /opt/hiclaw/agent/skills/worker-management/scripts/send-worker-greeting.sh \
+  --worker <NAME> \
+  --room "<ROOM_ID>"
+```
+
+`<ROOM_ID>` is the `room_id` field from the `hiclaw create worker -o json` response. Pass `--text "<custom message>"` to personalize the greeting.
+
+If the helper exits with code 2 instead of sending (this happens on non-CoPaw runtimes), it prints the target room, mention, and message text — deliver that greeting via your native message channel to the printed room.
 
 ## Imported Worker Pull-Up
 
