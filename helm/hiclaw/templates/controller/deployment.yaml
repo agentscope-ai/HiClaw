@@ -56,6 +56,8 @@ spec:
               value: {{ .Values.worker.defaultRuntime | quote }}
             - name: TZ
               value: {{ .Values.controller.timezone | quote }}
+            - name: HICLAW_STORAGE_PROVIDER
+              value: {{ .Values.storage.provider | quote }}
             - name: HICLAW_FS_ENDPOINT
               value: {{ include "hiclaw.storage.endpoint" . | quote }}
             - name: HICLAW_FS_BUCKET
@@ -72,11 +74,28 @@ spec:
                   name: {{ include "hiclaw.storage.adminSecretName" . }}
                   key: {{ include "hiclaw.storage.adminSecretKeyKey" . }}
             {{- end }}
+            - name: HICLAW_GATEWAY_PROVIDER
+              value: {{ .Values.gateway.provider | quote }}
             {{- if eq .Values.gateway.provider "higress" }}
             - name: HICLAW_AI_GATEWAY_ADMIN_URL
               value: {{ include "hiclaw.gateway.adminURL" . | quote }}
             - name: HICLAW_AI_GATEWAY_URL
               value: {{ include "hiclaw.gateway.internalURL" . | quote }}
+            {{- else if eq .Values.gateway.provider "ai-gateway" }}
+            - name: HICLAW_AI_GATEWAY_URL
+              value: {{ include "hiclaw.gateway.internalURL" . | quote }}
+            - name: HICLAW_REGION
+              value: {{ .Values.gateway.aiGateway.region | quote }}
+            - name: HICLAW_GW_GATEWAY_ID
+              value: {{ .Values.gateway.aiGateway.gatewayId | quote }}
+            - name: HICLAW_GW_MODEL_API_ID
+              value: {{ .Values.gateway.aiGateway.modelApiId | quote }}
+            - name: HICLAW_GW_ENV_ID
+              value: {{ .Values.gateway.aiGateway.envId | quote }}
+            {{- end }}
+            {{- if .Values.credentialProvider.enabled }}
+            - name: HICLAW_CREDENTIAL_PROVIDER_URL
+              value: {{ printf "http://127.0.0.1:%d" (.Values.credentialProvider.port | int) | quote }}
             {{- end }}
             {{- /* Matrix connection (Go MatrixClient) */}}
             - name: HICLAW_MATRIX_URL
@@ -150,6 +169,44 @@ spec:
             initialDelaySeconds: 30
             periodSeconds: 20
             failureThreshold: 3
+        {{- if .Values.credentialProvider.enabled }}
+        {{- $cpTag := include "hiclaw.imageTag" (dict "tag" .Values.credentialProvider.image.tag "global" .Values.global) }}
+        - name: credential-provider
+          image: "{{ required "credentialProvider.image.repository is required" .Values.credentialProvider.image.repository }}:{{ $cpTag }}"
+          imagePullPolicy: {{ .Values.credentialProvider.image.pullPolicy | default "IfNotPresent" }}
+          ports:
+            - name: creds
+              containerPort: {{ .Values.credentialProvider.port | int }}
+              protocol: TCP
+          env:
+            - name: PORT
+              value: {{ .Values.credentialProvider.port | quote }}
+            {{- range $k, $v := .Values.credentialProvider.env }}
+            {{- if $v }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+            {{- end }}
+            {{- end }}
+          {{- with .Values.credentialProvider.envFrom }}
+          envFrom:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.credentialProvider.resources | nindent 12 }}
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: creds
+            initialDelaySeconds: 2
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: creds
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            failureThreshold: 3
+        {{- end }}
       volumes:
         - name: worker-creds
           emptyDir: {}
