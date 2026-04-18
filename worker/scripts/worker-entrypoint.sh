@@ -150,15 +150,25 @@ log "HOME set to ${HOME} (workspace files will be synced to MinIO)"
 #     2. Notifying the other side via Matrix @mention so they can pull on demand
 #
 #   Local -> Remote: change-triggered push of Worker-managed content
-#     - Uses find to detect files modified in last 10s; only runs mc mirror when needed
+#     - Uses find to detect files modified after the last pull; only runs mc mirror when needed
 #     - Avoids mc mirror --watch TOCTOU bug (crashes on atomic ops like npm install)
-#     - Excludes Manager-managed files (openclaw.json, SOUL.md, AGENTS.md, HEARTBEAT.md, mcporter) and caches.
-#       These files are authoritatively written by the controller/Manager and must never be
-#       pushed back by the Worker — doing so races with controller overrides (e.g. inline
-#       soul/agents applied via `hiclaw apply -f` can be reverted by a stale Worker push).
+#     - The bulk mirror excludes openclaw.json (has its own merge protocol),
+#       SOUL.md/AGENTS.md/HEARTBEAT.md (handled by the per-file loop below
+#       with an mtime guard), and various caches.
+#     - The per-file `mc cp`-if-newer loop pushes SOUL.md/AGENTS.md/HEARTBEAT.md
+#       only when the local copy was modified after the last pull. This lets
+#       the agent persist its own self-edits (HEARTBEAT.md checklist tweaks,
+#       SOUL.md "personality evolution") without pushing back the unmodified
+#       package content that was just pulled. mc mirror is run before the
+#       touch ${PULL_MARKER} on every pull path, so package content always
+#       has mtime <= PULL_MARKER and the -nt check stays false until the
+#       agent itself writes.
 #
 #   Remote -> Local: on-demand pull via file-sync skill (triggered by Manager @mention)
 #     + 5-minute fallback pull of Manager-managed paths as safety net
+#       The fallback refreshes ${PULL_MARKER} so the change-triggered loop
+#       does not misinterpret freshly-pulled openclaw.json/skills mtimes as
+#       agent edits and spin forever on no-op pushes.
 #
 # ────────────────────────────────────────────────────────────────────────────
 (
@@ -178,6 +188,13 @@ log "HOME set to ${HOME} (workspace files will be synced to MinIO)"
                 --exclude "SOUL.md" --exclude "AGENTS.md" --exclude "HEARTBEAT.md" 2>&1; then
                 log "WARNING: Local->Remote sync failed"
             fi
+            # Per-file push for agent-self-modifiable files: only when locally
+            # modified after the last pull. See block comment above for design.
+            for _mf in SOUL.md AGENTS.md HEARTBEAT.md; do
+                if [ -f "${WORKSPACE}/${_mf}" ] && [ "${WORKSPACE}/${_mf}" -nt "${PULL_MARKER}" ]; then
+                    mc cp "${WORKSPACE}/${_mf}" "${HICLAW_STORAGE_PREFIX}/agents/${WORKER_NAME}/${_mf}" 2>/dev/null || true
+                fi
+            done
         fi
         sleep 5
     done
@@ -197,6 +214,10 @@ log "Local->Remote change-triggered sync started (PID: $!)"
         mc mirror "${HICLAW_STORAGE_PREFIX}/agents/${WORKER_NAME}/skills/" "${WORKSPACE}/skills/" --overwrite 2>/dev/null || true
         find "${WORKSPACE}/skills" -name '*.sh' -exec chmod +x {} + 2>/dev/null || true
         mc mirror "${HICLAW_STORAGE_PREFIX}/shared/" "${HICLAW_ROOT}/shared/" --overwrite --newer-than "5m" 2>/dev/null || true
+        # Refresh PULL_MARKER so the change-triggered push loop doesn't
+        # re-trigger forever on freshly-pulled openclaw.json/skills mtimes,
+        # and so the per-file -nt guard correctly classifies post-pull edits.
+        touch "${PULL_MARKER}"
     done
 ) &
 log "Remote->Local fallback sync started (Manager-managed files only, every 5m, PID: $!)"
