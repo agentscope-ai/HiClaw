@@ -704,6 +704,7 @@ if [ -f /root/manager-workspace/openclaw.json ]; then
         | .gateway.controlUi = ((.gateway.controlUi // {}) + {"dangerouslyDisableDeviceAuth": true, "allowInsecureAuth": true, "allowedOrigins": ["*"]})
         | .channels.matrix.encryption = $e2ee
         | .channels.matrix.network = ((.channels.matrix.network // {}) + {"dangerouslyAllowPrivateNetwork": true})
+        | .channels.matrix.autoJoin = "always"
         # Ensure memorySearch config exists (embedding model for memory) — skip if embedding model is empty
         | if $emb_model != "" then .agents.defaults.memorySearch //= {"provider":"openai","model":$emb_model,"remote":{"baseUrl":("http://" + $aigw_domain + ":8080/v1"),"apiKey":$key}} else . end
        ' \
@@ -933,6 +934,7 @@ if [ -f "${REGISTRY_FILE}" ]; then
                     | (.models.providers["hiclaw-gateway"].models | map({ ("hiclaw-gateway/" + .id): { "alias": .id } }) | add // {}) as $aliases
                     | .agents.defaults.models = ((.agents.defaults.models // {}) + $aliases)
                     | .channels.matrix.encryption = $e2ee
+                    | .channels.matrix.autoJoin = "always"
                 ' "${_tmp_in}" > "${_tmp_out}" 2>/dev/null
                 if ! diff -q "${_tmp_in}" "${_tmp_out}" > /dev/null 2>&1; then
                     if mc cp "${_tmp_out}" "${_minio_path}" 2>/dev/null; then

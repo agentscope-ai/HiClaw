@@ -1,8 +1,6 @@
 package agentconfig
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -87,16 +85,31 @@ func (g *Generator) GenerateOpenClawConfig(req WorkerConfigRequest) ([]byte, err
 	// port at install time and may reach it via 127.0.0.1, the host's LAN IP,
 	// or a custom hostname; hiclaw cannot enumerate every legitimate origin
 	// upfront. Token auth on the gateway remains the actual access boundary.
+	//
+	// gateway.auth.token / gateway.remote.token: req.GatewayKey — these used to
+	// be `generateRandomHex(32)` per call, which produced a fresh value on every
+	// reconcile. The agent file-sync skill pulls openclaw.json from MinIO on its
+	// heartbeat tick; openclaw 2026.4.x diff-watches the config and any change
+	// to gateway.auth.token forces a full gateway *restart* (matrix client is
+	// torn down and recreated, in-flight agent dispatches are dropped). With
+	// the default reconcile cadence this caused the manager to silently restart
+	// every ~5 minutes — long-running tasks (test-06 onwards) lost their
+	// in-flight reply, the test framework saw "Manager replied empty" and the
+	// CI matrix turned red. The manager-side boot template already pins both
+	// fields to the stable MANAGER_GATEWAY_KEY (loaded from creds.GatewayKey);
+	// mirror that here so the controller-pushed config stays byte-stable across
+	// reconciles. The token doubles as the Control UI / remote auth token, so
+	// reusing GatewayKey is consistent with the manager template.
 	config := map[string]interface{}{
 		"gateway": map[string]interface{}{
 			"mode": "local",
 			"port": 18799,
 			"bind": "lan",
 			"auth": map[string]interface{}{
-				"token": generateRandomHex(32),
+				"token": req.GatewayKey,
 			},
 			"remote": map[string]interface{}{
-				"token": generateRandomHex(32),
+				"token": req.GatewayKey,
 			},
 			"controlUi": map[string]interface{}{
 				"dangerouslyDisableDeviceAuth": true,
@@ -210,6 +223,20 @@ func (g *Generator) buildMatrixChannelConfig(req WorkerConfigRequest, serverURL,
 		"network": map[string]interface{}{
 			"dangerouslyAllowPrivateNetwork": true,
 		},
+		// openclaw 2026.4.x defaults the matrix invite-handler policy to "off",
+		// meaning agents *ignore* room invites — they stay in `membership:invite`
+		// forever instead of becoming `join`. Hiclaw's provisioning flow always
+		// invites the agent (manager or worker) into its dedicated room and then
+		// expects the agent's matrix client to accept the invite on its own; if
+		// it never joins, /sync delivers no room events, the agent is silent in
+		// its own room and every dependent test (test-06 onwards) fails with
+		// "Manager replied empty" / "Worker did not start". Force "always" so
+		// any invite (the room-create flow + any future re-invites after a token
+		// rotation or membership reset) is accepted automatically. Per-room
+		// access is already gated by the matrix server's invite ACLs and our
+		// dm/groupPolicy allowlists below, so accepting all invites doesn't
+		// widen the trust boundary.
+		"autoJoin": "always",
 	}
 
 	return cfg
@@ -393,12 +420,6 @@ func containsString(slice []string, s string) bool {
 		}
 	}
 	return false
-}
-
-func generateRandomHex(n int) string {
-	b := make([]byte, n)
-	rand.Read(b)
-	return hex.EncodeToString(b)
 }
 
 // allModelSpecs returns all known model specs for the openclaw.json models list.
