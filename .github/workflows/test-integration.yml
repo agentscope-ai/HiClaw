@@ -6,6 +6,8 @@ on:
       - main
     paths:
       - 'manager/**'
+      - 'worker/**'
+      - 'openclaw-base/**'
       - 'hiclaw-controller/**'
       - 'tests/**'
       - 'install/**'
@@ -20,6 +22,8 @@ on:
       - 'v*'
     paths:
       - 'manager/**'
+      - 'worker/**'
+      - 'openclaw-base/**'
       - 'hiclaw-controller/**'
       - 'tests/**'
       - 'install/**'
@@ -63,7 +67,45 @@ env:
   NON_GITHUB_TESTS: "01 02 03 04 05 06 14 15 17 18 19 20 21 100"
 
 jobs:
-  # Step 1: Build the shared base image (hiclaw-controller)
+  # Step 0: Detect which paths changed so we can decide whether to rebuild
+  # the openclaw-base image (slow, ~10min) or reuse the published `:latest`.
+  # On non-PR triggers (push to main, tag, workflow_dispatch) we conservatively
+  # always rebuild so release/baseline runs validate against the current source.
+  detect-changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    outputs:
+      openclaw_base: ${{ steps.decide.outputs.openclaw_base }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          fetch-depth: 0
+
+      - name: Detect openclaw-base changes (PR only)
+        id: filter
+        if: github.event_name == 'pull_request_target'
+        uses: dorny/paths-filter@v3
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          base: ${{ github.event.pull_request.base.sha }}
+          filters: |
+            openclaw_base:
+              - 'openclaw-base/**'
+
+      - name: Decide whether to rebuild openclaw-base
+        id: decide
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request_target" ]; then
+            echo "openclaw_base=${{ steps.filter.outputs.openclaw_base }}" >> $GITHUB_OUTPUT
+          else
+            # push to main / tag / workflow_dispatch: always rebuild
+            echo "openclaw_base=true" >> $GITHUB_OUTPUT
+          fi
+
+  # Step 1a: Build the shared base image (hiclaw-controller)
   build-base:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -91,9 +133,63 @@ jobs:
           path: /tmp/hiclaw-controller.tar.gz
           retention-days: 1
 
-  # Step 2: Build downstream images in parallel (all depend on hiclaw-controller)
+  # Step 1b: Build openclaw-base from this PR's source, but only when
+  # openclaw-base/** actually changed. Otherwise downstream builds reuse the
+  # published `:latest` from the registry (default Makefile behaviour).
+  build-openclaw-base:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.openclaw_base == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Free Up Disk Space
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: false
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          swap-storage: true
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build openclaw-base (local tag)
+        run: |
+          # `make build-openclaw-base` always tags as hiclaw/openclaw-base:latest
+          # (LOCAL_OPENCLAW_BASE is hardcoded in the Makefile), which is exactly
+          # what downstream build-manager/build-worker jobs consume via the
+          # OPENCLAW_BASE_IMAGE / OPENCLAW_BASE_VERSION overrides.
+          make build-openclaw-base DOCKER_BUILD_ARGS="--build-arg APT_MIRROR="
+          docker images | grep openclaw-base || true
+
+      - name: Save image
+        run: |
+          docker save hiclaw/openclaw-base:latest | gzip > /tmp/hiclaw-openclaw-base.tar.gz
+
+      - name: Upload image
+        uses: actions/upload-artifact@v4
+        with:
+          name: image-openclaw-base
+          path: /tmp/hiclaw-openclaw-base.tar.gz
+          retention-days: 1
+
+  # Step 2: Build downstream images in parallel (all depend on hiclaw-controller;
+  # manager and worker additionally depend on openclaw-base when it was rebuilt).
   build-images:
-    needs: build-base
+    needs: [detect-changes, build-base, build-openclaw-base]
+    # Run even if build-openclaw-base was skipped (no openclaw-base changes).
+    if: |
+      always() &&
+      needs.build-base.result == 'success' &&
+      (needs.build-openclaw-base.result == 'success' || needs.build-openclaw-base.result == 'skipped')
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
@@ -119,13 +215,48 @@ jobs:
       - name: Load controller image
         run: gunzip -c /tmp/hiclaw-controller.tar.gz | docker load
 
+      - name: Download local openclaw-base image
+        if: |
+          needs.detect-changes.outputs.openclaw_base == 'true' &&
+          (matrix.target == 'manager' || matrix.target == 'worker')
+        uses: actions/download-artifact@v4
+        with:
+          name: image-openclaw-base
+          path: /tmp
+
+      - name: Load local openclaw-base image
+        if: |
+          needs.detect-changes.outputs.openclaw_base == 'true' &&
+          (matrix.target == 'manager' || matrix.target == 'worker')
+        run: gunzip -c /tmp/hiclaw-openclaw-base.tar.gz | docker load
+
       - name: Build image
-        run: make build-${{ matrix.target }} DOCKER_BUILD_ARGS="--build-arg APT_MIRROR= --build-arg PIP_INDEX_URL=https://pypi.org/simple/"
+        run: |
+          # When openclaw-base was rebuilt from this PR's source, point manager
+          # and worker builds at the local image instead of pulling :latest from
+          # the published registry. Other targets (embedded, manager-copaw,
+          # copaw-worker) do not depend on openclaw-base so the override is a
+          # no-op for them.
+          EXTRA=""
+          if [ "${{ needs.detect-changes.outputs.openclaw_base }}" = "true" ] && \
+             { [ "${{ matrix.target }}" = "manager" ] || [ "${{ matrix.target }}" = "worker" ]; }; then
+            EXTRA="OPENCLAW_BASE_IMAGE=hiclaw/openclaw-base OPENCLAW_BASE_VERSION=latest"
+            echo "Using locally-built openclaw-base for ${{ matrix.target }}"
+          fi
+          make build-${{ matrix.target }} \
+            DOCKER_BUILD_ARGS="--build-arg APT_MIRROR= --build-arg PIP_INDEX_URL=https://pypi.org/simple/" \
+            $EXTRA
 
       - name: Save image
         run: |
+          # Exclude already-uploaded base images (controller, openclaw-base) so
+          # each per-target tar only contains its own deltas.
           docker save \
-            $(docker images --format '{{.Repository}}:{{.Tag}}' | grep -E '^hiclaw/' | grep -v '<none>' | grep -v 'hiclaw-controller') \
+            $(docker images --format '{{.Repository}}:{{.Tag}}' \
+              | grep -E '^hiclaw/' \
+              | grep -v '<none>' \
+              | grep -v 'hiclaw-controller' \
+              | grep -v 'openclaw-base') \
             | gzip > /tmp/hiclaw-${{ matrix.target }}.tar.gz
 
       - name: Upload image
