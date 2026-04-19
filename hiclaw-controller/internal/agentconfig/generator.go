@@ -161,6 +161,16 @@ func (g *Generator) buildMatrixChannelConfig(req WorkerConfigRequest, serverURL,
 		"groups": map[string]interface{}{
 			"*": map[string]interface{}{"allow": true, "requireMention": true},
 		},
+		// openclaw 2026.4.x onwards forwards the SSRF policy to the matrix-js-sdk
+		// fetch path. Without this opt-in, /sync to private hosts (the embedded
+		// `matrix-local.hiclaw.io` alias resolves to 127.0.0.1, k8s service DNS
+		// resolves to ClusterIP) is rejected and the worker never reaches a
+		// PREPARED state — no room joins, no message delivery. The manager
+		// template carries the same flag; mirror it here so every worker the
+		// controller provisions can talk to the (always private) homeserver.
+		"network": map[string]interface{}{
+			"dangerouslyAllowPrivateNetwork": true,
+		},
 	}
 
 	return cfg
