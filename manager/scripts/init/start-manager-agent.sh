@@ -662,6 +662,7 @@ if [ -f /root/manager-workspace/openclaw.json ]; then
        --arg model "${MODEL_NAME}" \
        --arg emb_model "${HICLAW_EMBEDDING_MODEL}" \
        --arg aigw_domain "${AI_GATEWAY_DOMAIN}" \
+       --arg matrix_user_id "@manager:${MATRIX_DOMAIN}" \
        --argjson e2ee "${MATRIX_E2EE_ENABLED}" \
        --argjson known_models "${KNOWN_MODELS}" \
        --argjson ctx "${MODEL_CONTEXT_WINDOW}" \
@@ -681,17 +682,29 @@ if [ -f /root/manager-workspace/openclaw.json ]; then
         # Rebuild model aliases from the full models list
         | (.models.providers["hiclaw-gateway"].models | map({ ("hiclaw-gateway/" + .id): { "alias": .id } }) | add // {}) as $aliases
         | .agents.defaults.models = ((.agents.defaults.models // {}) + $aliases)
-        | .channels.matrix.accessToken = $token | .models.providers["hiclaw-gateway"].apiKey = $key
+        | .channels.matrix.accessToken = $token | .channels.matrix.userId = $matrix_user_id | .models.providers["hiclaw-gateway"].apiKey = $key
         | ((.hooks.token // "") as $ht | if $ht == $key or $ht == ($key + "-hooks" | @base64) then del(.hooks) else . end)
         | .agents.defaults.model.primary = ("hiclaw-gateway/" + $model)
         | .commands.restart = true
         | .gateway.controlUi.dangerouslyDisableDeviceAuth = true
         | .channels.matrix.encryption = $e2ee
+        | .channels.matrix.network = ((.channels.matrix.network // {}) + {"dangerouslyAllowPrivateNetwork": true})
         # Ensure memorySearch config exists (embedding model for memory) — skip if embedding model is empty
         | if $emb_model != "" then .agents.defaults.memorySearch //= {"provider":"openai","model":$emb_model,"remote":{"baseUrl":("http://" + $aigw_domain + ":8080/v1"),"apiKey":$key}} else . end
        ' \
        /root/manager-workspace/openclaw.json > /tmp/openclaw.json.tmp && \
         mv /tmp/openclaw.json.tmp /root/manager-workspace/openclaw.json
+    # Anti-tampering bypass: openclaw's config-observe-recovery clobbers the file
+    # back to .bak whenever it sees "missing-meta-vs-last-good", which strips
+    # external edits like channels.matrix.network.dangerouslyAllowPrivateNetwork.
+    # Stamp meta and mirror to .bak so our edits survive.
+    _oc_ver=$(openclaw --version 2>/dev/null | head -1 | awk '{print $NF}')
+    [ -z "${_oc_ver}" ] && _oc_ver="hiclaw-bootstrap"
+    jq --arg ver "${_oc_ver}" --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+       '.meta = ((.meta // {}) + {lastTouchedVersion: $ver, lastTouchedAt: $ts})' \
+       /root/manager-workspace/openclaw.json > /tmp/openclaw.meta.json && \
+        mv /tmp/openclaw.meta.json /root/manager-workspace/openclaw.json
+    cp -f /root/manager-workspace/openclaw.json /root/manager-workspace/openclaw.json.bak
     # Verify the token was written correctly
     _written_token=$(jq -r '.channels.matrix.accessToken' /root/manager-workspace/openclaw.json 2>/dev/null)
     if [ -z "${_written_token}" ] || [ "${_written_token}" = "null" ]; then

@@ -53,20 +53,43 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
 # 1. Clone with single branch to minimize .git size
 # 2. Install dependencies and build
 # 3. Remove unnecessary files (tests, .git, etc.) - keep all node_modules for extensions
-RUN git clone --depth 1 --single-branch -b hiclaw-v1 \
+RUN git clone --depth 1 --single-branch -b hiclaw-2026.4.14 \
         ${OPENCLAW_REPO_URL} /opt/openclaw && \
     cd /opt/openclaw && \
-    git fetch --depth 1 origin 86dad1383c12629ad3aa48575f2dd350fc0775d4 && \
-    git checkout 86dad1383c12629ad3aa48575f2dd350fc0775d4 && \
+    git fetch --depth 1 origin b181285ad74e72f5a38c519a8d8ce15343695dc0 && \
+    git checkout b181285ad74e72f5a38c519a8d8ce15343695dc0 && \
     pnpm config set registry ${NPM_REGISTRY} && \
     pnpm install && \
     pnpm build && \
     pnpm ui:build && \
     echo "==> Verifying critical native addons..." && \
-    ADDON_DIR=/opt/openclaw/node_modules/.pnpm/@matrix-org+matrix-sdk-crypto-nodejs@0.4.0/node_modules/@matrix-org/matrix-sdk-crypto-nodejs && \
-    ls "$ADDON_DIR"/matrix-sdk-crypto.linux-*.node 2>/dev/null | grep -q . \
-        || (echo "ERROR: matrix-sdk-crypto native addon missing (pnpm install may have silently failed on this arch)" && exit 1) && \
-    echo "==> Native addon check passed: $(ls $ADDON_DIR/matrix-sdk-crypto.linux-*.node)" && \
+    MSC_DIR=/opt/openclaw/node_modules/@matrix-org/matrix-sdk-crypto-nodejs && \
+    MSC_VER=$(jq -r .version ${MSC_DIR}/package.json) && \
+    MSC_ARCH=$(uname -m) && \
+    case "${MSC_ARCH}" in \
+        x86_64)  MSC_FILE=matrix-sdk-crypto.linux-x64-gnu.node ;; \
+        aarch64) MSC_FILE=matrix-sdk-crypto.linux-arm64-gnu.node ;; \
+        *)       echo "Unsupported arch: ${MSC_ARCH}" && exit 1 ;; \
+    esac && \
+    if [ ! -f "${MSC_DIR}/${MSC_FILE}" ]; then \
+        echo "==> matrix-sdk-crypto native addon missing — fetching ${MSC_FILE} v${MSC_VER}..."; \
+        for i in 1 2 3 4 5; do \
+            curl -fsSL --retry 3 --retry-delay 2 \
+                "https://github.com/matrix-org/matrix-rust-sdk-crypto-nodejs/releases/download/v${MSC_VER}/${MSC_FILE}" \
+                -o "${MSC_DIR}/${MSC_FILE}" && break; \
+            echo "==> attempt $i failed, retrying..."; \
+            sleep $((i * 3)); \
+        done; \
+    fi && \
+    if [ ! -f "${MSC_DIR}/${MSC_FILE}" ] || [ ! -s "${MSC_DIR}/${MSC_FILE}" ]; then \
+        echo "ERROR: failed to fetch matrix-sdk-crypto native addon"; \
+        ls -la ${MSC_DIR}/ 2>/dev/null | head -20; \
+        exit 1; \
+    fi && \
+    echo "==> Native addon present: ${MSC_DIR}/${MSC_FILE} ($(stat -c%s ${MSC_DIR}/${MSC_FILE}) bytes)" && \
+    chmod +x /opt/openclaw/openclaw.mjs && \
+    ln -sf /opt/openclaw/openclaw.mjs /usr/local/bin/openclaw && \
+    echo "==> Linked openclaw CLI to /usr/local/bin/openclaw" && \
     rm -rf \
         .git .github \
         test \
