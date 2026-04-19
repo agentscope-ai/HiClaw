@@ -312,6 +312,17 @@ fi
 # Without this, config reload spawns a detached child and exits, killing the container.
 export OPENCLAW_NO_RESPAWN=1
 
+# Optional matrix-plugin trace logging — when HICLAW_MATRIX_DEBUG=1 is set in
+# the worker environment (propagated by the controller / install script), turn
+# on OPENCLAW_MATRIX_DEBUG so the matrix plugin emits structured INFO-level
+# lifecycle traces (sync.state transitions, room.invite/join, message handler
+# arrival + filter outcomes). Useful when diagnosing "worker never joined the
+# room" / "manager never replied" hangs without rebuilding the image.
+if [ "${HICLAW_MATRIX_DEBUG:-}" = "1" ] && [ -z "${OPENCLAW_MATRIX_DEBUG:-}" ]; then
+    export OPENCLAW_MATRIX_DEBUG=1
+    log "HICLAW_MATRIX_DEBUG=1 detected; OPENCLAW_MATRIX_DEBUG=1 exported for matrix plugin tracing"
+fi
+
 # ============================================================
 # Step 5c: Background readiness reporter
 # ============================================================

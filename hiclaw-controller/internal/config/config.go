@@ -134,6 +134,9 @@ type WorkerEnvDefaults struct {
 	AdminUser     string
 	Runtime       string // "docker" for embedded, "k8s" for incluster
 	YoloMode      bool   // HICLAW_YOLO=1 — propagated to managers and workers
+	MatrixDebug   bool   // HICLAW_MATRIX_DEBUG=1 — propagated to managers and workers,
+	// translated to OPENCLAW_MATRIX_DEBUG=1 by the container entrypoints to
+	// enable structured INFO-level traces in the openclaw matrix plugin.
 
 	// CMS observability (propagated to all workers and managers)
 	CMSTracesEnabled  bool
@@ -263,6 +266,7 @@ func LoadConfig() *Config {
 			MatrixURL:     envOrDefault("HICLAW_MATRIX_URL", "http://matrix-local.hiclaw.io:8080"),
 			AdminUser:     envOrDefault("HICLAW_ADMIN_USER", "admin"),
 			YoloMode:      envBool("HICLAW_YOLO"),
+			MatrixDebug:   envBool("HICLAW_MATRIX_DEBUG"),
 
 			// CMS observability (propagated from controller env to all workers/managers)
 			CMSTracesEnabled:  envBool("HICLAW_CMS_TRACES_ENABLED"),
@@ -529,6 +533,9 @@ func (c *Config) ManagerAgentEnv() map[string]string {
 	setIfNonEmpty("HICLAW_ELEMENT_WEB_URL", c.ElementWebURL)
 	if c.MatrixE2EE {
 		env["HICLAW_MATRIX_E2EE"] = "1"
+	}
+	if c.WorkerEnv.MatrixDebug {
+		env["HICLAW_MATRIX_DEBUG"] = "1"
 	}
 	if c.CMSTracesEnabled {
 		env["HICLAW_CMS_TRACES_ENABLED"] = "1"

@@ -1240,5 +1240,18 @@ else
     # Without this, config reload spawns a detached child and exits, then
     # supervisord restarts the CLI — resulting in two gateway processes.
     export OPENCLAW_NO_RESPAWN=1
+
+    # Optional matrix-plugin trace logging — when HICLAW_MATRIX_DEBUG=1 is set
+    # in the manager environment (propagated by install / supervisord), turn on
+    # OPENCLAW_MATRIX_DEBUG so the matrix plugin emits structured INFO-level
+    # lifecycle traces (sync.state transitions, room.invite/join, message
+    # handler arrival + filter outcomes). Useful for diagnosing "worker never
+    # joined the room" / "manager never replied" hangs without rebuilding the
+    # image.
+    if [ "${HICLAW_MATRIX_DEBUG:-}" = "1" ] && [ -z "${OPENCLAW_MATRIX_DEBUG:-}" ]; then
+        export OPENCLAW_MATRIX_DEBUG=1
+        log "HICLAW_MATRIX_DEBUG=1 detected; OPENCLAW_MATRIX_DEBUG=1 exported for matrix plugin tracing"
+    fi
+
     exec openclaw gateway run --verbose --force
 fi

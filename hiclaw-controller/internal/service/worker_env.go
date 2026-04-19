@@ -102,6 +102,17 @@ func (b *WorkerEnvBuilder) applyClusterDefaults(env map[string]string) {
 		env["HICLAW_YOLO"] = "1"
 	}
 
+	// Matrix-plugin trace logging: when the controller was started with
+	// HICLAW_MATRIX_DEBUG=1, propagate it to every manager + worker container.
+	// The container entrypoints translate it to OPENCLAW_MATRIX_DEBUG=1, which
+	// makes openclaw's matrix plugin emit structured INFO-level traces (sync
+	// state transitions, room.invite/join, message handler arrival + filter
+	// outcomes). Used to debug "worker never joined" / "manager never replied"
+	// hangs without rebuilding images.
+	if b.defaults.MatrixDebug {
+		env["HICLAW_MATRIX_DEBUG"] = "1"
+	}
+
 	// CMS observability configuration
 	if b.defaults.CMSTracesEnabled {
 		env["HICLAW_CMS_TRACES_ENABLED"] = "true"
