@@ -699,7 +699,9 @@ if [ -f /root/manager-workspace/openclaw.json ]; then
         | ((.hooks.token // "") as $ht | if $ht == $key or $ht == ($key + "-hooks" | @base64) then del(.hooks) else . end)
         | .agents.defaults.model.primary = ("hiclaw-gateway/" + $model)
         | .commands.restart = true
-        | .gateway.controlUi.dangerouslyDisableDeviceAuth = true
+        | .gateway.port = 18799
+        | .gateway.bind = "lan"
+        | .gateway.controlUi = ((.gateway.controlUi // {}) + {"dangerouslyDisableDeviceAuth": true, "allowInsecureAuth": true, "allowedOrigins": ["*"]})
         | .channels.matrix.encryption = $e2ee
         | .channels.matrix.network = ((.channels.matrix.network // {}) + {"dangerouslyAllowPrivateNetwork": true})
         # Ensure memorySearch config exists (embedding model for memory) — skip if embedding model is empty

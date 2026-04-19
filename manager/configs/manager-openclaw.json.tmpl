@@ -2,6 +2,7 @@
   "gateway": {
     "mode": "local",
     "port": 18799,
+    "bind": "lan",
     "auth": {
       "token": "${MANAGER_GATEWAY_KEY}"
     },
@@ -9,7 +10,9 @@
       "token": "${MANAGER_GATEWAY_KEY}"
     },
     "controlUi": {
-      "dangerouslyDisableDeviceAuth": true
+      "dangerouslyDisableDeviceAuth": true,
+      "allowInsecureAuth": true,
+      "allowedOrigins": ["*"]
     }
   },
 

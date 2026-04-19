@@ -204,7 +204,7 @@ vi /root/hiclaw-fs/agents/fbi-claw/openclaw.json
 ```json
 {
   "gateway": {
-    "port": 18800,
+    "port": 18799,
     "mode": "local",
     "auth": {
       "token": "your-gateway-token"

@@ -53,16 +53,55 @@ func (g *Generator) GenerateOpenClawConfig(req WorkerConfigRequest) ([]byte, err
 	adminUser := g.config.AdminUser
 	adminMatrixID := fmt.Sprintf("@%s:%s", adminUser, matrixDomain)
 
-	// Build the base openclaw.json structure (must match OpenClaw schema)
+	// Build the base openclaw.json structure (must match OpenClaw schema).
+	//
+	// gateway.port: 18799 — openclaw 2026.4.x onwards merges the Control UI HTTP
+	// server into the same listener as the gateway WebSocket (older versions ran
+	// the Control UI on a separate 18799 listener). Hiclaw's container port
+	// mapping (host:HICLAW_PORT_MANAGER_CONSOLE → container:18799), Dockerfile
+	// EXPOSE, install/health probes and the legacy nginx reverse proxy all
+	// assume the user-facing console reaches us on 18799. Keep that contract by
+	// pinning the gateway port to 18799 — the alternative (rewiring every
+	// downstream consumer) is far more invasive.
+	//
+	// gateway.bind: "lan" — openclaw 2026.4.x defaults to loopback (127.0.0.1)
+	// binding for the gateway/Control UI server. In hiclaw's embedded dual-
+	// container topology the manager runs in its own container and the Control
+	// UI is reached via a host port mapping (host:18888 → manager:18799), which
+	// requires the listener to be reachable from outside the container's loop-
+	// back interface. Bind LAN-wide (0.0.0.0); access remains gated by the
+	// shared gateway token.
+	//
+	// gateway.controlUi.dangerouslyDisableDeviceAuth: true — Higress-hosted
+	// console access uses the shared gateway token (no per-device pairing). The
+	// manager template carries this flag; the controller-pushed config must
+	// preserve it too, otherwise the mc-mirror sync strips it and the Control
+	// UI starts demanding device authentication that hiclaw never provisions.
+	//
+	// gateway.controlUi.allowInsecureAuth: true — hiclaw exposes the console
+	// over plain HTTP on the user's host port (HICLAW_PORT_MANAGER_CONSOLE),
+	// so the strict HTTPS-only browser-auth checks introduced in 2026.4.x must
+	// be relaxed.
+	//
+	// gateway.controlUi.allowedOrigins: ["*"] — the user picks the console host
+	// port at install time and may reach it via 127.0.0.1, the host's LAN IP,
+	// or a custom hostname; hiclaw cannot enumerate every legitimate origin
+	// upfront. Token auth on the gateway remains the actual access boundary.
 	config := map[string]interface{}{
 		"gateway": map[string]interface{}{
 			"mode": "local",
-			"port": 18800,
+			"port": 18799,
+			"bind": "lan",
 			"auth": map[string]interface{}{
 				"token": generateRandomHex(32),
 			},
 			"remote": map[string]interface{}{
 				"token": generateRandomHex(32),
+			},
+			"controlUi": map[string]interface{}{
+				"dangerouslyDisableDeviceAuth": true,
+				"allowInsecureAuth":            true,
+				"allowedOrigins":               []string{"*"},
 			},
 		},
 		"channels": map[string]interface{}{
