@@ -93,6 +93,49 @@ matrix_send_message() {
         }'
 }
 
+# Send a message that visibly mentions another Matrix user, the way Element does.
+# Usage: matrix_send_mention_message <access_token> <room_id> <mention_user_id> <message_body>
+# Returns: JSON with event_id
+#
+# openclaw's mention detection (extensions/matrix/src/matrix/monitor/mentions.ts)
+# requires BOTH `m.mentions.user_ids` metadata AND a *visible* mention — either
+# a `matrix.to` link in `formatted_body` or a regex match on plain text derived
+# from the agent's identity. A worker created from a minimal SOUL has no custom
+# identity regex, so a body-only mention is silently dropped with
+# `reason: "no-mention"`. Always use this helper for tests that need a worker
+# to actually wake up and reply.
+matrix_send_mention_message() {
+    local token="$1"
+    local room_id="$2"
+    local mention_user="$3"
+    local body="$4"
+    local txn_id="$(date +%s%N)"
+    local room_enc
+    room_enc="$(_encode_room_id "${room_id}")"
+
+    # URL-encode the user_id for the matrix.to link (@ -> %40, : -> %3A)
+    local user_enc="${mention_user//@/%40}"
+    user_enc="${user_enc//:/%3A}"
+
+    local payload
+    payload=$(jq -nc \
+        --arg user "${mention_user}" \
+        --arg user_enc "${user_enc}" \
+        --arg msg "${body}" \
+        '{
+            msgtype: "m.text",
+            body: ($user + " " + $msg),
+            format: "org.matrix.custom.html",
+            formatted_body: ("<a href=\"https://matrix.to/#/" + $user_enc + "\">" + $user + "</a> " + $msg),
+            "m.mentions": { user_ids: [$user] }
+        }')
+
+    exec_in_manager curl -sf -X PUT "${TEST_MATRIX_DIRECT_URL}/_matrix/client/v3/rooms/${room_enc}/send/m.room.message/${txn_id}" \
+        -H "Authorization: Bearer ${token}" \
+        -H 'Content-Type: application/json' \
+        -d "${payload}"
+}
+
 # Read recent messages from a room
 # Usage: matrix_read_messages <access_token> <room_id> [limit]
 # Returns: JSON with messages
