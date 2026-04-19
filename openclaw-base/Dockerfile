@@ -1,11 +1,14 @@
 # ============================================================
 # OpenClaw Base Image - Shared base for Manager and Worker
 # ============================================================
-# Based on higress/all-in-one so that Manager and Worker share
-# the same base layers, avoiding ~900MB duplicate downloads.
+# Based on a plain Ubuntu 24.04 image (mirrored from the higress
+# registry for in-China pull speed). The previous all-in-one base
+# carried Higress + Envoy + Pilot + Console (~1.7 GB) which the
+# modern Manager and Worker do not run — Higress lives in the
+# embedded controller image, not here.
 #
-# Includes: all-in-one (Higress) + Node.js 22 + OpenClaw + mcporter
-#           + common tools (git, jq, nginx, etc.)
+# Includes: Ubuntu 24.04 + Node.js 22 + OpenClaw + mcporter
+#           + common tools (git, jq, etc.)
 #
 # Build args:
 #   HIGRESS_REGISTRY  - base image registry (default: cn-hangzhou)
@@ -15,8 +18,8 @@
 
 ARG HIGRESS_REGISTRY=higress-registry.cn-hangzhou.cr.aliyuncs.com
 
-# Based on all-in-one (Ubuntu 22.04) for layer sharing with Manager
-FROM ${HIGRESS_REGISTRY}/higress/all-in-one:2.2.1
+# Plain Ubuntu 24.04 (Noble), ~100MB instead of all-in-one's ~1.79GB
+FROM ${HIGRESS_REGISTRY}/higress/ubuntu:24.04
 
 # Build args (must be declared BEFORE any RUN that uses them)
 ARG APT_MIRROR=
@@ -33,17 +36,26 @@ ENV HTTP_PROXY=${HTTP_PROXY} \
     http_proxy=${http_proxy} \
     https_proxy=${https_proxy}
 
-# all-in-one is based on Ubuntu 22.04, uses sources.list (not ubuntu.sources)
+# Ubuntu 24.04 ships APT sources in deb822 format at
+# /etc/apt/sources.list.d/ubuntu.sources. Older Ubuntu (22.04 and
+# earlier) used a single-line /etc/apt/sources.list. Rewrite both
+# so the mirror flag stays compatible if the base image is ever
+# downgraded or rebased.
 RUN if [ -n "${APT_MIRROR}" ]; then \
-        sed -i "s|archive.ubuntu.com|${APT_MIRROR}|g; s|security.ubuntu.com|${APT_MIRROR}|g" \
-            /etc/apt/sources.list 2>/dev/null || true; \
+        for _src in /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources; do \
+            [ -f "${_src}" ] && sed -i \
+                "s|archive.ubuntu.com|${APT_MIRROR}|g; \
+                 s|security.ubuntu.com|${APT_MIRROR}|g; \
+                 s|ports.ubuntu.com|${APT_MIRROR}|g" "${_src}" || true; \
+        done; \
     fi && \
     apt-get update && apt-get install -y \
     git python3 make g++ curl \
-    jq nginx gettext-base openssh-client ca-certificates procps tzdata \
+    jq gettext-base openssh-client ca-certificates procps tzdata \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Node.js 22 (all-in-one doesn't include Node.js)
+# Install Node.js 22 via NodeSource (the base image does not ship Node.js).
+# setup_22.x auto-installs gnupg / apt-transport-https if missing.
 RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
     apt-get install -y nodejs && \
     npm install -g pnpm && \
