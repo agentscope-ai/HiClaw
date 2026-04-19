@@ -94,6 +94,14 @@ func (b *WorkerEnvBuilder) applyClusterDefaults(env map[string]string) {
 		}
 	}
 
+	// YOLO mode: when the controller was started with HICLAW_YOLO=1, propagate
+	// it to every manager and worker container it provisions so the agent's
+	// auto-confirm path triggers reliably (otherwise an agent without this
+	// signal will block on confirmation prompts during integration tests).
+	if b.defaults.YoloMode {
+		env["HICLAW_YOLO"] = "1"
+	}
+
 	// CMS observability configuration
 	if b.defaults.CMSTracesEnabled {
 		env["HICLAW_CMS_TRACES_ENABLED"] = "true"

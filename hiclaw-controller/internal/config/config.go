@@ -133,6 +133,7 @@ type WorkerEnvDefaults struct {
 	MatrixURL     string
 	AdminUser     string
 	Runtime       string // "docker" for embedded, "k8s" for incluster
+	YoloMode      bool   // HICLAW_YOLO=1 — propagated to managers and workers
 
 	// CMS observability (propagated to all workers and managers)
 	CMSTracesEnabled  bool
@@ -261,6 +262,7 @@ func LoadConfig() *Config {
 			AIGatewayURL:  envOrDefault("HICLAW_AI_GATEWAY_URL", "http://aigw-local.hiclaw.io:8080"),
 			MatrixURL:     envOrDefault("HICLAW_MATRIX_URL", "http://matrix-local.hiclaw.io:8080"),
 			AdminUser:     envOrDefault("HICLAW_ADMIN_USER", "admin"),
+			YoloMode:      envBool("HICLAW_YOLO"),
 
 			// CMS observability (propagated from controller env to all workers/managers)
 			CMSTracesEnabled:  envBool("HICLAW_CMS_TRACES_ENABLED"),

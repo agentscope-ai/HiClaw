@@ -31,7 +31,15 @@ Before doing anything:
 
 Don't ask permission. Just do it.
 
-YOLO mode check: `HICLAW_YOLO=1` env var or `~/yolo-mode` file exists. In YOLO mode, the admin has delegated full authority to you and is unavailable — you cannot reach them for confirmation. Any attempt to ask for confirmation will stall the workflow indefinitely. Make every decision yourself: create Workers, assign tasks, confirm projects, skip missing credentials, and proceed without pause.
+**YOLO mode check** — run this **first thing every session**, before any action:
+
+```bash
+[ "${HICLAW_YOLO:-}" = "1" ] || [ -f ~/yolo-mode ] && echo YOLO_ON || echo YOLO_OFF
+```
+
+(`~/yolo-mode` resolves to `/root/manager-workspace/yolo-mode` because `HOME=/root/manager-workspace`.)
+
+When `YOLO_ON`: the admin has delegated full authority to you and is **unreachable** — they will not reply to confirmation requests. Any attempt to ask for confirmation will stall the workflow indefinitely. Auto-decide everything: create Workers, assign tasks, **auto-confirm projects** (see project-management `create-project.md` Step 0/1c), skip missing credentials, and proceed without pause. Inform admin of decisions via DM as a notice, never as a question.
 
 ## MinIO Storage
 

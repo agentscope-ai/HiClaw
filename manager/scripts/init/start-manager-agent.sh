@@ -37,6 +37,19 @@ export MATRIX_DOMAIN="${HICLAW_MATRIX_DOMAIN:-matrix-local.hiclaw.io:8080}"
 AI_GATEWAY_DOMAIN="${HICLAW_AI_GATEWAY_DOMAIN:-aigw-local.hiclaw.io}"
 
 # ============================================================
+# YOLO mode promotion
+# ============================================================
+# In embedded mode the controller does not propagate HICLAW_YOLO to the
+# manager container, but installer / test scripts touch a marker file at
+# `${WORKSPACE}/yolo-mode` instead. Promote that marker to the env var so the
+# agent's documented YOLO check (`HICLAW_YOLO=1`) reliably detects it without
+# depending on filesystem lookups during a turn.
+if [ -z "${HICLAW_YOLO:-}" ] && [ -f /root/manager-workspace/yolo-mode ]; then
+    export HICLAW_YOLO=1
+    log "YOLO mode marker detected at /root/manager-workspace/yolo-mode; HICLAW_YOLO=1 exported"
+fi
+
+# ============================================================
 # Cloud/K8s mode: validate required environment variables + initial credentials
 # ============================================================
 if [ "${HICLAW_RUNTIME}" = "aliyun" ] || [ "${HICLAW_RUNTIME}" = "k8s" ]; then
