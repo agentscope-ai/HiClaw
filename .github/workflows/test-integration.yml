@@ -343,6 +343,11 @@ jobs:
           HICLAW_LLM_PROVIDER: qwen
           HICLAW_DEFAULT_MODEL: ${{ inputs.model || 'qwen3.5-plus' }}
           HICLAW_MANAGER_RUNTIME: ${{ matrix.runtime }}
+          # Propagate the runtime to worker-creating tests too. Without this
+          # the apply-zip path (test-15) silently falls back to openclaw on
+          # both shards because defaultRuntime("") returns RuntimeOpenClaw,
+          # which made the copaw matrix dimension run hidden openclaw workers.
+          HICLAW_DEFAULT_WORKER_RUNTIME: ${{ matrix.runtime }}
         run: |
           FILTER="${{ github.event.inputs.test_filter }}"
           if [ -z "$FILTER" ]; then

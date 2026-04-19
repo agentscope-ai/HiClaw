@@ -183,7 +183,7 @@ func applyWorkerSubCmd() *cobra.Command {
 			}
 
 			if zipFile != "" {
-				return applyWorkerZip(name, zipFile)
+				return applyWorkerZip(name, zipFile, runtime)
 			}
 
 			return applyWorkerParams(name, model, runtime, image, identity, soul, soulFile,
@@ -209,15 +209,23 @@ func applyWorkerSubCmd() *cobra.Command {
 }
 
 // applyWorkerZip uploads a ZIP to the controller, then creates/updates the Worker.
-func applyWorkerZip(name, zipPath string) error {
+//
+// runtimeOverride wins over whatever the ZIP's manifest declares; both win over
+// the controller's defaultRuntime() (which silently falls back to openclaw and
+// hides cross-runtime test coverage gaps — see fix in this commit).
+func applyWorkerZip(name, zipPath, runtimeOverride string) error {
 	zipData, err := os.ReadFile(zipPath)
 	if err != nil {
 		return fmt.Errorf("read ZIP %s: %w", zipPath, err)
 	}
 
-	model := extractModelFromZip(zipData)
+	model, manifestRuntime := extractWorkerFieldsFromZip(zipData)
 	if model == "" {
 		model = "qwen3.5-plus"
+	}
+	runtime := runtimeOverride
+	if runtime == "" {
+		runtime = manifestRuntime
 	}
 
 	client := NewAPIClient()
@@ -243,6 +251,7 @@ func applyWorkerZip(name, zipPath string) error {
 			"model":   model,
 			"package": pkgResp.PackageUri,
 		}
+		setIfNotEmpty(updateBody, "runtime", runtime)
 		if err := client.DoJSON("PUT", "/api/v1/workers/"+name, updateBody, &resp); err != nil {
 			return fmt.Errorf("update worker/%s: %w", name, err)
 		}
@@ -253,6 +262,7 @@ func applyWorkerZip(name, zipPath string) error {
 			"model":   model,
 			"package": pkgResp.PackageUri,
 		}
+		setIfNotEmpty(createBody, "runtime", runtime)
 		if err := client.DoJSON("POST", "/api/v1/workers", createBody, &resp); err != nil {
 			return fmt.Errorf("create worker/%s: %w", name, err)
 		}
@@ -332,37 +342,50 @@ func applyWorkerParams(name, model, runtime, image, identity, soul, soulFile,
 // ZIP manifest helpers
 // ---------------------------------------------------------------------------
 
-// extractModelFromZip reads manifest.json from the ZIP and extracts the model field.
-func extractModelFromZip(zipData []byte) string {
+// extractWorkerFieldsFromZip reads manifest.json from the ZIP and extracts the
+// model and runtime fields. Both top-level and `worker.<field>` placements are
+// honored; the worker block takes precedence to match the documented schema in
+// docs/import-worker.md.
+//
+// Either return value may be empty when the manifest does not declare it (or
+// when the ZIP has no manifest at all). Callers are expected to fall back to
+// their own defaults (model → "qwen3.5-plus", runtime → server-side default).
+func extractWorkerFieldsFromZip(zipData []byte) (model, runtime string) {
 	r, err := zip.NewReader(bytes.NewReader(zipData), int64(len(zipData)))
 	if err != nil {
-		return ""
+		return "", ""
 	}
 
 	for _, f := range r.File {
-		if f.Name == "manifest.json" {
-			rc, err := f.Open()
-			if err != nil {
-				return ""
-			}
-			defer rc.Close()
-
-			var manifest map[string]interface{}
-			if err := json.NewDecoder(rc).Decode(&manifest); err != nil {
-				return ""
-			}
-
-			// Try top-level "model", then "worker.model"
-			if m, ok := manifest["model"].(string); ok && m != "" {
-				return m
-			}
-			if w, ok := manifest["worker"].(map[string]interface{}); ok {
-				if m, ok := w["model"].(string); ok && m != "" {
-					return m
-				}
-			}
-			return ""
+		if f.Name != "manifest.json" {
+			continue
 		}
+		rc, err := f.Open()
+		if err != nil {
+			return "", ""
+		}
+		defer rc.Close()
+
+		var manifest map[string]interface{}
+		if err := json.NewDecoder(rc).Decode(&manifest); err != nil {
+			return "", ""
+		}
+
+		if m, ok := manifest["model"].(string); ok && m != "" {
+			model = m
+		}
+		if rt, ok := manifest["runtime"].(string); ok && rt != "" {
+			runtime = rt
+		}
+		if w, ok := manifest["worker"].(map[string]interface{}); ok {
+			if m, ok := w["model"].(string); ok && m != "" {
+				model = m
+			}
+			if rt, ok := w["runtime"].(string); ok && rt != "" {
+				runtime = rt
+			}
+		}
+		return model, runtime
 	}
-	return ""
+	return "", ""
 }

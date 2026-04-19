@@ -74,6 +74,13 @@ log_section "Create Test ZIP Package"
 
 WORK_DIR="/tmp/hiclaw-test-${TEST_WORKER}"
 
+# Track the matrix runtime so the worker we import here matches the runtime
+# being exercised by this CI shard. Without this the apply-zip path always
+# defaults to openclaw on the controller side (defaultRuntime("") returns
+# RuntimeOpenClaw), which makes the "copaw shard" run a hidden openclaw
+# worker -- defeating the point of the matrix expansion.
+TEST_WORKER_RUNTIME="${HICLAW_DEFAULT_WORKER_RUNTIME:-openclaw}"
+
 exec_in_manager bash -c "
     mkdir -p ${WORK_DIR}/package/config ${WORK_DIR}/package/skills/test-skill
 
@@ -83,7 +90,8 @@ exec_in_manager bash -c "
   \"version\": 1,
   \"worker\": {
     \"suggested_name\": \"${TEST_WORKER}\",
-    \"model\": \"qwen3.5-plus\"
+    \"model\": \"qwen3.5-plus\",
+    \"runtime\": \"${TEST_WORKER_RUNTIME}\"
   },
   \"source\": {
     \"hostname\": \"integration-test\"
@@ -235,8 +243,16 @@ REGISTRY_ENTRY=$(echo "${REGISTRY_JSON}" | jq -r --arg w "${TEST_WORKER}" '.work
 assert_not_empty "${REGISTRY_ENTRY}" "Worker registered in workers-registry.json"
 
 # Matrix Room (from CRD status)
-ROOM_ID=$(exec_in_agent hiclaw get workers "${TEST_WORKER}" -o json 2>/dev/null | jq -r '.roomID // empty')
+WORKER_JSON_AFTER_RECONCILE=$(exec_in_agent hiclaw get workers "${TEST_WORKER}" -o json 2>/dev/null)
+ROOM_ID=$(echo "${WORKER_JSON_AFTER_RECONCILE}" | jq -r '.roomID // empty')
 assert_not_empty "${ROOM_ID}" "Matrix Room created: ${ROOM_ID}"
+
+# Runtime carried through from the manifest. defaultRuntime("") returns
+# RuntimeOpenClaw on the controller side, so a regression here would silently
+# downgrade copaw shards back to openclaw without any other test catching it.
+WORKER_RUNTIME=$(echo "${WORKER_JSON_AFTER_RECONCILE}" | jq -r '.runtime // empty')
+assert_eq "${TEST_WORKER_RUNTIME}" "${WORKER_RUNTIME}" \
+    "Worker runtime matches manifest (got: '${WORKER_RUNTIME}', want: '${TEST_WORKER_RUNTIME}')"
 
 # openclaw.json in MinIO
 OPENCLAW_EXISTS=$(exec_in_manager bash -c "mc ls '${STORAGE_PREFIX}/agents/${TEST_WORKER}/openclaw.json' >/dev/null 2>&1 && echo yes || echo no")
