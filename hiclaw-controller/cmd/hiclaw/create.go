@@ -44,6 +44,7 @@ func createWorkerCmd() *cobra.Command {
 		role        string
 		outputFmt   string
 		waitTimeout time.Duration
+		noWait      bool
 	)
 
 	cmd := &cobra.Command{
@@ -107,6 +108,15 @@ func createWorkerCmd() *cobra.Command {
 				return fmt.Errorf("create worker: %w", err)
 			}
 
+			if noWait {
+				if outputFmt == "json" {
+					printJSON(createResp)
+				} else {
+					fmt.Printf("worker/%s create accepted (poll `hiclaw get workers -o json` for phase=Running)\n", name)
+				}
+				return nil
+			}
+
 			finalStatus, err := waitForWorkerReady(client, name, waitTimeout)
 			if err != nil {
 				return err
@@ -136,6 +146,7 @@ func createWorkerCmd() *cobra.Command {
 	cmd.Flags().StringVar(&role, "role", "", "Role within team (team_leader|worker)")
 	cmd.Flags().StringVarP(&outputFmt, "output", "o", "", "Output format (json)")
 	cmd.Flags().DurationVar(&waitTimeout, "wait-timeout", 3*time.Minute, "Maximum time to wait for the Worker to report Ready")
+	cmd.Flags().BoolVar(&noWait, "no-wait", false, "Return immediately after the controller accepts the create request, without polling for Ready")
 	return cmd
 }
 
