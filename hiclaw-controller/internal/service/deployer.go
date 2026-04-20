@@ -285,7 +285,7 @@ func (d *Deployer) WriteLeaderCoordinationContext(ctx context.Context, req Leade
 
 // renderAndPushSoulTemplate reads SOUL.md.tmpl from the builtin team-leader-agent
 // directory, substitutes ${VAR} placeholders, and pushes the result as SOUL.md.
-func (d *Deployer) renderAndPushSoulTemplate(ctx context.Context, agentPrefix string, req CoordinationDeployRequest) error {
+func (d *Deployer) renderAndPushSoulTemplate(ctx context.Context, agentPrefix string, req LeaderCoordinationRequest) error {
 	tmplPath := filepath.Join(d.builtinAgentDir("team_leader", ""), "SOUL.md.tmpl")
 	tmplData, err := os.ReadFile(tmplPath)
 	if err != nil {
@@ -295,8 +295,8 @@ func (d *Deployer) renderAndPushSoulTemplate(ctx context.Context, agentPrefix st
 		return fmt.Errorf("read SOUL.md.tmpl: %w", err)
 	}
 
-	workerNames := make([]string, 0, len(req.TeamWorkers))
-	for _, wn := range req.TeamWorkers {
+	workerNames := make([]string, 0, len(req.TeamMemberNames))
+	for _, wn := range req.TeamMemberNames {
 		workerNames = append(workerNames, wn)
 	}
 

@@ -22,7 +22,6 @@ import (
 	"github.com/hiclaw/hiclaw-controller/internal/service"
 	"github.com/hiclaw/hiclaw-controller/internal/store"
 	"github.com/hiclaw/hiclaw-controller/internal/watcher"
-	hiclawwebhook "github.com/hiclaw/hiclaw-controller/internal/webhook"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -30,7 +29,6 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
-	ctrlwebhook "sigs.k8s.io/controller-runtime/pkg/webhook"
 )
 
 // App is the top-level application container. It centralizes dependency
@@ -69,11 +67,6 @@ type App struct {
 	envBuilder  *service.WorkerEnvBuilder
 	legacy      *service.LegacyCompat
 	observer    *service.Observer
-
-	// Admission validators (constructed unconditionally so embedded-mode
-	// REST handlers can invoke them inline; incluster+enabled additionally
-	// registers them with the manager for the ValidatingWebhook path).
-	validators *hiclawwebhook.Validators
 }
 
 // New constructs the entire application dependency graph and wires everything
@@ -129,7 +122,7 @@ func (a *App) Start(ctx context.Context) error {
 				ManagerEnabled: a.cfg.ManagerEnabled,
 				ManagerModel:   a.cfg.ManagerModel,
 				ManagerRuntime: a.cfg.ManagerRuntime,
-				ManagerImage:   a.cfg.ResolveManagerImage(a.cfg.ManagerRuntime),
+				ManagerImage:   a.cfg.ManagerImage,
 				AdminUser:      a.cfg.MatrixAdminUser,
 				AdminPassword:  a.cfg.MatrixAdminPassword,
 				Namespace:      a.namespace,
@@ -281,13 +274,12 @@ func (a *App) initServiceLayer(_ context.Context) error {
 
 func (a *App) initReconcilers(_ context.Context) error {
 	if err := (&controller.WorkerReconciler{
-		Client:       a.mgr.GetClient(),
-		Provisioner:  a.provisioner,
-		Deployer:     a.deployer,
-		Backend:      a.registry,
-		EnvBuilder:   a.envBuilder,
-		Legacy:       a.legacy,
-		ResolveImage: a.cfg.ResolveWorkerImage,
+		Client:      a.mgr.GetClient(),
+		Provisioner: a.provisioner,
+		Deployer:    a.deployer,
+		Backend:     a.registry,
+		EnvBuilder:  a.envBuilder,
+		Legacy:      a.legacy,
 	}).SetupWithManager(a.mgr); err != nil {
 		return fmt.Errorf("setup WorkerReconciler: %w", err)
 	}
@@ -316,7 +308,6 @@ func (a *App) initReconcilers(_ context.Context) error {
 		Backend:          a.registry,
 		EnvBuilder:       a.envBuilder,
 		ManagerResources: a.cfg.ManagerResources(),
-		ResolveImage:     a.cfg.ResolveManagerImage,
 	}
 	if a.cfg.KubeMode == "embedded" {
 		mgrReconciler.EmbeddedConfig = &controller.ManagerEmbeddedConfig{
@@ -330,17 +321,6 @@ func (a *App) initReconcilers(_ context.Context) error {
 		return fmt.Errorf("setup ManagerReconciler: %w", err)
 	}
 
-	// Build validators once so REST API handlers (resource_handler,
-	// bundle_handler) can invoke them inline in both embedded and
-	// incluster modes. In incluster mode with webhook enabled, also
-	// register them with the manager to drive the ValidatingWebhook path.
-	a.validators = hiclawwebhook.NewValidators(a.mgr.GetClient())
-	if a.cfg.KubeMode == "incluster" && a.cfg.WebhookEnabled {
-		if err := a.validators.RegisterWithManager(a.mgr); err != nil {
-			return fmt.Errorf("register webhook validators: %w", err)
-		}
-	}
-
 	return nil
 }
 
@@ -352,7 +332,6 @@ func (a *App) initHTTPServer(_ context.Context) error {
 		OSS:        a.oss,
 		STS:        a.stsService,
 		AuthMw:     a.authMw,
-		Validators: a.validators,
 		KubeMode:   a.cfg.KubeMode,
 		Namespace:  a.namespace,
 		SocketPath: a.cfg.SocketPath,
@@ -431,20 +410,6 @@ func (a *App) startInCluster() (*rest.Config, error) {
 		}
 		opts.LeaderElectionNamespace = a.cfg.K8sNamespace
 	}
-	// Wire an explicit webhook server only when the webhook is enabled.
-	// The default webhook server auto-allocates a listener on the Manager
-	// which we want to avoid in embedded mode where no admission is served.
-	if a.cfg.WebhookEnabled {
-		opts.WebhookServer = ctrlwebhook.NewServer(ctrlwebhook.Options{
-			Port:    a.cfg.WebhookPort,
-			CertDir: a.cfg.WebhookCertDir,
-		})
-		logger.Info("admission webhook server configured",
-			"port", a.cfg.WebhookPort, "certDir", a.cfg.WebhookCertDir)
-	} else {
-		logger.Info("admission webhook server disabled (HICLAW_WEBHOOK_ENABLED=false)")
-	}
-
 	var err error
 	a.mgr, err = ctrl.NewManager(restCfg, opts)
 	if err != nil {

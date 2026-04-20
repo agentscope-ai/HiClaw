@@ -10,7 +10,6 @@ import (
 
 	v1beta1 "github.com/hiclaw/hiclaw-controller/api/v1beta1"
 	authpkg "github.com/hiclaw/hiclaw-controller/internal/auth"
-	hiclawwebhook "github.com/hiclaw/hiclaw-controller/internal/webhook"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -19,8 +18,7 @@ import (
 func TestCreateWorkerForTeamLeaderForcesTeamContext(t *testing.T) {
 	scheme := newServerTestScheme(t)
 	k8sClient := fake.NewClientBuilder().WithScheme(scheme).Build()
-	validators := hiclawwebhook.NewValidators(k8sClient)
-	handler := NewResourceHandler(k8sClient, "default", validators)
+	handler := NewResourceHandler(k8sClient, "default")
 
 	// The caller is team-leader of alpha-team. Even though the request body
 	// asks for a team_leader role in other-team, the handler must force the
@@ -60,8 +58,7 @@ func TestCreateWorkerForTeamLeaderForcesTeamContext(t *testing.T) {
 func TestCreateAndUpdateTeamRuntimeConfig(t *testing.T) {
 	scheme := newServerTestScheme(t)
 	k8sClient := fake.NewClientBuilder().WithScheme(scheme).Build()
-	validators := hiclawwebhook.NewValidators(k8sClient)
-	handler := NewResourceHandler(k8sClient, "default", validators)
+	handler := NewResourceHandler(k8sClient, "default")
 
 	createBody := []byte(`{
 		"name":"alpha-team",

@@ -8,10 +8,8 @@ import (
 
 	v1beta1 "github.com/hiclaw/hiclaw-controller/api/v1beta1"
 	"github.com/hiclaw/hiclaw-controller/internal/httputil"
-	hiclawwebhook "github.com/hiclaw/hiclaw-controller/internal/webhook"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/util/validation/field"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -20,13 +18,12 @@ import (
 // operations always return 207 Multi-Status so partial failures are visible
 // to the caller without short-circuiting the whole request.
 type BundleHandler struct {
-	client     client.Client
-	namespace  string
-	validators *hiclawwebhook.Validators
+	client    client.Client
+	namespace string
 }
 
-func NewBundleHandler(c client.Client, namespace string, v *hiclawwebhook.Validators) *BundleHandler {
-	return &BundleHandler{client: c, namespace: namespace, validators: v}
+func NewBundleHandler(c client.Client, namespace string) *BundleHandler {
+	return &BundleHandler{client: c, namespace: namespace}
 }
 
 // CreateTeamBundle handles POST /api/v1/bundles/team. It dry-runs all
@@ -53,32 +50,6 @@ func (h *BundleHandler) CreateTeamBundle(w http.ResponseWriter, r *http.Request)
 	team := buildTeamFromBundle(&req, h.namespace)
 	leader := buildLeaderFromBundle(&req, h.namespace)
 	members := buildMembersFromBundle(&req, h.namespace)
-
-	var validationItems []BundleResultItem
-	if errs := h.validateTeam(r.Context(), team); len(errs) > 0 {
-		validationItems = append(validationItems, BundleResultItem{
-			Kind: "validation", Name: req.Name, Status: "invalid",
-			Message: "team: " + errs.ToAggregate().Error(),
-		})
-	}
-	if errs := h.validateWorker(r.Context(), leader); len(errs) > 0 {
-		validationItems = append(validationItems, BundleResultItem{
-			Kind: "validation", Name: leader.Name, Status: "invalid",
-			Message: "leader worker: " + errs.ToAggregate().Error(),
-		})
-	}
-	for i := range members {
-		if errs := h.validateWorker(r.Context(), members[i]); len(errs) > 0 {
-			validationItems = append(validationItems, BundleResultItem{
-				Kind: "validation", Name: members[i].Name, Status: "invalid",
-				Message: "member worker: " + errs.ToAggregate().Error(),
-			})
-		}
-	}
-	if len(validationItems) > 0 {
-		httputil.WriteJSON(w, http.StatusBadRequest, BundleResponse{Items: validationItems})
-		return
-	}
 
 	items := make([]BundleResultItem, 0, 3+len(members)+len(req.Admins))
 
@@ -350,21 +321,7 @@ func humanHasTeamAccess(hu *v1beta1.Human, teamName string) bool {
 	return false
 }
 
-// --- validators / error mappers ---
-
-func (h *BundleHandler) validateTeam(ctx context.Context, t *v1beta1.Team) field.ErrorList {
-	if h.validators == nil || h.validators.Team == nil {
-		return nil
-	}
-	return h.validators.Team.ValidateTeam(ctx, t, nil)
-}
-
-func (h *BundleHandler) validateWorker(ctx context.Context, wk *v1beta1.Worker) field.ErrorList {
-	if h.validators == nil || h.validators.Worker == nil {
-		return nil
-	}
-	return h.validators.Worker.ValidateWorker(ctx, wk, nil)
-}
+// --- error mappers ---
 
 func teamItemFromError(name, op string, err error) BundleResultItem {
 	status := "error"

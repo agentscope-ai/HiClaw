@@ -1,35 +1,25 @@
 package server
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 
 	v1beta1 "github.com/hiclaw/hiclaw-controller/api/v1beta1"
 	authpkg "github.com/hiclaw/hiclaw-controller/internal/auth"
 	"github.com/hiclaw/hiclaw-controller/internal/httputil"
-	hiclawwebhook "github.com/hiclaw/hiclaw-controller/internal/webhook"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/util/validation/field"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// ResourceHandler handles declarative CRUD operations on CRs. All create /
-// update paths invoke the shared admission validators inline so that
-// embedded mode (which does not run a webhook server) still enforces the
-// same structural invariants as incluster mode.
+// ResourceHandler handles declarative CRUD operations on CRs.
 type ResourceHandler struct {
-	client     client.Client
-	namespace  string
-	validators *hiclawwebhook.Validators
+	client    client.Client
+	namespace string
 }
 
-// NewResourceHandler constructs a ResourceHandler. The validators argument
-// may be nil in tests that do not exercise the validation path; all handler
-// methods treat a nil Validators (or nested nil sub-validator) as a no-op.
-func NewResourceHandler(c client.Client, namespace string, v *hiclawwebhook.Validators) *ResourceHandler {
-	return &ResourceHandler{client: c, namespace: namespace, validators: v}
+func NewResourceHandler(c client.Client, namespace string) *ResourceHandler {
+	return &ResourceHandler{client: c, namespace: namespace}
 }
 
 // --- Workers ---
@@ -74,11 +64,6 @@ func (h *ResourceHandler) CreateWorker(w http.ResponseWriter, r *http.Request) {
 	if caller != nil && caller.Role == authpkg.RoleTeamLeader {
 		worker.Spec.TeamRef = caller.Team
 		worker.Spec.Role = v1beta1.WorkerRoleTeamWorker
-	}
-
-	if errs := h.validateWorker(r.Context(), worker, nil); len(errs) > 0 {
-		writeValidationError(w, errs)
-		return
 	}
 
 	if err := h.client.Create(r.Context(), worker); err != nil {
@@ -145,7 +130,6 @@ func (h *ResourceHandler) UpdateWorker(w http.ResponseWriter, r *http.Request) {
 		writeK8sError(w, "get worker for update", err)
 		return
 	}
-	oldWorker := existing.DeepCopy()
 	newWorker := &existing
 
 	if req.Model != "" {
@@ -189,11 +173,6 @@ func (h *ResourceHandler) UpdateWorker(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.TeamRef != nil {
 		newWorker.Spec.TeamRef = *req.TeamRef
-	}
-
-	if errs := h.validateWorker(r.Context(), newWorker, oldWorker); len(errs) > 0 {
-		writeValidationError(w, errs)
-		return
 	}
 
 	if err := h.client.Update(r.Context(), newWorker); err != nil {
@@ -247,11 +226,6 @@ func (h *ResourceHandler) CreateTeam(w http.ResponseWriter, r *http.Request) {
 			Heartbeat:         req.Heartbeat,
 			WorkerIdleTimeout: req.WorkerIdleTimeout,
 		},
-	}
-
-	if errs := h.validateTeam(r.Context(), team, nil); len(errs) > 0 {
-		writeValidationError(w, errs)
-		return
 	}
 
 	if err := h.client.Create(r.Context(), team); err != nil {
@@ -311,7 +285,6 @@ func (h *ResourceHandler) UpdateTeam(w http.ResponseWriter, r *http.Request) {
 		writeK8sError(w, "get team for update", err)
 		return
 	}
-	oldTeam := existing.DeepCopy()
 	newTeam := &existing
 
 	if req.Description != "" {
@@ -328,11 +301,6 @@ func (h *ResourceHandler) UpdateTeam(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.WorkerIdleTimeout != "" {
 		newTeam.Spec.WorkerIdleTimeout = req.WorkerIdleTimeout
-	}
-
-	if errs := h.validateTeam(r.Context(), newTeam, oldTeam); len(errs) > 0 {
-		writeValidationError(w, errs)
-		return
 	}
 
 	if err := h.client.Update(r.Context(), newTeam); err != nil {
@@ -387,11 +355,6 @@ func (h *ResourceHandler) CreateHuman(w http.ResponseWriter, r *http.Request) {
 			TeamAccess:   req.TeamAccess,
 			WorkerAccess: req.WorkerAccess,
 		},
-	}
-
-	if errs := h.validateHuman(r.Context(), human, nil); len(errs) > 0 {
-		writeValidationError(w, errs)
-		return
 	}
 
 	if err := h.client.Create(r.Context(), human); err != nil {
@@ -451,7 +414,6 @@ func (h *ResourceHandler) UpdateHuman(w http.ResponseWriter, r *http.Request) {
 		writeK8sError(w, "get human for update", err)
 		return
 	}
-	oldHuman := existing.DeepCopy()
 	newHuman := &existing
 
 	if req.DisplayName != "" {
@@ -471,11 +433,6 @@ func (h *ResourceHandler) UpdateHuman(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.WorkerAccess != nil {
 		newHuman.Spec.WorkerAccess = req.WorkerAccess
-	}
-
-	if errs := h.validateHuman(r.Context(), newHuman, oldHuman); len(errs) > 0 {
-		writeValidationError(w, errs)
-		return
 	}
 
 	if err := h.client.Update(r.Context(), newHuman); err != nil {
@@ -657,29 +614,6 @@ func (h *ResourceHandler) DeleteManager(w http.ResponseWriter, r *http.Request) 
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// --- Inline validator wrappers ---
-
-func (h *ResourceHandler) validateWorker(ctx context.Context, newW, oldW *v1beta1.Worker) field.ErrorList {
-	if h.validators == nil || h.validators.Worker == nil {
-		return nil
-	}
-	return h.validators.Worker.ValidateWorker(ctx, newW, oldW)
-}
-
-func (h *ResourceHandler) validateTeam(ctx context.Context, newT, oldT *v1beta1.Team) field.ErrorList {
-	if h.validators == nil || h.validators.Team == nil {
-		return nil
-	}
-	return h.validators.Team.ValidateTeam(ctx, newT, oldT)
-}
-
-func (h *ResourceHandler) validateHuman(ctx context.Context, newH, oldH *v1beta1.Human) field.ErrorList {
-	if h.validators == nil || h.validators.Human == nil {
-		return nil
-	}
-	return h.validators.Human.ValidateHuman(ctx, newH, oldH)
-}
-
 // --- Conversion helpers ---
 
 func workerToResponse(w *v1beta1.Worker) WorkerResponse {
@@ -793,10 +727,4 @@ func writeK8sError(w http.ResponseWriter, op string, err error) {
 	default:
 		httputil.WriteError(w, http.StatusInternalServerError, op+": "+err.Error())
 	}
-}
-
-// writeValidationError renders an admission-style field.ErrorList as a
-// single 400 response with the aggregated error string.
-func writeValidationError(w http.ResponseWriter, errs field.ErrorList) {
-	httputil.WriteError(w, http.StatusBadRequest, "validation failed: "+errs.ToAggregate().Error())
 }

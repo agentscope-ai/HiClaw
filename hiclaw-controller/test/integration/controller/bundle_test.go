@@ -12,7 +12,6 @@ import (
 
 	v1beta1 "github.com/hiclaw/hiclaw-controller/api/v1beta1"
 	"github.com/hiclaw/hiclaw-controller/internal/server"
-	hiclawwebhook "github.com/hiclaw/hiclaw-controller/internal/webhook"
 	"github.com/hiclaw/hiclaw-controller/test/testutil/fixtures"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -22,8 +21,7 @@ import (
 // state in the handler (there isn't any, but this keeps the pattern
 // forward-compatible).
 func newBundleHandler() *server.BundleHandler {
-	validators := hiclawwebhook.NewValidators(k8sClient)
-	return server.NewBundleHandler(k8sClient, fixtures.DefaultNamespace, validators)
+	return server.NewBundleHandler(k8sClient, fixtures.DefaultNamespace)
 }
 
 // invokeCreateBundle sends a POST-equivalent request directly into the
