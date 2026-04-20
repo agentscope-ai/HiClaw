@@ -20,7 +20,6 @@ credentials:
   llmApiKey: ""               # LLM API key (required)
   llmProvider: "qwen"
   defaultModel: "qwen3.5-plus"
-  controllerApiKey: ""       # Controller auth key (auto-generated if empty)
   higressAdminUser: "admin"    # Higress console admin username
   higressAdminPassword: "admin" # Higress console admin password
 
