@@ -30,12 +30,25 @@ func TestHTTPClient_Issue_FullSTS(t *testing.T) {
 	defer srv.Close()
 
 	c := NewHTTPClient(srv.URL, nil)
-	tok, err := c.Issue(context.Background(), IssueRequest{Role: RoleController})
+	tok, err := c.Issue(context.Background(), sampleReq())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if tok.SecurityToken != "TOK" {
 		t.Fatalf("SecurityToken = %q, want TOK", tok.SecurityToken)
+	}
+}
+
+func sampleReq() IssueRequest {
+	return IssueRequest{
+		SessionName: "hiclaw-controller",
+		Entries: []AccessEntry{
+			{
+				Service:     ServiceObjectStorage,
+				Permissions: []string{"read", "write", "list"},
+				Scope:       AccessScope{Bucket: "hiclaw-test", Prefixes: []string{"*"}},
+			},
+		},
 	}
 }
 
@@ -52,7 +65,7 @@ func TestHTTPClient_Issue_EmptySecurityTokenAccepted(t *testing.T) {
 	defer srv.Close()
 
 	c := NewHTTPClient(srv.URL, nil)
-	tok, err := c.Issue(context.Background(), IssueRequest{Role: RoleController})
+	tok, err := c.Issue(context.Background(), sampleReq())
 	if err != nil {
 		t.Fatalf("expected passthrough response to be accepted, got error: %v", err)
 	}
@@ -69,7 +82,7 @@ func TestHTTPClient_Issue_MissingAK(t *testing.T) {
 	defer srv.Close()
 
 	c := NewHTTPClient(srv.URL, nil)
-	if _, err := c.Issue(context.Background(), IssueRequest{Role: RoleController}); err == nil {
+	if _, err := c.Issue(context.Background(), sampleReq()); err == nil {
 		t.Fatalf("expected error for missing access_key_id")
 	} else if !strings.Contains(err.Error(), "incomplete credentials") {
 		t.Fatalf("unexpected error: %v", err)
@@ -81,7 +94,7 @@ func TestHTTPClient_Issue_Non2xx(t *testing.T) {
 	defer srv.Close()
 
 	c := NewHTTPClient(srv.URL, nil)
-	if _, err := c.Issue(context.Background(), IssueRequest{Role: RoleController}); err == nil {
+	if _, err := c.Issue(context.Background(), sampleReq()); err == nil {
 		t.Fatalf("expected non-2xx to surface as an error")
 	} else if !strings.Contains(err.Error(), "502") {
 		t.Fatalf("expected status code in error, got: %v", err)

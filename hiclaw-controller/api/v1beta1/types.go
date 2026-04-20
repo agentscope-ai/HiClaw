@@ -2,12 +2,35 @@
 
 package v1beta1
 
-import metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+import (
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+)
 
 const (
 	GroupName = "hiclaw.io"
 	Version   = "v1beta1"
 )
+
+// AccessEntry declares one cloud-permission grant under a logical
+// service. v1 supported services: "object-storage", "gateway-admin".
+//
+// Scope is a schema-less JSON blob in the CR layer: it may reference
+// logical names (bucketRef: workspace, gatewayRef: default) and
+// template variables (${self.name}, ${self.kind}, ${self.namespace}).
+// The hiclaw-controller resolves it to real resource values before
+// calling hiclaw-credential-provider; the provider never sees the
+// CR-layer form.
+//
+// AccessEntry is only honored when the controller runs with a
+// credential-provider sidecar (gateway.provider=ai-gateway or
+// storage.provider=oss). In local higress+minio deployments the
+// field is accepted by the CRD but not read by the controller.
+type AccessEntry struct {
+	Service     string                `json:"service"`
+	Permissions []string              `json:"permissions,omitempty"`
+	Scope       *apiextensionsv1.JSON `json:"scope,omitempty"`
+}
 
 // +genclient
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
@@ -37,6 +60,12 @@ type WorkerSpec struct {
 	// Valid values: "Running" (default), "Sleeping", "Stopped".
 	// The controller reconciles actual backend state toward this desired state.
 	State *string `json:"state,omitempty"`
+
+	// AccessEntries declares the cloud permissions this worker should be
+	// granted via hiclaw-credential-provider. See AccessEntry for semantics.
+	// When empty the controller applies a sensible default (object-storage
+	// scoped to agents/<name>/* and shared/*).
+	AccessEntries []AccessEntry `json:"accessEntries,omitempty"`
 }
 
 // DesiredState returns the effective desired state, defaulting to "Running".
@@ -299,6 +328,12 @@ type ManagerSpec struct {
 	// Valid values: "Running" (default), "Sleeping", "Stopped".
 	// The controller reconciles actual backend state toward this desired state.
 	State *string `json:"state,omitempty"`
+
+	// AccessEntries declares the cloud permissions this manager should be
+	// granted via hiclaw-credential-provider. See AccessEntry for semantics.
+	// When empty the controller applies a sensible default (object-storage
+	// scoped to agents/<name>/*, shared/*, and manager/*).
+	AccessEntries []AccessEntry `json:"accessEntries,omitempty"`
 }
 
 // DesiredState returns the effective desired state, defaulting to "Running".

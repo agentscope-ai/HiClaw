@@ -8,38 +8,56 @@
 // itself is credential-less: whenever it needs to talk to APIG, OSS, or
 // any other Alibaba Cloud service, it asks the sidecar for a fresh STS
 // triple via this package.
+//
+// The request contract matches the accessEntries model documented in
+// docs/design/hiclaw-credential-provider-arch.md §6.3: the caller sends
+// an array of AccessEntry items whose scope is already fully resolved
+// (no bucketRef / gatewayRef, no ${self.*} templates). The sidecar
+// translates the entries into a provider-native inline policy and
+// issues the STS triple.
 package credprovider
 
-// Role identifies the logical caller requesting a token and determines the
-// scope of the inline policy attached to the resulting STS token.
-type Role string
-
-const (
-	// RoleWorker: a normal Worker Agent. Scoped to agents/<name>/* and
-	// shared/* in the configured OSS bucket.
-	RoleWorker Role = "worker"
-
-	// RoleManager: the Manager Agent. Adds write access to the manager/*
-	// prefix for workspace sync.
-	RoleManager Role = "manager"
-
-	// RoleController: the hiclaw-controller itself. No inline policy is
-	// attached: the caller inherits the full permission set granted by
-	// the RAM role (expected to include OSS read/write plus APIG
-	// consumer management). Used for bootstrap OSS operations and APIG
-	// SDK calls.
-	RoleController Role = "controller"
-)
-
 // IssueRequest is the body sent to the sidecar's POST /issue endpoint.
+//
+// SessionName is propagated into AssumeRole's RoleSessionName and
+// should uniquely identify the calling entity (e.g. "hiclaw-worker-alice",
+// "hiclaw-manager", "hiclaw-controller"). Entries carries the resolved
+// AccessEntry list and must be non-empty; the sidecar rejects empty
+// requests with HTTP 400.
 type IssueRequest struct {
-	Role            Role   `json:"role"`
-	Name            string `json:"name,omitempty"`
-	Bucket          string `json:"bucket,omitempty"`
-	DurationSeconds int    `json:"duration_seconds,omitempty"`
+	SessionName     string        `json:"session_name"`
+	DurationSeconds int           `json:"duration_seconds,omitempty"`
+	Entries         []AccessEntry `json:"entries"`
+}
+
+// AccessEntry is the RESOLVED form of a single permission grant as it
+// crosses the controller → sidecar boundary. There is a matching but
+// looser type in api/v1beta1 which is what users author in CRs; the
+// controller's internal accessresolver package converts between them
+// and expands logical refs and template variables.
+type AccessEntry struct {
+	Service     string      `json:"service"`
+	Permissions []string    `json:"permissions,omitempty"`
+	Scope       AccessScope `json:"scope"`
+}
+
+// AccessScope is the union of all resolved scope fields supported in
+// v1. Only fields relevant to Service should be populated.
+type AccessScope struct {
+	// object-storage
+	Bucket   string   `json:"bucket,omitempty"`
+	Prefixes []string `json:"prefixes,omitempty"`
+	// gateway-admin
+	GatewayID string   `json:"gatewayId,omitempty"`
+	Resources []string `json:"resources,omitempty"`
 }
 
 // IssueResponse is the sidecar's reply to POST /issue.
+//
+// Endpoint carries the OSS endpoint returned by the provider so that
+// callers can build `mc` alias URLs directly. It is empty when the
+// entries list contains no object-storage entry (e.g. a gateway-only
+// token).
 type IssueResponse struct {
 	AccessKeyID     string `json:"access_key_id"`
 	AccessKeySecret string `json:"access_key_secret"`
@@ -48,3 +66,11 @@ type IssueResponse struct {
 	ExpiresInSec    int    `json:"expires_in_sec"`
 	Endpoint        string `json:"endpoint"`
 }
+
+// Supported Service identifiers. Keep in sync with the CRD schema's
+// `spec.accessEntries[].service` enum and with the sidecar's
+// buildInlinePolicy dispatch.
+const (
+	ServiceObjectStorage = "object-storage"
+	ServiceGatewayAdmin  = "gateway-admin"
+)

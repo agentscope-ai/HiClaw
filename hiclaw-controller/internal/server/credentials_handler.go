@@ -26,18 +26,14 @@ func (h *CredentialsHandler) RefreshSTS(w http.ResponseWriter, r *http.Request) 
 	}
 
 	caller := auth.CallerFromContext(r.Context())
-	workerName := ""
-	if caller != nil {
-		workerName = caller.Username
-	}
-	if workerName == "" {
-		httputil.WriteError(w, http.StatusBadRequest, "worker identity not found in request context")
+	if caller == nil || caller.Username == "" {
+		httputil.WriteError(w, http.StatusBadRequest, "caller identity not found in request context")
 		return
 	}
 
-	token, err := h.stsService.IssueWorkerToken(r.Context(), workerName)
+	token, err := h.stsService.IssueForCaller(r.Context(), caller)
 	if err != nil {
-		log.Printf("[ERROR] issue STS token for worker %s: %v", workerName, err)
+		log.Printf("[ERROR] issue STS token for %s/%s: %v", caller.Role, caller.Username, err)
 		httputil.WriteError(w, http.StatusInternalServerError, "failed to issue STS token: "+err.Error())
 		return
 	}

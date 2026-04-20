@@ -2,9 +2,18 @@ package credentials
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+
+	v1beta1 "github.com/hiclaw/hiclaw-controller/api/v1beta1"
+	"github.com/hiclaw/hiclaw-controller/internal/accessresolver"
+	"github.com/hiclaw/hiclaw-controller/internal/auth"
 	"github.com/hiclaw/hiclaw-controller/internal/credprovider"
 )
 
@@ -22,62 +31,126 @@ func (f *fakeProvider) Issue(_ context.Context, req credprovider.IssueRequest) (
 	return f.resp, nil
 }
 
-func TestIssueWorkerToken_DelegatesToProvider(t *testing.T) {
-	fake := &fakeProvider{
-		resp: &credprovider.IssueResponse{
-			AccessKeyID:     "STS.test-ak",
-			AccessKeySecret: "test-sk",
-			SecurityToken:   "test-token",
-			Expiration:      "2026-03-26T12:00:00Z",
-			ExpiresInSec:    3600,
-			Endpoint:        "oss-cn-hangzhou-internal.aliyuncs.com",
+const ns = "hiclaw"
+
+func newFakeK8sClient(t *testing.T, objs ...client.Object) client.Client {
+	t.Helper()
+	scheme := runtime.NewScheme()
+	if err := v1beta1.AddToScheme(scheme); err != nil {
+		t.Fatalf("add scheme: %v", err)
+	}
+	return fake.NewClientBuilder().WithScheme(scheme).WithObjects(objs...).Build()
+}
+
+func rawJSON(t *testing.T, v any) *apiextensionsv1.JSON {
+	t.Helper()
+	b, err := json.Marshal(v)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	return &apiextensionsv1.JSON{Raw: b}
+}
+
+func TestIssueForCaller_WorkerDefaultEntries(t *testing.T) {
+	worker := &v1beta1.Worker{}
+	worker.Name = "alice"
+	worker.Namespace = ns
+	c := newFakeK8sClient(t, worker)
+	resolver := accessresolver.New(c, ns, "test-bucket", "")
+
+	fake := &fakeProvider{resp: &credprovider.IssueResponse{
+		AccessKeyID:     "STS.test-ak",
+		AccessKeySecret: "test-sk",
+		SecurityToken:   "test-token",
+		ExpiresInSec:    3600,
+		Endpoint:        "oss-cn-hangzhou.aliyuncs.com",
+	}}
+	svc := NewSTSService(STSConfig{OSSBucket: "test-bucket"}, resolver, fake)
+
+	tok, err := svc.IssueForCaller(context.Background(), &auth.CallerIdentity{
+		Role: auth.RoleWorker, Username: "alice", WorkerName: "alice",
+	})
+	if err != nil {
+		t.Fatalf("IssueForCaller: %v", err)
+	}
+	if tok.AccessKeyID != "STS.test-ak" || tok.OSSBucket != "test-bucket" {
+		t.Fatalf("unexpected token: %+v", tok)
+	}
+
+	if fake.lastReq.SessionName != "hiclaw-worker-alice" {
+		t.Fatalf("session = %q", fake.lastReq.SessionName)
+	}
+	if len(fake.lastReq.Entries) != 2 {
+		t.Fatalf("expected 2 default entries, got %d", len(fake.lastReq.Entries))
+	}
+	for _, e := range fake.lastReq.Entries {
+		if e.Scope.Bucket != "test-bucket" {
+			t.Fatalf("bucket not resolved in %+v", e.Scope)
+		}
+	}
+	if got := fake.lastReq.Entries[0].Scope.Prefixes[0]; got != "agents/alice/*" {
+		t.Fatalf("template not expanded: %q", got)
+	}
+}
+
+func TestIssueForCaller_WorkerCustomEntries(t *testing.T) {
+	worker := &v1beta1.Worker{}
+	worker.Name = "bob"
+	worker.Namespace = ns
+	worker.Spec.AccessEntries = []v1beta1.AccessEntry{
+		{
+			Service:     credprovider.ServiceObjectStorage,
+			Permissions: []string{"read"},
+			Scope: rawJSON(t, map[string]any{
+				"bucketRef": "workspace",
+				"prefixes":  []string{"readonly/*"},
+			}),
 		},
 	}
-	svc := NewSTSService(STSConfig{OSSBucket: "test-bucket"}, fake)
+	c := newFakeK8sClient(t, worker)
+	resolver := accessresolver.New(c, ns, "test-bucket", "")
 
-	tok, err := svc.IssueWorkerToken(context.Background(), "alice")
-	if err != nil {
-		t.Fatalf("IssueWorkerToken: %v", err)
+	fake := &fakeProvider{resp: &credprovider.IssueResponse{
+		AccessKeyID: "ak", AccessKeySecret: "sk", ExpiresInSec: 900,
+	}}
+	svc := NewSTSService(STSConfig{OSSBucket: "test-bucket"}, resolver, fake)
+
+	if _, err := svc.IssueForCaller(context.Background(), &auth.CallerIdentity{
+		Role: auth.RoleWorker, Username: "bob", WorkerName: "bob",
+	}); err != nil {
+		t.Fatalf("IssueForCaller: %v", err)
 	}
-	if tok.AccessKeyID != "STS.test-ak" {
-		t.Errorf("AccessKeyID = %q, want STS.test-ak", tok.AccessKeyID)
+	if len(fake.lastReq.Entries) != 1 || fake.lastReq.Entries[0].Scope.Prefixes[0] != "readonly/*" {
+		t.Fatalf("custom entries not propagated: %+v", fake.lastReq.Entries)
 	}
-	if tok.SecurityToken != "test-token" {
-		t.Errorf("SecurityToken = %q, want test-token", tok.SecurityToken)
-	}
-	if tok.OSSEndpoint != "oss-cn-hangzhou-internal.aliyuncs.com" {
-		t.Errorf("OSSEndpoint = %q, want internal endpoint", tok.OSSEndpoint)
-	}
-	if tok.OSSBucket != "test-bucket" {
-		t.Errorf("OSSBucket = %q, want test-bucket", tok.OSSBucket)
-	}
-	if tok.ExpiresInSec != 3600 {
-		t.Errorf("ExpiresInSec = %d, want 3600", tok.ExpiresInSec)
-	}
-	if fake.lastReq.Role != credprovider.RoleWorker {
-		t.Errorf("provider role = %q, want worker", fake.lastReq.Role)
-	}
-	if fake.lastReq.Name != "alice" {
-		t.Errorf("provider name = %q, want alice", fake.lastReq.Name)
-	}
-	if fake.lastReq.Bucket != "test-bucket" {
-		t.Errorf("provider bucket = %q, want test-bucket", fake.lastReq.Bucket)
+	if perms := fake.lastReq.Entries[0].Permissions; len(perms) != 1 || perms[0] != "read" {
+		t.Fatalf("permissions not propagated: %+v", perms)
 	}
 }
 
-func TestIssueWorkerToken_ProviderError(t *testing.T) {
-	svc := NewSTSService(STSConfig{OSSBucket: "b"}, &fakeProvider{err: errors.New("boom")})
-	if _, err := svc.IssueWorkerToken(context.Background(), "alice"); err == nil {
-		t.Fatal("expected error, got nil")
+func TestIssueForCaller_ProviderError(t *testing.T) {
+	worker := &v1beta1.Worker{}
+	worker.Name = "alice"
+	worker.Namespace = ns
+	c := newFakeK8sClient(t, worker)
+	resolver := accessresolver.New(c, ns, "b", "")
+	svc := NewSTSService(STSConfig{OSSBucket: "b"}, resolver, &fakeProvider{err: errors.New("boom")})
+
+	if _, err := svc.IssueForCaller(context.Background(), &auth.CallerIdentity{
+		Role: auth.RoleWorker, Username: "alice", WorkerName: "alice",
+	}); err == nil {
+		t.Fatal("expected provider error to propagate")
 	}
 }
 
-func TestConfigured_NilProvider(t *testing.T) {
-	svc := NewSTSService(STSConfig{}, nil)
-	if svc.Configured() {
-		t.Fatal("Configured() = true with nil provider, want false")
+func TestConfigured(t *testing.T) {
+	if NewSTSService(STSConfig{}, nil, nil).Configured() {
+		t.Fatal("empty service should not be configured")
 	}
-	if _, err := svc.IssueWorkerToken(context.Background(), "x"); err == nil {
-		t.Fatal("expected error from unconfigured service")
+	if NewSTSService(STSConfig{}, accessresolver.New(newFakeK8sClient(t), ns, "b", ""), nil).Configured() {
+		t.Fatal("service without provider should not be configured")
+	}
+	if NewSTSService(STSConfig{}, nil, &fakeProvider{}).Configured() {
+		t.Fatal("service without resolver should not be configured")
 	}
 }

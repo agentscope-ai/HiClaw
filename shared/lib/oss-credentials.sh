@@ -112,7 +112,7 @@ _OSS_CRED_EXPIRES_AT=${expires_at}
 EOF
     chmod 600 "${_OSS_CRED_FILE}"
 
-    echo "[oss-credentials] STS credentials refreshed via controller (AK prefix: ${sts_ak:0:8}..., endpoint: ${oss_endpoint})" >&2
+    echo "[oss-credentials] STS credentials refreshed via controller (AK prefix: $(printf '%s' "${sts_ak}" | cut -c1-8)..., endpoint: ${oss_endpoint})" >&2
 }
 
 # --------------------------------------------------------------------------

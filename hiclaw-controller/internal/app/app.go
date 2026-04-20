@@ -6,6 +6,7 @@ import (
 	"log"
 
 	v1beta1 "github.com/hiclaw/hiclaw-controller/api/v1beta1"
+	"github.com/hiclaw/hiclaw-controller/internal/accessresolver"
 	"github.com/hiclaw/hiclaw-controller/internal/agentconfig"
 	"github.com/hiclaw/hiclaw-controller/internal/apiserver"
 	authpkg "github.com/hiclaw/hiclaw-controller/internal/auth"
@@ -181,7 +182,9 @@ func (a *App) initInfraClients(_ context.Context) error {
 	// worker STS issuance, optional otherwise.
 	if cfg.CredentialProviderURL != "" {
 		a.credProvider = credprovider.NewHTTPClient(cfg.CredentialProviderURL, nil)
-		a.stsService = credentials.NewSTSService(cfg.STSConfig(), a.credProvider)
+		// Note: a.stsService is constructed in initServiceLayer, after the
+		// controller-runtime Manager (and its client.Client) is built, since
+		// the accessresolver needs to read Worker/Manager CRs.
 		logger.Info("credential-provider sidecar configured", "url", cfg.CredentialProviderURL)
 	}
 
@@ -191,8 +194,8 @@ func (a *App) initInfraClients(_ context.Context) error {
 			return fmt.Errorf("ai-gateway provider requires HICLAW_CREDENTIAL_PROVIDER_URL to be set")
 		}
 		tm := credprovider.NewTokenManager(a.credProvider, credprovider.IssueRequest{
-			Role:   credprovider.RoleController,
-			Bucket: cfg.OSSBucket,
+			SessionName: "hiclaw-controller",
+			Entries:     accessresolver.ControllerDefaults(cfg.OSSBucket, cfg.GWGatewayID),
 		})
 		cred := credprovider.NewAliyunCredential(tm)
 		cli, err := gateway.NewAIGatewayClient(cfg.AIGatewayConfig(), cred)
@@ -216,9 +219,13 @@ func (a *App) initInfraClients(_ context.Context) error {
 		if a.credProvider == nil {
 			return fmt.Errorf("oss provider requires HICLAW_CREDENTIAL_PROVIDER_URL to be set")
 		}
+		gatewayID := ""
+		if cfg.UsesAIGateway() {
+			gatewayID = cfg.GWGatewayID
+		}
 		tm := credprovider.NewTokenManager(a.credProvider, credprovider.IssueRequest{
-			Role:   credprovider.RoleController,
-			Bucket: cfg.OSSBucket,
+			SessionName: "hiclaw-controller",
+			Entries:     accessresolver.ControllerDefaults(cfg.OSSBucket, gatewayID),
 		})
 		mcClient = mcClient.WithCredentialSource(&ossControllerCredSource{tm: tm})
 		a.oss = mcClient
@@ -331,6 +338,20 @@ func (a *App) initAuth(_ context.Context) error {
 
 func (a *App) initServiceLayer(_ context.Context) error {
 	cfg := a.cfg
+
+	// Build the STS service now that the controller-runtime Manager (and
+	// thus client.Client) is available. The resolver reads Worker/Manager
+	// CRs to translate CR-layer AccessEntries into the resolved form
+	// expected by the credential-provider sidecar. In local higress+minio
+	// deployments CredentialProviderURL is empty and the service stays nil.
+	if a.credProvider != nil {
+		gatewayID := ""
+		if cfg.UsesAIGateway() {
+			gatewayID = cfg.GWGatewayID
+		}
+		resolver := accessresolver.New(a.mgr.GetClient(), a.namespace, cfg.OSSBucket, gatewayID)
+		a.stsService = credentials.NewSTSService(cfg.STSConfig(), resolver, a.credProvider)
+	}
 
 	var credStore service.CredentialStore
 	if cfg.KubeMode == "incluster" && a.k8sClient != nil {
