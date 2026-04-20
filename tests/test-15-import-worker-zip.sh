@@ -334,22 +334,17 @@ else
             log_fail "Admin is NOT joined in worker room (auto-join may have failed)"
         fi
 
-        # Send message with @mention (Worker requires m.mentions to wake up)
-        MESSAGE_BODY="${WORKER_MATRIX_ID} Hello! Please reply with a short greeting."
-        TXN_ID="$(date +%s%N)"
-        ROOM_ENC="$(_encode_room_id "${ROOM_ID}")"
-
-        SEND_RESULT=$(exec_in_manager curl -s -X PUT \
-            "${TEST_MATRIX_DIRECT_URL}/_matrix/client/v3/rooms/${ROOM_ENC}/send/m.room.message/${TXN_ID}" \
-            -H "Authorization: Bearer ${ADMIN_TOKEN}" \
-            -H 'Content-Type: application/json' \
-            -d '{
-                "msgtype": "m.text",
-                "body": "'"${MESSAGE_BODY}"'",
-                "m.mentions": {
-                    "user_ids": ["'"${WORKER_MATRIX_ID}"'"]
-                }
-            }' 2>&1)
+        # Send Element-style mention. openclaw's monitor requires BOTH
+        # `m.mentions.user_ids` metadata AND a visible mention (matrix.to link
+        # in formatted_body OR a regex match on identity), otherwise the event
+        # is dropped with `reason: "no-mention"`. A worker created from a
+        # minimal SOUL has no custom identity regex, so the metadata-only
+        # form silently fails. Use the helper that mirrors what Element sends.
+        SEND_RESULT=$(matrix_send_mention_message \
+            "${ADMIN_TOKEN}" \
+            "${ROOM_ID}" \
+            "${WORKER_MATRIX_ID}" \
+            "Hello! Please reply with a short greeting." 2>&1)
 
         SEND_EVENT=$(echo "${SEND_RESULT}" | jq -r '.event_id // empty' 2>/dev/null)
         if [ -n "${SEND_EVENT}" ] && [ "${SEND_EVENT}" != "null" ]; then

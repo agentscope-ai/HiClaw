@@ -353,8 +353,14 @@ func (d *Deployer) DeployManagerConfig(ctx context.Context, req ManagerDeployReq
 	agentPrefix := fmt.Sprintf("agents/%s", req.Name)
 
 	// --- openclaw.json ---
+	// Manager's Matrix username is always "manager" regardless of the Manager
+	// CR name (which is typically "default"). Without this override the
+	// generated openclaw.json ends up with userId=@<crName>:<domain>, the
+	// Matrix client filters all DMs to that wrong localpart, and the agent
+	// silently never sees admin messages. See commit 3f8f84b which fixed this
+	// originally before the controller refactor accidentally reverted it.
 	configJSON, err := d.agentConfig.GenerateOpenClawConfig(agentconfig.WorkerConfigRequest{
-		WorkerName:  req.Name,
+		WorkerName:  "manager",
 		MatrixToken: req.MatrixToken,
 		GatewayKey:  req.GatewayKey,
 		ModelName:   req.Spec.Model,
