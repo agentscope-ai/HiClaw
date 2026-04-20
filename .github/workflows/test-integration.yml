@@ -13,6 +13,7 @@ on:
       - 'install/**'
       - 'shared/**'
       - 'copaw/**'
+      - 'hermes/**'
       - 'Makefile'
       - '.github/workflows/test-integration.yml'
   push:
@@ -29,6 +30,7 @@ on:
       - 'install/**'
       - 'shared/**'
       - 'copaw/**'
+      - 'hermes/**'
       - 'Makefile'
   workflow_dispatch:
     inputs:
@@ -48,6 +50,7 @@ on:
           - both
           - openclaw
           - copaw
+          - hermes
         default: 'both'
       model:
         description: 'LLM model to use'
@@ -195,7 +198,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [embedded, manager, manager-copaw, worker, copaw-worker]
+        target: [embedded, manager, manager-copaw, worker, copaw-worker, hermes-worker]
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -312,6 +315,25 @@ jobs:
             filter_env: SHARD_D_TESTS
             manager_runtime: copaw
             worker_runtime: copaw
+          # Hermes worker coverage: exercise bridge.py + matrix-nio adapter end-to-end.
+          # Pairs with the copaw manager because both speak matrix-nio (same
+          # adapter family), keeping the surface area small while still
+          # validating worker-side container start, config bridging, Matrix
+          # join, and task assignment for the hermes runtime. controller-cr-2
+          # (test-21 team project DAG) is intentionally excluded — the team
+          # controller hardcodes Runtime: "copaw", so it cannot exercise hermes.
+          - shard: llm-interaction
+            filter_env: SHARD_A_TESTS
+            manager_runtime: copaw
+            worker_runtime: hermes
+          - shard: llm-interaction-2
+            filter_env: SHARD_B_TESTS
+            manager_runtime: copaw
+            worker_runtime: hermes
+          - shard: controller-cr
+            filter_env: SHARD_C_TESTS
+            manager_runtime: copaw
+            worker_runtime: hermes
 
     steps:
       - name: Free Up Disk Space
@@ -354,11 +376,10 @@ jobs:
           HICLAW_MANAGER_RUNTIME: ${{ matrix.manager_runtime }}
           # Propagate the worker runtime to worker-creating tests too. Without
           # this the apply-zip path (test-15) silently falls back to openclaw
-          # on the copaw shards because the controller's backend resolves an
-          # empty req.Runtime to RuntimeOpenClaw — which made the copaw matrix
-          # dimension run hidden openclaw workers and invalidated the parallel-
-          # runtime coverage. The matrix split + dual env keeps each shard
-          # honest end-to-end.
+          # on the copaw and hermes matrix entries because the controller's
+          # backend resolves an empty req.Runtime to RuntimeOpenClaw — which
+          # would make those dimensions run hidden openclaw workers and
+          # invalidate the parallel-runtime coverage we set up above.
           HICLAW_DEFAULT_WORKER_RUNTIME: ${{ matrix.worker_runtime }}
         run: |
           FILTER="${{ github.event.inputs.test_filter }}"

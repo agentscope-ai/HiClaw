@@ -71,6 +71,7 @@ COPAW_MANAGER_IMAGE="hiclaw/manager-copaw:local"
 CONTROLLER_IMAGE="hiclaw/hiclaw-controller:local"
 WORKER_IMAGE="hiclaw/worker-agent:local"
 COPAW_WORKER_IMAGE="hiclaw/copaw-worker:local"
+HERMES_WORKER_IMAGE="hiclaw/hermes-worker:local"
 HELM_IMAGE_OVERRIDES=""
 
 if [ "$SKIP_BUILD" = "0" ]; then
@@ -115,12 +116,19 @@ if [ "$SKIP_BUILD" = "0" ]; then
         --build-context shared="${PROJECT_ROOT}/shared/lib" \
         -f "${PROJECT_ROOT}/copaw/Dockerfile" "${PROJECT_ROOT}/copaw"
 
+    log "Building worker image (hermes)..."
+    docker build -t "$HERMES_WORKER_IMAGE" \
+        --build-arg HICLAW_CONTROLLER_IMAGE="$CONTROLLER_IMAGE" \
+        --build-context shared="${PROJECT_ROOT}/shared/lib" \
+        -f "${PROJECT_ROOT}/hermes/Dockerfile" "${PROJECT_ROOT}/hermes"
+
     log "Loading images into kind cluster..."
     kind load docker-image "$MANAGER_IMAGE" --name "$CLUSTER_NAME"
     kind load docker-image "$COPAW_MANAGER_IMAGE" --name "$CLUSTER_NAME"
     kind load docker-image "$CONTROLLER_IMAGE" --name "$CLUSTER_NAME"
     kind load docker-image "$WORKER_IMAGE" --name "$CLUSTER_NAME"
     kind load docker-image "$COPAW_WORKER_IMAGE" --name "$CLUSTER_NAME"
+    kind load docker-image "$HERMES_WORKER_IMAGE" --name "$CLUSTER_NAME"
 
     # Pre-load Docker Hub images that Kind nodes may not be able to pull directly
     # (e.g., behind GFW or with unreliable Docker Hub access)
@@ -151,6 +159,7 @@ if [ "$SKIP_BUILD" = "0" ]; then
     HELM_IMAGE_OVERRIDES="${HELM_IMAGE_OVERRIDES} --set controller.image.repository=hiclaw/hiclaw-controller --set controller.image.tag=local --set controller.image.pullPolicy=Never"
     HELM_IMAGE_OVERRIDES="${HELM_IMAGE_OVERRIDES} --set worker.defaultImage.openclaw.repository=hiclaw/worker-agent --set worker.defaultImage.openclaw.tag=local"
     HELM_IMAGE_OVERRIDES="${HELM_IMAGE_OVERRIDES} --set worker.defaultImage.copaw.repository=hiclaw/copaw-worker --set worker.defaultImage.copaw.tag=local"
+    HELM_IMAGE_OVERRIDES="${HELM_IMAGE_OVERRIDES} --set worker.defaultImage.hermes.repository=hiclaw/hermes-worker --set worker.defaultImage.hermes.tag=local"
 
     log "Local images built and loaded"
 else

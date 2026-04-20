@@ -20,11 +20,12 @@ const defaultK8sNamespaceFile = "/var/run/secrets/kubernetes.io/serviceaccount/n
 
 // K8sConfig holds Kubernetes backend configuration.
 type K8sConfig struct {
-	Namespace        string
-	WorkerImage      string
-	CopawWorkerImage string
-	WorkerCPU        string
-	WorkerMemory     string
+	Namespace         string
+	WorkerImage       string
+	CopawWorkerImage  string
+	HermesWorkerImage string
+	WorkerCPU         string
+	WorkerMemory      string
 }
 
 // K8sBackend manages worker lifecycle via Kubernetes Pods.
@@ -144,9 +145,12 @@ func (k *K8sBackend) Create(ctx context.Context, req CreateRequest) (*WorkerResu
 
 	image := req.Image
 	if image == "" {
-		if req.Runtime == RuntimeCopaw && k.config.CopawWorkerImage != "" {
+		switch {
+		case req.Runtime == RuntimeCopaw && k.config.CopawWorkerImage != "":
 			image = k.config.CopawWorkerImage
-		} else if k.config.WorkerImage != "" {
+		case req.Runtime == RuntimeHermes && k.config.HermesWorkerImage != "":
+			image = k.config.HermesWorkerImage
+		case k.config.WorkerImage != "":
 			image = k.config.WorkerImage
 		}
 	}
@@ -155,13 +159,21 @@ func (k *K8sBackend) Create(ctx context.Context, req CreateRequest) (*WorkerResu
 	}
 
 	if req.WorkingDir == "" {
-		if req.Runtime == RuntimeCopaw {
+		switch {
+		case req.Runtime == RuntimeCopaw:
 			req.WorkingDir = "/root/.copaw-worker"
-		} else if home := req.Env["HOME"]; home != "" {
-			req.WorkingDir = home
-		} else {
-			req.WorkingDir = fmt.Sprintf("/root/hiclaw-fs/agents/%s", req.Name)
-			req.Env["HOME"] = req.WorkingDir
+		case req.Runtime == RuntimeHermes:
+			// hermes-worker uses the standard hiclaw worker layout
+			// (/root/.hiclaw-worker/<name>); the .hermes/ subdir is created
+			// by the worker's own bootstrap.
+			req.WorkingDir = "/root/.hiclaw-worker"
+		default:
+			if home := req.Env["HOME"]; home != "" {
+				req.WorkingDir = home
+			} else {
+				req.WorkingDir = fmt.Sprintf("/root/hiclaw-fs/agents/%s", req.Name)
+				req.Env["HOME"] = req.WorkingDir
+			}
 		}
 	}
 
@@ -500,10 +512,14 @@ func rawK8sPhase(phase corev1.PodPhase) string {
 }
 
 func defaultRuntime(runtime string) string {
-	if runtime == RuntimeCopaw {
+	switch runtime {
+	case RuntimeCopaw:
 		return RuntimeCopaw
+	case RuntimeHermes:
+		return RuntimeHermes
+	default:
+		return RuntimeOpenClaw
 	}
-	return RuntimeOpenClaw
 }
 
 func loadK8sRESTConfig() (*rest.Config, error) {

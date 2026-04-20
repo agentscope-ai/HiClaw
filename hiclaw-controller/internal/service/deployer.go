@@ -511,8 +511,11 @@ func (d *Deployer) builtinAgentDir(role, runtime string) string {
 	case "team_leader":
 		return filepath.Join(baseDir, "team-leader-agent")
 	default:
-		if runtime == "copaw" {
+		switch runtime {
+		case "copaw":
 			return filepath.Join(baseDir, "copaw-worker-agent")
+		case "hermes":
+			return filepath.Join(baseDir, "hermes-worker-agent")
 		}
 		return d.workerAgentDir
 	}

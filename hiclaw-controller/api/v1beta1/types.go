@@ -22,7 +22,7 @@ type Worker struct {
 
 type WorkerSpec struct {
 	Model         string             `json:"model"`
-	Runtime       string             `json:"runtime,omitempty"` // openclaw | copaw (default: openclaw)
+	Runtime       string             `json:"runtime,omitempty"` // openclaw | copaw | hermes (default: openclaw)
 	Image         string             `json:"image,omitempty"`   // custom Docker image
 	Identity      string             `json:"identity,omitempty"`
 	Soul          string             `json:"soul,omitempty"`
@@ -218,7 +218,7 @@ type Manager struct {
 
 type ManagerSpec struct {
 	Model      string        `json:"model"`
-	Runtime    string        `json:"runtime,omitempty"`    // openclaw | copaw (default: openclaw)
+	Runtime    string        `json:"runtime,omitempty"`    // openclaw | copaw | hermes (default: openclaw)
 	Image      string        `json:"image,omitempty"`      // custom Docker image
 	Soul       string        `json:"soul,omitempty"`       // custom SOUL.md content
 	Agents     string        `json:"agents,omitempty"`     // custom AGENTS.md content
