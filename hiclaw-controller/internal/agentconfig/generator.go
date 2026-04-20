@@ -1,8 +1,6 @@
 package agentconfig
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -53,16 +51,70 @@ func (g *Generator) GenerateOpenClawConfig(req WorkerConfigRequest) ([]byte, err
 	adminUser := g.config.AdminUser
 	adminMatrixID := fmt.Sprintf("@%s:%s", adminUser, matrixDomain)
 
-	// Build the base openclaw.json structure (must match OpenClaw schema)
+	// Build the base openclaw.json structure (must match OpenClaw schema).
+	//
+	// gateway.port: 18799 — openclaw 2026.4.x onwards merges the Control UI HTTP
+	// server into the same listener as the gateway WebSocket (older versions ran
+	// the Control UI on a separate 18799 listener). Hiclaw's container port
+	// mapping (host:HICLAW_PORT_MANAGER_CONSOLE → container:18799), Dockerfile
+	// EXPOSE, install/health probes and the legacy nginx reverse proxy all
+	// assume the user-facing console reaches us on 18799. Keep that contract by
+	// pinning the gateway port to 18799 — the alternative (rewiring every
+	// downstream consumer) is far more invasive.
+	//
+	// gateway.bind: "lan" — openclaw 2026.4.x defaults to loopback (127.0.0.1)
+	// binding for the gateway/Control UI server. In hiclaw's embedded dual-
+	// container topology the manager runs in its own container and the Control
+	// UI is reached via a host port mapping (host:18888 → manager:18799), which
+	// requires the listener to be reachable from outside the container's loop-
+	// back interface. Bind LAN-wide (0.0.0.0); access remains gated by the
+	// shared gateway token.
+	//
+	// gateway.controlUi.dangerouslyDisableDeviceAuth: true — Higress-hosted
+	// console access uses the shared gateway token (no per-device pairing). The
+	// manager template carries this flag; the controller-pushed config must
+	// preserve it too, otherwise the mc-mirror sync strips it and the Control
+	// UI starts demanding device authentication that hiclaw never provisions.
+	//
+	// gateway.controlUi.allowInsecureAuth: true — hiclaw exposes the console
+	// over plain HTTP on the user's host port (HICLAW_PORT_MANAGER_CONSOLE),
+	// so the strict HTTPS-only browser-auth checks introduced in 2026.4.x must
+	// be relaxed.
+	//
+	// gateway.controlUi.allowedOrigins: ["*"] — the user picks the console host
+	// port at install time and may reach it via 127.0.0.1, the host's LAN IP,
+	// or a custom hostname; hiclaw cannot enumerate every legitimate origin
+	// upfront. Token auth on the gateway remains the actual access boundary.
+	//
+	// gateway.auth.token / gateway.remote.token: req.GatewayKey — these used to
+	// be `generateRandomHex(32)` per call, which produced a fresh value on every
+	// reconcile. The agent file-sync skill pulls openclaw.json from MinIO on its
+	// heartbeat tick; openclaw 2026.4.x diff-watches the config and any change
+	// to gateway.auth.token forces a full gateway *restart* (matrix client is
+	// torn down and recreated, in-flight agent dispatches are dropped). With
+	// the default reconcile cadence this caused the manager to silently restart
+	// every ~5 minutes — long-running tasks (test-06 onwards) lost their
+	// in-flight reply, the test framework saw "Manager replied empty" and the
+	// CI matrix turned red. The manager-side boot template already pins both
+	// fields to the stable MANAGER_GATEWAY_KEY (loaded from creds.GatewayKey);
+	// mirror that here so the controller-pushed config stays byte-stable across
+	// reconciles. The token doubles as the Control UI / remote auth token, so
+	// reusing GatewayKey is consistent with the manager template.
 	config := map[string]interface{}{
 		"gateway": map[string]interface{}{
 			"mode": "local",
-			"port": 18800,
+			"port": 18799,
+			"bind": "lan",
 			"auth": map[string]interface{}{
-				"token": generateRandomHex(32),
+				"token": req.GatewayKey,
 			},
 			"remote": map[string]interface{}{
-				"token": generateRandomHex(32),
+				"token": req.GatewayKey,
+			},
+			"controlUi": map[string]interface{}{
+				"dangerouslyDisableDeviceAuth": true,
+				"allowInsecureAuth":            true,
+				"allowedOrigins":               []string{"*"},
 			},
 		},
 		"channels": map[string]interface{}{
@@ -161,6 +213,30 @@ func (g *Generator) buildMatrixChannelConfig(req WorkerConfigRequest, serverURL,
 		"groups": map[string]interface{}{
 			"*": map[string]interface{}{"allow": true, "requireMention": true},
 		},
+		// openclaw 2026.4.x onwards forwards the SSRF policy to the matrix-js-sdk
+		// fetch path. Without this opt-in, /sync to private hosts (the embedded
+		// `matrix-local.hiclaw.io` alias resolves to 127.0.0.1, k8s service DNS
+		// resolves to ClusterIP) is rejected and the worker never reaches a
+		// PREPARED state — no room joins, no message delivery. The manager
+		// template carries the same flag; mirror it here so every worker the
+		// controller provisions can talk to the (always private) homeserver.
+		"network": map[string]interface{}{
+			"dangerouslyAllowPrivateNetwork": true,
+		},
+		// openclaw 2026.4.x defaults the matrix invite-handler policy to "off",
+		// meaning agents *ignore* room invites — they stay in `membership:invite`
+		// forever instead of becoming `join`. Hiclaw's provisioning flow always
+		// invites the agent (manager or worker) into its dedicated room and then
+		// expects the agent's matrix client to accept the invite on its own; if
+		// it never joins, /sync delivers no room events, the agent is silent in
+		// its own room and every dependent test (test-06 onwards) fails with
+		// "Manager replied empty" / "Worker did not start". Force "always" so
+		// any invite (the room-create flow + any future re-invites after a token
+		// rotation or membership reset) is accepted automatically. Per-room
+		// access is already gated by the matrix server's invite ACLs and our
+		// dm/groupPolicy allowlists below, so accepting all invites doesn't
+		// widen the trust boundary.
+		"autoJoin": "always",
 	}
 
 	return cfg
@@ -344,12 +420,6 @@ func containsString(slice []string, s string) bool {
 		}
 	}
 	return false
-}
-
-func generateRandomHex(n int) string {
-	b := make([]byte, n)
-	rand.Read(b)
-	return hex.EncodeToString(b)
 }
 
 // allModelSpecs returns all known model specs for the openclaw.json models list.
