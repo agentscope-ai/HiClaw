@@ -43,5 +43,6 @@ COPY --from=builder /hiclaw-controller /usr/local/bin/hiclaw-controller
 COPY --from=builder /hiclaw /usr/local/bin/hiclaw
 COPY --from=kube-bin /kube-apiserver /usr/local/bin/kube-apiserver
 COPY config/crd/ /opt/hiclaw/config/crd/
+COPY agent/ /opt/hiclaw/agent/
 
 ENTRYPOINT ["hiclaw-controller"]

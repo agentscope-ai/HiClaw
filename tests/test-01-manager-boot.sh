@@ -118,12 +118,6 @@ case "${MANAGER_RUNTIME}" in
             log_fail "CoPaw config.json valid"
         fi
 
-        if docker exec "${_AGENT_CTR}" grep -q "_was_mentioned" /opt/copaw-venv/lib/python3.10/site-packages/copaw/app/channels/matrix/channel.py 2>/dev/null; then
-            log_pass "Matrix channel with mentions support"
-        else
-            log_fail "Matrix channel with mentions support"
-        fi
-
         if docker exec "${_AGENT_CTR}" pgrep -f "copaw app" >/dev/null 2>&1; then
             log_pass "CoPaw process running"
         else

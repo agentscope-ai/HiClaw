@@ -6,6 +6,9 @@ from typing import Optional, Union, Dict, List, Literal, Any
 
 from pydantic import BaseModel, Field, ConfigDict, model_validator
 import shortuuid
+from agentscope_runtime.engine.schemas.exception import (
+    ConfigurationException,
+)
 
 from .timezone import detect_system_timezone
 from ..constant import (
@@ -95,6 +98,15 @@ class QQConfig(BaseChannelConfig):
     max_reconnect_attempts: int = 100
 
 
+class OneBotConfig(BaseChannelConfig):
+    """OneBot v11 channel: reverse WebSocket for NapCat/go-cqhttp/Lagrange."""
+
+    ws_host: str = "0.0.0.0"
+    ws_port: int = 6199
+    access_token: str = ""
+    share_session_in_group: bool = False
+
+
 class TelegramConfig(BaseChannelConfig):
     bot_token: str = ""
     http_proxy: str = ""
@@ -161,9 +173,14 @@ class MatrixConfig(BaseChannelConfig):
     history_limit: int = 50
     username: str = ""
     password: str = ""
-    device_name: str = "copaw-worker"
+    device_name: str = "qwenpaw-worker"
     # matrix-nio sync long-poll timeout (ms); typical 30s
     sync_timeout_ms: int = Field(default=30000, ge=5000, le=300000)
+    # When True, prepend HTML pill to formatted_body for outbound mentions.
+    # Default False: m.mentions is always set for push, but pill is omitted.
+    mention_pill_in_body: bool = False
+    # When True, apply m.mentions + optional pill on outbound messages.
+    outbound_structured_mentions: bool = True
 
 
 class VoiceChannelConfig(BaseChannelConfig):
@@ -177,7 +194,7 @@ class VoiceChannelConfig(BaseChannelConfig):
     tts_voice: str = "en-US-Journey-D"
     stt_provider: str = "deepgram"
     language: str = "en-US"
-    welcome_greeting: str = "Hi! This is CoPaw. How can I help you?"
+    welcome_greeting: str = "Hi! This is QwenPaw. How can I help you?"
 
 
 class XiaoYiConfig(BaseChannelConfig):
@@ -195,7 +212,7 @@ class WeixinConfig(BaseChannelConfig):
 
     bot_token:      Bearer token obtained after QR code login.
     bot_token_file: Path to persist/load the bot_token
-                    (default ~/.copaw/weixin_bot_token).
+                    (default ~/.qwenpaw/weixin_bot_token).
     base_url:       iLink API base URL (leave empty to use default).
     media_dir:      Local directory for downloaded media files.
     """
@@ -225,6 +242,7 @@ class ChannelConfig(BaseModel):
     wecom: WecomConfig = WecomConfig()
     xiaoyi: XiaoYiConfig = XiaoYiConfig()
     weixin: WeixinConfig = WeixinConfig()
+    onebot: OneBotConfig = OneBotConfig()
 
 
 class LastApiConfig(BaseModel):
@@ -398,6 +416,15 @@ class MemorySummaryConfig(BaseModel):
         description="Whether to enable memory summarization during compaction",
     )
 
+    memory_prompt_enabled: bool = Field(
+        default=True,
+        description=(
+            "Whether to include the memory guidance section in the system"
+            " prompt (the <!-- memory:start/end --> block in AGENTS.md)."
+            " Set to False to omit it and save tokens."
+        ),
+    )
+
     force_memory_search: bool = Field(
         default=False,
         description="Whether to force memory search on every turn",
@@ -419,6 +446,15 @@ class MemorySummaryConfig(BaseModel):
         description=(
             "Minimum relevance score for results when force memory"
             " search is enabled"
+        ),
+    )
+
+    force_memory_search_timeout: float = Field(
+        default=10.0,
+        gt=0.0,
+        description=(
+            "Timeout in seconds for force memory search. Increase this value"
+            " when using remote embedding APIs that may have higher latency."
         ),
     )
 
@@ -521,9 +557,12 @@ class AgentsRunningConfig(BaseModel):
     def validate_llm_retry_backoff(self) -> "AgentsRunningConfig":
         """Validate LLM retry backoff relationships."""
         if self.llm_backoff_cap < self.llm_backoff_base:
-            raise ValueError(
-                "llm_backoff_cap must be greater than or equal to "
-                "llm_backoff_base",
+            raise ConfigurationException(
+                config_key="llm_backoff",
+                message=(
+                    "llm_backoff_cap must be greater than or equal to "
+                    "llm_backoff_base"
+                ),
             )
         return self
 
@@ -697,6 +736,10 @@ class AgentsConfig(BaseModel):
         default="default",
         description="Currently active agent ID",
     )
+    agent_order: List[str] = Field(
+        default_factory=lambda: ["default"],
+        description="Persisted UI order for configured agents",
+    )
     profiles: Dict[str, AgentProfileRef] = Field(
         default_factory=lambda: {
             "default": AgentProfileRef(
@@ -832,12 +875,16 @@ class MCPClientConfig(BaseModel):
         """Validate required fields for each MCP transport type."""
         if self.transport == "stdio":
             if not self.command.strip():
-                raise ValueError("stdio MCP client requires non-empty command")
+                raise ConfigurationException(
+                    config_key="mcp.command",
+                    message="stdio MCP client requires non-empty command",
+                )
             return self
 
         if not self.url.strip():
-            raise ValueError(
-                f"{self.transport} MCP client requires non-empty url",
+            raise ConfigurationException(
+                config_key="mcp.url",
+                message=f"{self.transport} MCP client requires non-empty url",
             )
         return self
 
@@ -877,6 +924,10 @@ class BuiltinToolConfig(BaseModel):
         False,
         description="Whether to execute the tool asynchronously in background",
     )
+    icon: str | None = Field(
+        default=None,
+        description="Emoji icon for the tool",
+    )
 
 
 def _default_builtin_tools() -> Dict[str, BuiltinToolConfig]:
@@ -886,68 +937,87 @@ def _default_builtin_tools() -> Dict[str, BuiltinToolConfig]:
             name="execute_shell_command",
             enabled=True,
             description="Execute shell commands",
+            icon="💻",
         ),
         "read_file": BuiltinToolConfig(
             name="read_file",
             enabled=True,
             description="Read file contents",
+            icon="📄",
         ),
         "write_file": BuiltinToolConfig(
             name="write_file",
             enabled=True,
             description="Write content to file",
+            icon="✍️",
         ),
         "edit_file": BuiltinToolConfig(
             name="edit_file",
             enabled=True,
             description="Edit file using find-and-replace",
+            icon="🖊️",
         ),
         "grep_search": BuiltinToolConfig(
             name="grep_search",
             enabled=True,
             description="Search file contents by pattern",
+            icon="🔍",
         ),
         "glob_search": BuiltinToolConfig(
             name="glob_search",
             enabled=True,
             description="Find files matching a glob pattern",
+            icon="📁",
         ),
         "browser_use": BuiltinToolConfig(
             name="browser_use",
             enabled=True,
             description="Browser automation and web interaction",
+            icon="🌐",
         ),
         "desktop_screenshot": BuiltinToolConfig(
             name="desktop_screenshot",
             enabled=True,
             description="Capture desktop screenshots",
+            icon="📸",
         ),
         "view_image": BuiltinToolConfig(
             name="view_image",
             enabled=True,
-            description="Load an image into LLM context "
-            "for visual analysis",
+            description="Load an image into LLM context for visual analysis",
             display_to_user=False,
+            icon="🖼️",
+        ),
+        "view_video": BuiltinToolConfig(
+            name="view_video",
+            enabled=True,
+            description="Load a video into LLM context for visual analysis",
+            display_to_user=False,
+            icon="🎥",
         ),
         "send_file_to_user": BuiltinToolConfig(
             name="send_file_to_user",
             enabled=True,
             description="Send files to user",
+            icon="📤",
         ),
         "get_current_time": BuiltinToolConfig(
             name="get_current_time",
             enabled=True,
             description="Get current date and time",
+            icon="🕐",
         ),
         "set_user_timezone": BuiltinToolConfig(
             name="set_user_timezone",
             enabled=True,
             description="Set user timezone",
+            icon="🌍",
         ),
         "get_token_usage": BuiltinToolConfig(
             name="get_token_usage",
             enabled=True,
             description="Get llm token usage",
+            icon="📊",
         ),
     }
 
@@ -965,6 +1035,8 @@ class ToolsConfig(BaseModel):
         for name, tc in _default_builtin_tools().items():
             if name not in self.builtin_tools:
                 self.builtin_tools[name] = tc
+            elif self.builtin_tools[name].icon is None:
+                self.builtin_tools[name].icon = tc.icon
         return self
 
 
@@ -1091,6 +1163,11 @@ class Config(BaseModel):
         description="User IANA timezone (e.g. Asia/Shanghai). "
         "Defaults to the system timezone.",
     )
+    plugins: Dict[str, Dict[str, Any]] = Field(
+        default_factory=dict,
+        description="Plugin configurations. Key is plugin_id, "
+        "value is plugin-specific config dict.",
+    )
 
 
 ChannelConfigUnion = Union[
@@ -1131,7 +1208,10 @@ def load_agent_config(agent_id: str) -> AgentProfileConfig:
     config = load_config()
 
     if agent_id not in config.agents.profiles:
-        raise ValueError(f"Agent '{agent_id}' not found in config")
+        raise ConfigurationException(
+            config_key="agent",
+            message=f"Agent '{agent_id}' not found in config",
+        )
 
     agent_ref = config.agents.profiles[agent_id]
     workspace_dir = Path(agent_ref.workspace_dir).expanduser()
@@ -1189,7 +1269,7 @@ def load_agent_config(agent_id: str) -> AgentProfileConfig:
         data = json.load(f)
 
     # Normalize legacy ~/.copaw-bound paths to current WORKING_DIR.
-    # This keeps COPAW_WORKING_DIR effective even if existing agent.json
+    # This keeps QWENPAW_WORKING_DIR effective even if existing agent.json
     # contains older hard-coded paths like "~/.copaw/media".
     try:
         from .utils import _normalize_working_dir_bound_paths
@@ -1219,7 +1299,10 @@ def save_agent_config(
     config = load_config()
 
     if agent_id not in config.agents.profiles:
-        raise ValueError(f"Agent '{agent_id}' not found in config")
+        raise ConfigurationException(
+            config_key="agent",
+            message=f"Agent '{agent_id}' not found in config",
+        )
 
     agent_ref = config.agents.profiles[agent_id]
     workspace_dir = Path(agent_ref.workspace_dir).expanduser()
@@ -1271,7 +1354,7 @@ def migrate_legacy_config_to_multi_agent() -> bool:
     default_agent_config = AgentProfileConfig(
         id="default",
         name="Default Agent",
-        description="Default CoPaw agent",
+        description="Default QwenPaw agent",
         workspace_dir=str(default_workspace),
         channels=config.channels if config.channels else None,
         mcp=config.mcp if config.mcp else None,
@@ -1310,7 +1393,7 @@ def migrate_legacy_config_to_multi_agent() -> bool:
         )
 
     # Migrate existing workspace files from legacy default working dir.
-    # When COPAW_WORKING_DIR is customized, historical data may still exist
+    # When QWENPAW_WORKING_DIR is customized, historical data may still exist
     # under "~/.copaw".
     old_workspace = Path("~/.copaw").expanduser().resolve()
 

@@ -6,33 +6,22 @@
 - **Degraded**: Some workers stopped or unavailable, Leader still running
 - **Stopped**: All containers stopped (can be restarted)
 
+Check status: `hiclaw get team <TEAM_NAME>`
+
 ## Adding a Worker to an Existing Team
 
-1. Write SOUL.md for the new worker
-2. Run `create-worker.sh --name <NEW_WORKER> --role worker --team <TEAM> --team-leader <LEADER>`
-3. Invite new worker to Team Room
-4. Add new worker to Leader's `groupAllowFrom`
-5. Update `teams-registry.json` via `manage-teams-registry.sh --action add-worker`
-6. Notify Leader to `file-sync`
+1. Update the team via `hiclaw apply -f` with the new worker added to the workers list
+2. Controller handles: creates Worker CR, joins Team Room, updates Leader's coordination context
 
 ## Removing a Worker from a Team
 
-1. Stop the worker container
-2. Remove worker from Team Room
-3. Remove worker from Leader's `groupAllowFrom`
-4. Update `teams-registry.json` via `manage-teams-registry.sh --action remove-worker`
-5. Push updated Leader `openclaw.json` to MinIO
-6. Notify Leader to `file-sync`
+1. Update the team via `hiclaw apply -f` with the worker removed from the workers list
+2. Controller handles: removes Worker CR, updates Leader's coordination context
 
 ## Deleting a Team
 
-Order matters — delete from inside out:
-
-1. Delete all team worker containers: `lifecycle-worker.sh --action delete --worker <name>` (per worker)
-2. Delete Leader container: `lifecycle-worker.sh --action delete --worker <leader>`
-3. Remove Team Room (or leave it as archive)
-4. Remove from `teams-registry.json`
-5. Remove `team_id` from workers in `workers-registry.json`
+1. Delete the team: `hiclaw delete team <TEAM_NAME>`
+2. Controller handles: deletes all worker containers, cleans up rooms, removes storage
 
 ## Task Delegation to Teams
 

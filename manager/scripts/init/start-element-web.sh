@@ -109,6 +109,37 @@ server {
 NGINX
 fi
 
+# Generate Nginx config for Higress WASM plugin server (port 8002).
+# This serves /usr/share/nginx/html/plugins/* to Envoy so it can fetch
+# WASM modules (ai-proxy, key-auth, ai-statistics, etc.). Without this,
+# Envoy fails to load AI plugins and forwards requests to upstream LLMs
+# without Host header rewrite, resulting in 404s from the LLM backend.
+# The base higress/all-in-one image normally runs this as a separate
+# `plugin-server` supervisord program with its own nginx instance, but
+# our embedded supervisord overrides that config — so we serve it from
+# the same nginx as Element Web instead, listening on both v4 and v6
+# loopback (Envoy's wasm fetcher uses `localhost` which may resolve to ::1).
+cat > /etc/nginx/conf.d/plugin-server.conf << 'NGINX'
+server {
+    listen 8002;
+    listen [::]:8002;
+    server_name localhost;
+
+    root /usr/share/nginx/html;
+    server_tokens off;
+
+    location = /healthz {
+        return 200 'ok';
+        add_header Content-Type text/plain;
+    }
+
+    error_page 500 502 503 504 /50x.html;
+    location = /50x.html {
+        root /usr/share/nginx/html;
+    }
+}
+NGINX
+
 # Remove default nginx site if exists
 rm -f /etc/nginx/sites-enabled/default
 

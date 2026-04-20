@@ -1,6 +1,6 @@
 # Worker Skills Management
 
-Manager centrally manages all Worker skills. Canonical definitions live in `~/worker-skills/`. Assignments are tracked in `~/workers-registry.json`.
+Manager centrally manages all Worker skills. Canonical definitions live in `~/worker-skills/`. Worker status is available via `hiclaw get workers`.
 
 ## Commands
 

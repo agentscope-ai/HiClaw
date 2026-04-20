@@ -135,6 +135,13 @@ rm -f "${DM_ROOMS_FILE}" "${DM_ROOMS_FILE}.tmp"
 # agent.json uses config.json's channels config
 # Note: We need to preserve group_allow_from which BaseChannelConfig lacks
 log "Generating agent.json..."
+AGENT_JSON="${WORKSPACE_DIR}/agent.json"
+# Save runtime-only fields from existing agent.json before regenerating
+_RUNTIME_ENV=""
+if [ -f "${AGENT_JSON}" ]; then
+    _RUNTIME_ENV=$(jq -c 'select(.env != null) | .env' "${AGENT_JSON}" 2>/dev/null)
+fi
+# Generate fresh agent.json from config.json (channels, running, security always update)
 jq --arg ws "${WORKSPACE_DIR}" '{
   "id": "default",
   "name": "Manager",
@@ -142,12 +149,64 @@ jq --arg ws "${WORKSPACE_DIR}" '{
   "channels": .channels,
   "heartbeat": (.heartbeat // {"enabled": false}),
   "running": (.agents.running // {}),
-  "system_prompt_files": (.agents.system_prompt_files // ["AGENTS.md", "SOUL.md", "PROFILE.md", "TOOLS.md"])
-}' "${CONFIG_FILE}" > "${WORKSPACE_DIR}/agent.json"
+  "system_prompt_files": (.agents.system_prompt_files // ["AGENTS.md", "SOUL.md", "PROFILE.md", "TOOLS.md"]),
+  "security": (.security // {"tool_guard": {"enabled": false}, "file_guard": {"enabled": false}, "skill_scanner": {"mode": "off"}})
+}' "${CONFIG_FILE}" > "${AGENT_JSON}"
+# Restore runtime-only fields preserved from previous agent.json
+if [ -n "${_RUNTIME_ENV}" ] && [ "${_RUNTIME_ENV}" != "null" ]; then
+    jq --argjson e "${_RUNTIME_ENV}" '. + {env: $e}' "${AGENT_JSON}" > "${AGENT_JSON}.tmp" && mv "${AGENT_JSON}.tmp" "${AGENT_JSON}"
+fi
 log "Generated agent.json"
 
 # ============================================================
-# 8. Launch CoPaw Manager (app mode with hot-reload)
+# 8. Configure CoPaw CMS plugin (LoongSuite observability)
+# ============================================================
+CMS_TRACES_ENABLED="$(echo "${HICLAW_CMS_TRACES_ENABLED:-false}" | tr '[:upper:]' '[:lower:]')"
+if [ "${CMS_TRACES_ENABLED}" = "true" ]; then
+    log "Configuring CoPaw CMS plugin..."
+
+    # Create bootstrap config directory
+    BOOTSTRAP_CONFIG_DIR="${HOME}/.loongsuite"
+    mkdir -p "${BOOTSTRAP_CONFIG_DIR}"
+    BOOTSTRAP_CONFIG="${BOOTSTRAP_CONFIG_DIR}/bootstrap-config.json"
+
+    # Generate bootstrap-config.json
+    python3 - "${BOOTSTRAP_CONFIG}" <<'PYEOF'
+import json
+import sys
+import os
+from pathlib import Path
+
+cfg_path = Path(sys.argv[1])
+endpoint = os.getenv("HICLAW_CMS_ENDPOINT", "")
+license_key = os.getenv("HICLAW_CMS_LICENSE_KEY", "")
+arms_project = os.getenv("HICLAW_CMS_PROJECT", "")
+cms_workspace = os.getenv("HICLAW_CMS_WORKSPACE", "")
+service_name = os.getenv("HICLAW_CMS_SERVICE_NAME", "hiclaw-manager")
+protocol = "http/protobuf"  # Default OTLP protocol
+
+config = {
+    "OTEL_EXPORTER_OTLP_ENDPOINT": endpoint,
+    "OTEL_EXPORTER_OTLP_PROTOCOL": protocol,
+    "OTEL_EXPORTER_OTLP_HEADERS": f"x-arms-license-key={license_key},x-arms-project={arms_project},x-cms-workspace={cms_workspace}",
+    "OTEL_SERVICE_NAME": service_name,
+    "OTEL_SEMCONV_STABILITY_OPT_IN": "http",
+    "OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT": "true",
+    "LOONGSUITE_PYTHON_SITE_BOOTSTRAP": "true",
+}
+
+cfg_path.parent.mkdir(parents=True, exist_ok=True)
+with open(cfg_path, "w") as f:
+    json.dump(config, f, indent=2)
+
+print(f"Bootstrap config written to: {cfg_path}")
+PYEOF
+
+    log "CoPaw CMS plugin configured at ${BOOTSTRAP_CONFIG}"
+fi
+
+# ============================================================
+# 9. Launch CoPaw Manager (app mode with hot-reload)
 # ============================================================
 export COPAW_WORKING_DIR="${COPAW_WORKING_DIR}"
 

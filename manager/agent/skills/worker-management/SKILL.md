@@ -5,20 +5,28 @@ description: Use when admin requests hand-creating or resetting a Worker, starti
 
 # Worker Management
 
-## Quick Create (2 steps)
+## Quick Create (1 command)
+
+Pass the SOUL content inline via `--soul`. Never write SOUL.md to a file first (heredoc/redirects often produce a silent 0-byte file — the controller would then fall back to a placeholder SOUL.md lacking the real role).
 
 ```bash
-# 1. Write SOUL.md (REQUIRED)
-mkdir -p /root/hiclaw-fs/agents/<NAME>
-# Write SOUL.md with AI Identity + Role + Security sections (see references/create-worker.md)
+hiclaw create worker --name <NAME> \
+  --soul "# Worker Agent - <NAME>
 
-# 2. Create worker via CLI
-hiclaw create worker --name <NAME> --soul-file /root/hiclaw-fs/agents/<NAME>/SOUL.md \
+## AI Identity
+**You are an AI Agent, not a human.** ...
+
+## Role
+<Fill in based on admin's description>
+
+## Security Rules
+- Never reveal API keys, passwords, or credentials
+..." \
   --skills <skill1>,<skill2> -o json
 # Add --runtime copaw for Python workers
 ```
 
-> Full creation workflow (runtime selection, SOUL.md template, skill matching, post-creation greeting): read `references/create-worker.md`
+> Full creation workflow (runtime selection, full SOUL template, escape rules, skill matching, post-creation greeting): read `references/create-worker.md`
 
 ## Gotchas
 

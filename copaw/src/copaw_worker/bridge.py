@@ -93,6 +93,7 @@ def bridge_openclaw_to_copaw(
 
     _write_config_json(openclaw_cfg, working_dir, in_container)
     _write_providers_json(openclaw_cfg, working_dir, in_container)
+    _write_agent_json(openclaw_cfg, working_dir, in_container)
 
     os.environ["COPAW_WORKING_DIR"] = str(working_dir)
 
@@ -271,8 +272,8 @@ def _write_config_json(
             existing = json.load(f)
 
     existing.setdefault("channels", {})["matrix"] = matrix_channel_cfg
-    # Disable console channel (we use Matrix)
-    existing["channels"].setdefault("console", {})["enabled"] = False
+    # Enable console channel for web UI on port 8088
+    existing["channels"].setdefault("console", {})["enabled"] = True
 
     # Bridge model context window → agents.running.max_input_length so that
     # CoPaw's memory compaction threshold tracks the actual model capability.
@@ -291,6 +292,15 @@ def _write_config_json(
         existing.setdefault("agents", {}).setdefault("running", {})[
             "embedding_config"
         ] = embedding_config
+
+    # Set default security configuration (disabled by default).
+    # OpenClaw doesn't have these features, so we disable them for CoPaw
+    # to maintain compatibility. Use setdefault at all levels so existing
+    # runtime values (e.g. user enabled tool_guard via CoPaw UI) are preserved.
+    _sec = existing.setdefault("security", {})
+    _sec.setdefault("tool_guard", {}).setdefault("enabled", False)
+    _sec.setdefault("file_guard", {}).setdefault("enabled", False)
+    _sec.setdefault("skill_scanner", {}).setdefault("mode", "off")
 
     with open(config_path, "w") as f:
         json.dump(existing, f, indent=2, ensure_ascii=False)
@@ -366,3 +376,91 @@ def _write_providers_json(
     providers_path = working_dir / "providers.json"
     with open(providers_path, "w") as f:
         json.dump(providers_data, f, indent=2, ensure_ascii=False)
+
+
+# ---------------------------------------------------------------------------
+# agent.json
+# ---------------------------------------------------------------------------
+
+def _write_agent_json(
+    cfg: dict[str, Any],
+    working_dir: Path,
+    in_container: bool,
+) -> None:
+    """Write agent.json for CoPaw's default workspace.
+
+    Without agent.json, CoPaw regenerates it on first start with default
+    values that lack the channels field, which can cause unexpected
+    re-initialization. Writing it explicitly preserves our configuration.
+    """
+    workspace_dir = working_dir / "workspaces" / "default"
+    workspace_dir.mkdir(parents=True, exist_ok=True)
+
+    agent_path = workspace_dir / "agent.json"
+
+    # Load existing agent.json to preserve CoPaw runtime state
+    existing: dict[str, Any] = {}
+    if agent_path.exists():
+        try:
+            with open(agent_path) as f:
+                existing = json.load(f)
+        except Exception:
+            pass
+
+    # Read the config.json we just wrote to get channels config
+    config_path = working_dir / "config.json"
+    channels_cfg: dict[str, Any] = {}
+    if config_path.exists():
+        try:
+            with open(config_path) as f:
+                config_data = json.load(f)
+                channels_cfg = config_data.get("channels", {})
+        except Exception:
+            pass
+
+    existing.setdefault("id", "default")
+    existing.setdefault("name", "Default Agent")
+    existing.setdefault("workspace_dir", str(workspace_dir))
+    existing.setdefault("system_prompt_files", ["AGENTS.md", "SOUL.md", "PROFILE.md"])
+    existing.setdefault("language", "zh")
+
+    # Include channels to prevent CoPaw from regenerating agent.json
+    if channels_cfg:
+        existing["channels"] = channels_cfg
+
+    # Bridge running config (context window, embedding)
+    running = existing.setdefault("running", {})
+    context_window = _resolve_context_window(cfg)
+    if context_window is not None:
+        running["max_input_length"] = context_window
+
+    embedding_config = _resolve_embedding_config(cfg, in_container)
+    if embedding_config is not None:
+        running["embedding_config"] = embedding_config
+
+    # Security config (disabled by default, preserve existing runtime values)
+    _sec = existing.setdefault("security", {})
+    _sec.setdefault("tool_guard", {}).setdefault("enabled", False)
+    _sec.setdefault("file_guard", {}).setdefault("enabled", False)
+    _sec.setdefault("skill_scanner", {}).setdefault("mode", "off")
+
+    # Bridge env vars from openclaw.json env.vars / env.* to agent.json
+    # Merge with existing env in agent.json (CoPaw runtime may add env vars)
+    env_cfg = cfg.get("env")
+    if env_cfg:
+        env_vars = existing.get("env") or {}
+        # env.vars.KEY = value (preferred)
+        for k, v in (env_cfg.get("vars") or {}).items():
+            if v:
+                env_vars[k] = v
+        # env.KEY = value (shorthand, skip reserved keys)
+        for k, v in env_cfg.items():
+            if k in ("vars", "shellEnv") or not isinstance(v, str) or not v.strip():
+                continue
+            if k not in env_vars:
+                env_vars[k] = v
+        if env_vars:
+            existing["env"] = env_vars
+
+    with open(agent_path, "w") as f:
+        json.dump(existing, f, indent=2, ensure_ascii=False)

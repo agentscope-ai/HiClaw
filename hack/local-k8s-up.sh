@@ -68,7 +68,7 @@ fi
 # ── Step 2: Build & load local images ──────────────────────────────────────
 
 MANAGER_IMAGE="hiclaw/manager:local"
-COPAW_MANAGER_IMAGE="hiclaw/copaw-manager:local"
+COPAW_MANAGER_IMAGE="hiclaw/manager-copaw:local"
 CONTROLLER_IMAGE="hiclaw/hiclaw-controller:local"
 WORKER_IMAGE="hiclaw/worker-agent:local"
 COPAW_WORKER_IMAGE="hiclaw/copaw-worker:local"
@@ -97,8 +97,8 @@ if [ "$SKIP_BUILD" = "0" ]; then
             -f "${PROJECT_ROOT}/manager/Dockerfile" "${PROJECT_ROOT}"
     fi
 
-    # CoPaw Manager
-    log "Building copaw manager image..."
+    # CoPaw Manager (lightweight Python image with copaw_worker for bridge/sync)
+    log "Building CoPaw manager image..."
     docker build -t "$COPAW_MANAGER_IMAGE" \
         --build-arg HICLAW_CONTROLLER_IMAGE="$CONTROLLER_IMAGE" \
         -f "${PROJECT_ROOT}/manager/Dockerfile.copaw" "${PROJECT_ROOT}"
@@ -138,14 +138,20 @@ if [ "$SKIP_BUILD" = "0" ]; then
         "higress-registry.cn-hangzhou.cr.aliyuncs.com/higress/gateway:2.2.0"
         "higress-registry.cn-hangzhou.cr.aliyuncs.com/higress/proxyv2:2.2.0"
     )
+    PLATFORM="linux/$(uname -m | sed 's/x86_64/amd64/' | sed 's/aarch64/arm64/')"
     for img in "${PRELOAD_IMAGES[@]}"; do
-        docker pull "$img" 2>/dev/null || log "WARN: failed to pull $img (may already exist locally)"
-        kind load docker-image "$img" --name "$CLUSTER_NAME"
+        # Remove existing image first to avoid stale multi-arch manifest
+        docker rmi "$img" 2>/dev/null || true
+        docker pull --platform "$PLATFORM" "$img" 2>/dev/null || log "WARN: failed to pull $img (may already exist locally)"
+        # Bypass kind entirely: pipe docker save directly into containerd import
+        # without --all-platforms to avoid multi-arch manifest digest issues
+        docker save "$img" | docker exec --privileged -i "$CLUSTER_NAME-control-plane" \
+            ctr --namespace=k8s.io images import --snapshotter=overlayfs -
     done
 
     HELM_IMAGE_OVERRIDES="--set manager.runtime=${MANAGER_RUNTIME}"
     HELM_IMAGE_OVERRIDES="${HELM_IMAGE_OVERRIDES} --set manager.defaultImage.openclaw.repository=hiclaw/manager --set manager.defaultImage.openclaw.tag=local"
-    HELM_IMAGE_OVERRIDES="${HELM_IMAGE_OVERRIDES} --set manager.defaultImage.copaw.repository=hiclaw/copaw-manager --set manager.defaultImage.copaw.tag=local"
+    HELM_IMAGE_OVERRIDES="${HELM_IMAGE_OVERRIDES} --set manager.defaultImage.copaw.repository=hiclaw/manager-copaw --set manager.defaultImage.copaw.tag=local"
     HELM_IMAGE_OVERRIDES="${HELM_IMAGE_OVERRIDES} --set controller.image.repository=hiclaw/hiclaw-controller --set controller.image.tag=local --set controller.image.pullPolicy=Never"
     HELM_IMAGE_OVERRIDES="${HELM_IMAGE_OVERRIDES} --set worker.defaultImage.openclaw.repository=hiclaw/worker-agent --set worker.defaultImage.openclaw.tag=local"
     HELM_IMAGE_OVERRIDES="${HELM_IMAGE_OVERRIDES} --set worker.defaultImage.copaw.repository=hiclaw/copaw-worker --set worker.defaultImage.copaw.tag=local"

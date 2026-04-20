@@ -12,7 +12,7 @@ Delegate to a Team Leader when:
 ```
 Manager receives task from Admin
   ↓
-Manager checks teams-registry.json for matching team
+Manager checks team info via `hiclaw get team <TEAM_NAME>` for matching team
   ↓
 Manager creates task: shared/tasks/{task-id}/
   - meta.json: assigned_to = leader name

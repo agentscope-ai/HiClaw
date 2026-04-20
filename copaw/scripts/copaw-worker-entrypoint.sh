@@ -1,18 +1,12 @@
 #!/bin/bash
 # copaw-worker-entrypoint.sh - CoPaw Worker Agent container startup
-# Reads config from environment variables and launches copaw-worker
-# or lite-copaw-worker.
-#
-# Mode selection:
-#   - HICLAW_CONSOLE_PORT set   → standard mode (copaw-worker, PyPI CoPaw venv)
-#   - HICLAW_CONSOLE_PORT unset → lite mode (lite-copaw-worker, lite CoPaw venv)
+# Reads config from environment variables and launches copaw-worker.
 #
 # Environment variables (set by controller during worker creation):
 #   HICLAW_WORKER_NAME   - Worker name (required)
 #   HICLAW_FS_ENDPOINT   - MinIO endpoint (required in local mode)
 #   HICLAW_FS_ACCESS_KEY - MinIO access key (required in local mode)
 #   HICLAW_FS_SECRET_KEY - MinIO secret key (required in local mode)
-#   HICLAW_CONSOLE_PORT  - CoPaw web console port (triggers standard mode, costs ~500MB RAM)
 #   HICLAW_RUNTIME       - "aliyun" for cloud mode (uses RRSA/STS via hiclaw-env.sh)
 #   TZ                   - Timezone (optional)
 
@@ -22,8 +16,7 @@ set -e
 source /opt/hiclaw/scripts/lib/hiclaw-env.sh 2>/dev/null || true
 
 WORKER_NAME="${HICLAW_WORKER_NAME:?HICLAW_WORKER_NAME is required}"
-INSTALL_DIR="/root/.copaw-worker"
-CONSOLE_PORT="${HICLAW_CONSOLE_PORT:-}"
+INSTALL_DIR="/root/.hiclaw-worker"
 
 log() {
     echo "[hiclaw-copaw-worker $(date '+%Y-%m-%d %H:%M:%S')] $1"
@@ -55,6 +48,7 @@ else
     FS_SECRET_KEY="${HICLAW_FS_SECRET_KEY:?HICLAW_FS_SECRET_KEY is required}"
     FS_BUCKET="${HICLAW_FS_BUCKET:-hiclaw-storage}"
 fi
+log "  FS bucket: ${FS_BUCKET}"
 
 # Set up skills CLI symlink: ~/.agents/skills -> worker's skills directory
 # This makes `skills add -g` install skills into the worker's MinIO-synced skills/ dir
@@ -93,40 +87,57 @@ _start_readiness_reporter() {
     log "Background readiness reporter started (PID: $!)"
 }
 
-if [ -n "${CONSOLE_PORT}" ]; then
-    # ---------- Standard mode: copaw-worker (PyPI CoPaw venv, with console) ----------
-    VENV="/opt/venv/standard"
-    log "Starting copaw-worker: ${WORKER_NAME}"
-    log "  FS endpoint: ${FS_ENDPOINT}"
-    log "  Install dir: ${INSTALL_DIR}"
-    log "  Console port: ${CONSOLE_PORT}"
-    log "  CoPaw: standard (${VENV})"
+VENV="/opt/venv/copaw"
+log "Starting copaw-worker: ${WORKER_NAME}"
+log "  FS endpoint: ${FS_ENDPOINT}"
+log "  Install dir: ${INSTALL_DIR}"
+log "  CoPaw venv: ${VENV}"
 
-    _start_readiness_reporter
+# Set COPAW_WORKING_DIR before starting (read by copaw.constant at import time)
+export COPAW_WORKING_DIR="${INSTALL_DIR}/${WORKER_NAME}/.copaw"
 
-    exec "${VENV}/bin/copaw-worker" \
-        --name "${WORKER_NAME}" \
-        --fs "${FS_ENDPOINT}" \
-        --fs-key "${FS_ACCESS_KEY}" \
-        --fs-secret "${FS_SECRET_KEY}" \
-        --fs-bucket "${FS_BUCKET}" \
-        --install-dir "${INSTALL_DIR}" \
-        --console-port "${CONSOLE_PORT}"
-else
-    # ---------- Lite mode: lite CoPaw venv, headless ----------
-    VENV="/opt/venv/lite"
-    log "Starting copaw-worker: ${WORKER_NAME}"
-    log "  FS endpoint: ${FS_ENDPOINT}"
-    log "  Install dir: ${INSTALL_DIR}"
-    log "  CoPaw: lite (${VENV})"
+# Enable debug logging for troubleshooting
+export COPAW_LOG_LEVEL="${COPAW_LOG_LEVEL:-info}"
 
-    _start_readiness_reporter
+# ── CoPaw CMS Plugin Configuration ───────────────────────────────────────────
+# Configure LoongSuite observability plugin if tracing is enabled
+CMS_TRACES_ENABLED="$(echo "${HICLAW_CMS_TRACES_ENABLED:-false}" | tr '[:upper:]' '[:lower:]')"
+if [ "${CMS_TRACES_ENABLED}" = "true" ]; then
+    log "Configuring CoPaw CMS plugin..."
+    LOONGSUITE_DIR="${HOME}/.loongsuite"
+    mkdir -p "${LOONGSUITE_DIR}"
 
-    exec "${VENV}/bin/copaw-worker" \
-        --name "${WORKER_NAME}" \
-        --fs "${FS_ENDPOINT}" \
-        --fs-key "${FS_ACCESS_KEY}" \
-        --fs-secret "${FS_SECRET_KEY}" \
-        --fs-bucket "${FS_BUCKET}" \
-        --install-dir "${INSTALL_DIR}"
+    cat > "${LOONGSUITE_DIR}/bootstrap-config.json" <<EOF
+{
+  "OTEL_EXPORTER_OTLP_ENDPOINT": "${HICLAW_CMS_ENDPOINT}",
+  "OTEL_EXPORTER_OTLP_PROTOCOL": "http/protobuf",
+  "OTEL_EXPORTER_OTLP_HEADERS": "x-arms-license-key=${HICLAW_CMS_LICENSE_KEY},x-arms-project=${HICLAW_CMS_PROJECT},x-cms-workspace=${HICLAW_CMS_WORKSPACE}",
+  "OTEL_SERVICE_NAME": "${HICLAW_CMS_SERVICE_NAME:-hiclaw-worker-${WORKER_NAME}}",
+  "OTEL_SEMCONV_STABILITY_OPT_IN": "http",
+  "OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT": "true",
+  "LOONGSUITE_PYTHON_SITE_BOOTSTRAP": "true"
+}
+EOF
+    log "CoPaw CMS plugin configured at ${LOONGSUITE_DIR}/bootstrap-config.json"
+    export LOONGSUITE_PYTHON_SITE_BOOTSTRAP=true
 fi
+
+# Console port (default 8088, can be overridden via HICLAW_CONSOLE_PORT)
+CONSOLE_PORT="${HICLAW_CONSOLE_PORT:-8088}"
+
+# Build command
+CMD_ARGS=(
+    --name "${WORKER_NAME}"
+    --fs "${FS_ENDPOINT}"
+    --fs-key "${FS_ACCESS_KEY}"
+    --fs-secret "${FS_SECRET_KEY}"
+    --fs-bucket "${FS_BUCKET}"
+    --install-dir "${INSTALL_DIR}"
+    --console-port "${CONSOLE_PORT}"
+)
+
+log "  Console port: ${CONSOLE_PORT}"
+
+_start_readiness_reporter
+
+exec "${VENV}/bin/copaw-worker" "${CMD_ARGS[@]}"

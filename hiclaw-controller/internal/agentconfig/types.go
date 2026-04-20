@@ -24,6 +24,7 @@ type Config struct {
 	CMSLicenseKey     string
 	CMSProject        string
 	CMSWorkspace      string
+	CMSServiceName    string
 }
 
 // WorkerConfigRequest describes everything needed to generate a worker's config files.

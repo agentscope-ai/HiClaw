@@ -129,9 +129,11 @@ OPENCLAW_BASE_PUSH_ARG  = --build-arg OPENCLAW_BASE_IMAGE=$(OPENCLAW_BASE_IMAGE)
 
 build-hiclaw-controller: ## Build hiclaw-controller image (prerequisite for Manager)
 	@echo "==> Building hiclaw-controller image: $(LOCAL_CONTROLLER)"
+	@rm -rf ./hiclaw-controller/agent && cp -r ./manager/agent ./hiclaw-controller/agent
 	docker build $(PLATFORM_FLAG) $(DOCKER_BUILD_ARGS) \
 		-t $(LOCAL_CONTROLLER) \
 		./hiclaw-controller/
+	@rm -rf ./hiclaw-controller/agent
 
 build-manager: build-hiclaw-controller ## Build Manager image (OpenClaw runtime)
 	@echo "==> Building Manager image: $(LOCAL_MANAGER) (registry: $(HIGRESS_REGISTRY))"
@@ -157,17 +159,15 @@ build-embedded: build-hiclaw-controller ## Build embedded all-in-one controller 
 		-t $(LOCAL_EMBEDDED) \
 		.
 
-build-worker: build-hiclaw-controller ## Build Worker image
+build-worker: ## Build Worker image
 	@echo "==> Building Worker image: $(LOCAL_WORKER) (registry: $(HIGRESS_REGISTRY))"
 	docker build $(PLATFORM_FLAG) $(REGISTRY_ARG) $(OPENCLAW_BASE_BUILD_ARG) $(SHARED_LIB_CTX) $(DOCKER_BUILD_ARGS) \
-		--build-arg HICLAW_CONTROLLER_IMAGE=$(LOCAL_CONTROLLER) \
 		-t $(LOCAL_WORKER) \
 		./worker/
 
-build-copaw-worker: build-hiclaw-controller ## Build CoPaw Worker image
+build-copaw-worker: ## Build CoPaw Worker image
 	@echo "==> Building CoPaw Worker image: $(LOCAL_COPAW_WORKER) (registry: $(HIGRESS_REGISTRY))"
 	docker build $(PLATFORM_FLAG) $(REGISTRY_ARG) $(SHARED_LIB_CTX) $(DOCKER_BUILD_ARGS) \
-		--build-arg HICLAW_CONTROLLER_IMAGE=$(LOCAL_CONTROLLER) \
 		-t $(LOCAL_COPAW_WORKER) \
 		./copaw/
 
@@ -239,6 +239,7 @@ endif
 
 push-hiclaw-controller: buildx-setup ## Build + push multi-arch hiclaw-controller image
 	@echo "==> Building + pushing multi-arch hiclaw-controller: $(CONTROLLER_TAG) [$(MULTIARCH_PLATFORMS)]"
+	@rm -rf ./hiclaw-controller/agent && cp -r ./manager/agent ./hiclaw-controller/agent
 ifeq ($(IS_PODMAN),1)
 	-podman manifest rm $(CONTROLLER_TAG) 2>/dev/null
 	$(foreach plat,$(subst $(comma), ,$(MULTIARCH_PLATFORMS)), \
@@ -257,6 +258,7 @@ else
 		--push \
 		./hiclaw-controller/
 endif
+	@rm -rf ./hiclaw-controller/agent
 
 push-manager: push-hiclaw-controller buildx-setup ## Build + push multi-arch Manager image (OpenClaw)
 	@echo "==> Building + pushing multi-arch Manager: $(MANAGER_TAG) [$(MULTIARCH_PLATFORMS)]"
@@ -287,7 +289,7 @@ else
 		.
 endif
 
-push-manager-copaw: push-hiclaw-controller buildx-setup ## Build + push multi-arch Manager CoPaw image
+push-manager-copaw: buildx-setup ## Build + push multi-arch Manager CoPaw image
 	@echo "==> Building + pushing multi-arch Manager CoPaw: $(MANAGER_COPAW_TAG) [$(MULTIARCH_PLATFORMS)]"
 ifeq ($(IS_PODMAN),1)
 	-podman manifest rm $(MANAGER_COPAW_TAG) 2>/dev/null
@@ -316,7 +318,7 @@ else
 		.
 endif
 
-push-worker: push-hiclaw-controller buildx-setup ## Build + push multi-arch Worker image
+push-worker: buildx-setup ## Build + push multi-arch Worker image
 	@echo "==> Building + pushing multi-arch Worker: $(WORKER_TAG) [$(MULTIARCH_PLATFORMS)]"
 ifeq ($(IS_PODMAN),1)
 	@# Podman: build each platform into a manifest list, then push
@@ -325,7 +327,6 @@ ifeq ($(IS_PODMAN),1)
 		echo "  -> Building Worker for $(plat)..." && \
 		podman build --platform $(plat) \
 			$(REGISTRY_ARG) $(OPENCLAW_BASE_PUSH_ARG) $(SHARED_LIB_CTX) $(DOCKER_BUILD_ARGS) \
-			--build-arg HICLAW_CONTROLLER_IMAGE=$(CONTROLLER_TAG) \
 			--manifest $(WORKER_TAG) \
 			./worker/ && ) true
 	podman manifest push --all $(WORKER_TAG) docker://$(WORKER_TAG)
@@ -337,14 +338,13 @@ else
 		--builder $(BUILDX_BUILDER) \
 		--platform $(MULTIARCH_PLATFORMS) \
 		$(REGISTRY_ARG) $(OPENCLAW_BASE_PUSH_ARG) $(SHARED_LIB_CTX) $(DOCKER_BUILD_ARGS) \
-		--build-arg HICLAW_CONTROLLER_IMAGE=$(CONTROLLER_TAG) \
 		-t $(WORKER_TAG) \
 		$(if $(PUSH_LATEST),-t $(WORKER_IMAGE):latest) \
 		--push \
 		./worker/
 endif
 
-push-copaw-worker: push-hiclaw-controller buildx-setup ## Build + push multi-arch CoPaw Worker image
+push-copaw-worker: buildx-setup ## Build + push multi-arch CoPaw Worker image
 	@echo "==> Building + pushing multi-arch CoPaw Worker: $(COPAW_WORKER_TAG) [$(MULTIARCH_PLATFORMS)]"
 ifeq ($(IS_PODMAN),1)
 	-podman manifest rm $(COPAW_WORKER_TAG) 2>/dev/null
@@ -352,7 +352,6 @@ ifeq ($(IS_PODMAN),1)
 		echo "  -> Building CoPaw Worker for $(plat)..." && \
 		podman build --platform $(plat) \
 			$(REGISTRY_ARG) $(SHARED_LIB_CTX) $(DOCKER_BUILD_ARGS) \
-			--build-arg HICLAW_CONTROLLER_IMAGE=$(CONTROLLER_TAG) \
 			--manifest $(COPAW_WORKER_TAG) \
 			./copaw/ && ) true
 	podman manifest push --all $(COPAW_WORKER_TAG) docker://$(COPAW_WORKER_TAG)
@@ -364,7 +363,6 @@ else
 		--builder $(BUILDX_BUILDER) \
 		--platform $(MULTIARCH_PLATFORMS) \
 		$(REGISTRY_ARG) $(SHARED_LIB_CTX) $(DOCKER_BUILD_ARGS) \
-		--build-arg HICLAW_CONTROLLER_IMAGE=$(CONTROLLER_TAG) \
 		-t $(COPAW_WORKER_TAG) \
 		$(if $(PUSH_LATEST),-t $(COPAW_WORKER_IMAGE):latest) \
 		--push \
@@ -518,11 +516,7 @@ uninstall: ## Stop and remove Manager + all Worker containers
 
 install-embedded: ## Install in embedded mode (dual-container: controller + agent)
 ifndef SKIP_BUILD
-ifeq ($(HICLAW_MANAGER_RUNTIME),copaw)
-	$(MAKE) build-embedded build-manager-copaw build-worker build-copaw-worker
-else
-	$(MAKE) build-embedded build-manager build-worker build-copaw-worker
-endif
+	$(MAKE) build-embedded build-manager build-manager-copaw build-worker build-copaw-worker
 endif
 	@echo "==> Installing HiClaw (embedded mode)..."
 	HICLAW_NON_INTERACTIVE=1 \

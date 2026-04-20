@@ -6,7 +6,6 @@ type Config struct {
 	AdminUser                 string // console login username
 	AdminPassword             string // console login password
 	AllowDefaultAdminFallback bool   // embedded bootstrap only: recover from all-in-one default admin/admin
-	PilotURL                  string // istiod debug API, e.g. http://127.0.0.1:15014 (embedded mode only)
 }
 
 // ConsumerRequest describes a gateway consumer to create.

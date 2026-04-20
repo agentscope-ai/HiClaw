@@ -255,8 +255,6 @@ func (p *Provisioner) ProvisionWorker(ctx context.Context, req WorkerProvisionRe
 		}
 	}
 
-	p.gateway.TriggerPush()
-
 	return &WorkerProvisionResult{
 		MatrixUserID:   workerMatrixID,
 		MatrixToken:    userCreds.AccessToken,
@@ -569,8 +567,6 @@ func (p *Provisioner) ProvisionManager(ctx context.Context, req ManagerProvision
 			logger.Error(err, "MCP authorization partial failure (non-fatal)")
 		}
 	}
-
-	p.gateway.TriggerPush()
 
 	return &ManagerProvisionResult{
 		MatrixUserID:   managerMatrixID,
