@@ -23,8 +23,11 @@ COPY . .
 RUN CGO_ENABLED=1 go build -ldflags '-extldflags "-static"' -o /hiclaw-controller ./cmd/controller/
 RUN CGO_ENABLED=0 go build -o /hiclaw ./cmd/hiclaw/
 
-# ============ Stage 2: Download kube-apiserver ============
-FROM ${HIGRESS_REGISTRY}/higress/alpine:3.20 AS kube-bin
+# ============ Stage 2: mc (MinIO Client) ============
+FROM ${HIGRESS_REGISTRY}/higress/mc:20260216 AS mc
+
+# ============ Stage 3: Download kube-apiserver (native arch to avoid QEMU TLS bugs) ============
+FROM --platform=$BUILDPLATFORM ${HIGRESS_REGISTRY}/higress/alpine:3.20 AS kube-bin
 ARG KUBE_VERSION=v1.31.3
 ARG TARGETARCH=amd64
 RUN apk add --no-cache curl && \
@@ -35,10 +38,9 @@ RUN apk add --no-cache curl && \
 # ============ Final: Minimal image with all artifacts ============
 FROM ${HIGRESS_REGISTRY}/higress/alpine:3.20
 
-RUN apk add --no-cache bash jq curl unzip && \
-    curl -fSL -o /usr/local/bin/mc https://dl.min.io/client/mc/release/linux-amd64/mc && \
-    chmod +x /usr/local/bin/mc
+RUN apk add --no-cache bash jq curl unzip
 
+COPY --from=mc /usr/bin/mc /usr/local/bin/mc
 COPY --from=builder /hiclaw-controller /usr/local/bin/hiclaw-controller
 COPY --from=builder /hiclaw /usr/local/bin/hiclaw
 COPY --from=kube-bin /kube-apiserver /usr/local/bin/kube-apiserver
