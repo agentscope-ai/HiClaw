@@ -36,6 +36,19 @@ export TEST_OUTPUT_DIR="${TEST_OUTPUT_DIR:-${PROJECT_ROOT:-.}/tests/output}"
 # Runtime-aware Session Path Detection
 # ============================================================
 
+# Detect the agent runtime ID for a container.
+# Probes both HICLAW_MANAGER_RUNTIME (manager containers) and
+# HICLAW_WORKER_RUNTIME (worker containers); falls back to "openclaw".
+_detect_runtime() {
+    local container="$1"
+    local runtime
+    runtime=$(docker exec "$container" sh -c \
+        'printenv HICLAW_MANAGER_RUNTIME || printenv HICLAW_WORKER_RUNTIME' \
+        2>/dev/null)
+    [ -z "$runtime" ] && runtime="openclaw"
+    echo "$runtime"
+}
+
 # Detect session directory for a given container based on its runtime.
 # Usage: _detect_session_dir <container> <base_workspace_dir>
 # Output: session directory path (e.g. /root/manager-workspace/.openclaw/agents/main/sessions)
@@ -43,13 +56,53 @@ _detect_session_dir() {
     local container="$1"
     local base_dir="$2"
     local runtime
-    runtime=$(docker exec "$container" printenv HICLAW_MANAGER_RUNTIME 2>/dev/null || echo "openclaw")
+    runtime=$(_detect_runtime "$container")
 
-    if [ "$runtime" = "copaw" ]; then
-        echo "${base_dir}/.copaw/sessions"
-    else
-        echo "${base_dir}/.openclaw/agents/main/sessions"
-    fi
+    case "$runtime" in
+        copaw)
+            # CoPaw stores one .json per session under workspaces/default/sessions.
+            # See copaw/AGENTS.md "Session files" table.
+            echo "${base_dir}/.copaw/workspaces/default/sessions"
+            ;;
+        *)
+            # OpenClaw default: one .jsonl per session under agents/main/sessions.
+            echo "${base_dir}/.openclaw/agents/main/sessions"
+            ;;
+    esac
+}
+
+# Returns 0 if the runtime persists LLM token usage in its session files
+# (and therefore can be parsed by parse_session_metrics_inline), 1 otherwise.
+#
+# CoPaw session JSON files only contain message content + tool I/O; they do
+# NOT carry any token-usage block, so parsing them returns zeros across the
+# board. Treat copaw as "unsupported" so collect/print can surface the gap
+# explicitly instead of producing misleading "0 LLM calls" output.
+_is_metrics_supported() {
+    local container="$1"
+    local runtime
+    runtime=$(_detect_runtime "$container")
+    case "$runtime" in
+        copaw) return 1 ;;
+        *) return 0 ;;
+    esac
+}
+
+# Emit a placeholder metrics JSON for runtimes whose session files do not
+# carry token usage. Includes a "metrics_supported": false marker so consumers
+# can distinguish "0 LLM calls" from "this runtime does not record usage".
+_emit_unsupported_metrics_blob() {
+    local runtime="$1"
+    cat <<EOF
+{
+  "llm_calls": 0,
+  "tokens": {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0, "total": 0},
+  "timing": {"start": "", "end": "", "duration_seconds": 0},
+  "metrics_supported": false,
+  "runtime": "${runtime}",
+  "note": "session files for this runtime do not record LLM token usage"
+}
+EOF
 }
 
 # ============================================================
@@ -175,13 +228,19 @@ wait_for_worker_session_stable() {
     local stable_seconds="${2:-5}"
     local max_wait="${3:-120}"
     local container="hiclaw-worker-${worker}"
-    local session_dir
-    session_dir=$(_detect_session_dir "$container" "/root/hiclaw-fs/agents/${worker}")
 
     if ! docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^${container}$"; then
         log_info "Worker '${worker}' container not running, skipping session wait" >&2
         return 0
     fi
+
+    if ! _is_metrics_supported "$container"; then
+        log_info "Worker '${worker}' runtime does not record session metrics, skipping session wait" >&2
+        return 0
+    fi
+
+    local session_dir
+    session_dir=$(_detect_session_dir "$container" "/root/hiclaw-fs/agents/${worker}")
 
     log_info "Waiting for Worker '${worker}' session to stabilize (up to ${max_wait}s)..." >&2
 
@@ -222,6 +281,12 @@ wait_for_session_stable() {
     local stable_seconds="${1:-5}"
     local max_wait="${2:-60}"
     local manager_container="${TEST_AGENT_CONTAINER:-${TEST_CONTROLLER_CONTAINER:-hiclaw-manager}}"
+
+    if ! _is_metrics_supported "$manager_container"; then
+        log_info "Manager runtime does not record session metrics, skipping session wait" >&2
+        return 0
+    fi
+
     local manager_session_dir
     manager_session_dir=$(_detect_session_dir "$manager_container" "/root/manager-workspace")
 
@@ -270,34 +335,44 @@ snapshot_baseline() {
     local workers=("$@")
 
     local manager_container="${TEST_AGENT_CONTAINER:-${TEST_CONTROLLER_CONTAINER:-hiclaw-manager}}"
-    local manager_session_dir
-    manager_session_dir=$(_detect_session_dir "$manager_container" "/root/manager-workspace")
 
     local snapshot_result='{"offsets": {}}'
 
-    # Snapshot all Manager session files
-    local manager_files
-    manager_files=$(docker exec "$manager_container" \
-        sh -c "ls '${manager_session_dir}'/*.jsonl 2>/dev/null" 2>/dev/null)
-    if [ -n "$manager_files" ]; then
-        local manager_offsets='{}'
-        while IFS= read -r f; do
-            local sz
-            sz=$(docker exec "$manager_container" sh -c "wc -c < '$f' 2>/dev/null || echo 0")
-            manager_offsets=$(echo "$manager_offsets" | jq --arg f "$f" --argjson s "$sz" '.[$f] = $s')
-        done <<< "$manager_files"
-        snapshot_result=$(echo "$snapshot_result" | jq --argjson o "$manager_offsets" '.offsets.manager = $o')
+    # Snapshot all Manager session files (only for runtimes whose sessions
+    # are parseable; otherwise leave the offsets map empty so collect_*
+    # can short-circuit with an unsupported placeholder).
+    if _is_metrics_supported "$manager_container"; then
+        local manager_session_dir
+        manager_session_dir=$(_detect_session_dir "$manager_container" "/root/manager-workspace")
+
+        local manager_files
+        manager_files=$(docker exec "$manager_container" \
+            sh -c "ls '${manager_session_dir}'/*.jsonl 2>/dev/null" 2>/dev/null)
+        if [ -n "$manager_files" ]; then
+            local manager_offsets='{}'
+            while IFS= read -r f; do
+                local sz
+                sz=$(docker exec "$manager_container" sh -c "wc -c < '$f' 2>/dev/null || echo 0")
+                manager_offsets=$(echo "$manager_offsets" | jq --arg f "$f" --argjson s "$sz" '.[$f] = $s')
+            done <<< "$manager_files"
+            snapshot_result=$(echo "$snapshot_result" | jq --argjson o "$manager_offsets" '.offsets.manager = $o')
+        fi
     fi
 
     # Snapshot all Worker session files
     for worker in "${workers[@]}"; do
         local worker_container="hiclaw-worker-${worker}"
-        local worker_session_dir
-        worker_session_dir=$(_detect_session_dir "$worker_container" "/root/hiclaw-fs/agents/${worker}")
 
         if ! docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^${worker_container}$"; then
             continue
         fi
+
+        if ! _is_metrics_supported "$worker_container"; then
+            continue
+        fi
+
+        local worker_session_dir
+        worker_session_dir=$(_detect_session_dir "$worker_container" "/root/hiclaw-fs/agents/${worker}")
 
         local worker_files
         worker_files=$(docker exec "$worker_container" \
@@ -407,28 +482,35 @@ collect_delta_metrics() {
     local workers=("$@")
 
     local manager_container="${TEST_AGENT_CONTAINER:-${TEST_CONTROLLER_CONTAINER:-hiclaw-manager}}"
-    local manager_session_dir
-    manager_session_dir=$(_detect_session_dir "$manager_container" "/root/manager-workspace")
 
     # Initialize result structure
     local delta_result='{"test_name": "'"${test_name}"'", "timestamp": "'"$(date -Iseconds)"'", "agents": {}, "totals": {"llm_calls": 0, "tokens": {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0, "total": 0}, "timing": {"duration_seconds": 0}}}'
 
     # Collect Manager delta using byte-offset approach across all session files
     log_info "Collecting Manager delta metrics..." >&2
-    local manager_offsets
-    manager_offsets=$(echo "$baseline" | jq -r '.offsets.manager // empty')
-    local manager_delta
-    manager_delta=$(_collect_agent_delta "$manager_container" "$manager_session_dir" "$manager_offsets")
-    if [ -n "$manager_delta" ]; then
-        delta_result=$(echo "$delta_result" | jq --argjson m "$manager_delta" '.agents.manager = $m')
-        log_info "Manager delta: $(echo "$manager_delta" | jq -r '.llm_calls') LLM calls, $(echo "$manager_delta" | jq -r '.tokens.total') tokens" >&2
+    if _is_metrics_supported "$manager_container"; then
+        local manager_session_dir
+        manager_session_dir=$(_detect_session_dir "$manager_container" "/root/manager-workspace")
+        local manager_offsets
+        manager_offsets=$(echo "$baseline" | jq -r '.offsets.manager // empty')
+        local manager_delta
+        manager_delta=$(_collect_agent_delta "$manager_container" "$manager_session_dir" "$manager_offsets")
+        if [ -n "$manager_delta" ]; then
+            delta_result=$(echo "$delta_result" | jq --argjson m "$manager_delta" '.agents.manager = $m')
+            log_info "Manager delta: $(echo "$manager_delta" | jq -r '.llm_calls') LLM calls, $(echo "$manager_delta" | jq -r '.tokens.total') tokens" >&2
+        fi
+    else
+        local manager_runtime
+        manager_runtime=$(_detect_runtime "$manager_container")
+        log_info "Manager runtime '${manager_runtime}' does not record session metrics; emitting unsupported placeholder" >&2
+        local manager_blob
+        manager_blob=$(_emit_unsupported_metrics_blob "$manager_runtime")
+        delta_result=$(echo "$delta_result" | jq --argjson m "$manager_blob" '.agents.manager = $m')
     fi
 
     # Collect Worker deltas
     for worker in "${workers[@]}"; do
         local worker_container="hiclaw-worker-${worker}"
-        local worker_session_dir
-        worker_session_dir=$(_detect_session_dir "$worker_container" "/root/hiclaw-fs/agents/${worker}")
 
         log_info "Collecting Worker '${worker}' delta metrics..." >&2
 
@@ -436,6 +518,19 @@ collect_delta_metrics() {
             log_info "Worker '${worker}' container not running, skipping" >&2
             continue
         fi
+
+        if ! _is_metrics_supported "$worker_container"; then
+            local worker_runtime
+            worker_runtime=$(_detect_runtime "$worker_container")
+            log_info "Worker '${worker}' runtime '${worker_runtime}' does not record session metrics; emitting unsupported placeholder" >&2
+            local worker_blob
+            worker_blob=$(_emit_unsupported_metrics_blob "$worker_runtime")
+            delta_result=$(echo "$delta_result" | jq --arg w "$worker" --argjson m "$worker_blob" '.agents[$w] = $m')
+            continue
+        fi
+
+        local worker_session_dir
+        worker_session_dir=$(_detect_session_dir "$worker_container" "/root/hiclaw-fs/agents/${worker}")
 
         local worker_offsets
         worker_offsets=$(echo "$baseline" | jq -r --arg w "$worker" '.offsets[$w] // empty')
@@ -476,45 +571,65 @@ collect_test_metrics() {
     local workers=("$@")
     
     local manager_container="${TEST_AGENT_CONTAINER:-${TEST_CONTROLLER_CONTAINER:-hiclaw-manager}}"
-    local manager_session_dir
-    manager_session_dir=$(_detect_session_dir "$manager_container" "/root/manager-workspace")
 
     # Initialize result structure
     local cumulative_result='{"test_name": "'"${test_name}"'", "timestamp": "'"$(date -Iseconds)"'", "agents": {}, "totals": {"llm_calls": 0, "tokens": {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0, "total": 0}, "timing": {"duration_seconds": 0}}}'
     
     # Collect Manager metrics
     log_info "Collecting Manager metrics..." >&2
-    local manager_session
-    manager_session=$(get_latest_session "$manager_container" "$manager_session_dir")
-    
-    if [ -n "$manager_session" ]; then
-        local manager_metrics
-        manager_metrics=$(docker exec "$manager_container" cat "$manager_session" 2>/dev/null | parse_session_metrics_inline)
-        if [ -n "$manager_metrics" ]; then
-            cumulative_result=$(echo "$cumulative_result" | jq --argjson m "$manager_metrics" '.agents.manager = $m')
-            log_info "Manager: $(echo "$manager_metrics" | jq -r '.llm_calls') LLM calls, $(echo "$manager_metrics" | jq -r '.tokens.total') tokens" >&2
+    if _is_metrics_supported "$manager_container"; then
+        local manager_session_dir
+        manager_session_dir=$(_detect_session_dir "$manager_container" "/root/manager-workspace")
+        local manager_session
+        manager_session=$(get_latest_session "$manager_container" "$manager_session_dir")
+
+        if [ -n "$manager_session" ]; then
+            local manager_metrics
+            manager_metrics=$(docker exec "$manager_container" cat "$manager_session" 2>/dev/null | parse_session_metrics_inline)
+            if [ -n "$manager_metrics" ]; then
+                cumulative_result=$(echo "$cumulative_result" | jq --argjson m "$manager_metrics" '.agents.manager = $m')
+                log_info "Manager: $(echo "$manager_metrics" | jq -r '.llm_calls') LLM calls, $(echo "$manager_metrics" | jq -r '.tokens.total') tokens" >&2
+            fi
+        else
+            log_info "No Manager session found" >&2
         fi
     else
-        log_info "No Manager session found" >&2
+        local manager_runtime
+        manager_runtime=$(_detect_runtime "$manager_container")
+        log_info "Manager runtime '${manager_runtime}' does not record session metrics; emitting unsupported placeholder" >&2
+        local manager_blob
+        manager_blob=$(_emit_unsupported_metrics_blob "$manager_runtime")
+        cumulative_result=$(echo "$cumulative_result" | jq --argjson m "$manager_blob" '.agents.manager = $m')
     fi
     
     # Collect Worker metrics
     for worker in "${workers[@]}"; do
         local worker_container="hiclaw-worker-${worker}"
-        local worker_session_dir
-        worker_session_dir=$(_detect_session_dir "$worker_container" "/root/hiclaw-fs/agents/${worker}")
-        
+
         log_info "Collecting Worker '${worker}' metrics..." >&2
-        
+
         # Check if worker container exists and is running
         if ! docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^${worker_container}$"; then
             log_info "Worker '${worker}' container not running, skipping" >&2
             continue
         fi
-        
+
+        if ! _is_metrics_supported "$worker_container"; then
+            local worker_runtime
+            worker_runtime=$(_detect_runtime "$worker_container")
+            log_info "Worker '${worker}' runtime '${worker_runtime}' does not record session metrics; emitting unsupported placeholder" >&2
+            local worker_blob
+            worker_blob=$(_emit_unsupported_metrics_blob "$worker_runtime")
+            cumulative_result=$(echo "$cumulative_result" | jq --arg w "$worker" --argjson m "$worker_blob" '.agents[$w] = $m')
+            continue
+        fi
+
+        local worker_session_dir
+        worker_session_dir=$(_detect_session_dir "$worker_container" "/root/hiclaw-fs/agents/${worker}")
+
         local worker_session
         worker_session=$(get_latest_session "$worker_container" "$worker_session_dir")
-        
+
         if [ -n "$worker_session" ]; then
             local worker_metrics
             worker_metrics=$(docker exec "$worker_container" cat "$worker_session" 2>/dev/null | parse_session_metrics_inline)
@@ -590,6 +705,20 @@ print_metrics_report() {
 
         echo ""
         echo "  [$agent]"
+
+        # Surface an explicit note when the runtime cannot produce metrics, so
+        # readers don't mistake the all-zero block below for "this agent did
+        # nothing" (e.g. CoPaw session files do not record token usage).
+        # NOTE: don't use `.metrics_supported // empty` because jq's `//`
+        # treats boolean false as falsy and short-circuits to the alternative.
+        local unsupported runtime note
+        unsupported=$(echo "$d" | jq -r 'if .metrics_supported == false then "yes" else "no" end')
+        if [ "$unsupported" = "yes" ]; then
+            runtime=$(echo "$d" | jq -r '.runtime // "unknown"')
+            note=$(echo "$d" | jq -r '.note // "metrics unsupported for this runtime"')
+            printf "    (NOTE: runtime=%s — %s)\n" "$runtime" "$note"
+        fi
+
         _print_metric "LLM Calls"     "$(echo "$d" | jq -r '.llm_calls')"          "$b_calls"  "$baseline"
         _print_metric "Input Tokens"  "$(echo "$d" | jq -r '.tokens.input')"        "$b_in"     "$baseline"
         _print_metric "Output Tokens" "$(echo "$d" | jq -r '.tokens.output')"       "$b_out"    "$baseline"
