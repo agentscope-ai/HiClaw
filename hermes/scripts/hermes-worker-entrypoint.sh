@@ -16,7 +16,13 @@ set -e
 source /opt/hiclaw/scripts/lib/hiclaw-env.sh 2>/dev/null || true
 
 WORKER_NAME="${HICLAW_WORKER_NAME:?HICLAW_WORKER_NAME is required}"
-INSTALL_DIR="/root/.hiclaw-worker"
+# Align with the openclaw worker layout: HOME == workspace == MinIO mirror root.
+# The controller injects HOME=/root/hiclaw-fs/agents/<WORKER_NAME>; we anchor
+# the install dir to its parent so workspace_dir == HOME and ${HERMES_HOME}
+# == ${HOME}/.hermes/. This makes `cd ~ && ls` show openclaw.json / AGENTS.md /
+# SOUL.md / skills / .hermes just like the openclaw worker.
+INSTALL_DIR="/root/hiclaw-fs/agents"
+WORKSPACE="${INSTALL_DIR}/${WORKER_NAME}"
 
 log() {
     echo "[hiclaw-hermes-worker $(date '+%Y-%m-%d %H:%M:%S')] $1"
@@ -49,15 +55,13 @@ else
 fi
 log "  FS bucket: ${FS_BUCKET}"
 
-# Set up skills CLI symlink: ~/.agents/skills -> worker's skills directory
-WORKER_SKILLS_DIR="${INSTALL_DIR}/${WORKER_NAME}/skills"
-mkdir -p "${WORKER_SKILLS_DIR}"
-mkdir -p "${HOME}/.agents"
-ln -sfn "${WORKER_SKILLS_DIR}" "${HOME}/.agents/skills"
-
-# /root/hiclaw-fs symlink so absolute paths used by Manager-side scripts also
-# work inside the hermes worker container.
-ln -sfn "${INSTALL_DIR}/${WORKER_NAME}" /root/hiclaw-fs 2>/dev/null || true
+# Workspace == HOME, so ~/skills is the real directory hermes_worker syncs from
+# MinIO. Mirror the openclaw convention of also exposing it as ~/.agents/skills
+# for any tool that walks that legacy path.
+mkdir -p "${WORKSPACE}/skills" "${HOME}/.agents"
+# Use --no-dereference so we replace any pre-existing symlink-to-directory
+# instead of nesting ~/.agents/skills/skills inside it.
+ln -sfn "${WORKSPACE}/skills" "${HOME}/.agents/skills"
 
 # Background readiness reporter — report ready once the bridge has produced
 # the gateway's config.yaml (i.e. the worker can actually serve traffic).
@@ -66,7 +70,7 @@ _start_readiness_reporter() {
 
     (
         TIMEOUT=120; ELAPSED=0
-        CONFIG_FILE="${INSTALL_DIR}/${WORKER_NAME}/.hermes/config.yaml"
+        CONFIG_FILE="${WORKSPACE}/.hermes/config.yaml"
         while [ "${ELAPSED}" -lt "${TIMEOUT}" ]; do
             if [ -f "${CONFIG_FILE}" ] && grep -q '^matrix:' "${CONFIG_FILE}" 2>/dev/null; then
                 break
@@ -91,7 +95,7 @@ log "  Install dir: ${INSTALL_DIR}"
 log "  Hermes venv: ${VENV}"
 
 # Hermes-agent reads its workspace from HERMES_HOME at process start.
-export HERMES_HOME="${INSTALL_DIR}/${WORKER_NAME}/.hermes"
+export HERMES_HOME="${WORKSPACE}/.hermes"
 mkdir -p "${HERMES_HOME}"
 
 # ── Hermes CMS Plugin Configuration ──────────────────────────────────────────

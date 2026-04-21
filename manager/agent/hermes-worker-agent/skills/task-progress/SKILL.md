@@ -8,7 +8,7 @@ description: Use when executing a task (progress logging, plan updates), when re
 ## Gotchas
 
 - **Push progress log after every meaningful action** — don't batch updates; session resets can lose unpushed work
-- **task-history.json is LRU top 10** — overflow goes to `~/.hiclaw-worker/<your-name>/.hermes/history-tasks/{task-id}.json`
+- **task-history.json is LRU top 10** — overflow goes to `~/.hermes/history-tasks/{task-id}.json`
 - **Resume flow reads progress/ latest-first** — keep filenames as `YYYY-MM-DD.md` for correct sort order
 
 ## Progress Log
@@ -16,7 +16,7 @@ description: Use when executing a task (progress logging, plan updates), when re
 After every meaningful action (completing a sub-step, hitting a problem, making a decision), append to:
 
 ```
-~/.hiclaw-worker/<your-name>/shared/tasks/{task-id}/progress/YYYY-MM-DD.md
+~/shared/tasks/{task-id}/progress/YYYY-MM-DD.md
 ```
 
 Format (append, don't overwrite):
@@ -32,12 +32,12 @@ Format (append, don't overwrite):
 
 Push the task directory after each update:
 ```bash
-mc mirror ~/.hiclaw-worker/<your-name>/shared/tasks/{task-id}/ ${HICLAW_STORAGE_PREFIX}/shared/tasks/{task-id}/ --overwrite --exclude "spec.md" --exclude "base/"
+mc mirror ~/shared/tasks/{task-id}/ ${HICLAW_STORAGE_PREFIX}/shared/tasks/{task-id}/ --overwrite --exclude "spec.md" --exclude "base/"
 ```
 
 ## Task History (LRU Top 10)
 
-File: `~/.hiclaw-worker/<your-name>/.hermes/task-history.json`
+File: `~/.hermes/task-history.json`
 
 ```json
 {
@@ -47,7 +47,7 @@ File: `~/.hiclaw-worker/<your-name>/.hermes/task-history.json`
       "task_id": "task-20260221-100000",
       "brief": "One-line description of the task",
       "status": "in_progress",
-      "task_dir": "~/.hiclaw-worker/<your-name>/shared/tasks/task-20260221-100000",
+      "task_dir": "~/shared/tasks/task-20260221-100000",
       "last_worked_on": "2026-02-21T15:00:00Z"
     }
   ]
@@ -56,7 +56,7 @@ File: `~/.hiclaw-worker/<your-name>/.hermes/task-history.json`
 
 Rules:
 - **New task assigned**: add to head of `recent_tasks`
-- **Exceeds 10 entries**: move oldest to `~/.hiclaw-worker/<your-name>/.hermes/history-tasks/{task-id}.json`
+- **Exceeds 10 entries**: move oldest to `~/.hermes/history-tasks/{task-id}.json`
 - **Status changes**: update `status` field in `recent_tasks`
 
 ## Resume Flow
@@ -65,6 +65,6 @@ When your coordinator or admin asks you to resume a task after session reset:
 
 1. Read `task-history.json`; if not there, check `history-tasks/{task-id}.json`
 2. Get `task_dir` from the entry
-3. Task files are already in `~/.hiclaw-worker/<your-name>/shared/tasks/{task-id}/` (auto-synced). If you need the very latest, run `hermes-sync`
+3. Task files are already in `~/shared/tasks/{task-id}/` (auto-synced). If you need the very latest, run `hermes-sync`
 4. Read `{task_dir}/spec.md`, `{task_dir}/plan.md`, and recent `{task_dir}/progress/` files (latest first)
 5. Continue work and append to today's `progress/YYYY-MM-DD.md`

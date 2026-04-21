@@ -4,13 +4,13 @@ You are a **Hermes Worker** — a Python-based agent powered by hermes-agent, in
 
 ## Workspace Layout
 
-- **Your agent files:** `~/.hiclaw-worker/<your-name>/.hermes/` (config.yaml, .env, SOUL.md, AGENTS.md, skills/, sessions/)
-- **Shared space:** `~/.hiclaw-worker/<your-name>/shared/` — auto-synced from MinIO every 5 minutes
+- **Your agent files:** `~/.hermes/` (config.yaml, .env, SOUL.md, AGENTS.md, skills/, sessions/)
+- **Shared space:** `~/shared/` — auto-synced from MinIO every 5 minutes
 - **MinIO alias:** `hiclaw` (pre-configured at startup)
 
 The `shared/` directory is automatically mirrored from MinIO at startup and every sync cycle. Tasks and projects are available locally without manual `mc mirror` pulls.
 
-Hermes-agent reads its configuration from two files inside `~/.hiclaw-worker/<your-name>/.hermes/`:
+Hermes-agent reads its configuration from two files inside `~/.hermes/`:
 
 | File         | Owner             | Notes                                          |
 |--------------|-------------------|------------------------------------------------|
@@ -24,12 +24,12 @@ Both `config.yaml` and `.env` are **rewritten** every time the bridge runs (star
 ## Accessing Shared Files
 
 Task and project files are at:
-- `~/.hiclaw-worker/<your-name>/shared/tasks/{task-id}/`
-- `~/.hiclaw-worker/<your-name>/shared/projects/{project-id}/`
+- `~/shared/tasks/{task-id}/`
+- `~/shared/projects/{project-id}/`
 
 ```bash
 # Push your results back (push is still manual)
-mc mirror ~/.hiclaw-worker/<your-name>/shared/tasks/{task-id}/ ${HICLAW_STORAGE_PREFIX}/shared/tasks/{task-id}/ --overwrite --exclude "spec.md" --exclude "base/"
+mc mirror ~/shared/tasks/{task-id}/ ${HICLAW_STORAGE_PREFIX}/shared/tasks/{task-id}/ --overwrite --exclude "spec.md" --exclude "base/"
 ```
 
 ## Every Session
@@ -60,13 +60,13 @@ Don't ask permission. Just do it.
 
 You wake up fresh each session. Files are your continuity:
 
-- **Daily notes:** `~/.hiclaw-worker/<your-name>/.hermes/memory/YYYY-MM-DD.md` — what happened, decisions made, progress on tasks
-- **Long-term:** `~/.hiclaw-worker/<your-name>/.hermes/MEMORY.md` — curated learnings about your domain, tools, and patterns
+- **Daily notes:** `~/.hermes/memory/YYYY-MM-DD.md` — what happened, decisions made, progress on tasks
+- **Long-term:** `~/.hermes/MEMORY.md` — curated learnings about your domain, tools, and patterns
 
 Push memory files to MinIO so they survive restarts:
 
 ```bash
-mc cp ~/.hiclaw-worker/<your-name>/.hermes/memory/YYYY-MM-DD.md \
+mc cp ~/.hermes/memory/YYYY-MM-DD.md \
    ${HICLAW_STORAGE_PREFIX}/agents/<your-name>/memory/YYYY-MM-DD.md
 ```
 
@@ -81,13 +81,13 @@ mc cp ~/.hiclaw-worker/<your-name>/.hermes/memory/YYYY-MM-DD.md \
 
 ## Skills
 
-Your skills live in `~/.hiclaw-worker/<your-name>/.hermes/skills/`. Each skill directory contains a `SKILL.md` explaining how to use it.
+Your skills live in `~/.hermes/skills/`. Each skill directory contains a `SKILL.md` explaining how to use it.
 
 The coordinator assigns and updates skills. When notified of skill updates, use your `file-sync` skill to pull the latest.
 
 ### MCP Tools (mcporter)
 
-If `~/.hiclaw-worker/<your-name>/.hermes/config/mcporter.json` exists, you can call MCP Server tools via `mcporter` CLI. See the relevant skill's `SKILL.md` for usage patterns.
+If `~/.hermes/config/mcporter.json` exists, you can call MCP Server tools via `mcporter` CLI. See the relevant skill's `SKILL.md` for usage patterns.
 
 ## Communication
 
@@ -154,13 +154,13 @@ History messages are context only. Always identify the sender from the Current m
 
 When you receive a task from your coordinator:
 
-1. Read the task spec (`~/.hiclaw-worker/<your-name>/shared/tasks/{task-id}/spec.md`) — the shared directory is auto-synced
+1. Read the task spec (`~/shared/tasks/{task-id}/spec.md`) — the shared directory is auto-synced
 2. Register the task in `task-history.json` with status `in_progress` (see task-progress skill)
 3. Create `plan.md` in the task directory before starting work
 4. Execute the task. After every meaningful sub-step, append to the progress log (see task-progress skill)
 5. Push the task directory after each sub-step:
    ```bash
-   mc mirror ~/.hiclaw-worker/<your-name>/shared/tasks/{task-id}/ ${HICLAW_STORAGE_PREFIX}/shared/tasks/{task-id}/ --overwrite --exclude "spec.md" --exclude "base/"
+   mc mirror ~/shared/tasks/{task-id}/ ${HICLAW_STORAGE_PREFIX}/shared/tasks/{task-id}/ --overwrite --exclude "spec.md" --exclude "base/"
    ```
 6. Write `result.md` (finite tasks only), final push, update `task-history.json` to `completed`
 7. @mention your coordinator with a completion report
@@ -173,7 +173,7 @@ If blocked, @mention your coordinator immediately — don't wait to be asked.
 ### Task Directory Structure
 
 ```
-~/.hiclaw-worker/<your-name>/shared/tasks/{task-id}/
+~/shared/tasks/{task-id}/
 ├── spec.md       # Written by your coordinator (read-only for you)
 ├── base/         # Reference files from your coordinator (read-only)
 ├── plan.md       # Your execution plan (create before starting)

@@ -13,7 +13,8 @@ Environment variables (set by the container at startup):
 - ``HICLAW_FS_SECRET_KEY`` MinIO secret key
 - ``HICLAW_FS_BUCKET``    MinIO bucket    (default: hiclaw-storage)
 - ``HERMES_HOME``         hermes-agent workspace
-                          (default: ~/.hiclaw-worker/<worker_name>/.hermes)
+                          (default: $HOME/.hermes, i.e.
+                          /root/hiclaw-fs/agents/<worker_name>/.hermes)
 """
 from __future__ import annotations
 
@@ -79,7 +80,8 @@ def main() -> None:
         )
         sys.exit(1)
 
-    workspace_dir = Path.home() / ".hiclaw-worker" / worker_name
+    # Workspace == HOME (== MinIO mirror root); aligned with openclaw worker.
+    workspace_dir = Path.home()
     if hermes_home:
         hermes_home_path = Path(hermes_home)
     else:

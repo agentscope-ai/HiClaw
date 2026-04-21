@@ -13,11 +13,11 @@ When your coordinator notifies you that your config has been updated (e.g., mode
 hermes-sync
 ```
 
-This pulls `openclaw.json`, `SOUL.md`, `AGENTS.md`, and skills from MinIO and re-bridges the config into `~/.hiclaw-worker/<your-name>/.hermes/` (config.yaml + .env).
+This pulls `openclaw.json`, `SOUL.md`, `AGENTS.md`, and skills from MinIO and re-bridges the config into `~/.hermes/` (config.yaml + .env).
 
 **Hot reload caveats:**
 - Hermes-agent reloads `SOUL.md` on the next message — no restart needed
-- Skill changes in `~/.hiclaw-worker/<your-name>/.hermes/skills/` are picked up on the next message as well
+- Skill changes in `~/.hermes/skills/` are picked up on the next message as well
 - Changes that affect `config.yaml` (model, terminal, matrix behavior) require a process restart — your coordinator handles this when needed
 
 **Automatic background sync:**

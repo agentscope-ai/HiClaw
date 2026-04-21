@@ -23,7 +23,10 @@ class WorkerConfig:
         self.minio_bucket = minio_bucket
         self.minio_secure = minio_secure
         self.sync_interval = sync_interval
-        self.install_dir = install_dir or Path.home() / ".hiclaw-worker"
+        # Default to the openclaw-style layout: workspace == HOME (== MinIO
+        # mirror root). The entrypoint passes --install-dir explicitly, so this
+        # default only matters for direct `hermes-worker` invocations (CI / dev).
+        self.install_dir = install_dir or Path("/root/hiclaw-fs/agents")
 
     @property
     def workspace_dir(self) -> Path:

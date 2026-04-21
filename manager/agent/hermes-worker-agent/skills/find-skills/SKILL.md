@@ -32,7 +32,7 @@ If `skills` command is not found, install it: `npm install -g skills`
 Always use this fixed script path for this skill. Do not rely on a relative `scripts/` path from your current directory:
 
 ```bash
-FIND_SKILLS_SCRIPT="${HERMES_HOME:-$HOME/.hiclaw-worker/${HICLAW_WORKER_NAME}/.hermes}/skills/find-skills/scripts/hiclaw-find-skill.sh"
+FIND_SKILLS_SCRIPT="${HERMES_HOME:-$HOME/.hermes}/skills/find-skills/scripts/hiclaw-find-skill.sh"
 ```
 
 **Key commands:**
@@ -171,4 +171,4 @@ skills init my-xyz-skill
 
 ## Skill Resources
 
-`${HERMES_HOME:-$HOME/.hiclaw-worker/${HICLAW_WORKER_NAME}/.hermes}/skills/find-skills/scripts/hiclaw-find-skill.sh` is the resource that belongs to this skill. Always invoke that exact path (or the `FIND_SKILLS_SCRIPT` variable above) instead of `scripts/hiclaw-find-skill.sh`, so your command does not depend on the current directory.
+`${HERMES_HOME:-$HOME/.hermes}/skills/find-skills/scripts/hiclaw-find-skill.sh` is the resource that belongs to this skill. Always invoke that exact path (or the `FIND_SKILLS_SCRIPT` variable above) instead of `scripts/hiclaw-find-skill.sh`, so your command does not depend on the current directory.

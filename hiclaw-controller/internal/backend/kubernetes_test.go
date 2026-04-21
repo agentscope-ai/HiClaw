@@ -398,6 +398,61 @@ func TestK8sWithPrefixStop(t *testing.T) {
 	}
 }
 
+// TestK8sCreateRuntimeWorkingDir verifies WorkingDir / HOME defaulting per
+// runtime. The hermes runtime now shares the openclaw layout: WorkingDir ==
+// HOME == /root/hiclaw-fs/agents/<name> (== MinIO mirror root). Only copaw
+// keeps its own /root/.copaw-worker workspace.
+func TestK8sCreateRuntimeWorkingDir(t *testing.T) {
+	cases := []struct {
+		name           string
+		runtime        string
+		wantWorkingDir string
+		wantHome       string
+	}{
+		{"openclaw", RuntimeOpenClaw, "/root/hiclaw-fs/agents/x", "/root/hiclaw-fs/agents/x"},
+		{"hermes", RuntimeHermes, "/root/hiclaw-fs/agents/x", "/root/hiclaw-fs/agents/x"},
+		{"copaw", RuntimeCopaw, "/root/.copaw-worker", ""},
+		{"empty_default", "", "/root/hiclaw-fs/agents/x", "/root/hiclaw-fs/agents/x"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			client := newFakeK8sCoreClient()
+			b := NewK8sBackendWithClient(client, K8sConfig{
+				Namespace:         "hiclaw",
+				WorkerImage:       "hiclaw/worker-agent:latest",
+				CopawWorkerImage:  "hiclaw/copaw-worker:latest",
+				HermesWorkerImage: "hiclaw/hermes-worker:latest",
+				WorkerCPU:         "1000m",
+				WorkerMemory:      "2Gi",
+			}, "hiclaw-worker-")
+
+			if _, err := b.Create(context.Background(), CreateRequest{
+				Name:    "x",
+				Runtime: tc.runtime,
+			}); err != nil {
+				t.Fatalf("Create failed: %v", err)
+			}
+			pod, err := b.client.Pods("hiclaw").Get(context.Background(), "hiclaw-worker-x", metav1.GetOptions{})
+			if err != nil {
+				t.Fatalf("Get pod failed: %v", err)
+			}
+			if got := pod.Spec.Containers[0].WorkingDir; got != tc.wantWorkingDir {
+				t.Fatalf("WorkingDir = %q, want %q", got, tc.wantWorkingDir)
+			}
+			var gotHome string
+			for _, ev := range pod.Spec.Containers[0].Env {
+				if ev.Name == "HOME" {
+					gotHome = ev.Value
+					break
+				}
+			}
+			if gotHome != tc.wantHome {
+				t.Fatalf("HOME = %q, want %q", gotHome, tc.wantHome)
+			}
+		})
+	}
+}
+
 // TestK8sCreateResolvesImageFromRuntime verifies that the K8s backend selects
 // the correct image and runtime label based on req.Runtime, with empty values
 // falling back to the caller-provided RuntimeFallback (worker reconciler →

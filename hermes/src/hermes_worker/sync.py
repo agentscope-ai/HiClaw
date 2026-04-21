@@ -118,7 +118,13 @@ class FileSync:
         self.bucket = bucket
         self.worker_name = worker_name
         self._secure = secure
-        self.local_dir = local_dir or Path.home() / ".hiclaw-worker" / worker_name
+        # Default to the openclaw-style layout: HOME == workspace == MinIO
+        # mirror root. The Worker class always passes ``local_dir`` explicitly
+        # (config.workspace_dir), so this default only kicks in for direct
+        # ``FileSync(...)`` callers in tests / dev scripts.
+        self.local_dir = (
+            local_dir or Path("/root/hiclaw-fs/agents") / worker_name
+        )
         self.local_dir.mkdir(parents=True, exist_ok=True)
         self._prefix = f"agents/{worker_name}"
         self._alias_set = False

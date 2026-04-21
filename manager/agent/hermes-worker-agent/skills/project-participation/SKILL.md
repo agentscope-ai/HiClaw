@@ -7,7 +7,7 @@ description: Use when you are invited to a Project Room or assigned a task withi
 
 ## Gotchas
 
-- **Project plan is auto-synced** — read directly from `~/.hiclaw-worker/<your-name>/shared/projects/{project-id}/plan.md`
+- **Project plan is auto-synced** — read directly from `~/shared/projects/{project-id}/plan.md`
 - **Git author must be your worker name** — set `git config user.name` and `user.email` before any commits
 - **Report completion via @mention to your coordinator** — this is what advances the project to the next task
 
@@ -16,7 +16,7 @@ description: Use when you are invited to a Project Room or assigned a task withi
 When invited to a Project Room, the project plan is already available locally (auto-synced):
 
 ```bash
-cat ~/.hiclaw-worker/<your-name>/shared/projects/{project-id}/plan.md
+cat ~/shared/projects/{project-id}/plan.md
 ```
 
 The plan.md shows:

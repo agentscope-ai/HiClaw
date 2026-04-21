@@ -158,14 +158,15 @@ COPY --from=shared . /opt/hiclaw/scripts/lib/
 RUN chmod +x /opt/hiclaw/scripts/lib/mc-wrapper.sh && \
     ln -sf /opt/hiclaw/scripts/lib/mc-wrapper.sh /usr/local/bin/mc
 
-# Create workspace directory. HERMES_HOME is per-worker and chosen at
-# startup by the entrypoint.
-RUN mkdir -p /root/.hiclaw-worker
+# Workspace lives under the controller-injected HOME=/root/hiclaw-fs/agents/<name>
+# so the layout matches the openclaw worker (HOME == workspace == MinIO mirror
+# root). The per-worker subdir is created by the entrypoint at startup.
+RUN mkdir -p /root/hiclaw-fs/agents
 
-WORKDIR /root/.hiclaw-worker
+WORKDIR /root/hiclaw-fs/agents
 
-# HERMES_HOME is the canonical config / data directory for hermes-agent.
-# The entrypoint sets it to <install_dir>/<worker>/.hermes before exec.
-ENV HERMES_HOME=/root/.hiclaw-worker/.hermes
+# HERMES_HOME is set per-worker by the entrypoint (<workspace>/.hermes); we
+# deliberately leave it unset in the image so `docker exec` can't see a wrong
+# default that points at a non-existent path.
 
 ENTRYPOINT ["/opt/hiclaw/scripts/hermes-worker-entrypoint.sh"]

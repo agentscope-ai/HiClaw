@@ -162,12 +162,12 @@ func (k *K8sBackend) Create(ctx context.Context, req CreateRequest) (*WorkerResu
 		switch {
 		case req.Runtime == RuntimeCopaw:
 			req.WorkingDir = "/root/.copaw-worker"
-		case req.Runtime == RuntimeHermes:
-			// hermes-worker uses the standard hiclaw worker layout
-			// (/root/.hiclaw-worker/<name>); the .hermes/ subdir is created
-			// by the worker's own bootstrap.
-			req.WorkingDir = "/root/.hiclaw-worker"
 		default:
+			// Both openclaw and hermes use the same workspace layout:
+			// HOME == WorkingDir == /root/hiclaw-fs/agents/<name> (== MinIO
+			// mirror root). The hermes entrypoint anchors its install_dir to
+			// the same location so workspace_dir == HOME and HERMES_HOME ==
+			// $HOME/.hermes.
 			if home := req.Env["HOME"]; home != "" {
 				req.WorkingDir = home
 			} else {
