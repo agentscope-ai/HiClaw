@@ -531,10 +531,14 @@ func (a *App) startInCluster() (*rest.Config, error) {
 	logger.Info("starting in-cluster mode")
 
 	restCfg := ctrl.GetConfigOrDie()
+	leaseID := "hiclaw-controller-leader"
+	if a.cfg.ControllerName != "" {
+		leaseID = a.cfg.ControllerName + "-leader"
+	}
 	opts := ctrl.Options{
 		Scheme:                        a.scheme,
 		LeaderElection:                true,
-		LeaderElectionID:              "hiclaw-controller-leader",
+		LeaderElectionID:              leaseID,
 		LeaderElectionReleaseOnCancel: true,
 	}
 	if a.cfg.K8sNamespace != "" {
@@ -543,6 +547,10 @@ func (a *App) startInCluster() (*rest.Config, error) {
 		}
 		opts.LeaderElectionNamespace = a.cfg.K8sNamespace
 	}
+	logger.Info("leader election configured",
+		"leaseID", leaseID,
+		"namespace", opts.LeaderElectionNamespace,
+		"controllerName", a.cfg.ControllerName)
 	var err error
 	a.mgr, err = ctrl.NewManager(restCfg, opts)
 	if err != nil {

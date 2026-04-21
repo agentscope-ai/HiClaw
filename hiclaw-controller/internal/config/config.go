@@ -87,6 +87,13 @@ type Config struct {
 	// Controller URL (advertised to workers for STS refresh etc.)
 	ControllerURL string
 
+	// ControllerName identifies this controller instance. When multiple
+	// hiclaw-controller deployments live in the same namespace (e.g. separate
+	// Helm releases), each must use a distinct LeaderElection lease to avoid
+	// one instance blocking the other. Sourced from HICLAW_CONTROLLER_NAME;
+	// if empty, leader election falls back to the legacy global lease name.
+	ControllerName string
+
 	// Embedded-mode Manager Agent container mounts (host paths, read from env)
 	ManagerWorkspaceDir string // e.g. ~/hiclaw-manager — mounted as /root/manager-workspace
 	HostShareDir        string // e.g. ~/ — mounted as /host-share
@@ -237,7 +244,8 @@ func LoadConfig() *Config {
 		K8sManagerCPU:           envOrDefault("HICLAW_K8S_MANAGER_CPU", "2"),
 		K8sManagerMemory:        envOrDefault("HICLAW_K8S_MANAGER_MEMORY", "4Gi"),
 
-		ControllerURL: os.Getenv("HICLAW_CONTROLLER_URL"),
+		ControllerURL:  os.Getenv("HICLAW_CONTROLLER_URL"),
+		ControllerName: os.Getenv("HICLAW_CONTROLLER_NAME"),
 
 		ManagerWorkspaceDir: os.Getenv("HICLAW_WORKSPACE_DIR"),
 		HostShareDir:        os.Getenv("HICLAW_HOST_SHARE_DIR"),
