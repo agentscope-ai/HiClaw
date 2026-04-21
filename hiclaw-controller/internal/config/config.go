@@ -70,6 +70,13 @@ type Config struct {
 	K8sManagerCPU           string
 	K8sManagerMemory        string
 
+	// DefaultWorkerRuntime is applied by the Worker reconciler when a Worker
+	// CR has spec.runtime unset, before falling back to "openclaw". Sourced
+	// from HICLAW_DEFAULT_WORKER_RUNTIME at install time. Manager pods use
+	// ManagerRuntime instead, since Backend.Create is shared between both
+	// and only the caller knows which env var applies.
+	DefaultWorkerRuntime string
+
 	// Controller URL (advertised to workers for STS refresh etc.)
 	ControllerURL string
 
@@ -215,6 +222,7 @@ func LoadConfig() *Config {
 		ManagerModel:            firstNonEmpty(os.Getenv("HICLAW_MANAGER_MODEL"), envOrDefault("HICLAW_DEFAULT_MODEL", "qwen3.5-plus")),
 		ManagerRuntime:          envOrDefault("HICLAW_MANAGER_RUNTIME", "openclaw"),
 		ManagerImage:            os.Getenv("HICLAW_MANAGER_IMAGE"),
+		DefaultWorkerRuntime:    os.Getenv("HICLAW_DEFAULT_WORKER_RUNTIME"),
 		K8sManagerCPURequest:    envOrDefault("HICLAW_K8S_MANAGER_CPU_REQUEST", "500m"),
 		K8sManagerMemoryRequest: envOrDefault("HICLAW_K8S_MANAGER_MEMORY_REQUEST", "1Gi"),
 		K8sManagerCPU:           envOrDefault("HICLAW_K8S_MANAGER_CPU", "2"),
@@ -351,9 +359,6 @@ func (c *Config) DockerConfig() backend.DockerConfig {
 		WorkerImage:      envOrDefault("HICLAW_WORKER_IMAGE", "hiclaw/worker-agent:latest"),
 		CopawWorkerImage: envOrDefault("HICLAW_COPAW_WORKER_IMAGE", "hiclaw/copaw-worker:latest"),
 		DefaultNetwork:   envOrDefault("HICLAW_DOCKER_NETWORK", "hiclaw-net"),
-		// Empty (env unset) means "no operator preference" — ResolveRuntime
-		// will fall back to RuntimeOpenClaw at request time.
-		DefaultRuntime: os.Getenv("HICLAW_DEFAULT_WORKER_RUNTIME"),
 	}
 }
 
@@ -383,7 +388,6 @@ func (c *Config) K8sConfig() backend.K8sConfig {
 		CopawWorkerImage: envOrDefault("HICLAW_COPAW_WORKER_IMAGE", "hiclaw/copaw-worker:latest"),
 		WorkerCPU:        c.K8sWorkerCPU,
 		WorkerMemory:     c.K8sWorkerMemory,
-		DefaultRuntime:   os.Getenv("HICLAW_DEFAULT_WORKER_RUNTIME"),
 	}
 }
 

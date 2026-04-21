@@ -25,10 +25,6 @@ type K8sConfig struct {
 	CopawWorkerImage string
 	WorkerCPU        string
 	WorkerMemory     string
-	// DefaultRuntime is applied when CreateRequest.Runtime is empty.
-	// Sourced from HICLAW_DEFAULT_WORKER_RUNTIME at deploy time. See
-	// ResolveRuntime godoc for the full resolution chain.
-	DefaultRuntime string
 }
 
 // K8sBackend manages worker lifecycle via Kubernetes Pods.
@@ -113,11 +109,13 @@ func (k *K8sBackend) Available(_ context.Context) bool {
 }
 
 func (k *K8sBackend) Create(ctx context.Context, req CreateRequest) (*WorkerResult, error) {
-	// Resolve effective runtime once: explicit > backend default > openclaw.
-	// See ResolveRuntime godoc — the Worker CRD intentionally has no
-	// schema-level default, so the only place HICLAW_DEFAULT_WORKER_RUNTIME
-	// can take effect is here, before image / working-dir / label selection.
-	req.Runtime = ResolveRuntime(req.Runtime, k.config.DefaultRuntime)
+	// Resolve effective runtime once: explicit > caller fallback > openclaw.
+	// See ResolveRuntime godoc — the Worker / Manager CRDs intentionally have
+	// no schema-level default, so the only place the operator-side env var can
+	// take effect is here, via the caller-provided RuntimeFallback (which the
+	// reconciler picks per-resource: HICLAW_MANAGER_RUNTIME for managers,
+	// HICLAW_DEFAULT_WORKER_RUNTIME for workers).
+	req.Runtime = ResolveRuntime(req.Runtime, req.RuntimeFallback)
 
 	podName := req.ContainerName
 	if podName == "" {

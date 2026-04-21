@@ -38,22 +38,25 @@ func ValidRuntime(r string) bool {
 // ResolveRuntime returns the effective runtime for a backend request.
 // Resolution order:
 //  1. The explicit runtime on the request (req.Runtime).
-//  2. The backend's configured default (HICLAW_DEFAULT_WORKER_RUNTIME).
+//  2. The caller-provided fallback (req.RuntimeFallback) — typically
+//     HICLAW_MANAGER_RUNTIME for Manager pods, HICLAW_DEFAULT_WORKER_RUNTIME
+//     for Worker pods. The caller (reconciler) is responsible for picking the
+//     right env var since Backend.Create is shared between both.
 //  3. RuntimeOpenClaw — the historical default.
 //
 // Backends call this once at the top of Create() so downstream image / working-
 // dir / label resolution can rely on a non-empty, normalized runtime value.
 //
-// This indirection exists because the Worker CRD intentionally does not pin a
-// schema-level default — that would make HICLAW_DEFAULT_WORKER_RUNTIME a no-op
-// for any Worker CR created with `spec.runtime` unset (the API server would
+// This indirection exists because the Worker / Manager CRDs intentionally do
+// not pin a schema-level default — that would make the env-var fallback a
+// no-op for any CR created with `spec.runtime` unset (the API server would
 // silently fill it before the controller ever observes the empty value).
-func ResolveRuntime(reqRuntime, backendDefault string) string {
+func ResolveRuntime(reqRuntime, fallback string) string {
 	if reqRuntime != "" {
 		return reqRuntime
 	}
-	if backendDefault != "" {
-		return backendDefault
+	if fallback != "" {
+		return fallback
 	}
 	return RuntimeOpenClaw
 }
@@ -85,13 +88,19 @@ type PortMapping struct {
 
 // CreateRequest holds parameters for creating a worker container/instance.
 type CreateRequest struct {
-	Name       string            `json:"name"`
-	Image      string            `json:"image,omitempty"`
-	Env        map[string]string `json:"env,omitempty"`
-	Runtime    string            `json:"runtime,omitempty"` // "openclaw" | "copaw"
-	Network    string            `json:"network,omitempty"`
-	ExtraHosts []string          `json:"extra_hosts,omitempty"`
-	WorkingDir string            `json:"working_dir,omitempty"`
+	Name    string            `json:"name"`
+	Image   string            `json:"image,omitempty"`
+	Env     map[string]string `json:"env,omitempty"`
+	Runtime string            `json:"runtime,omitempty"` // "openclaw" | "copaw"
+	// RuntimeFallback is the value used by Backend.Create when Runtime is
+	// empty, before falling back to RuntimeOpenClaw. Manager / Worker
+	// reconcilers populate this from HICLAW_MANAGER_RUNTIME /
+	// HICLAW_DEFAULT_WORKER_RUNTIME respectively, since Backend.Create is
+	// shared between both and cannot tell which env var to consult on its own.
+	RuntimeFallback string   `json:"-"`
+	Network         string   `json:"network,omitempty"`
+	ExtraHosts      []string `json:"extra_hosts,omitempty"`
+	WorkingDir      string   `json:"working_dir,omitempty"`
 
 	// Controller URL advertised to worker for callbacks.
 	ControllerURL string `json:"-"`

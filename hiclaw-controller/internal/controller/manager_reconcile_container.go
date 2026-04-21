@@ -152,6 +152,7 @@ func (r *ManagerReconciler) createManagerContainer(ctx context.Context, s *manag
 		ContainerName:      containerName,
 		Image:              m.Spec.Image,
 		Runtime:            m.Spec.Runtime,
+		RuntimeFallback:    r.DefaultRuntime,
 		Env:                managerEnv,
 		ServiceAccountName: saName,
 		Resources:          r.ManagerResources,

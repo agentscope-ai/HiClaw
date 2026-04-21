@@ -400,20 +400,21 @@ func TestK8sWithPrefixStop(t *testing.T) {
 
 // TestK8sCreateResolvesImageFromRuntime verifies that the K8s backend selects
 // the correct image and runtime label based on req.Runtime, with empty values
-// falling back to the configured DefaultRuntime (HICLAW_DEFAULT_WORKER_RUNTIME).
+// falling back to the caller-provided RuntimeFallback (worker reconciler →
+// HICLAW_DEFAULT_WORKER_RUNTIME, manager reconciler → HICLAW_MANAGER_RUNTIME).
 func TestK8sCreateResolvesImageFromRuntime(t *testing.T) {
 	cases := []struct {
-		name           string
-		runtime        string
-		defaultRuntime string
-		wantImage      string
-		wantLabel      string
+		name      string
+		runtime   string
+		fallback  string
+		wantImage string
+		wantLabel string
 	}{
 		{"explicit_copaw", RuntimeCopaw, "", "hiclaw/copaw-worker:latest", RuntimeCopaw},
 		{"explicit_openclaw", RuntimeOpenClaw, "", "hiclaw/worker-agent:latest", RuntimeOpenClaw},
-		{"empty_no_default", "", "", "hiclaw/worker-agent:latest", RuntimeOpenClaw},
-		{"empty_with_copaw_default", "", RuntimeCopaw, "hiclaw/copaw-worker:latest", RuntimeCopaw},
-		{"explicit_overrides_default", RuntimeOpenClaw, RuntimeCopaw, "hiclaw/worker-agent:latest", RuntimeOpenClaw},
+		{"empty_no_fallback", "", "", "hiclaw/worker-agent:latest", RuntimeOpenClaw},
+		{"empty_with_copaw_fallback", "", RuntimeCopaw, "hiclaw/copaw-worker:latest", RuntimeCopaw},
+		{"explicit_overrides_fallback", RuntimeOpenClaw, RuntimeCopaw, "hiclaw/worker-agent:latest", RuntimeOpenClaw},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -424,10 +425,13 @@ func TestK8sCreateResolvesImageFromRuntime(t *testing.T) {
 				CopawWorkerImage: "hiclaw/copaw-worker:latest",
 				WorkerCPU:        "1000m",
 				WorkerMemory:     "2Gi",
-				DefaultRuntime:   tc.defaultRuntime,
 			}, "hiclaw-worker-")
 
-			if _, err := b.Create(context.Background(), CreateRequest{Name: "x", Runtime: tc.runtime}); err != nil {
+			if _, err := b.Create(context.Background(), CreateRequest{
+				Name:            "x",
+				Runtime:         tc.runtime,
+				RuntimeFallback: tc.fallback,
+			}); err != nil {
 				t.Fatalf("Create failed: %v", err)
 			}
 

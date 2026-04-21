@@ -268,12 +268,13 @@ func (a *App) initServiceLayer(_ context.Context) error {
 
 func (a *App) initReconcilers(_ context.Context) error {
 	if err := (&controller.WorkerReconciler{
-		Client:      a.mgr.GetClient(),
-		Provisioner: a.provisioner,
-		Deployer:    a.deployer,
-		Backend:     a.registry,
-		EnvBuilder:  a.envBuilder,
-		Legacy:      a.legacy,
+		Client:         a.mgr.GetClient(),
+		Provisioner:    a.provisioner,
+		Deployer:       a.deployer,
+		Backend:        a.registry,
+		EnvBuilder:     a.envBuilder,
+		Legacy:         a.legacy,
+		DefaultRuntime: a.cfg.DefaultWorkerRuntime,
 	}).SetupWithManager(a.mgr); err != nil {
 		return fmt.Errorf("setup WorkerReconciler: %w", err)
 	}
@@ -303,6 +304,7 @@ func (a *App) initReconcilers(_ context.Context) error {
 		Backend:          a.registry,
 		EnvBuilder:       a.envBuilder,
 		ManagerResources: a.cfg.ManagerResources(),
+		DefaultRuntime:   a.cfg.ManagerRuntime,
 	}
 	if a.cfg.KubeMode == "embedded" {
 		mgrReconciler.EmbeddedConfig = &controller.ManagerEmbeddedConfig{

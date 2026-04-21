@@ -419,20 +419,21 @@ func TestNormalizeDockerStatus(t *testing.T) {
 
 // TestDockerCreateResolvesImageFromRuntime verifies that the backend selects
 // the correct image based on req.Runtime when req.Image is empty, and that an
-// empty req.Runtime resolves to the configured DefaultRuntime fallback (which
-// mirrors HICLAW_DEFAULT_WORKER_RUNTIME).
+// empty req.Runtime resolves to the caller-provided RuntimeFallback (which
+// the worker / manager reconciler populates from
+// HICLAW_DEFAULT_WORKER_RUNTIME / HICLAW_MANAGER_RUNTIME respectively).
 func TestDockerCreateResolvesImageFromRuntime(t *testing.T) {
 	cases := []struct {
-		name           string
-		runtime        string // CreateRequest.Runtime
-		defaultRuntime string // DockerConfig.DefaultRuntime
-		wantImage      string
+		name      string
+		runtime   string // CreateRequest.Runtime
+		fallback  string // CreateRequest.RuntimeFallback
+		wantImage string
 	}{
 		{"explicit_copaw_uses_copaw_image", RuntimeCopaw, "", "hiclaw/copaw-worker:latest"},
 		{"explicit_openclaw_uses_worker_image", RuntimeOpenClaw, "", "hiclaw/worker-agent:latest"},
-		{"empty_runtime_with_no_default_uses_worker_image", "", "", "hiclaw/worker-agent:latest"},
-		{"empty_runtime_with_copaw_default_uses_copaw_image", "", RuntimeCopaw, "hiclaw/copaw-worker:latest"},
-		{"explicit_runtime_overrides_default", RuntimeOpenClaw, RuntimeCopaw, "hiclaw/worker-agent:latest"},
+		{"empty_runtime_with_no_fallback_uses_worker_image", "", "", "hiclaw/worker-agent:latest"},
+		{"empty_runtime_with_copaw_fallback_uses_copaw_image", "", RuntimeCopaw, "hiclaw/copaw-worker:latest"},
+		{"explicit_runtime_overrides_fallback", RuntimeOpenClaw, RuntimeCopaw, "hiclaw/worker-agent:latest"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -443,7 +444,6 @@ func TestDockerCreateResolvesImageFromRuntime(t *testing.T) {
 					WorkerImage:      "hiclaw/worker-agent:latest",
 					CopawWorkerImage: "hiclaw/copaw-worker:latest",
 					DefaultNetwork:   "hiclaw-net",
-					DefaultRuntime:   tc.defaultRuntime,
 				},
 				containerPrefix: "hiclaw-worker-",
 				client: &http.Client{
@@ -452,8 +452,9 @@ func TestDockerCreateResolvesImageFromRuntime(t *testing.T) {
 			}
 
 			_, err := b.Create(context.Background(), CreateRequest{
-				Name:    "x",
-				Runtime: tc.runtime,
+				Name:            "x",
+				Runtime:         tc.runtime,
+				RuntimeFallback: tc.fallback,
 			})
 			if err != nil {
 				t.Fatalf("Create failed: %v", err)

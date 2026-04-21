@@ -4,21 +4,21 @@ import "testing"
 
 func TestResolveRuntime(t *testing.T) {
 	cases := []struct {
-		name           string
-		reqRuntime     string
-		backendDefault string
-		want           string
+		name       string
+		reqRuntime string
+		fallback   string
+		want       string
 	}{
 		{"explicit_wins", RuntimeCopaw, RuntimeOpenClaw, RuntimeCopaw},
-		{"explicit_over_empty_default", RuntimeOpenClaw, "", RuntimeOpenClaw},
-		{"empty_falls_back_to_backend_default", "", RuntimeCopaw, RuntimeCopaw},
-		{"empty_and_no_default_falls_back_to_openclaw", "", "", RuntimeOpenClaw},
+		{"explicit_over_empty_fallback", RuntimeOpenClaw, "", RuntimeOpenClaw},
+		{"empty_uses_fallback", "", RuntimeCopaw, RuntimeCopaw},
+		{"empty_and_no_fallback_uses_openclaw", "", "", RuntimeOpenClaw},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := ResolveRuntime(tc.reqRuntime, tc.backendDefault)
+			got := ResolveRuntime(tc.reqRuntime, tc.fallback)
 			if got != tc.want {
-				t.Fatalf("ResolveRuntime(%q, %q) = %q, want %q", tc.reqRuntime, tc.backendDefault, got, tc.want)
+				t.Fatalf("ResolveRuntime(%q, %q) = %q, want %q", tc.reqRuntime, tc.fallback, got, tc.want)
 			}
 		})
 	}

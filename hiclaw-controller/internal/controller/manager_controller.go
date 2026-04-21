@@ -49,6 +49,12 @@ type ManagerReconciler struct {
 	EnvBuilder       service.ManagerEnvBuilderI
 	ManagerResources *backend.ResourceRequirements
 	EmbeddedConfig   *ManagerEmbeddedConfig // non-nil in embedded mode only
+
+	// DefaultRuntime is the value passed to backend.CreateRequest.RuntimeFallback
+	// when a Manager CR omits spec.runtime. Sourced from HICLAW_MANAGER_RUNTIME
+	// (Config.ManagerRuntime). Distinct from WorkerReconciler.DefaultRuntime
+	// because Backend.Create is shared and cannot tell which env var applies.
+	DefaultRuntime string
 }
 
 func (r *ManagerReconciler) Reconcile(ctx context.Context, req reconcile.Request) (retres reconcile.Result, reterr error) {

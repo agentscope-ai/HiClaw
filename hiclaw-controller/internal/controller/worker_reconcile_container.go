@@ -155,6 +155,7 @@ func (r *WorkerReconciler) createWorkerContainer(ctx context.Context, s *workerS
 		Name:               w.Name,
 		Image:              w.Spec.Image,
 		Runtime:            w.Spec.Runtime,
+		RuntimeFallback:    r.DefaultRuntime,
 		Env:                workerEnv,
 		ServiceAccountName: saName,
 	}

@@ -36,6 +36,13 @@ type WorkerReconciler struct {
 	Backend     *backend.Registry
 	EnvBuilder  service.WorkerEnvBuilderI
 	Legacy      *service.LegacyCompat // nil in incluster mode
+
+	// DefaultRuntime is the value passed to backend.CreateRequest.RuntimeFallback
+	// when a Worker CR omits spec.runtime. Sourced from
+	// HICLAW_DEFAULT_WORKER_RUNTIME (Config.DefaultWorkerRuntime). Empty means
+	// "no operator preference" — backend.ResolveRuntime will fall back to
+	// "openclaw".
+	DefaultRuntime string
 }
 
 func (r *WorkerReconciler) Reconcile(ctx context.Context, req reconcile.Request) (retres reconcile.Result, reterr error) {
