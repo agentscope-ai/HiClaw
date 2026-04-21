@@ -564,6 +564,59 @@ class MatrixAdapter(BasePlatformAdapter):
             return ""
 
     # ------------------------------------------------------------------
+    # Outbound mention helper — MSC3952 m.mentions from body text
+    # ------------------------------------------------------------------
+    # Matrix MXIDs: ``@localpart:domain[:port]``.  Localpart character class
+    # follows the Matrix spec's "user-id grammar"; domain may be a hostname
+    # or an IP literal with optional port.
+    _MATRIX_USER_ID_RE = re.compile(
+        r"@[a-zA-Z0-9._=+/\-]+:[a-zA-Z0-9.\-]+(?::\d+)?",
+    )
+
+    def _extract_mentions_from_text(self, text: str) -> List[str]:
+        """Return ordered, de-duplicated MXIDs found in ``text``.
+
+        Filters out the bot's own MXID — m.mentions of self would mark the
+        outgoing message as a self-ping in coordinator clients (and inbound
+        events from self are already dropped by ``_is_self_event``).
+        """
+        if not text:
+            return []
+        seen: Set[str] = set()
+        out: List[str] = []
+        self_uid = (self._user_id or "").lower()
+        for mx in self._MATRIX_USER_ID_RE.findall(text):
+            if mx in seen:
+                continue
+            if self_uid and mx.lower() == self_uid:
+                continue
+            seen.add(mx)
+            out.append(mx)
+        return out
+
+    def _apply_mention(self, content: Dict[str, Any]) -> None:
+        """Populate ``m.mentions.user_ids`` (MSC3952) from the body text.
+
+        Hiclaw's CoPaw / OpenClaw / Hermes Worker prompts all instruct the
+        agent to address peers with their full MXID
+        (e.g. ``@manager:matrix-local.hiclaw.io``).  Without a structured
+        ``m.mentions`` block the recipient's adapter — which enforces
+        ``requireMention`` in group rooms — silently drops the message and
+        the workflow stalls (the symptom that motivated this helper:
+        Manager never sees Worker's PHASE{N}_DONE replies).
+
+        We deliberately do **not** rewrite ``body`` or inject a
+        ``matrix.to`` pill into ``formatted_body``.  The structured
+        ``m.mentions`` field is the authoritative signal per MSC3952 and
+        is what every hiclaw adapter (this one, copaw's MatrixChannel,
+        Element clients) actually checks first.
+        """
+        body = content.get("body", "")
+        mentioned = self._extract_mentions_from_text(body)
+        if mentioned:
+            content["m.mentions"] = {"user_ids": mentioned}
+
+    # ------------------------------------------------------------------
     # History buffering
     # ------------------------------------------------------------------
 
@@ -904,6 +957,11 @@ class MatrixAdapter(BasePlatformAdapter):
                 "format": "org.matrix.custom.html",
                 "formatted_body": _md_to_html(chunk),
             }
+
+            # Discover MXIDs in the body and attach them as MSC3952
+            # ``m.mentions.user_ids`` so the recipient's mention-required
+            # filter (copaw / our own ``_was_mentioned``) actually fires.
+            self._apply_mention(content_payload)
 
             relates: Dict[str, Any] = {}
             if thread_root:

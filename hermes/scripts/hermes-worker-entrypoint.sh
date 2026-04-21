@@ -98,6 +98,30 @@ log "  Hermes venv: ${VENV}"
 export HERMES_HOME="${WORKSPACE}/.hermes"
 mkdir -p "${HERMES_HOME}"
 
+# ── Hermes runtime knobs for autonomous Worker operation ─────────────────────
+# These match hermes-agent's own "container deployment" intent but it does not
+# auto-detect that we're inside the worker pod (hermes only auto-bypasses when
+# its terminal sandbox is set to "docker"; we run the local sandbox inside an
+# already-isolated container, so it sees env_type=local and prompts for human
+# approval on every dangerous command).
+#
+# 1) HERMES_YOLO_MODE=1 — bypass the dangerous-command approval gate.
+#    The worker container is itself the security boundary; pausing on every
+#    `rm -rf` would deadlock multi-Agent collaboration (the gate posts a
+#    "/approve …" prompt to the room and waits indefinitely for a human or
+#    coordinator that has no way to actually approve via Matrix).
+# 2) MATRIX_HOME_CHANNEL=disabled — suppress the per-session "📬 No home
+#    channel is set …" onboarding reminder. Workers don't deliver cron job
+#    output and Manager doesn't have a UI to /sethome on the worker's behalf,
+#    so the reminder is pure noise that fires every time a new room session
+#    starts. Any non-empty value satisfies hermes-agent's check
+#    (gateway/run.py: `if not os.getenv("MATRIX_HOME_CHANNEL")`).
+#
+# Both can still be overridden by the user via the openclaw env block.
+: "${HERMES_YOLO_MODE:=1}"
+: "${MATRIX_HOME_CHANNEL:=disabled}"
+export HERMES_YOLO_MODE MATRIX_HOME_CHANNEL
+
 # ── Hermes CMS Plugin Configuration ──────────────────────────────────────────
 # Pass observability env through to hermes-agent. Hermes uses standard OTel
 # environment variables, so no per-app bootstrap file is required.
