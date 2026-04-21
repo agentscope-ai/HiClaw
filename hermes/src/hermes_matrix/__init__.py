@@ -1,16 +1,17 @@
-"""hermes-worker custom Matrix platform adapter.
+"""HiClaw Matrix overlay for hermes-worker.
 
-This package overlays hermes-agent's stock ``gateway/platforms/matrix.py``
-(which uses ``mautrix``) with a ``matrix-nio``-based implementation that
-mirrors the policies of HiClaw's CoPaw worker:
+This package no longer replaces hermes-agent's native Matrix transport.
+Instead, the image build renames hermes-agent's stock
+``gateway/platforms/matrix.py`` to ``_matrix_native.py`` and installs a tiny
+shim at the original path.  That shim re-exports the native module while
+replacing only ``MatrixAdapter`` with ``hermes_matrix.adapter.MatrixAdapter``.
 
-  * DM and group allow-lists
-  * @mention requirement in groups (with free-response rooms)
-  * Per-room history buffering with markers
-  * Vision support gated on the active model's capabilities
-  * Optional E2EE via ``matrix-nio[e2e]`` + libolm
+The subclass keeps hermes-agent's native mautrix implementation for media,
+streaming, typing, reactions, threads, and E2EE, while layering HiClaw's
+policy-only behavior on top:
 
-The Dockerfile copies ``hermes_matrix/adapter.py`` over
-``gateway/platforms/matrix.py`` inside the installed hermes-agent so the
-gateway loads our adapter via the standard import path.
+  * outbound ``m.mentions`` enrichment
+  * DM / group split allow-lists
+  * copaw-style history buffering in group rooms
+  * image downgrade when the active model lacks vision support
 """

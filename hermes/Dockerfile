@@ -4,9 +4,9 @@
 # Lightweight Python container running hermes-agent v0.10.0 as a
 # HiClaw Worker. Uses the same MinIO-backed config/sync model as the
 # OpenClaw / CoPaw workers, with hermes-agent providing the agent loop
-# and tools. The Matrix gateway adapter is replaced with a matrix-nio
-# implementation that mirrors the CoPaw worker's Matrix policies
-# (allowlists, mention-required, encryption, vision).
+# and tools. The Matrix gateway adapter keeps hermes-agent's native
+# mautrix implementation and overlays only HiClaw-specific policy
+# hooks (allowlists, mention enrichment, history, vision gating).
 #
 # Build args:
 #   HIGRESS_REGISTRY        - base image registry for mc + python
@@ -106,6 +106,7 @@ RUN python -m venv /opt/venv/hermes \
     && /opt/venv/hermes/bin/pip install --no-cache-dir \
         --index-url "${PIP_INDEX_URL}" \
         --trusted-host "$(echo ${PIP_INDEX_URL} | sed 's|https\?://||;s|/.*||')" \
+         "mautrix[encryption]" \
         "matrix-nio[e2e]>=0.24.0" \
         "markdown-it-py>=3.0" \
         "linkify-it-py>=2.0" \
@@ -128,14 +129,15 @@ RUN SITE=/opt/venv/hermes/lib/python3.11/site-packages \
     && cp -a /tmp/hermes-worker/src/hermes_matrix/* "$SITE/hermes_matrix/" \
     && rm -rf /tmp/hermes-worker/
 
-# --- Overlay our Matrix adapter into hermes-agent's gateway/platforms/ ---
-# This REPLACES hermes-agent's native mautrix-based MatrixAdapter with our
-# matrix-nio-based adapter that mirrors CoPaw worker's Matrix behavior
-# (allowlists, dm/group policy, mention filter, history, vision, markdown).
-# Hermes's gateway auto-discovers gateway/platforms/matrix.py via a string
-# import in run.py::_create_adapter, so the overlay is transparent.
+# --- Overlay our Matrix shim into hermes-agent's gateway/platforms/ ---
+# Keep hermes-agent's native mautrix transport by renaming its original
+# gateway/platforms/matrix.py to _matrix_native.py, then install a shim at
+# the original import path.  The shim re-exports the native module and swaps
+# in hermes_matrix.adapter.MatrixAdapter, a thin subclass that only adds
+# HiClaw policy hooks (mentions, allowlists, history, vision gating).
 RUN SITE=/opt/venv/hermes/lib/python3.11/site-packages \
-    && cp "$SITE/hermes_matrix/adapter.py" "$SITE/gateway/platforms/matrix.py"
+    && mv "$SITE/gateway/platforms/matrix.py" "$SITE/gateway/platforms/_matrix_native.py" \
+    && cp "$SITE/hermes_matrix/_shim.py" "$SITE/gateway/platforms/matrix.py"
 
 # Symlinks for hermes CLI on PATH (used by entrypoint and skills)
 RUN if [ -f /opt/venv/hermes/bin/hermes ]; then \
