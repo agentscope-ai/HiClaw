@@ -188,6 +188,11 @@ spec:
                   type: object
                   description: Exposed ports per worker name
                   x-kubernetes-preserve-unknown-fields: true
+                observedMembers:
+                  type: array
+                  description: "Names of members (leader + workers) whose infrastructure provisioning has succeeded at least once. Used by the TeamReconciler to pick Provision vs Refresh and to detect stale members that need cleanup."
+                  items:
+                    type: string
       subresources:
         status: {}
       additionalPrinterColumns:

@@ -100,6 +100,46 @@ func TestMain(m *testing.M) {
 		panic(fmt.Sprintf("failed to setup WorkerReconciler: %v", err))
 	}
 
+	teamReconciler := &controller.TeamReconciler{
+		Client:      mgr.GetClient(),
+		Provisioner: mockProv,
+		Deployer:    mockDeploy,
+		Backend:     workerBackendRegistry,
+		EnvBuilder:  mockEnv,
+		Legacy:      nil,
+		AgentFSDir:  os.TempDir(),
+	}
+	if err := teamReconciler.SetupWithManager(mgr); err != nil {
+		panic(fmt.Sprintf("failed to setup TeamReconciler: %v", err))
+	}
+
+	if err := mgr.GetFieldIndexer().IndexField(ctx, &v1beta1.Team{}, controller.TeamLeaderNameField,
+		func(obj client.Object) []string {
+			team, ok := obj.(*v1beta1.Team)
+			if !ok || team.Spec.Leader.Name == "" {
+				return nil
+			}
+			return []string{team.Spec.Leader.Name}
+		}); err != nil {
+		panic(fmt.Sprintf("failed to index team leader name: %v", err))
+	}
+	if err := mgr.GetFieldIndexer().IndexField(ctx, &v1beta1.Team{}, controller.TeamWorkerNameField,
+		func(obj client.Object) []string {
+			team, ok := obj.(*v1beta1.Team)
+			if !ok {
+				return nil
+			}
+			names := make([]string, 0, len(team.Spec.Workers))
+			for _, w := range team.Spec.Workers {
+				if w.Name != "" {
+					names = append(names, w.Name)
+				}
+			}
+			return names
+		}); err != nil {
+		panic(fmt.Sprintf("failed to index team worker names: %v", err))
+	}
+
 	// Wire up Manager mocks
 	mockMgrProv = mocks.NewMockManagerProvisioner()
 	mockMgrDeploy = mocks.NewMockManagerDeployer()

@@ -3,28 +3,46 @@ package controller
 import (
 	"context"
 	"fmt"
+	"sort"
+	"strings"
 	"time"
 
 	v1beta1 "github.com/hiclaw/hiclaw-controller/api/v1beta1"
+	"github.com/hiclaw/hiclaw-controller/internal/backend"
 	"github.com/hiclaw/hiclaw-controller/internal/executor"
 	"github.com/hiclaw/hiclaw-controller/internal/service"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	corev1 "k8s.io/api/core/v1"
+	kerrors "k8s.io/apimachinery/pkg/util/errors"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
-// TeamReconciler reconciles Team resources using Service-layer orchestration.
+// Team cache field indexer keys. Registered in app.initFieldIndexers and
+// consumed by the auth enricher to resolve team membership by worker name
+// without enumerating every Team.
+const (
+	TeamLeaderNameField = "spec.leader.name"
+	TeamWorkerNameField = "spec.workerNames"
+)
+
+// TeamReconciler reconciles Team resources. It directly owns the lifecycle of
+// team members (leader + workers) via the shared member_reconcile helpers; no
+// child Worker CRs are created.
 type TeamReconciler struct {
 	client.Client
 
-	Provisioner *service.Provisioner
-	Deployer    *service.Deployer
+	Provisioner service.WorkerProvisioner
+	Deployer    service.WorkerDeployer
+	Backend     *backend.Registry
+	EnvBuilder  service.WorkerEnvBuilderI
 	Legacy      *service.LegacyCompat // nil in incluster mode
 
-	AgentFSDir string // for writing inline configs to local FS
+	AgentFSDir string // for writing inline configs to the local agent FS
 }
 
 func (r *TeamReconciler) Reconcile(ctx context.Context, req reconcile.Request) (reconcile.Result, error) {
@@ -56,22 +74,25 @@ func (r *TeamReconciler) Reconcile(ctx context.Context, req reconcile.Request) (
 		}
 	}
 
-	switch team.Status.Phase {
-	case "", "Failed":
-		return r.handleCreate(ctx, &team)
-	default:
-		return r.handleUpdate(ctx, &team)
-	}
+	return r.reconcileTeamNormal(ctx, &team)
 }
 
-func (r *TeamReconciler) handleCreate(ctx context.Context, t *v1beta1.Team) (reconcile.Result, error) {
+// reconcileTeamNormal drives one convergence pass over a Team CR:
+//  1. Provision team-level infra (rooms, shared storage)
+//  2. Clean up stale members (in Status.ObservedMembers but no longer desired)
+//  3. Reconcile each desired member (leader + workers) via the shared phases
+//  4. Inject leader coordination context + register with Manager + Legacy
+//  5. Summarise backend readiness and patch Team.Status
+func (r *TeamReconciler) reconcileTeamNormal(ctx context.Context, t *v1beta1.Team) (reconcile.Result, error) {
 	logger := log.FromContext(ctx)
-	logger.Info("creating team", "name", t.Name)
 
-	t.Status.Phase = "Pending"
-	t.Status.TotalWorkers = len(t.Spec.Workers)
-	if err := r.Status().Update(ctx, t); err != nil {
-		return reconcile.Result{}, err
+	patchBase := client.MergeFrom(t.DeepCopy())
+	if t.Status.Phase == "" {
+		t.Status.Phase = "Pending"
+		if err := r.Status().Patch(ctx, t, patchBase); err != nil {
+			return reconcile.Result{}, err
+		}
+		patchBase = client.MergeFrom(t.DeepCopy())
 	}
 
 	workerNames := make([]string, 0, len(t.Spec.Workers))
@@ -79,7 +100,7 @@ func (r *TeamReconciler) handleCreate(ctx context.Context, t *v1beta1.Team) (rec
 		workerNames = append(workerNames, w.Name)
 	}
 
-	// --- Step 1: Create Team Room + Leader DM Room ---
+	// --- Step 1: Team-level infrastructure ---
 	rooms, err := r.Provisioner.ProvisionTeamRooms(ctx, service.TeamRoomRequest{
 		TeamName:       t.Name,
 		LeaderName:     t.Spec.Leader.Name,
@@ -88,51 +109,94 @@ func (r *TeamReconciler) handleCreate(ctx context.Context, t *v1beta1.Team) (rec
 		ExistingRoomID: t.Status.TeamRoomID,
 	})
 	if err != nil {
-		return r.failTeam(ctx, t, err.Error())
+		return r.failTeam(ctx, t, patchBase, fmt.Sprintf("provision team rooms: %v", err))
 	}
 	t.Status.TeamRoomID = rooms.TeamRoomID
 	t.Status.LeaderDMRoomID = rooms.LeaderDMRoomID
 
-	// --- Step 2: Write inline configs for leader + workers ---
-	if t.Spec.Leader.Identity != "" || t.Spec.Leader.Soul != "" || t.Spec.Leader.Agents != "" {
-		agentDir := fmt.Sprintf("%s/%s", r.AgentFSDir, t.Spec.Leader.Name)
-		if err := executor.WriteInlineConfigs(agentDir, "", t.Spec.Leader.Identity, t.Spec.Leader.Soul, t.Spec.Leader.Agents); err != nil {
-			return r.failTeam(ctx, t, fmt.Sprintf("write leader inline configs failed: %v", err))
-		}
-	}
-	for _, w := range t.Spec.Workers {
-		if w.Identity != "" || w.Soul != "" || w.Agents != "" {
-			agentDir := fmt.Sprintf("%s/%s", r.AgentFSDir, w.Name)
-			if err := executor.WriteInlineConfigs(agentDir, w.Runtime, w.Identity, w.Soul, w.Agents); err != nil {
-				return r.failTeam(ctx, t, fmt.Sprintf("write worker %s inline configs failed: %v", w.Name, err))
-			}
-		}
+	if err := r.Deployer.EnsureTeamStorage(ctx, t.Name); err != nil {
+		logger.Error(err, "team shared storage init failed (non-fatal)", "name", t.Name)
 	}
 
-	// --- Step 3: Create Worker CRs (leader + workers) ---
-	leaderCR := r.buildLeaderCR(t)
-	if err := r.createOrUpdateWorkerCR(ctx, leaderCR); err != nil {
-		return r.failTeam(ctx, t, fmt.Sprintf("create leader Worker CR failed: %v", err))
+	// --- Step 2: Write local inline configs (shared FS with agents) ---
+	if err := r.writeInlineConfigs(t); err != nil {
+		return r.failTeam(ctx, t, patchBase, err.Error())
 	}
-	logger.Info("leader Worker CR created", "name", t.Spec.Leader.Name)
 
-	for _, w := range t.Spec.Workers {
-		workerCR := r.buildWorkerCR(t, w, "worker", t.Spec.Leader.Name, t.Name)
-		if err := r.createOrUpdateWorkerCR(ctx, workerCR); err != nil {
-			logger.Error(err, "failed to create team worker CR (non-fatal)", "worker", w.Name)
-		} else {
-			logger.Info("team worker CR created", "name", w.Name)
+	// --- Step 3: Stale cleanup ---
+	desiredMembers := buildDesiredMembers(t)
+	desiredNames := make(map[string]struct{}, len(desiredMembers))
+	for _, m := range desiredMembers {
+		desiredNames[m.Name] = struct{}{}
+	}
+	staleNames := make([]string, 0)
+	for _, observed := range t.Status.ObservedMembers {
+		if _, keep := desiredNames[observed]; !keep {
+			staleNames = append(staleNames, observed)
 		}
 	}
+	deps := MemberDeps{
+		Provisioner: r.Provisioner,
+		Deployer:    r.Deployer,
+		Backend:     r.Backend,
+		EnvBuilder:  r.EnvBuilder,
+	}
+	for _, name := range staleNames {
+		staleCtx := MemberContext{
+			Name:                name,
+			Namespace:           t.Namespace,
+			Role:                RoleTeamWorker,
+			TeamName:            t.Name,
+			TeamLeaderName:      t.Spec.Leader.Name,
+			CurrentExposedPorts: t.Status.WorkerExposedPorts[name],
+		}
+		if err := ReconcileMemberDelete(ctx, deps, staleCtx); err != nil {
+			logger.Error(err, "failed to remove stale team member (non-fatal)", "name", name)
+		}
+		delete(t.Status.WorkerExposedPorts, name)
+	}
 
-	// --- Step 4: Inject coordination context for leader ---
+	// --- Step 4: Reconcile each desired member (leader first) ---
+	//
+	// observedSet tracks which members have successfully completed at least one
+	// reconcile pass. A member is considered "observed" iff infra provisioning
+	// succeeded at some point (this pass or a prior one). A transient error on
+	// an already-observed member does NOT drop it from the set, so subsequent
+	// reconciles keep using Refresh. But a member whose first Provision fails
+	// stays out of the set, ensuring the next reconcile retries Provision
+	// (mirrors the WorkerReconciler semantics driven by Status.MatrixUserID).
+	observedSet := make(map[string]struct{}, len(t.Status.ObservedMembers))
+	for _, n := range t.Status.ObservedMembers {
+		if _, keep := desiredNames[n]; keep {
+			observedSet[n] = struct{}{}
+		}
+	}
+	perMemberErrors := make([]string, 0)
+	workerExposed := t.Status.WorkerExposedPorts
+	if workerExposed == nil {
+		workerExposed = make(map[string][]v1beta1.ExposedPortStatus)
+	}
+	for i := range desiredMembers {
+		m := desiredMembers[i]
+		if existing, ok := workerExposed[m.Name]; ok {
+			m.CurrentExposedPorts = existing
+		}
+		if err := r.reconcileMember(ctx, deps, m, workerExposed); err != nil {
+			logger.Error(err, "team member reconcile failed", "name", m.Name)
+			perMemberErrors = append(perMemberErrors, fmt.Sprintf("%s: %v", m.Name, err))
+			continue
+		}
+		observedSet[m.Name] = struct{}{}
+	}
+
+	// --- Step 5: Leader-specific hooks (coordination, groupAllowFrom, registry) ---
 	var teamAdminID string
 	if t.Spec.Admin != nil {
 		teamAdminID = t.Spec.Admin.MatrixUserID
 	}
 	if err := r.Deployer.InjectCoordinationContext(ctx, service.CoordinationDeployRequest{
 		LeaderName:        t.Spec.Leader.Name,
-		Role:              "team_leader",
+		Role:              RoleTeamLeader.String(),
 		TeamName:          t.Name,
 		TeamRoomID:        rooms.TeamRoomID,
 		LeaderDMRoomID:    rooms.LeaderDMRoomID,
@@ -144,27 +208,11 @@ func (r *TeamReconciler) handleCreate(ctx context.Context, t *v1beta1.Team) (rec
 		logger.Error(err, "leader coordination context injection failed (non-fatal)")
 	}
 
-	// --- Step 5: Expose ports for team workers ---
-	workerExposed := make(map[string][]v1beta1.ExposedPortStatus)
-	for _, w := range t.Spec.Workers {
-		if len(w.Expose) > 0 {
-			exposed, exposeErr := r.Provisioner.ReconcileExpose(ctx, w.Name, w.Expose, nil)
-			if exposeErr != nil {
-				logger.Error(exposeErr, "failed to expose ports for team worker (non-fatal)", "worker", w.Name)
-			}
-			if len(exposed) > 0 {
-				workerExposed[w.Name] = exposed
-			}
-		}
-	}
-
-	// --- Step 6: Team shared storage ---
-	if err := r.Deployer.EnsureTeamStorage(ctx, t.Name); err != nil {
-		logger.Error(err, "team shared storage init failed (non-fatal)")
-	}
-
-	// --- Step 7: Legacy teams-registry + Manager groupAllowFrom ---
 	if r.Legacy != nil && r.Legacy.Enabled() {
+		leaderMatrixID := r.Legacy.MatrixUserID(t.Spec.Leader.Name)
+		if err := r.Legacy.UpdateManagerGroupAllowFrom(leaderMatrixID, true); err != nil {
+			logger.Error(err, "failed to update Manager groupAllowFrom for team leader (non-fatal)")
+		}
 		if err := r.Legacy.UpdateTeamsRegistry(service.TeamRegistryEntry{
 			Name:           t.Name,
 			Leader:         t.Spec.Leader.Name,
@@ -175,225 +223,316 @@ func (r *TeamReconciler) handleCreate(ctx context.Context, t *v1beta1.Team) (rec
 		}); err != nil {
 			logger.Error(err, "teams-registry update failed (non-fatal)")
 		}
-		// Add team leader to Manager's groupAllowFrom so Manager can receive leader messages
-		leaderMatrixID := r.Legacy.MatrixUserID(t.Spec.Leader.Name)
-		if err := r.Legacy.UpdateManagerGroupAllowFrom(leaderMatrixID, true); err != nil {
-			logger.Error(err, "failed to update Manager groupAllowFrom for team leader (non-fatal)")
-		}
 	}
 
-	_ = r.Get(ctx, client.ObjectKeyFromObject(t), t)
-	t.Status.Phase = "Active"
-	t.Status.LeaderReady = true
-	t.Status.ReadyWorkers = len(t.Spec.Workers)
-	t.Status.TeamRoomID = rooms.TeamRoomID
-	t.Status.LeaderDMRoomID = rooms.LeaderDMRoomID
-	t.Status.Message = ""
+	// --- Step 6: Summarise backend readiness and patch status ---
+	leaderReady, readyWorkers := r.summarizeBackendReadiness(ctx, desiredMembers)
+	observed := make([]string, 0, len(observedSet))
+	for n := range observedSet {
+		observed = append(observed, n)
+	}
+	sort.Strings(observed)
+
+	t.Status.ObservedMembers = observed
+	t.Status.TotalWorkers = len(t.Spec.Workers)
+	t.Status.LeaderReady = leaderReady
+	t.Status.ReadyWorkers = readyWorkers
 	if len(workerExposed) > 0 {
 		t.Status.WorkerExposedPorts = workerExposed
-	}
-	if err := r.Status().Update(ctx, t); err != nil {
-		logger.Error(err, "failed to update team status (non-fatal)")
+	} else {
+		t.Status.WorkerExposedPorts = nil
 	}
 
-	logger.Info("team created", "name", t.Name, "teamRoomID", rooms.TeamRoomID)
-	return reconcile.Result{}, nil
+	switch {
+	case len(perMemberErrors) > 0:
+		t.Status.Phase = "Degraded"
+		t.Status.Message = strings.Join(perMemberErrors, "; ")
+	case leaderReady && readyWorkers == t.Status.TotalWorkers:
+		t.Status.Phase = "Active"
+		t.Status.Message = ""
+	default:
+		t.Status.Phase = "Pending"
+		t.Status.Message = ""
+	}
+
+	if err := r.Status().Patch(ctx, t, patchBase); err != nil {
+		logger.Error(err, "failed to patch team status (non-fatal)")
+	}
+
+	requeue := reconcileInterval
+	if len(perMemberErrors) > 0 {
+		requeue = reconcileRetryDelay
+	}
+	logger.Info("team reconciled",
+		"name", t.Name,
+		"phase", t.Status.Phase,
+		"leaderReady", leaderReady,
+		"readyWorkers", readyWorkers,
+		"observedMembers", observed)
+	return reconcile.Result{RequeueAfter: requeue}, nil
 }
 
-func (r *TeamReconciler) handleUpdate(ctx context.Context, t *v1beta1.Team) (reconcile.Result, error) {
-	logger := log.FromContext(ctx)
-	logger.Info("updating team", "name", t.Name)
+// reconcileMember runs the shared member phases for one team member and
+// accumulates exposed-port state into workerExposed. Leader membership in
+// workerExposed is skipped because the leader never exposes gateway ports.
+func (r *TeamReconciler) reconcileMember(ctx context.Context, deps MemberDeps, m MemberContext, workerExposed map[string][]v1beta1.ExposedPortStatus) error {
+	state := &MemberState{}
 
-	leaderCR := r.buildLeaderCR(t)
-	if err := r.createOrUpdateWorkerCR(ctx, leaderCR); err != nil {
-		return r.failTeam(ctx, t, fmt.Sprintf("update leader Worker CR failed: %v", err))
+	// Pre-populate ExistingMatrixUserID when we've already provisioned the
+	// member before, forcing the Refresh path instead of Provision.
+	if m.IsUpdate {
+		m.ExistingMatrixUserID = r.Provisioner.MatrixUserID(m.Name)
 	}
 
-	desiredWorkers := make(map[string]v1beta1.TeamWorkerSpec, len(t.Spec.Workers))
-	workerNames := make([]string, 0, len(t.Spec.Workers))
-	for _, workerSpec := range t.Spec.Workers {
-		desiredWorkers[workerSpec.Name] = workerSpec
-		workerNames = append(workerNames, workerSpec.Name)
+	if _, err := ReconcileMemberInfra(ctx, deps, m, state); err != nil {
+		return err
+	}
+	if err := EnsureMemberServiceAccount(ctx, deps, m); err != nil {
+		return err
+	}
+	if err := ReconcileMemberConfig(ctx, deps, m, state); err != nil {
+		return err
+	}
+	if _, err := ReconcileMemberContainer(ctx, deps, m, state); err != nil {
+		return err
+	}
+	_ = ReconcileMemberExpose(ctx, deps, m, state)
 
-		workerCR := r.buildWorkerCR(t, workerSpec, "worker", t.Spec.Leader.Name, t.Name)
-		if err := r.createOrUpdateWorkerCR(ctx, workerCR); err != nil {
-			return r.failTeam(ctx, t, fmt.Sprintf("update team worker %s failed: %v", workerSpec.Name, err))
+	if m.Role == RoleTeamWorker {
+		if len(state.ExposedPorts) > 0 {
+			workerExposed[m.Name] = state.ExposedPorts
+		} else {
+			delete(workerExposed, m.Name)
 		}
 	}
+	return nil
+}
 
-	var existingWorkers v1beta1.WorkerList
-	if err := r.List(ctx, &existingWorkers, client.InNamespace(t.Namespace), client.MatchingLabels{"hiclaw.io/team": t.Name}); err != nil {
-		return reconcile.Result{}, err
+// summarizeBackendReadiness queries each member's pod/container status from
+// the backend. Used instead of reading Worker CR status because team members
+// no longer have Worker CRs.
+func (r *TeamReconciler) summarizeBackendReadiness(ctx context.Context, members []MemberContext) (leaderReady bool, readyWorkers int) {
+	if r.Backend == nil {
+		return false, 0
 	}
-	for i := range existingWorkers.Items {
-		existing := &existingWorkers.Items[i]
-		if existing.Name == t.Spec.Leader.Name {
+	wb := r.Backend.DetectWorkerBackend(ctx)
+	if wb == nil {
+		return false, 0
+	}
+	for _, m := range members {
+		result, err := wb.Status(ctx, m.Name)
+		if err != nil {
 			continue
 		}
-		if _, keep := desiredWorkers[existing.Name]; keep {
+		ready := result.Status == backend.StatusRunning || result.Status == backend.StatusReady
+		if m.Role == RoleTeamLeader {
+			leaderReady = ready
 			continue
 		}
-		if err := r.deleteWorkerAndExpose(ctx, t, existing); err != nil {
-			logger.Error(err, "failed to remove stale team worker", "worker", existing.Name)
+		if ready {
+			readyWorkers++
 		}
 	}
+	return leaderReady, readyWorkers
+}
 
-	var teamAdminID string
-	if t.Spec.Admin != nil {
-		teamAdminID = t.Spec.Admin.MatrixUserID
-	}
-	if err := r.Deployer.InjectCoordinationContext(ctx, service.CoordinationDeployRequest{
-		LeaderName:        t.Spec.Leader.Name,
-		Role:              "team_leader",
-		TeamName:          t.Name,
-		TeamRoomID:        t.Status.TeamRoomID,
-		LeaderDMRoomID:    t.Status.LeaderDMRoomID,
-		HeartbeatEvery:    leaderHeartbeatEvery(t),
-		WorkerIdleTimeout: t.Spec.Leader.WorkerIdleTimeout,
-		TeamWorkers:       workerNames,
-		TeamAdminID:       teamAdminID,
-	}); err != nil {
-		logger.Error(err, "leader coordination context refresh failed (non-fatal)")
-	}
-
-	_ = r.Get(ctx, client.ObjectKeyFromObject(t), t)
-	t.Status.TotalWorkers = len(t.Spec.Workers)
-	t.Status.ReadyWorkers, t.Status.LeaderReady = summarizeTeamWorkerReadiness(existingWorkers.Items, t.Spec.Leader.Name)
-	if t.Status.Phase == "" {
-		t.Status.Phase = "Active"
-	}
-	if t.Status.WorkerExposedPorts != nil {
-		for workerName := range t.Status.WorkerExposedPorts {
-			if _, keep := desiredWorkers[workerName]; !keep {
-				delete(t.Status.WorkerExposedPorts, workerName)
-			}
+// writeInlineConfigs persists leader + worker inline identity/soul/agents
+// strings to the shared agent FS. No-op for members that don't supply any.
+func (r *TeamReconciler) writeInlineConfigs(t *v1beta1.Team) error {
+	if t.Spec.Leader.Identity != "" || t.Spec.Leader.Soul != "" || t.Spec.Leader.Agents != "" {
+		agentDir := fmt.Sprintf("%s/%s", r.AgentFSDir, t.Spec.Leader.Name)
+		if err := executor.WriteInlineConfigs(agentDir, "copaw", t.Spec.Leader.Identity, t.Spec.Leader.Soul, t.Spec.Leader.Agents); err != nil {
+			return fmt.Errorf("write leader inline configs: %w", err)
 		}
 	}
-	t.Status.Message = ""
-	if err := r.Status().Update(ctx, t); err != nil {
-		logger.Error(err, "failed to update team status after update (non-fatal)")
+	for _, w := range t.Spec.Workers {
+		if w.Identity == "" && w.Soul == "" && w.Agents == "" {
+			continue
+		}
+		agentDir := fmt.Sprintf("%s/%s", r.AgentFSDir, w.Name)
+		runtime := w.Runtime
+		if runtime == "" {
+			runtime = "copaw"
+		}
+		if err := executor.WriteInlineConfigs(agentDir, runtime, w.Identity, w.Soul, w.Agents); err != nil {
+			return fmt.Errorf("write worker %s inline configs: %w", w.Name, err)
+		}
 	}
-
-	return reconcile.Result{}, nil
+	return nil
 }
 
 func (r *TeamReconciler) handleDelete(ctx context.Context, t *v1beta1.Team) error {
 	logger := log.FromContext(ctx)
 	logger.Info("deleting team", "name", t.Name)
 
-	// Clean up exposed ports for team workers
+	deps := MemberDeps{
+		Provisioner: r.Provisioner,
+		Deployer:    r.Deployer,
+		Backend:     r.Backend,
+		EnvBuilder:  r.EnvBuilder,
+	}
+
+	// Union of ObservedMembers and desired members to guarantee cleanup even
+	// when reconcile failed before writing observedMembers.
+	names := make(map[string]MemberRole)
+	for _, name := range t.Status.ObservedMembers {
+		if name == t.Spec.Leader.Name {
+			names[name] = RoleTeamLeader
+		} else {
+			names[name] = RoleTeamWorker
+		}
+	}
+	if t.Spec.Leader.Name != "" {
+		names[t.Spec.Leader.Name] = RoleTeamLeader
+	}
 	for _, w := range t.Spec.Workers {
-		var currentExposed []v1beta1.ExposedPortStatus
-		if t.Status.WorkerExposedPorts != nil {
-			currentExposed = t.Status.WorkerExposedPorts[w.Name]
+		names[w.Name] = RoleTeamWorker
+	}
+
+	errs := make([]error, 0)
+	for name, role := range names {
+		mctx := MemberContext{
+			Name:                name,
+			Namespace:           t.Namespace,
+			Role:                role,
+			TeamName:            t.Name,
+			TeamLeaderName:      t.Spec.Leader.Name,
+			CurrentExposedPorts: t.Status.WorkerExposedPorts[name],
 		}
-		if len(currentExposed) == 0 && len(w.Expose) > 0 {
-			for _, ep := range w.Expose {
-				currentExposed = append(currentExposed, v1beta1.ExposedPortStatus{
-					Port:   ep.Port,
-					Domain: service.ContainerDNSName(w.Name),
-				})
+		if role == RoleTeamLeader {
+			mctx.Spec = leaderWorkerSpec(t)
+		} else {
+			for _, w := range t.Spec.Workers {
+				if w.Name == name {
+					mctx.Spec = teamWorkerSpecToWorkerSpec(t, w)
+					break
+				}
 			}
 		}
-		if len(currentExposed) > 0 {
-			if _, err := r.Provisioner.ReconcileExpose(ctx, w.Name, nil, currentExposed); err != nil {
-				logger.Error(err, "failed to clean up exposed ports for team worker (non-fatal)", "worker", w.Name)
-			}
+		if err := ReconcileMemberDelete(ctx, deps, mctx); err != nil {
+			logger.Error(err, "member cleanup failed (non-fatal)", "name", name)
+			errs = append(errs, err)
 		}
 	}
 
-	// Delete Worker CRs (workers first, then leader)
-	ns := t.Namespace
-	for _, w := range t.Spec.Workers {
-		workerCR := &v1beta1.Worker{}
-		workerCR.Name = w.Name
-		workerCR.Namespace = ns
-		if err := r.Delete(ctx, workerCR); err != nil {
-			logger.Error(err, "failed to delete team worker CR (may not exist)", "worker", w.Name)
+	if r.Legacy != nil && r.Legacy.Enabled() {
+		if t.Spec.Leader.Name != "" {
+			leaderMatrixID := r.Legacy.MatrixUserID(t.Spec.Leader.Name)
+			if err := r.Legacy.UpdateManagerGroupAllowFrom(leaderMatrixID, false); err != nil {
+				logger.Error(err, "failed to revoke Manager groupAllowFrom (non-fatal)")
+			}
 		}
-	}
-	leaderCR := &v1beta1.Worker{}
-	leaderCR.Name = t.Spec.Leader.Name
-	leaderCR.Namespace = ns
-	if err := r.Delete(ctx, leaderCR); err != nil {
-		logger.Error(err, "failed to delete team leader CR (may not exist)", "leader", t.Spec.Leader.Name)
-	}
-
-	// Legacy: remove team from teams-registry
-	if r.Legacy != nil {
 		if err := r.Legacy.RemoveFromTeamsRegistry(ctx, t.Name); err != nil {
 			logger.Error(err, "failed to remove team from registry (non-fatal)")
 		}
 	}
 
-	logger.Info("team deleted", "name", t.Name)
+	if len(errs) > 0 {
+		// Errors are non-fatal individually but we return the aggregate so the
+		// caller logs one consolidated message; finalizer removal still
+		// proceeds at the Reconcile level to avoid stuck CRs.
+		return kerrors.NewAggregate(errs)
+	}
 	return nil
 }
 
-func (r *TeamReconciler) buildLeaderCR(t *v1beta1.Team) *v1beta1.Worker {
-	policy := mergeChannelPolicy(t.Spec.ChannelPolicy, t.Spec.Leader.ChannelPolicy)
-
-	allWorkerNames := make([]string, 0, len(t.Spec.Workers))
-	for _, w := range t.Spec.Workers {
-		allWorkerNames = append(allWorkerNames, w.Name)
+func (r *TeamReconciler) failTeam(ctx context.Context, t *v1beta1.Team, patchBase client.Patch, msg string) (reconcile.Result, error) {
+	t.Status.Phase = "Failed"
+	t.Status.Message = msg
+	if err := r.Status().Patch(ctx, t, patchBase); err != nil {
+		log.FromContext(ctx).Error(err, "failed to patch team status after failure (non-fatal)")
 	}
-	policy = appendGroupAllowExtra(policy, allWorkerNames...)
+	return reconcile.Result{RequeueAfter: reconcileRetryDelay}, fmt.Errorf("%s", msg)
+}
 
+// --- helpers ---
+
+// buildDesiredMembers translates a Team spec into MemberContexts for leader
+// and each worker. Every member is tagged with PodLabel hiclaw.io/team=<name>
+// so the Team controller can watch their pod lifecycle via a shared predicate.
+func buildDesiredMembers(t *v1beta1.Team) []MemberContext {
+	observed := make(map[string]struct{}, len(t.Status.ObservedMembers))
+	for _, n := range t.Status.ObservedMembers {
+		observed[n] = struct{}{}
+	}
+	members := make([]MemberContext, 0, 1+len(t.Spec.Workers))
+
+	leaderSpec := leaderWorkerSpec(t)
+	_, leaderObserved := observed[t.Spec.Leader.Name]
+	members = append(members, MemberContext{
+		Name:              t.Spec.Leader.Name,
+		Namespace:         t.Namespace,
+		Role:              RoleTeamLeader,
+		Spec:              leaderSpec,
+		Generation:        t.Generation,
+		IsUpdate:          leaderObserved,
+		TeamName:          t.Name,
+		TeamLeaderName:    "",
+		TeamAdminMatrixID: teamAdminMatrixID(t),
+		PodLabels: map[string]string{
+			"hiclaw.io/team": t.Name,
+			"hiclaw.io/role": RoleTeamLeader.String(),
+		},
+	})
+
+	for _, w := range t.Spec.Workers {
+		_, workerObserved := observed[w.Name]
+		spec := teamWorkerSpecToWorkerSpec(t, w)
+		members = append(members, MemberContext{
+			Name:              w.Name,
+			Namespace:         t.Namespace,
+			Role:              RoleTeamWorker,
+			Spec:              spec,
+			Generation:        t.Generation,
+			IsUpdate:          workerObserved,
+			TeamName:          t.Name,
+			TeamLeaderName:    t.Spec.Leader.Name,
+			TeamAdminMatrixID: teamAdminMatrixID(t),
+			PodLabels: map[string]string{
+				"hiclaw.io/team": t.Name,
+				"hiclaw.io/role": RoleTeamWorker.String(),
+			},
+		})
+	}
+	return members
+}
+
+// leaderWorkerSpec projects a LeaderSpec into WorkerSpec with merged channel
+// policy (team leader can @ all members + admin).
+func leaderWorkerSpec(t *v1beta1.Team) v1beta1.WorkerSpec {
+	policy := mergeChannelPolicy(t.Spec.ChannelPolicy, t.Spec.Leader.ChannelPolicy)
+	workerNames := make([]string, 0, len(t.Spec.Workers))
+	for _, w := range t.Spec.Workers {
+		workerNames = append(workerNames, w.Name)
+	}
+	policy = appendGroupAllowExtra(policy, workerNames...)
 	if t.Spec.Admin != nil && t.Spec.Admin.Name != "" {
 		policy = appendGroupAllowExtra(policy, t.Spec.Admin.Name)
 		policy = appendDmAllowExtra(policy, t.Spec.Admin.Name)
 	}
-
-	annotations := map[string]string{
-		"hiclaw.io/role": "team_leader",
-		"hiclaw.io/team": t.Name,
-	}
-	if t.Spec.Admin != nil && t.Spec.Admin.MatrixUserID != "" {
-		annotations["hiclaw.io/team-admin-id"] = t.Spec.Admin.MatrixUserID
-	}
-
-	return &v1beta1.Worker{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:        t.Spec.Leader.Name,
-			Namespace:   t.Namespace,
-			Annotations: annotations,
-			Labels: map[string]string{
-				"hiclaw.io/team": t.Name,
-				"hiclaw.io/role": "team_leader",
-			},
-		},
-		Spec: v1beta1.WorkerSpec{
-			Model:         t.Spec.Leader.Model,
-			Runtime:       "copaw", // Team mode requires copaw runtime for leader too
-			Identity:      t.Spec.Leader.Identity,
-			Soul:          t.Spec.Leader.Soul,
-			Agents:        t.Spec.Leader.Agents,
-			Package:       t.Spec.Leader.Package,
-			ChannelPolicy: policy,
-			State:         t.Spec.Leader.State,
-		},
+	return v1beta1.WorkerSpec{
+		Model:         t.Spec.Leader.Model,
+		Runtime:       "copaw",
+		Identity:      t.Spec.Leader.Identity,
+		Soul:          t.Spec.Leader.Soul,
+		Agents:        t.Spec.Leader.Agents,
+		Package:       t.Spec.Leader.Package,
+		ChannelPolicy: policy,
+		State:         t.Spec.Leader.State,
 	}
 }
 
-func (r *TeamReconciler) buildWorkerCR(t *v1beta1.Team, w v1beta1.TeamWorkerSpec, role, leaderName, teamName string) *v1beta1.Worker {
-	annotations := map[string]string{
-		"hiclaw.io/role": role,
-		"hiclaw.io/team": teamName,
-	}
-	if leaderName != "" {
-		annotations["hiclaw.io/team-leader"] = leaderName
-	}
-	if t.Spec.Admin != nil && t.Spec.Admin.MatrixUserID != "" {
-		annotations["hiclaw.io/team-admin-id"] = t.Spec.Admin.MatrixUserID
-	}
-
+// teamWorkerSpecToWorkerSpec projects a TeamWorkerSpec into WorkerSpec with
+// the policy merge rules:
+//   - leader is always on the worker's groupAllow
+//   - team admin (if any) is on the worker's groupAllow
+//   - if Team.Spec.PeerMentions is true (default), all peers are groupAllow too
+func teamWorkerSpecToWorkerSpec(t *v1beta1.Team, w v1beta1.TeamWorkerSpec) v1beta1.WorkerSpec {
 	policy := mergeChannelPolicy(t.Spec.ChannelPolicy, w.ChannelPolicy)
-	policy = appendGroupAllowExtra(policy, leaderName)
-
+	policy = appendGroupAllowExtra(policy, t.Spec.Leader.Name)
 	if t.Spec.Admin != nil && t.Spec.Admin.Name != "" {
 		policy = appendGroupAllowExtra(policy, t.Spec.Admin.Name)
 	}
-
 	peerMentions := t.Spec.PeerMentions == nil || *t.Spec.PeerMentions
 	if peerMentions {
 		for _, peer := range t.Spec.Workers {
@@ -402,81 +541,57 @@ func (r *TeamReconciler) buildWorkerCR(t *v1beta1.Team, w v1beta1.TeamWorkerSpec
 			}
 		}
 	}
-
-	return &v1beta1.Worker{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:        w.Name,
-			Namespace:   t.Namespace,
-			Annotations: annotations,
-			Labels: map[string]string{
-				"hiclaw.io/team": teamName,
-				"hiclaw.io/role": role,
-			},
-		},
-		Spec: v1beta1.WorkerSpec{
-			Model:         w.Model,
-			Runtime:       "copaw", // Team mode requires copaw runtime
-			Image:         w.Image,
-			Identity:      w.Identity,
-			Soul:          w.Soul,
-			Agents:        w.Agents,
-			Skills:        w.Skills,
-			McpServers:    w.McpServers,
-			Package:       w.Package,
-			Expose:        w.Expose,
-			ChannelPolicy: policy,
-			State:         w.State,
-		},
+	return v1beta1.WorkerSpec{
+		Model:         w.Model,
+		Runtime:       "copaw",
+		Image:         w.Image,
+		Identity:      w.Identity,
+		Soul:          w.Soul,
+		Agents:        w.Agents,
+		Skills:        w.Skills,
+		McpServers:    w.McpServers,
+		Package:       w.Package,
+		Expose:        w.Expose,
+		ChannelPolicy: policy,
+		State:         w.State,
 	}
 }
 
-func (r *TeamReconciler) createOrUpdateWorkerCR(ctx context.Context, desired *v1beta1.Worker) error {
-	existing := &v1beta1.Worker{}
-	err := r.Get(ctx, client.ObjectKeyFromObject(desired), existing)
-	if err != nil {
-		if client.IgnoreNotFound(err) != nil {
-			return err
-		}
-		return r.Create(ctx, desired)
+func teamAdminMatrixID(t *v1beta1.Team) string {
+	if t.Spec.Admin == nil {
+		return ""
 	}
-	existing.Spec = desired.Spec
-	if existing.Annotations == nil {
-		existing.Annotations = make(map[string]string)
-	}
-	for k, v := range desired.Annotations {
-		existing.Annotations[k] = v
-	}
-	return r.Update(ctx, existing)
+	return t.Spec.Admin.MatrixUserID
 }
 
-func (r *TeamReconciler) failTeam(ctx context.Context, t *v1beta1.Team, msg string) (reconcile.Result, error) {
-	_ = r.Get(ctx, client.ObjectKeyFromObject(t), t)
-	t.Status.Phase = "Failed"
-	t.Status.Message = msg
-	r.Status().Update(ctx, t)
-	return reconcile.Result{RequeueAfter: time.Minute}, fmt.Errorf("%s", msg)
-}
+func (r *TeamReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	bldr := ctrl.NewControllerManagedBy(mgr).For(&v1beta1.Team{})
 
-func (r *TeamReconciler) deleteWorkerAndExpose(ctx context.Context, team *v1beta1.Team, worker *v1beta1.Worker) error {
-	var currentExposed []v1beta1.ExposedPortStatus
-	if team.Status.WorkerExposedPorts != nil {
-		currentExposed = team.Status.WorkerExposedPorts[worker.Name]
-	}
-	if len(currentExposed) == 0 && len(worker.Spec.Expose) > 0 {
-		for _, ep := range worker.Spec.Expose {
-			currentExposed = append(currentExposed, v1beta1.ExposedPortStatus{
-				Port:   ep.Port,
-				Domain: service.ContainerDNSName(worker.Name),
-			})
+	if r.Backend != nil {
+		if wb := r.Backend.DetectWorkerBackend(context.Background()); wb != nil && wb.Name() == "k8s" {
+			bldr = bldr.Watches(
+				&corev1.Pod{},
+				handler.EnqueueRequestsFromMapFunc(func(_ context.Context, obj client.Object) []reconcile.Request {
+					teamName := obj.GetLabels()["hiclaw.io/team"]
+					if teamName == "" {
+						return nil
+					}
+					return []reconcile.Request{
+						{NamespacedName: client.ObjectKey{
+							Name:      teamName,
+							Namespace: obj.GetNamespace(),
+						}},
+					}
+				}),
+				builder.WithPredicates(podLifecyclePredicates("hiclaw.io/team")),
+			)
 		}
 	}
-	if len(currentExposed) > 0 {
-		if _, err := r.Provisioner.ReconcileExpose(ctx, worker.Name, nil, currentExposed); err != nil {
-			return err
-		}
-	}
-	return r.Delete(ctx, worker)
+
+	return bldr.Complete(r)
 }
+
+// --- Policy helpers (preserved from prior implementation) ---
 
 func leaderHeartbeatEvery(team *v1beta1.Team) string {
 	if team.Spec.Leader.Heartbeat == nil {
@@ -485,30 +600,6 @@ func leaderHeartbeatEvery(team *v1beta1.Team) string {
 	return team.Spec.Leader.Heartbeat.Every
 }
 
-func summarizeTeamWorkerReadiness(workers []v1beta1.Worker, leaderName string) (int, bool) {
-	readyWorkers := 0
-	leaderReady := false
-	for _, worker := range workers {
-		isReady := worker.Status.Phase == "Running" || worker.Status.Phase == "Ready"
-		if worker.Name == leaderName {
-			leaderReady = isReady
-			continue
-		}
-		if isReady {
-			readyWorkers++
-		}
-	}
-	return readyWorkers, leaderReady
-}
-
-func (r *TeamReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	return ctrl.NewControllerManagedBy(mgr).
-		For(&v1beta1.Team{}).
-		Complete(r)
-}
-
-// mergeChannelPolicy produces a merged ChannelPolicySpec from a team-wide base
-// and an individual override. Both may be nil.
 func mergeChannelPolicy(teamPolicy, individualPolicy *v1beta1.ChannelPolicySpec) *v1beta1.ChannelPolicySpec {
 	if teamPolicy == nil && individualPolicy == nil {
 		return nil
@@ -529,7 +620,6 @@ func mergeChannelPolicy(teamPolicy, individualPolicy *v1beta1.ChannelPolicySpec)
 	return merged
 }
 
-// appendGroupAllowExtra adds names to GroupAllowExtra, creating the policy if nil.
 func appendGroupAllowExtra(policy *v1beta1.ChannelPolicySpec, names ...string) *v1beta1.ChannelPolicySpec {
 	if len(names) == 0 {
 		return policy
@@ -550,7 +640,6 @@ func appendGroupAllowExtra(policy *v1beta1.ChannelPolicySpec, names ...string) *
 	return policy
 }
 
-// appendDmAllowExtra adds names to DmAllowExtra, creating the policy if nil.
 func appendDmAllowExtra(policy *v1beta1.ChannelPolicySpec, names ...string) *v1beta1.ChannelPolicySpec {
 	if len(names) == 0 {
 		return policy

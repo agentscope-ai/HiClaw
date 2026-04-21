@@ -156,6 +156,15 @@ type TeamStatus struct {
 	TotalWorkers       int                            `json:"totalWorkers,omitempty"`
 	Message            string                         `json:"message,omitempty"`
 	WorkerExposedPorts map[string][]ExposedPortStatus `json:"workerExposedPorts,omitempty"`
+	// ObservedMembers records the set of member names (leader + workers) whose
+	// infrastructure provisioning has succeeded at least once. TeamReconciler
+	// uses this set to (a) detect stale members needing cleanup when the spec
+	// shrinks, and (b) decide per member whether to take the Provision path
+	// (first-time) or the Refresh path (already provisioned) on each reconcile.
+	// A member that fails ReconcileMemberInfra stays out of the set so the
+	// next reconcile retries Provision instead of silently succeeding via
+	// Refresh — mirroring WorkerReconciler's Status.MatrixUserID semantics.
+	ObservedMembers []string `json:"observedMembers,omitempty"`
 }
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object

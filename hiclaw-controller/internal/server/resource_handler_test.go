@@ -15,12 +15,14 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
-func TestCreateWorkerForTeamLeaderForcesTeamContext(t *testing.T) {
+// Post-refactor contract: team leaders cannot create team members via
+// /api/v1/workers. They must use /api/v1/teams. The handler must return 409.
+func TestCreateWorkerRejectsTeamLeaderCaller(t *testing.T) {
 	scheme := newServerTestScheme(t)
 	k8sClient := fake.NewClientBuilder().WithScheme(scheme).Build()
-	handler := NewResourceHandler(k8sClient, "default")
+	handler := NewResourceHandler(k8sClient, "default", nil)
 
-	body := []byte(`{"name":"alpha-temp","model":"qwen3.5-plus","team":"other-team","role":"team_leader","teamLeader":"wrong-lead"}`)
+	body := []byte(`{"name":"alpha-temp","model":"qwen3.5-plus"}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/workers", bytes.NewReader(body))
 	req = req.WithContext(context.WithValue(req.Context(), authpkg.CallerKeyForTest(), &authpkg.CallerIdentity{
 		Role:     authpkg.RoleTeamLeader,
@@ -31,30 +33,149 @@ func TestCreateWorkerForTeamLeaderForcesTeamContext(t *testing.T) {
 
 	handler.CreateWorker(rec, req)
 
-	if rec.Code != http.StatusCreated {
-		t.Fatalf("expected status %d, got %d: %s", http.StatusCreated, rec.Code, rec.Body.String())
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusConflict, rec.Code, rec.Body.String())
 	}
+}
 
-	var worker v1beta1.Worker
-	if err := k8sClient.Get(context.Background(), client.ObjectKey{Name: "alpha-temp", Namespace: "default"}, &worker); err != nil {
-		t.Fatalf("get worker: %v", err)
-	}
+// When the worker name is a member of an existing Team, CreateWorker must
+// return 409 regardless of caller role.
+func TestCreateWorkerRejectsExistingTeamMemberName(t *testing.T) {
+	scheme := newServerTestScheme(t)
+	team := &v1beta1.Team{}
+	team.Name = "alpha-team"
+	team.Namespace = "default"
+	team.Spec.Leader.Name = "alpha-lead"
+	team.Spec.Workers = []v1beta1.TeamWorkerSpec{{Name: "alpha-dev"}}
+	k8sClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(team).Build()
+	handler := NewResourceHandler(k8sClient, "default", nil)
 
-	if got := worker.Annotations["hiclaw.io/team"]; got != "alpha-team" {
-		t.Fatalf("expected team annotation alpha-team, got %q", got)
+	body := []byte(`{"name":"alpha-dev","model":"qwen3.5-plus"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/workers", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	handler.CreateWorker(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusConflict, rec.Code, rec.Body.String())
 	}
-	if got := worker.Annotations["hiclaw.io/role"]; got != "worker" {
-		t.Fatalf("expected role annotation worker, got %q", got)
+}
+
+// /api/v1/workers/{name} must synthesize a response for a team member even
+// though no Worker CR exists.
+func TestGetWorkerSynthesizesTeamMember(t *testing.T) {
+	scheme := newServerTestScheme(t)
+	team := &v1beta1.Team{}
+	team.Name = "alpha-team"
+	team.Namespace = "default"
+	team.Spec.Leader = v1beta1.LeaderSpec{Name: "alpha-lead", Model: "qwen3.5-plus"}
+	team.Spec.Workers = []v1beta1.TeamWorkerSpec{{Name: "alpha-dev", Model: "qwen3.5-plus"}}
+	k8sClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(team).Build()
+	handler := NewResourceHandler(k8sClient, "default", nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/workers/alpha-dev", nil)
+	req.SetPathValue("name", "alpha-dev")
+	rec := httptest.NewRecorder()
+	handler.GetWorker(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, rec.Code, rec.Body.String())
 	}
-	if got := worker.Annotations["hiclaw.io/team-leader"]; got != "alpha-lead" {
-		t.Fatalf("expected team leader annotation alpha-lead, got %q", got)
+	var resp WorkerResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Team != "alpha-team" || resp.Name != "alpha-dev" || resp.Role != "worker" {
+		t.Fatalf("unexpected synthesized response: %+v", resp)
+	}
+}
+
+// /api/v1/workers must list standalone workers and synthetic team members.
+// Workers with team annotations (legacy CRs) must NOT be duplicated.
+func TestListWorkersAggregatesTeamMembers(t *testing.T) {
+	scheme := newServerTestScheme(t)
+
+	standalone := &v1beta1.Worker{}
+	standalone.Name = "solo"
+	standalone.Namespace = "default"
+
+	team := &v1beta1.Team{}
+	team.Name = "alpha-team"
+	team.Namespace = "default"
+	team.Spec.Leader = v1beta1.LeaderSpec{Name: "alpha-lead", Model: "qwen3.5-plus"}
+	team.Spec.Workers = []v1beta1.TeamWorkerSpec{{Name: "alpha-dev", Model: "qwen3.5-plus"}}
+
+	k8sClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(standalone, team).Build()
+	handler := NewResourceHandler(k8sClient, "default", nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/workers", nil)
+	rec := httptest.NewRecorder()
+	handler.ListWorkers(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, rec.Code, rec.Body.String())
+	}
+	var list WorkerListResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &list); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if list.Total != 3 {
+		t.Fatalf("expected 3 workers (solo + leader + dev), got %d: %+v", list.Total, list.Workers)
+	}
+	names := map[string]bool{}
+	for _, w := range list.Workers {
+		names[w.Name] = true
+	}
+	for _, want := range []string{"solo", "alpha-lead", "alpha-dev"} {
+		if !names[want] {
+			t.Errorf("missing %q in aggregated list: %+v", want, list.Workers)
+		}
+	}
+}
+
+func TestUpdateWorkerRejectsTeamMember(t *testing.T) {
+	scheme := newServerTestScheme(t)
+	team := &v1beta1.Team{}
+	team.Name = "alpha-team"
+	team.Namespace = "default"
+	team.Spec.Leader.Name = "alpha-lead"
+	team.Spec.Workers = []v1beta1.TeamWorkerSpec{{Name: "alpha-dev"}}
+	k8sClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(team).Build()
+	handler := NewResourceHandler(k8sClient, "default", nil)
+
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/workers/alpha-dev", bytes.NewReader([]byte(`{"model":"new-model"}`)))
+	req.SetPathValue("name", "alpha-dev")
+	rec := httptest.NewRecorder()
+	handler.UpdateWorker(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusConflict, rec.Code, rec.Body.String())
+	}
+}
+
+func TestDeleteWorkerRejectsTeamMember(t *testing.T) {
+	scheme := newServerTestScheme(t)
+	team := &v1beta1.Team{}
+	team.Name = "alpha-team"
+	team.Namespace = "default"
+	team.Spec.Leader.Name = "alpha-lead"
+	team.Spec.Workers = []v1beta1.TeamWorkerSpec{{Name: "alpha-dev"}}
+	k8sClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(team).Build()
+	handler := NewResourceHandler(k8sClient, "default", nil)
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/workers/alpha-dev", nil)
+	req.SetPathValue("name", "alpha-dev")
+	rec := httptest.NewRecorder()
+	handler.DeleteWorker(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusConflict, rec.Code, rec.Body.String())
 	}
 }
 
 func TestCreateAndUpdateTeamLeaderRuntimeConfig(t *testing.T) {
 	scheme := newServerTestScheme(t)
 	k8sClient := fake.NewClientBuilder().WithScheme(scheme).Build()
-	handler := NewResourceHandler(k8sClient, "default")
+	handler := NewResourceHandler(k8sClient, "default", nil)
 
 	createBody := []byte(`{
 		"name":"alpha-team",
