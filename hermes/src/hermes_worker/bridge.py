@@ -16,6 +16,7 @@ Bridge-owned env keys (always rewritten):
 
 Bridge-owned YAML blocks:
   ``model.{default,provider,base_url,context_length}``,
+  ``auxiliary.vision.{provider,model,base_url,api_key}``,
   ``platforms.matrix.enabled`` / ``platforms.matrix.reply_to_mode``,
   top-level ``matrix.{require_mention,free_response_rooms,auto_thread,…}``.
 
@@ -352,6 +353,32 @@ def _matrix_yaml_block(cfg: Dict[str, Any]) -> Dict[str, Any]:
     return block
 
 
+def _auxiliary_vision_yaml_block(cfg: Dict[str, Any]) -> Dict[str, Any]:
+    """Build ``auxiliary.vision`` to match the active model endpoint.
+
+    Hermes routes image understanding through ``vision_analyze_tool`` which
+    reads its own auxiliary vision config rather than inheriting the main
+    model's runtime env. To keep worker-side image handling aligned with the
+    active HiClaw model, explicitly point auxiliary vision at the same
+    OpenAI-compatible endpoint and token.
+    """
+    if not _resolve_vision_enabled(cfg):
+        return {}
+
+    model = _resolve_active_model(cfg)
+    if not model:
+        return {}
+
+    in_container = _is_in_container()
+    provider_cfg = model.get("_provider", {})
+    return {
+        "provider": "custom",
+        "model": model.get("id", ""),
+        "base_url": _port_remap(provider_cfg.get("baseUrl", ""), in_container),
+        "api_key": provider_cfg.get("apiKey", ""),
+    }
+
+
 # ---------------------------------------------------------------------------
 # Public entrypoint
 # ---------------------------------------------------------------------------
@@ -371,7 +398,8 @@ def bridge_openclaw_to_hermes(
           vars from openclaw.env. User-managed keys are preserved.
 
       ``<hermes_home>/config.yaml``
-          ``model:`` block, top-level ``matrix:`` block, and
+          ``model:`` block, ``auxiliary.vision:`` bridge block, top-level
+          ``matrix:`` block, and
           ``platforms.matrix.enabled = true``. Other YAML keys (terminal,
           memory, mcp_servers, skills, …) are preserved.
 
@@ -425,6 +453,17 @@ def bridge_openclaw_to_hermes(
     matrix_block = _matrix_yaml_block(openclaw_cfg)
     if matrix_block:
         existing_yaml["matrix"] = {**existing_yaml.get("matrix", {}), **matrix_block}
+
+    auxiliary_vision_block = _auxiliary_vision_yaml_block(openclaw_cfg)
+    if auxiliary_vision_block:
+        auxiliary = existing_yaml.setdefault("auxiliary", {})
+        if not isinstance(auxiliary, dict):
+            auxiliary = {}
+            existing_yaml["auxiliary"] = auxiliary
+        auxiliary_vision = auxiliary.setdefault("vision", {})
+        if not isinstance(auxiliary_vision, dict):
+            auxiliary_vision = {}
+        auxiliary["vision"] = {**auxiliary_vision, **auxiliary_vision_block}
 
     platforms = existing_yaml.setdefault("platforms", {})
     if not isinstance(platforms, dict):

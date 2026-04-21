@@ -29,6 +29,18 @@ from hermes_matrix.policies import (
 )
 
 logger = logging.getLogger(__name__)
+_IMAGE_FILENAME_EXTENSIONS = frozenset({
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".gif",
+    ".webp",
+    ".bmp",
+    ".tiff",
+    ".tif",
+    ".heic",
+    ".heif",
+})
 
 
 def _truthy_env(name: str, default: bool = False) -> bool:
@@ -40,6 +52,28 @@ def _truthy_env(name: str, default: bool = False) -> bool:
 
 def _is_commandish(text: str) -> bool:
     return (text or "").startswith(("/", "!"))
+
+
+def _normalize_image_body(body: str) -> str:
+    """Drop Matrix transport filenames so image-only messages stay image-first.
+
+    Matrix image events commonly populate ``body`` with the uploaded filename
+    even when the user did not provide any textual caption. Feeding that raw
+    filename to Hermes causes the downstream agent to treat the turn like a
+    file lookup (for example ``search_files("foo.png")``) instead of relying
+    on the already-cached image plus automatic vision enrichment.
+    """
+    stripped = (body or "").strip()
+    if not stripped:
+        return ""
+    if "\n" in stripped or "\r" in stripped:
+        return stripped
+
+    leaf = stripped.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+    stem, ext = os.path.splitext(leaf)
+    if stem and ext.lower() in _IMAGE_FILENAME_EXTENSIONS:
+        return ""
+    return stripped
 
 
 def _describe_dropped_media(source_content: dict, fallback_body: str) -> str:
@@ -169,6 +203,28 @@ class MatrixAdapter(_NativeMatrixAdapter):
                 event_ts,
                 text_content,
                 relates_to,
+            )
+            return
+
+        if msgtype == "m.image":
+            normalized_content = dict(source_content)
+            normalized_body = _normalize_image_body(
+                source_content.get("body", "") or ""
+            )
+            if normalized_body != (source_content.get("body", "") or ""):
+                logger.debug(
+                    "Matrix: stripping transport filename from inbound image body %r",
+                    source_content.get("body", ""),
+                )
+                normalized_content["body"] = normalized_body
+            await super()._handle_media_message(
+                room_id,
+                sender,
+                event_id,
+                event_ts,
+                normalized_content,
+                relates_to,
+                msgtype,
             )
             return
 
