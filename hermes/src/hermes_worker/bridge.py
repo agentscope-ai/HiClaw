@@ -17,6 +17,7 @@ Bridge-owned env keys (always rewritten):
 Bridge-owned YAML blocks:
   ``model.{default,provider,base_url,context_length}``,
   ``auxiliary.vision.{provider,model,base_url,api_key}``,
+  ``logging.level`` (when ``HICLAW_MATRIX_DEBUG=1``),
   ``platforms.matrix.enabled`` / ``platforms.matrix.reply_to_mode``,
   top-level ``matrix.{require_mention,free_response_rooms,auto_thread,…}``.
 
@@ -379,6 +380,19 @@ def _auxiliary_vision_yaml_block(cfg: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _logging_yaml_block() -> Dict[str, Any]:
+    """Raise Hermes log verbosity when HiClaw Matrix debugging is enabled.
+
+    Hermes' native Matrix plugin logs through the normal Python logging tree.
+    Unlike OpenClaw there is no dedicated ``*_MATRIX_DEBUG`` env toggle, so we
+    bridge HiClaw's runtime-wide ``HICLAW_MATRIX_DEBUG=1`` flag to
+    ``config.yaml -> logging.level: DEBUG``.
+    """
+    if os.environ.get("HICLAW_MATRIX_DEBUG") != "1":
+        return {}
+    return {"level": "DEBUG"}
+
+
 # ---------------------------------------------------------------------------
 # Public entrypoint
 # ---------------------------------------------------------------------------
@@ -398,7 +412,8 @@ def bridge_openclaw_to_hermes(
           vars from openclaw.env. User-managed keys are preserved.
 
       ``<hermes_home>/config.yaml``
-          ``model:`` block, ``auxiliary.vision:`` bridge block, top-level
+          ``model:`` block, ``auxiliary.vision:`` bridge block, optional
+          ``logging.level: DEBUG`` (when ``HICLAW_MATRIX_DEBUG=1``), top-level
           ``matrix:`` block, and
           ``platforms.matrix.enabled = true``. Other YAML keys (terminal,
           memory, mcp_servers, skills, …) are preserved.
@@ -464,6 +479,13 @@ def bridge_openclaw_to_hermes(
         if not isinstance(auxiliary_vision, dict):
             auxiliary_vision = {}
         auxiliary["vision"] = {**auxiliary_vision, **auxiliary_vision_block}
+
+    logging_block = _logging_yaml_block()
+    if logging_block:
+        logging_cfg = existing_yaml.setdefault("logging", {})
+        if not isinstance(logging_cfg, dict):
+            logging_cfg = {}
+        existing_yaml["logging"] = {**logging_cfg, **logging_block}
 
     platforms = existing_yaml.setdefault("platforms", {})
     if not isinstance(platforms, dict):

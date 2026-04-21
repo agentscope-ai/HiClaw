@@ -89,3 +89,21 @@ def test_bridge_skips_auxiliary_vision_for_text_only_model(monkeypatch) -> None:
     config = _bridge_and_read(_make_openclaw_cfg(vision=False))
 
     assert "auxiliary" not in config or "vision" not in config["auxiliary"]
+
+
+def test_bridge_enables_debug_logging_when_matrix_debug_set(monkeypatch) -> None:
+    monkeypatch.setenv("HICLAW_MATRIX_DEBUG", "1")
+
+    config = _bridge_and_read(
+        _make_openclaw_cfg(vision=False),
+        initial_config={
+            "logging": {
+                "max_size_mb": 12,
+                "backup_count": 9,
+            }
+        },
+    )
+
+    assert config["logging"]["level"] == "DEBUG"
+    assert config["logging"]["max_size_mb"] == 12
+    assert config["logging"]["backup_count"] == 9

@@ -122,6 +122,13 @@ mkdir -p "${HERMES_HOME}"
 : "${MATRIX_HOME_CHANNEL:=disabled}"
 export HERMES_YOLO_MODE MATRIX_HOME_CHANNEL
 
+# Hermes does not expose a dedicated Matrix trace env knob like OpenClaw's
+# OPENCLAW_MATRIX_DEBUG. When HiClaw asks for Matrix debug logs, the bridge
+# upgrades Hermes' config.yaml logging.level to DEBUG before the gateway starts.
+if [ "${HICLAW_MATRIX_DEBUG:-}" = "1" ]; then
+    log "HICLAW_MATRIX_DEBUG=1 detected; Hermes bridge will set logging.level=DEBUG for Matrix/gateway tracing"
+fi
+
 # ── Hermes CMS Plugin Configuration ──────────────────────────────────────────
 # Pass observability env through to hermes-agent. Hermes uses standard OTel
 # environment variables, so no per-app bootstrap file is required.

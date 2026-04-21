@@ -1,7 +1,7 @@
 #!/bin/bash
 # agent-metrics.sh - Agent session metrics extraction and analysis
 #
-# Parses OpenClaw session .jsonl files to extract LLM call metrics:
+# Parses agent session artifacts to extract LLM call metrics:
 # - LLM call count per agent
 # - Token usage (input/output/cache)
 # - Timing information
@@ -36,20 +36,52 @@ export TEST_OUTPUT_DIR="${TEST_OUTPUT_DIR:-${PROJECT_ROOT:-.}/tests/output}"
 # Runtime-aware Session Path Detection
 # ============================================================
 
+# Detect agent runtime for a given container from its on-disk workspace layout.
+# Usage: _detect_runtime <container> <base_workspace_dir>
+# Output: openclaw | copaw | hermes | unknown
+_detect_runtime() {
+    local container="$1"
+    local base_dir="$2"
+
+    docker exec "$container" sh -c "
+        if [ -d '${base_dir}/.hermes/sessions' ]; then
+            echo hermes
+        elif [ -d '${base_dir}/.copaw/sessions' ]; then
+            echo copaw
+        elif [ -d '${base_dir}/.openclaw/agents/main/sessions' ]; then
+            echo openclaw
+        else
+            echo unknown
+        fi
+    " 2>/dev/null | tr -d '\r'
+}
+
 # Detect session directory for a given container based on its runtime.
 # Usage: _detect_session_dir <container> <base_workspace_dir>
-# Output: session directory path (e.g. /root/manager-workspace/.openclaw/agents/main/sessions)
 _detect_session_dir() {
     local container="$1"
     local base_dir="$2"
     local runtime
-    runtime=$(docker exec "$container" printenv HICLAW_MANAGER_RUNTIME 2>/dev/null || echo "openclaw")
+    runtime=$(_detect_runtime "$container" "$base_dir")
 
-    if [ "$runtime" = "copaw" ]; then
-        echo "${base_dir}/.copaw/sessions"
-    else
-        echo "${base_dir}/.openclaw/agents/main/sessions"
-    fi
+    case "$runtime" in
+        hermes)
+            echo "${base_dir}/.hermes/sessions"
+            ;;
+        copaw)
+            echo "${base_dir}/.copaw/sessions"
+            ;;
+        *)
+            echo "${base_dir}/.openclaw/agents/main/sessions"
+            ;;
+    esac
+}
+
+# Detect Hermes state DB path for a workspace root.
+# Usage: _detect_hermes_state_db <base_workspace_dir>
+_detect_hermes_state_db() {
+    local base_dir="$1"
+    echo "${base_dir}/.hermes/state.db"
 }
 
 # ============================================================
@@ -136,6 +168,202 @@ parse_session_metrics_inline() {
 EOF
 }
 
+# ============================================================
+# Hermes SessionDB Parsing
+# ============================================================
+
+# Snapshot all Hermes sessions from state.db with aggregated assistant-call counts.
+# Usage: _snapshot_hermes_sessions <container> <state_db_path>
+# Output: {"sessions": {"<id>": {"llm_calls": ..., "tokens": {...}, "timing": {...}}}}
+_snapshot_hermes_sessions() {
+    local container="$1"
+    local state_db="$2"
+
+    docker exec -i -e HERMES_STATE_DB="$state_db" "$container" python3 - <<'PY'
+import datetime
+import json
+import os
+import sqlite3
+
+db_path = os.environ.get("HERMES_STATE_DB", "")
+if not db_path or not os.path.exists(db_path):
+    print(json.dumps({"sessions": {}}))
+    raise SystemExit(0)
+
+conn = sqlite3.connect(db_path)
+conn.row_factory = sqlite3.Row
+cur = conn.cursor()
+query = """
+SELECT
+    s.id,
+    s.started_at,
+    COALESCE(s.ended_at, MAX(m.timestamp), s.started_at) AS end_ts,
+    s.input_tokens,
+    s.output_tokens,
+    s.cache_read_tokens,
+    s.cache_write_tokens,
+    SUM(CASE WHEN m.role = 'assistant' THEN 1 ELSE 0 END) AS llm_calls
+FROM sessions s
+LEFT JOIN messages m ON m.session_id = s.id
+GROUP BY
+    s.id,
+    s.started_at,
+    s.ended_at,
+    s.input_tokens,
+    s.output_tokens,
+    s.cache_read_tokens,
+    s.cache_write_tokens
+ORDER BY s.started_at DESC
+"""
+
+def iso(ts: float | None) -> str:
+    if ts is None:
+        return ""
+    return datetime.datetime.fromtimestamp(
+        float(ts), tz=datetime.timezone.utc
+    ).isoformat()
+
+out = {"sessions": {}}
+for row in cur.execute(query):
+    start = float(row["started_at"] or 0)
+    end = float(row["end_ts"] or start)
+    input_tokens = int(row["input_tokens"] or 0)
+    output_tokens = int(row["output_tokens"] or 0)
+    cache_read = int(row["cache_read_tokens"] or 0)
+    cache_write = int(row["cache_write_tokens"] or 0)
+    out["sessions"][row["id"]] = {
+        "llm_calls": int(row["llm_calls"] or 0),
+        "tokens": {
+            "input": input_tokens,
+            "output": output_tokens,
+            "cache_read": cache_read,
+            "cache_write": cache_write,
+            "total": input_tokens + output_tokens,
+        },
+        "timing": {
+            "start_epoch": start,
+            "end_epoch": end,
+            "start": iso(start),
+            "end": iso(end),
+            "duration_seconds": max(0, int(end - start)),
+        },
+    }
+
+print(json.dumps(out))
+PY
+}
+
+# Collect metrics for the latest Hermes session from state.db.
+# Usage: _collect_hermes_latest_metrics <container> <state_db_path>
+_collect_hermes_latest_metrics() {
+    local container="$1"
+    local state_db="$2"
+    local snapshot
+    snapshot=$(_snapshot_hermes_sessions "$container" "$state_db")
+    [ -z "$snapshot" ] && return 0
+
+    echo "$snapshot" | jq -c '
+        .sessions
+        | to_entries
+        | sort_by(.value.timing.start_epoch)
+        | last
+        | .value
+        | .timing = {
+            "start": .timing.start,
+            "end": .timing.end,
+            "duration_seconds": .timing.duration_seconds
+        }
+    ' 2>/dev/null
+}
+
+# Collect delta metrics for Hermes by diffing state.db session aggregates.
+# Usage: _collect_hermes_delta <container> <state_db_path> <baseline_json>
+_collect_hermes_delta() {
+    local container="$1"
+    local state_db="$2"
+    local baseline_json="$3"
+    local current_json
+    current_json=$(_snapshot_hermes_sessions "$container" "$state_db")
+    [ -z "$current_json" ] && return 0
+
+    if [ -z "$baseline_json" ] || [ "$baseline_json" = "null" ]; then
+        baseline_json='{"sessions": {}}'
+    fi
+
+    jq -n --argjson current "$current_json" --argjson baseline "$baseline_json" '
+        def zero:
+            {
+                llm_calls: 0,
+                tokens: {
+                    input: 0,
+                    output: 0,
+                    cache_read: 0,
+                    cache_write: 0,
+                    total: 0
+                },
+                timing: {
+                    start: "",
+                    end: "",
+                    duration_seconds: 0,
+                    start_epoch: 0,
+                    end_epoch: 0
+                }
+            };
+
+        reduce ($current.sessions | to_entries[]) as $session (
+            {
+                llm_calls: 0,
+                tokens: {
+                    input: 0,
+                    output: 0,
+                    cache_read: 0,
+                    cache_write: 0,
+                    total: 0
+                },
+                timing: {
+                    start: "",
+                    end: "",
+                    duration_seconds: 0
+                }
+            };
+            ($baseline.sessions[$session.key] // zero) as $base
+            | ($session.value.llm_calls - ($base.llm_calls // 0)) as $delta_calls
+            | ($session.value.tokens.input - ($base.tokens.input // 0)) as $delta_in
+            | ($session.value.tokens.output - ($base.tokens.output // 0)) as $delta_out
+            | ($session.value.tokens.cache_read - ($base.tokens.cache_read // 0)) as $delta_cache_read
+            | ($session.value.tokens.cache_write - ($base.tokens.cache_write // 0)) as $delta_cache_write
+            | ($session.value.timing.duration_seconds - ($base.timing.duration_seconds // 0)) as $delta_duration
+            | if (
+                $delta_calls != 0
+                or $delta_in != 0
+                or $delta_out != 0
+                or $delta_cache_read != 0
+                or $delta_cache_write != 0
+            ) then
+                .llm_calls += $delta_calls
+                | .tokens.input += $delta_in
+                | .tokens.output += $delta_out
+                | .tokens.cache_read += $delta_cache_read
+                | .tokens.cache_write += $delta_cache_write
+                | .timing.duration_seconds += (if $delta_duration > 0 then $delta_duration else 0 end)
+                | .timing.start = (
+                    if .timing.start == "" or (
+                        $session.value.timing.start != ""
+                        and $session.value.timing.start < .timing.start
+                    ) then $session.value.timing.start else .timing.start end
+                )
+                | .timing.end = (
+                    if .timing.end == "" or (
+                        $session.value.timing.end != ""
+                        and $session.value.timing.end > .timing.end
+                    ) then $session.value.timing.end else .timing.end end
+                )
+            else . end
+        )
+        | .tokens.total = (.tokens.input + .tokens.output)
+    '
+}
+
 # Calculate duration in seconds between two ISO timestamps
 calculate_duration_seconds() {
     local start_ts="$1"
@@ -177,6 +405,13 @@ wait_for_worker_session_stable() {
     local container="hiclaw-worker-${worker}"
     local session_dir
     session_dir=$(_detect_session_dir "$container" "/root/hiclaw-fs/agents/${worker}")
+    local runtime
+    runtime=$(_detect_runtime "$container" "/root/hiclaw-fs/agents/${worker}")
+
+    if [ "$runtime" = "hermes" ]; then
+        log_info "Worker '${worker}' uses Hermes; SessionDB metrics are transaction-based, skipping jsonl stabilization wait" >&2
+        return 0
+    fi
 
     if ! docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^${container}$"; then
         log_info "Worker '${worker}' container not running, skipping session wait" >&2
@@ -224,6 +459,13 @@ wait_for_session_stable() {
     local manager_container="${TEST_AGENT_CONTAINER:-${TEST_CONTROLLER_CONTAINER:-hiclaw-manager}}"
     local manager_session_dir
     manager_session_dir=$(_detect_session_dir "$manager_container" "/root/manager-workspace")
+    local manager_runtime
+    manager_runtime=$(_detect_runtime "$manager_container" "/root/manager-workspace")
+
+    if [ "$manager_runtime" = "hermes" ]; then
+        log_info "Manager uses Hermes; SessionDB metrics are transaction-based, skipping jsonl stabilization wait" >&2
+        return 0
+    fi
 
     log_info "Waiting for Manager session to stabilize (up to ${max_wait}s)..." >&2
 
@@ -272,21 +514,31 @@ snapshot_baseline() {
     local manager_container="${TEST_AGENT_CONTAINER:-${TEST_CONTROLLER_CONTAINER:-hiclaw-manager}}"
     local manager_session_dir
     manager_session_dir=$(_detect_session_dir "$manager_container" "/root/manager-workspace")
+    local manager_runtime
+    manager_runtime=$(_detect_runtime "$manager_container" "/root/manager-workspace")
 
     local snapshot_result='{"offsets": {}}'
 
-    # Snapshot all Manager session files
-    local manager_files
-    manager_files=$(docker exec "$manager_container" \
-        sh -c "ls '${manager_session_dir}'/*.jsonl 2>/dev/null" 2>/dev/null)
-    if [ -n "$manager_files" ]; then
-        local manager_offsets='{}'
-        while IFS= read -r f; do
-            local sz
-            sz=$(docker exec "$manager_container" sh -c "wc -c < '$f' 2>/dev/null || echo 0")
-            manager_offsets=$(echo "$manager_offsets" | jq --arg f "$f" --argjson s "$sz" '.[$f] = $s')
-        done <<< "$manager_files"
-        snapshot_result=$(echo "$snapshot_result" | jq --argjson o "$manager_offsets" '.offsets.manager = $o')
+    # Snapshot all Manager session artifacts
+    if [ "$manager_runtime" = "hermes" ]; then
+        local manager_db
+        manager_db=$(_detect_hermes_state_db "/root/manager-workspace")
+        local manager_snapshot
+        manager_snapshot=$(_snapshot_hermes_sessions "$manager_container" "$manager_db")
+        snapshot_result=$(echo "$snapshot_result" | jq --argjson o "$manager_snapshot" '.offsets.manager = $o')
+    else
+        local manager_files
+        manager_files=$(docker exec "$manager_container" \
+            sh -c "ls '${manager_session_dir}'/*.jsonl 2>/dev/null" 2>/dev/null)
+        if [ -n "$manager_files" ]; then
+            local manager_offsets='{}'
+            while IFS= read -r f; do
+                local sz
+                sz=$(docker exec "$manager_container" sh -c "wc -c < '$f' 2>/dev/null || echo 0")
+                manager_offsets=$(echo "$manager_offsets" | jq --arg f "$f" --argjson s "$sz" '.[$f] = $s')
+            done <<< "$manager_files"
+            snapshot_result=$(echo "$snapshot_result" | jq --argjson o "$manager_offsets" '.offsets.manager = $o')
+        fi
     fi
 
     # Snapshot all Worker session files
@@ -294,22 +546,32 @@ snapshot_baseline() {
         local worker_container="hiclaw-worker-${worker}"
         local worker_session_dir
         worker_session_dir=$(_detect_session_dir "$worker_container" "/root/hiclaw-fs/agents/${worker}")
+        local worker_runtime
+        worker_runtime=$(_detect_runtime "$worker_container" "/root/hiclaw-fs/agents/${worker}")
 
         if ! docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^${worker_container}$"; then
             continue
         fi
 
-        local worker_files
-        worker_files=$(docker exec "$worker_container" \
-            sh -c "ls '${worker_session_dir}'/*.jsonl 2>/dev/null" 2>/dev/null)
-        if [ -n "$worker_files" ]; then
-            local worker_offsets='{}'
-            while IFS= read -r f; do
-                local sz
-                sz=$(docker exec "$worker_container" sh -c "wc -c < '$f' 2>/dev/null || echo 0")
-                worker_offsets=$(echo "$worker_offsets" | jq --arg f "$f" --argjson s "$sz" '.[$f] = $s')
-            done <<< "$worker_files"
-            snapshot_result=$(echo "$snapshot_result" | jq --arg w "$worker" --argjson o "$worker_offsets" '.offsets[$w] = $o')
+        if [ "$worker_runtime" = "hermes" ]; then
+            local worker_db
+            worker_db=$(_detect_hermes_state_db "/root/hiclaw-fs/agents/${worker}")
+            local worker_snapshot
+            worker_snapshot=$(_snapshot_hermes_sessions "$worker_container" "$worker_db")
+            snapshot_result=$(echo "$snapshot_result" | jq --arg w "$worker" --argjson o "$worker_snapshot" '.offsets[$w] = $o')
+        else
+            local worker_files
+            worker_files=$(docker exec "$worker_container" \
+                sh -c "ls '${worker_session_dir}'/*.jsonl 2>/dev/null" 2>/dev/null)
+            if [ -n "$worker_files" ]; then
+                local worker_offsets='{}'
+                while IFS= read -r f; do
+                    local sz
+                    sz=$(docker exec "$worker_container" sh -c "wc -c < '$f' 2>/dev/null || echo 0")
+                    worker_offsets=$(echo "$worker_offsets" | jq --arg f "$f" --argjson s "$sz" '.[$f] = $s')
+                done <<< "$worker_files"
+                snapshot_result=$(echo "$snapshot_result" | jq --arg w "$worker" --argjson o "$worker_offsets" '.offsets[$w] = $o')
+            fi
         fi
     done
 
@@ -409,16 +671,24 @@ collect_delta_metrics() {
     local manager_container="${TEST_AGENT_CONTAINER:-${TEST_CONTROLLER_CONTAINER:-hiclaw-manager}}"
     local manager_session_dir
     manager_session_dir=$(_detect_session_dir "$manager_container" "/root/manager-workspace")
+    local manager_runtime
+    manager_runtime=$(_detect_runtime "$manager_container" "/root/manager-workspace")
 
     # Initialize result structure
     local delta_result='{"test_name": "'"${test_name}"'", "timestamp": "'"$(date -Iseconds)"'", "agents": {}, "totals": {"llm_calls": 0, "tokens": {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0, "total": 0}, "timing": {"duration_seconds": 0}}}'
 
-    # Collect Manager delta using byte-offset approach across all session files
+    # Collect Manager delta using runtime-specific source
     log_info "Collecting Manager delta metrics..." >&2
     local manager_offsets
     manager_offsets=$(echo "$baseline" | jq -r '.offsets.manager // empty')
     local manager_delta
-    manager_delta=$(_collect_agent_delta "$manager_container" "$manager_session_dir" "$manager_offsets")
+    if [ "$manager_runtime" = "hermes" ]; then
+        local manager_db
+        manager_db=$(_detect_hermes_state_db "/root/manager-workspace")
+        manager_delta=$(_collect_hermes_delta "$manager_container" "$manager_db" "$manager_offsets")
+    else
+        manager_delta=$(_collect_agent_delta "$manager_container" "$manager_session_dir" "$manager_offsets")
+    fi
     if [ -n "$manager_delta" ]; then
         delta_result=$(echo "$delta_result" | jq --argjson m "$manager_delta" '.agents.manager = $m')
         log_info "Manager delta: $(echo "$manager_delta" | jq -r '.llm_calls') LLM calls, $(echo "$manager_delta" | jq -r '.tokens.total') tokens" >&2
@@ -429,6 +699,8 @@ collect_delta_metrics() {
         local worker_container="hiclaw-worker-${worker}"
         local worker_session_dir
         worker_session_dir=$(_detect_session_dir "$worker_container" "/root/hiclaw-fs/agents/${worker}")
+        local worker_runtime
+        worker_runtime=$(_detect_runtime "$worker_container" "/root/hiclaw-fs/agents/${worker}")
 
         log_info "Collecting Worker '${worker}' delta metrics..." >&2
 
@@ -440,7 +712,13 @@ collect_delta_metrics() {
         local worker_offsets
         worker_offsets=$(echo "$baseline" | jq -r --arg w "$worker" '.offsets[$w] // empty')
         local worker_delta
-        worker_delta=$(_collect_agent_delta "$worker_container" "$worker_session_dir" "$worker_offsets")
+        if [ "$worker_runtime" = "hermes" ]; then
+            local worker_db
+            worker_db=$(_detect_hermes_state_db "/root/hiclaw-fs/agents/${worker}")
+            worker_delta=$(_collect_hermes_delta "$worker_container" "$worker_db" "$worker_offsets")
+        else
+            worker_delta=$(_collect_agent_delta "$worker_container" "$worker_session_dir" "$worker_offsets")
+        fi
         if [ -n "$worker_delta" ]; then
             delta_result=$(echo "$delta_result" | jq --arg w "$worker" --argjson m "$worker_delta" '.agents[$w] = $m')
             log_info "Worker '${worker}' delta: $(echo "$worker_delta" | jq -r '.llm_calls') LLM calls, $(echo "$worker_delta" | jq -r '.tokens.total') tokens" >&2
@@ -478,22 +756,30 @@ collect_test_metrics() {
     local manager_container="${TEST_AGENT_CONTAINER:-${TEST_CONTROLLER_CONTAINER:-hiclaw-manager}}"
     local manager_session_dir
     manager_session_dir=$(_detect_session_dir "$manager_container" "/root/manager-workspace")
+    local manager_runtime
+    manager_runtime=$(_detect_runtime "$manager_container" "/root/manager-workspace")
 
     # Initialize result structure
     local cumulative_result='{"test_name": "'"${test_name}"'", "timestamp": "'"$(date -Iseconds)"'", "agents": {}, "totals": {"llm_calls": 0, "tokens": {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0, "total": 0}, "timing": {"duration_seconds": 0}}}'
     
     # Collect Manager metrics
     log_info "Collecting Manager metrics..." >&2
-    local manager_session
-    manager_session=$(get_latest_session "$manager_container" "$manager_session_dir")
-    
-    if [ -n "$manager_session" ]; then
-        local manager_metrics
-        manager_metrics=$(docker exec "$manager_container" cat "$manager_session" 2>/dev/null | parse_session_metrics_inline)
-        if [ -n "$manager_metrics" ]; then
-            cumulative_result=$(echo "$cumulative_result" | jq --argjson m "$manager_metrics" '.agents.manager = $m')
-            log_info "Manager: $(echo "$manager_metrics" | jq -r '.llm_calls') LLM calls, $(echo "$manager_metrics" | jq -r '.tokens.total') tokens" >&2
+    local manager_metrics
+    if [ "$manager_runtime" = "hermes" ]; then
+        local manager_db
+        manager_db=$(_detect_hermes_state_db "/root/manager-workspace")
+        manager_metrics=$(_collect_hermes_latest_metrics "$manager_container" "$manager_db")
+    else
+        local manager_session
+        manager_session=$(get_latest_session "$manager_container" "$manager_session_dir")
+        if [ -n "$manager_session" ]; then
+            manager_metrics=$(docker exec "$manager_container" cat "$manager_session" 2>/dev/null | parse_session_metrics_inline)
         fi
+    fi
+    
+    if [ -n "$manager_metrics" ] && [ "$manager_metrics" != "null" ]; then
+        cumulative_result=$(echo "$cumulative_result" | jq --argjson m "$manager_metrics" '.agents.manager = $m')
+        log_info "Manager: $(echo "$manager_metrics" | jq -r '.llm_calls') LLM calls, $(echo "$manager_metrics" | jq -r '.tokens.total') tokens" >&2
     else
         log_info "No Manager session found" >&2
     fi
@@ -503,6 +789,8 @@ collect_test_metrics() {
         local worker_container="hiclaw-worker-${worker}"
         local worker_session_dir
         worker_session_dir=$(_detect_session_dir "$worker_container" "/root/hiclaw-fs/agents/${worker}")
+        local worker_runtime
+        worker_runtime=$(_detect_runtime "$worker_container" "/root/hiclaw-fs/agents/${worker}")
         
         log_info "Collecting Worker '${worker}' metrics..." >&2
         
@@ -512,16 +800,22 @@ collect_test_metrics() {
             continue
         fi
         
-        local worker_session
-        worker_session=$(get_latest_session "$worker_container" "$worker_session_dir")
-        
-        if [ -n "$worker_session" ]; then
-            local worker_metrics
-            worker_metrics=$(docker exec "$worker_container" cat "$worker_session" 2>/dev/null | parse_session_metrics_inline)
-            if [ -n "$worker_metrics" ]; then
-                cumulative_result=$(echo "$cumulative_result" | jq --arg w "$worker" --argjson m "$worker_metrics" '.agents[$w] = $m')
-                log_info "Worker '${worker}': $(echo "$worker_metrics" | jq -r '.llm_calls') LLM calls, $(echo "$worker_metrics" | jq -r '.tokens.total') tokens" >&2
+        local worker_metrics
+        if [ "$worker_runtime" = "hermes" ]; then
+            local worker_db
+            worker_db=$(_detect_hermes_state_db "/root/hiclaw-fs/agents/${worker}")
+            worker_metrics=$(_collect_hermes_latest_metrics "$worker_container" "$worker_db")
+        else
+            local worker_session
+            worker_session=$(get_latest_session "$worker_container" "$worker_session_dir")
+            if [ -n "$worker_session" ]; then
+                worker_metrics=$(docker exec "$worker_container" cat "$worker_session" 2>/dev/null | parse_session_metrics_inline)
             fi
+        fi
+
+        if [ -n "$worker_metrics" ] && [ "$worker_metrics" != "null" ]; then
+            cumulative_result=$(echo "$cumulative_result" | jq --arg w "$worker" --argjson m "$worker_metrics" '.agents[$w] = $m')
+            log_info "Worker '${worker}': $(echo "$worker_metrics" | jq -r '.llm_calls') LLM calls, $(echo "$worker_metrics" | jq -r '.tokens.total') tokens" >&2
         else
             log_info "No session found for Worker '${worker}'" >&2
         fi
