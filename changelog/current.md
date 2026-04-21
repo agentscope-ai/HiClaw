@@ -4,6 +4,8 @@ Record image-affecting changes to `manager/`, `worker/`, `openclaw-base/` here b
 
 ---
 
+- fix(copaw): `MatrixChannel._apply_mention` now emits Element-style visible mentions (`matrix.to` anchor in `formatted_body` + MXID in `body` + `m.mentions.user_ids`) so openclaw >= 2026.4.x workers actually wake up instead of dropping the event as `no-mention`; `send()` / `send_media()` also accept `meta["mention_user_ids"]` for explicit targets.
+
 - feat(manager): add Team Leader heartbeat and worker lifecycle builtins for team-scoped sleep/wake coordination (unreleased)
 
 - fix(manager): make find-skills use deterministic script paths in worker/copaw SKILL.md, render canonical install/search commands from `hiclaw-find-skill.sh`, and treat "import/install xxx skill from market" as a direct install trigger

@@ -1941,22 +1941,74 @@ class MatrixChannel(BaseChannel):
         matches = self._MATRIX_USER_ID_RE.findall(text)
         return list(dict.fromkeys(matches))  # dedupe, preserve order
 
-    def _apply_mention(  # pylint: disable=unused-argument
+    def _apply_mention(
         self,
         content: dict[str, Any],
-        user_id: str,
         room_id: str,
+        *,
+        explicit_user_ids: Optional[List[str]] = None,
+        fallback_user_id: Optional[str] = None,
     ) -> None:
-        """Add Matrix mentions to an outgoing event content dict.
+        """Attach an Element-style visible mention to an outgoing event.
 
-        Scans the message body for @user:domain patterns and populates
-        ``m.mentions.user_ids`` (MSC3952). Only includes user IDs that
-        actually appear in the text. Does NOT modify the body text.
+        openclaw >= 2026.4.x requires BOTH ``m.mentions.user_ids`` AND a
+        *visible* mention (either a ``matrix.to`` link in ``formatted_body``
+        or a regex match on identity) before it will wake up on a
+        mention. A metadata-only mention is silently dropped with
+        ``reason: "no-mention"``. To stay compatible with OpenClaw
+        workers running a minimal SOUL (no custom identity regex), this
+        helper writes three layers in one shot:
+
+        1. ``body``           — ensure every mentioned MXID appears as plain
+                                text (prefix if missing).
+        2. ``formatted_body`` — rewrite each MXID occurrence as a
+                                ``<a href="https://matrix.to/#/...">...</a>``
+                                anchor, creating the field if absent.
+        3. ``m.mentions``     — list the mentioned MXIDs per MSC3952.
+
+        Mention target resolution (highest priority first):
+
+        * ``explicit_user_ids`` — caller-supplied list
+          (e.g. from ``meta["mention_user_ids"]``).
+        * ``fallback_user_id`` — e.g. the original sender when replying.
+        * Regex scan of ``body`` for ``@user:domain`` tokens.
         """
-        body = content.get("body", "")
-        mentioned_ids = self._extract_mentions_from_text(body)
-        if mentioned_ids:
-            content["m.mentions"] = {"user_ids": mentioned_ids}
+        body = content.get("body", "") or ""
+
+        targets: list[str]
+        if explicit_user_ids:
+            targets = list(dict.fromkeys(explicit_user_ids))
+        elif fallback_user_id:
+            targets = [fallback_user_id]
+        else:
+            targets = self._extract_mentions_from_text(body)
+
+        targets = [t for t in targets if t and t != self._user_id]
+        if not targets:
+            return
+
+        html_body = content.get("formatted_body", "") or ""
+        if not html_body:
+            html_body = html.escape(body).replace("\n", "<br>\n")
+
+        for mxid in targets:
+            if mxid not in body:
+                body = f"{mxid} {body}" if body else mxid
+            mxid_enc = urllib.parse.quote(mxid, safe="")
+            display = self._resolve_display_name(mxid, room_id) or mxid
+            anchor = (
+                f'<a href="https://matrix.to/#/{mxid_enc}">'
+                f"{html.escape(display)}</a>"
+            )
+            if mxid in html_body:
+                html_body = html_body.replace(mxid, anchor, 1)
+            else:
+                html_body = f"{anchor} {html_body}" if html_body else anchor
+
+        content["body"] = body
+        content["format"] = "org.matrix.custom.html"
+        content["formatted_body"] = html_body
+        content["m.mentions"] = {"user_ids": targets}
 
     def _resolve_display_name(self, user_id: str, room_id: str) -> str:
         """Best-effort display name for *user_id* in *room_id*."""
@@ -2018,11 +2070,16 @@ class MatrixChannel(BaseChannel):
             len(html_body),
         )
 
-        sender_id = (meta or {}).get("sender_id") or (meta or {}).get(
-            "user_id",
-        )
-        if sender_id:
-            self._apply_mention(content, sender_id, room_id)
+        meta_dict = meta or {}
+        explicit_ids = meta_dict.get("mention_user_ids") or None
+        sender_id = meta_dict.get("sender_id") or meta_dict.get("user_id")
+        if explicit_ids or sender_id:
+            self._apply_mention(
+                content,
+                room_id,
+                explicit_user_ids=explicit_ids,
+                fallback_user_id=sender_id if not explicit_ids else None,
+            )
 
         try:
             await self._client.room_send(
@@ -2109,11 +2166,18 @@ class MatrixChannel(BaseChannel):
                     "size": file_size,
                 },
             }
-            sender_id = (meta or {}).get("sender_id") or (meta or {}).get(
-                "user_id",
-            )
-            if sender_id:
-                self._apply_mention(event_content, sender_id, room_id)
+            meta_dict = meta or {}
+            explicit_ids = meta_dict.get("mention_user_ids") or None
+            sender_id = meta_dict.get("sender_id") or meta_dict.get("user_id")
+            if explicit_ids or sender_id:
+                self._apply_mention(
+                    event_content,
+                    room_id,
+                    explicit_user_ids=explicit_ids,
+                    fallback_user_id=(
+                        sender_id if not explicit_ids else None
+                    ),
+                )
 
             await self._client.room_send(
                 room_id,
