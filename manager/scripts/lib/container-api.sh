@@ -17,7 +17,7 @@
 CONTAINER_API_BASE="${HICLAW_CONTROLLER_URL:-http://localhost:8090}"
 WORKER_CONTAINER_PREFIX="hiclaw-worker-"
 
-# Resolve bearer token: HICLAW_AUTH_TOKEN > HICLAW_AUTH_TOKEN_FILE > API key > none
+# Resolve bearer token: HICLAW_AUTH_TOKEN > HICLAW_AUTH_TOKEN_FILE > none
 _HICLAW_CONTROLLER_TOKEN=""
 _resolve_controller_token() {
     # Re-read token each call (projected SA tokens are auto-rotated by kubelet)
@@ -25,8 +25,6 @@ _resolve_controller_token() {
         _HICLAW_CONTROLLER_TOKEN="${HICLAW_AUTH_TOKEN}"
     elif [ -n "${HICLAW_AUTH_TOKEN_FILE:-}" ] && [ -f "${HICLAW_AUTH_TOKEN_FILE}" ]; then
         _HICLAW_CONTROLLER_TOKEN=$(cat "${HICLAW_AUTH_TOKEN_FILE}")
-    elif [ -n "${HICLAW_CONTROLLER_API_KEY:-}" ]; then
-        _HICLAW_CONTROLLER_TOKEN="${HICLAW_CONTROLLER_API_KEY}"
     fi
 }
 

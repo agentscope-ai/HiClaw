@@ -498,6 +498,8 @@ Nacos URI 格式：`nacos://[user:pass@]host:port/{namespace}/{agentspec-name}[/
   },
   "worker": {
     "suggested_name": "my-worker",
+    "model": "qwen3.5-plus",
+    "runtime": "openclaw",
     "base_image": "hiclaw/worker-agent:latest",
     "apt_packages": ["ffmpeg"],
     "pip_packages": [],
@@ -505,6 +507,9 @@ Nacos URI 格式：`nacos://[user:pass@]host:port/{namespace}/{agentspec-name}[/
   }
 }
 ```
+
+`worker.runtime`（`openclaw` 或 `copaw`）会被 `hiclaw apply worker --zip` 读取，
+显式 `--runtime` 优先级更高。
 
 ## 操作方式
 

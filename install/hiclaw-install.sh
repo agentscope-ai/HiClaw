@@ -2375,6 +2375,16 @@ EOF
         log "$(msg install.yolo)"
     fi
 
+    # Matrix-plugin debug tracing: pass through if HICLAW_MATRIX_DEBUG=1.
+    # The container entrypoints translate this to OPENCLAW_MATRIX_DEBUG=1
+    # so the openclaw matrix plugin emits structured INFO-level lifecycle
+    # traces (sync state transitions, room.invite/join, message handler
+    # arrival + filter outcomes). Used to diagnose worker/manager hangs.
+    MATRIX_DEBUG_ARGS=""
+    if [ "${HICLAW_MATRIX_DEBUG:-}" = "1" ]; then
+        MATRIX_DEBUG_ARGS="-e HICLAW_MATRIX_DEBUG=1"
+    fi
+
     # E2EE is already in the env file; but also pass explicitly in case env file is not the source
     # (HICLAW_MATRIX_E2EE is already written to ENV_FILE above via --env-file)
 
@@ -2639,6 +2649,14 @@ CREDEOF
             _ctrl_env_args+=(-e "HICLAW_YOLO=1")
         fi
 
+        # Matrix-plugin debug tracing — propagated to every manager + worker
+        # the controller spawns, then translated to OPENCLAW_MATRIX_DEBUG=1
+        # by the container entrypoints. Use this to diagnose
+        # "worker did not join" / "manager replied empty" hangs.
+        if [ "${HICLAW_MATRIX_DEBUG:-}" = "1" ]; then
+            _ctrl_env_args+=(-e "HICLAW_MATRIX_DEBUG=1")
+        fi
+
         # Optional: GitHub token
         if [ -n "${HICLAW_GITHUB_TOKEN:-}" ]; then
             _ctrl_env_args+=(-e "HICLAW_GITHUB_TOKEN=${HICLAW_GITHUB_TOKEN}")
@@ -2790,6 +2808,11 @@ CREDEOF
             YOLO_ARGS="-e HICLAW_YOLO=1"
         fi
 
+        MATRIX_DEBUG_ARGS=""
+        if [ "${HICLAW_MATRIX_DEBUG:-}" = "1" ]; then
+            MATRIX_DEBUG_ARGS="-e HICLAW_MATRIX_DEBUG=1"
+        fi
+
         # shellcheck disable=SC2086
         ${DOCKER_CMD} run -d \
             --name hiclaw-manager \
@@ -2800,6 +2823,7 @@ CREDEOF
             -e HICLAW_MANAGER_RUNTIME="${HICLAW_MANAGER_RUNTIME:-openclaw}" \
             ${JVM_ARGS:+-e JVM_ARGS="${JVM_ARGS}"} \
             ${YOLO_ARGS} \
+            ${MATRIX_DEBUG_ARGS} \
             ${TZ_ARGS} \
             ${SOCKET_MOUNT_ARGS} \
             ${NETWORK_ARGS} \

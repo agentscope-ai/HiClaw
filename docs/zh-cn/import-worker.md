@@ -177,6 +177,8 @@ worker-package.zip
   },
   "worker": {
     "suggested_name": "my-worker",
+    "model": "qwen3.5-plus",
+    "runtime": "openclaw",
     "base_image": "hiclaw/worker-agent:latest",
     "apt_packages": ["ffmpeg", "imagemagick"],
     "pip_packages": [],
@@ -184,6 +186,9 @@ worker-package.zip
   }
 }
 ```
+
+`worker.runtime`（`openclaw` 或 `copaw`）会被 `hiclaw apply worker --zip` 读取，
+显式传入的 `--runtime` 参数优先级更高。两者都没设置时由 controller 兜底（默认 `openclaw`）。
 
 ## 场景一：迁移独立运行的 OpenClaw
 

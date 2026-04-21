@@ -498,6 +498,8 @@ Regardless of URI format, the extracted package follows a unified structure:
   },
   "worker": {
     "suggested_name": "my-worker",
+    "model": "qwen3.5-plus",
+    "runtime": "openclaw",
     "base_image": "hiclaw/worker-agent:latest",
     "apt_packages": ["ffmpeg"],
     "pip_packages": [],
@@ -505,6 +507,9 @@ Regardless of URI format, the extracted package follows a unified structure:
   }
 }
 ```
+
+`worker.runtime` (`openclaw` or `copaw`) is honored by `hiclaw apply worker --zip`
+and overridden by an explicit `--runtime` flag.
 
 ## Operations
 

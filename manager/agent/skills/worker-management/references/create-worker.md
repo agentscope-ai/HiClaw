@@ -69,9 +69,12 @@ Quick lookup:
 
 Pass the SOUL text from Step 1 **inline** via `--soul`, as a single double-quoted multi-line argument. Everything travels in argv — no file write, no stdin heredoc, no silent 0-byte trap.
 
+Always use `--no-wait` so the call returns in ~1s instead of blocking up to 3 minutes waiting for `phase=Ready`. You will poll status separately in Step 2.5.
+
 ```bash
 hiclaw create worker \
   --name <NAME> \
+  --no-wait \
   --soul "# Worker Agent - <NAME>
 
 ## AI Identity
@@ -115,6 +118,7 @@ Escape rules inside the `--soul "..."` string:
 | `--skills` | Comma-separated built-in skills to assign |
 | `--mcp-servers` | Comma-separated MCP servers to authorize |
 | `--runtime` | Agent runtime: `openclaw` (default) or `copaw` |
+| `--no-wait` | **Strongly recommended.** Return as soon as the controller accepts the create request (~1s) instead of blocking up to 3 minutes for `phase=Ready`. Always pair with the Step 2.5 poll. |
 | `-o json` | Output full JSON response from controller |
 
 The controller handles everything: Matrix registration, room creation, Higress consumer, AI/MCP authorization, config generation, MinIO sync, skills push, and container startup.
@@ -130,34 +134,36 @@ The JSON response contains the worker status. Key fields:
 - `"room_id"` — Worker's Matrix room ID
 - `"install_cmd"` — (when status is `pending_install`) Provide this **verbatim in a code block** (do NOT redact `--fs-secret`)
 
-## Step 2.5: Check Worker status
+## Step 2.5: Poll for Ready
 
-**IMPORTANT**: After running `hiclaw create worker`, the Worker may be in `Pending` state (still creating). **DO NOT use `sleep` to wait**. Instead, immediately check the status:
+With `--no-wait`, the create call returns in ~1s with the controller's accept response — the Worker is **still being provisioned** at that point (Matrix registration, Higress config, container startup all happen asynchronously). Immediately poll status:
 
 ```bash
 hiclaw get workers -o json
 ```
 
-This command returns ALL workers with their current status. Look for your Worker's `phase` field:
-- `"Pending"` — Still creating (Matrix registration, Higress config, container startup)
-- `"Running"` — Ready to receive tasks
-- `"Failed"` — Creation failed (check `message` field for error)
+This command returns ALL workers with their current `phase`:
+- `"Pending"` — Still being provisioned. **This is the expected initial state**, not a failure.
+- `"Running"` — Ready to receive tasks. Proceed to Post-creation.
+- `"Failed"` — Creation failed. Read the `message` field and report the error to admin.
 
-**Typical creation time**:
+**Typical time to `Running`**:
 - OpenClaw Worker: 10-30 seconds
 - CoPaw Worker: 15-45 seconds
 
+Repeat the poll once every 5-10s while still `Pending`. If still `Pending` after ~90s, report the situation to admin — but do **NOT** abandon the CLI and try to create the Worker again via curl or any other path. The create request was already accepted; a duplicate POST will fail with 409 Conflict and confuse the picture.
+
 **What NOT to do**:
-- ❌ `sleep 30 && hiclaw get worker <name>` — Wastes time
-- ❌ `ls ~/scripts/` — Scripts are not needed
-- ❌ `cat /root/hiclaw-fs/agents/<name>/config.json` — Config is in MinIO, not local filesystem
-- ❌ `docker ps -a --filter "name=<name>"` — Docker may not be available in Manager container
-- ❌ `hiclaw --help` or `hiclaw get worker --help` — You already know the command
+- ❌ `sleep 30 && hiclaw get workers` — Wastes time. Poll immediately and repeat as needed.
+- ❌ `cat /root/hiclaw-fs/agents/<name>/config.json` — Config is in MinIO, not local filesystem.
+- ❌ `docker ps -a --filter "name=<name>"` — Docker may not be available in the Manager container.
+- ❌ `curl ${HICLAW_CONTROLLER_URL}/api/v1/workers/...` — **Forbidden.** See AGENTS.md "Controller API Rules". The CLI is the only supported path.
+- ❌ Re-running `hiclaw create worker` "to retry" while the first call is still `Pending` — that returns 409 Conflict.
 
 **What to do**:
-- ✅ `hiclaw get workers -o json` — Direct status check
-- ✅ If `phase` is `"Running"`, proceed to Post-creation
-- ✅ If `phase` is `"Failed"`, read the `message` field and report error to admin
+- ✅ `hiclaw get workers -o json` — Direct status check. Repeat every 5-10s if still `Pending`.
+- ✅ If `phase` is `"Running"`, proceed to Post-creation.
+- ✅ If `phase` is `"Failed"`, read the `message` field and report the error to admin.
 
 ## Post-creation
 
