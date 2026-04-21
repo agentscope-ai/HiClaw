@@ -2621,6 +2621,7 @@ CREDEOF
             -e "HICLAW_MANAGER_IMAGE=$([ "${HICLAW_MANAGER_RUNTIME}" = "copaw" ] && echo "${MANAGER_COPAW_IMAGE}" || echo "${MANAGER_IMAGE}")"
             -e "HICLAW_WORKER_IMAGE=${WORKER_IMAGE}"
             -e "HICLAW_COPAW_WORKER_IMAGE=${COPAW_WORKER_IMAGE}"
+            -e "HICLAW_DEFAULT_WORKER_RUNTIME=${HICLAW_DEFAULT_WORKER_RUNTIME:-openclaw}"
             -e "HICLAW_MATRIX_DOMAIN=${_matrix_domain}"
             -e "HICLAW_ELEMENT_HOMESERVER_URL=http://127.0.0.1:${HICLAW_PORT_GATEWAY}"
             -e "HICLAW_MATRIX_URL=http://127.0.0.1:6167"

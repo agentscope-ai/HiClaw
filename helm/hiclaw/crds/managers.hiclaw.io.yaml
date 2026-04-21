@@ -22,7 +22,10 @@ spec:
                 runtime:
                   type: string
                   enum: [openclaw, copaw]
-                  default: openclaw
+                  description: |
+                    Manager runtime. When omitted the controller falls back to
+                    HICLAW_MANAGER_RUNTIME (set at install time), and finally
+                    to "openclaw" if neither is set.
                 image:
                   type: string
                   description: Custom Docker image for the Manager agent

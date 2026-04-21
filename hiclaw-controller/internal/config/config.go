@@ -351,6 +351,9 @@ func (c *Config) DockerConfig() backend.DockerConfig {
 		WorkerImage:      envOrDefault("HICLAW_WORKER_IMAGE", "hiclaw/worker-agent:latest"),
 		CopawWorkerImage: envOrDefault("HICLAW_COPAW_WORKER_IMAGE", "hiclaw/copaw-worker:latest"),
 		DefaultNetwork:   envOrDefault("HICLAW_DOCKER_NETWORK", "hiclaw-net"),
+		// Empty (env unset) means "no operator preference" — ResolveRuntime
+		// will fall back to RuntimeOpenClaw at request time.
+		DefaultRuntime: os.Getenv("HICLAW_DEFAULT_WORKER_RUNTIME"),
 	}
 }
 
@@ -380,6 +383,7 @@ func (c *Config) K8sConfig() backend.K8sConfig {
 		CopawWorkerImage: envOrDefault("HICLAW_COPAW_WORKER_IMAGE", "hiclaw/copaw-worker:latest"),
 		WorkerCPU:        c.K8sWorkerCPU,
 		WorkerMemory:     c.K8sWorkerMemory,
+		DefaultRuntime:   os.Getenv("HICLAW_DEFAULT_WORKER_RUNTIME"),
 	}
 }
 

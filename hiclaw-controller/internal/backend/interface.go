@@ -30,9 +30,32 @@ const (
 )
 
 // ValidRuntime reports whether r is a recognized runtime value.
-// An empty string is valid — backends resolve it to the default image.
+// An empty string is valid — backends resolve it via ResolveRuntime.
 func ValidRuntime(r string) bool {
 	return r == "" || r == RuntimeOpenClaw || r == RuntimeCopaw
+}
+
+// ResolveRuntime returns the effective runtime for a backend request.
+// Resolution order:
+//  1. The explicit runtime on the request (req.Runtime).
+//  2. The backend's configured default (HICLAW_DEFAULT_WORKER_RUNTIME).
+//  3. RuntimeOpenClaw — the historical default.
+//
+// Backends call this once at the top of Create() so downstream image / working-
+// dir / label resolution can rely on a non-empty, normalized runtime value.
+//
+// This indirection exists because the Worker CRD intentionally does not pin a
+// schema-level default — that would make HICLAW_DEFAULT_WORKER_RUNTIME a no-op
+// for any Worker CR created with `spec.runtime` unset (the API server would
+// silently fill it before the controller ever observes the empty value).
+func ResolveRuntime(reqRuntime, backendDefault string) string {
+	if reqRuntime != "" {
+		return reqRuntime
+	}
+	if backendDefault != "" {
+		return backendDefault
+	}
+	return RuntimeOpenClaw
 }
 
 // ResourceRequirements specifies CPU/memory requests and limits for a container.

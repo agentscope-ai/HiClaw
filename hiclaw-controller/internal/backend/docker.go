@@ -23,6 +23,11 @@ type DockerConfig struct {
 	WorkerImage      string // default worker image (HICLAW_WORKER_IMAGE)
 	CopawWorkerImage string // default copaw worker image (HICLAW_COPAW_WORKER_IMAGE)
 	DefaultNetwork   string // default Docker network (default "hiclaw-net")
+	// DefaultRuntime is the runtime applied when a CreateRequest arrives with
+	// req.Runtime == "" — typically because the Worker CR omitted spec.runtime.
+	// Empty falls back to RuntimeOpenClaw inside ResolveRuntime.
+	// Sourced from HICLAW_DEFAULT_WORKER_RUNTIME at install time.
+	DefaultRuntime string
 }
 
 // DockerBackend manages worker containers via the Docker Engine API over a Unix socket.
@@ -94,6 +99,12 @@ func (d *DockerBackend) Create(ctx context.Context, req CreateRequest) (*WorkerR
 		}
 		containerName = prefix + req.Name
 	}
+
+	// Resolve effective runtime once: explicit > backend default > openclaw.
+	// We do this before image fallback so all runtime-dependent decisions
+	// (image, working dir, labels) see a consistent normalized value. The
+	// CRD intentionally does not pin a default — see ResolveRuntime godoc.
+	req.Runtime = ResolveRuntime(req.Runtime, d.config.DefaultRuntime)
 
 	// Default image fallback
 	image := req.Image

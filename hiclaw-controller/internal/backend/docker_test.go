@@ -416,3 +416,68 @@ func TestNormalizeDockerStatus(t *testing.T) {
 		}
 	}
 }
+
+// TestDockerCreateResolvesImageFromRuntime verifies that the backend selects
+// the correct image based on req.Runtime when req.Image is empty, and that an
+// empty req.Runtime resolves to the configured DefaultRuntime fallback (which
+// mirrors HICLAW_DEFAULT_WORKER_RUNTIME).
+func TestDockerCreateResolvesImageFromRuntime(t *testing.T) {
+	cases := []struct {
+		name           string
+		runtime        string // CreateRequest.Runtime
+		defaultRuntime string // DockerConfig.DefaultRuntime
+		wantImage      string
+	}{
+		{"explicit_copaw_uses_copaw_image", RuntimeCopaw, "", "hiclaw/copaw-worker:latest"},
+		{"explicit_openclaw_uses_worker_image", RuntimeOpenClaw, "", "hiclaw/worker-agent:latest"},
+		{"empty_runtime_with_no_default_uses_worker_image", "", "", "hiclaw/worker-agent:latest"},
+		{"empty_runtime_with_copaw_default_uses_copaw_image", "", RuntimeCopaw, "hiclaw/copaw-worker:latest"},
+		{"explicit_runtime_overrides_default", RuntimeOpenClaw, RuntimeCopaw, "hiclaw/worker-agent:latest"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := mockDockerAPI(t)
+			defer srv.Close()
+			b := &DockerBackend{
+				config: DockerConfig{
+					WorkerImage:      "hiclaw/worker-agent:latest",
+					CopawWorkerImage: "hiclaw/copaw-worker:latest",
+					DefaultNetwork:   "hiclaw-net",
+					DefaultRuntime:   tc.defaultRuntime,
+				},
+				containerPrefix: "hiclaw-worker-",
+				client: &http.Client{
+					Transport: &testTransport{serverURL: srv.URL},
+				},
+			}
+
+			_, err := b.Create(context.Background(), CreateRequest{
+				Name:    "x",
+				Runtime: tc.runtime,
+			})
+			if err != nil {
+				t.Fatalf("Create failed: %v", err)
+			}
+
+			// Mock stores the create body's Image on the container record;
+			// fetch it back through the same transport (raw inspect) so we
+			// don't need to expose Backend internals.
+			httpReq, _ := http.NewRequestWithContext(context.Background(),
+				http.MethodGet,
+				"http://localhost/containers/hiclaw-worker-x/json", nil)
+			resp, err := b.client.Do(httpReq)
+			if err != nil {
+				t.Fatalf("inspect roundtrip: %v", err)
+			}
+			defer resp.Body.Close()
+			var raw map[string]any
+			if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
+				t.Fatalf("decode inspect: %v", err)
+			}
+			image, _ := raw["Image"].(string)
+			if image != tc.wantImage {
+				t.Fatalf("image = %q, want %q", image, tc.wantImage)
+			}
+		})
+	}
+}
