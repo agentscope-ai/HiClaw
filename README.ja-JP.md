@@ -30,11 +30,11 @@
 
 ## ニュース
 
-- **2026-04-14**：詳細解説——Kubernetes ネイティブなマルチ Agent 協調オーケストレーションシステムとしての HiClaw。[Blog](blog/hiclaw-k8s-native-multi-agent-collaboration.md) | [中文](blog/hiclaw-k8s-native-multi-agent-collaboration.zh-CN.md)
-- **2026-04-03**：HiClaw 1.0.9 リリース。Kubernetes 風の宣言型リソース管理を導入し、YAML を用いて Worker、Team、Human などのリソースを定義可能に。Worker テンプレートマーケットを正式リリースし、テンプレートから Worker を作成可能に。Manager CoPaw ランタイムをサポート。Nacos Skills 登録センターなどの新機能を追加。
-- **2026-03-14**: HiClaw 1.0.6 — エンタープライズグレードの MCP Server 管理、認証情報のゼロ露出。[ブログ](blog/hiclaw-1.0.6-release.md)
-- **2026-03-10**: HiClaw 1.0.4 — CoPaw Worker サポート、メモリ使用量 80% 削減。[ブログ](blog/hiclaw-1.0.4-release.md)
-- **2026-03-04**: HiClaw オープンソース化。[アナウンス](blog/hiclaw-announcement.md)
+- **2026-04-14**: [English](blog/hiclaw-k8s-native-multi-agent-collaboration.md) | [中文](blog/zh-cn/hiclaw-k8s-native-multi-agent-collaboration.zh-CN.md) — Kubernetes ネイティブなマルチ Agent 協調オーケストレーションとしての HiClaw の解説。
+- **2026-04-03**: [English](docs/declarative-resource-management.md) | [中文](docs/zh-cn/declarative-resource-management.md) — HiClaw 1.0.9：宣言型リソース管理、Worker テンプレートマーケット、Manager CoPaw、Nacos Skills 登録センターなど。
+- **2026-03-14**: [English](blog/hiclaw-1.0.6-release.md) | [中文](blog/zh-cn/hiclaw-1.0.6-release.md) — HiClaw 1.0.6：エンタープライズ MCP Server 管理、認証情報ゼロ露出。
+- **2026-03-10**: [English](blog/hiclaw-1.0.4-release.md) | [中文](blog/zh-cn/hiclaw-1.0.4-release.md) — HiClaw 1.0.4：CoPaw Worker、メモリ約 80% 削減。
+- **2026-03-04**: [English](blog/hiclaw-announcement.md) | [中文](blog/zh-cn/hiclaw-announcement.md) — HiClaw オープンソース化。
 
 ## HiClaw を選ぶ理由
 
