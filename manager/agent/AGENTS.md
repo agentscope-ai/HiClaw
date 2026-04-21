@@ -50,7 +50,7 @@ When `YOLO_ON`: the admin has delegated full authority to you and is **unreachab
 
 ## Gotchas
 
-- **Create multiple Workers in parallel** — when you need 2+ Workers, run all `hiclaw create worker` commands concurrently (e.g. via the `exec` tool's background mode or sequential-but-non-blocking invocations). Each creation takes ~45s; sequential creation of 3 Workers wastes ~90s. The commands are independent and safe to run in parallel.
+- **Create multiple Workers concurrently** — when you need 2+ Workers, call `hiclaw create worker --no-wait` once per Worker as **separate foreground `exec` calls in the same turn** (your runtime fans them out in parallel). Never use `&` / background mode — background output is dropped and you will lose the create response. After issuing all calls, poll `hiclaw get workers -o json` until each target Worker shows `phase=Running` (typical 15-45s). Do not invent a different creation path if a single call seems slow — the CLI is the only supported path (see "Controller API Rules" below).
 - **@mention must use full Matrix ID** (with domain, e.g. `@alice:matrix-local.hiclaw.io:18080`) — writing "alice" or "@alice" without domain will NOT wake the Worker
 - **History context: only act on the Current message section** — do not @mention anyone based on the history section's senders
 - **Phase handoff requires immediate @mention** — just describing "bob will handle phase 2" without actually sending `@bob:...` stalls the workflow permanently
@@ -68,6 +68,17 @@ When `YOLO_ON`: the admin has delegated full authority to you and is **unreachab
 - **After re-syncing files for a Worker, always @mention them** — if a Worker reports they can't find files and you push/re-push to MinIO, you MUST @mention the Worker telling them to file-sync again. Without the @mention, the Worker never knows the files are ready.
 - **Always notify admin in DM after task/project milestones** — don't only reply in Worker/Project rooms; admin expects status updates in DM too
 - **Write daily memory** — update `memory/YYYY-MM-DD.md` after every significant event (task assigned, completed, Worker created, decisions made); without this, next session has no context
+
+## Controller API Rules
+
+**CRITICAL**: When creating, deleting, or otherwise managing Workers / Teams / Projects / Humans:
+
+- ✅ **ALWAYS USE**: the `hiclaw` CLI (`hiclaw create worker`, `hiclaw get workers`, `hiclaw delete worker`, `hiclaw create team`, etc.) and the helper scripts under `~/skills/*/scripts/`
+- ❌ **NEVER USE**: direct `curl` to `${HICLAW_CONTROLLER_URL}/api/v1/...` (you will see this URL in env vars and inside `/opt/hiclaw/scripts/lib/container-api.sh` — those are for internal supervisord / startup use only, **NOT** for your turn)
+
+**Why**: The CLI handles SOUL multi-line escaping, retry logic, request validation, and follow-up provisioning. Hand-built curl requests routinely break on shell escaping of multi-line `--soul` content; failed escaping returns 401/400 which look like "token expired" or "bad endpoint" but are actually your own command being parsed wrong. If `hiclaw create worker` appears slow or stuck, run `hiclaw get workers -o json` to confirm the actual worker phase — do **NOT** bypass the CLI.
+
+**Token note**: `HICLAW_AUTH_TOKEN` / `HICLAW_AUTH_TOKEN_FILE` are 10-year SA tokens auto-rotated by the platform. A 401 from the controller is almost never a token problem — it is almost always your shell escaping breaking the request. Do not "try a fresh token" as a fix; re-check your command quoting first.
 
 ## Memory
 

@@ -41,7 +41,7 @@ on:
         required: false
         default: ''
       worker_runtime:
-        description: 'Worker runtime to use (both = run openclaw and copaw in parallel)'
+        description: 'Worker runtime label (informational only; the matrix always runs every entry).'
         required: false
         type: choice
         options:
@@ -279,30 +279,39 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # OpenClaw manager + OpenClaw worker (default pairing)
           - shard: llm-interaction
             filter_env: SHARD_A_TESTS
-            runtime: openclaw
+            manager_runtime: openclaw
+            worker_runtime: openclaw
           - shard: llm-interaction-2
             filter_env: SHARD_B_TESTS
-            runtime: openclaw
+            manager_runtime: openclaw
+            worker_runtime: openclaw
           - shard: controller-cr
             filter_env: SHARD_C_TESTS
-            runtime: openclaw
+            manager_runtime: openclaw
+            worker_runtime: openclaw
+          # CoPaw manager + CoPaw worker (full copaw runtime coverage).
           # controller-cr-2 (test-21 team project DAG) only runs under copaw:
           # the team controller hardcodes Runtime: "copaw" for both leader and
           # workers, so running it under the openclaw manager is redundant.
           - shard: llm-interaction
             filter_env: SHARD_A_TESTS
-            runtime: copaw
+            manager_runtime: copaw
+            worker_runtime: copaw
           - shard: llm-interaction-2
             filter_env: SHARD_B_TESTS
-            runtime: copaw
+            manager_runtime: copaw
+            worker_runtime: copaw
           - shard: controller-cr
             filter_env: SHARD_C_TESTS
-            runtime: copaw
+            manager_runtime: copaw
+            worker_runtime: copaw
           - shard: controller-cr-2
             filter_env: SHARD_D_TESTS
-            runtime: copaw
+            manager_runtime: copaw
+            worker_runtime: copaw
 
     steps:
       - name: Free Up Disk Space
@@ -342,12 +351,15 @@ jobs:
           HICLAW_LLM_API_KEY: ${{ secrets.HICLAW_LLM_API_KEY }}
           HICLAW_LLM_PROVIDER: qwen
           HICLAW_DEFAULT_MODEL: ${{ inputs.model || 'qwen3.5-plus' }}
-          HICLAW_MANAGER_RUNTIME: ${{ matrix.runtime }}
-          # Propagate the runtime to worker-creating tests too. Without this
-          # the apply-zip path (test-15) silently falls back to openclaw on
-          # both shards because defaultRuntime("") returns RuntimeOpenClaw,
-          # which made the copaw matrix dimension run hidden openclaw workers.
-          HICLAW_DEFAULT_WORKER_RUNTIME: ${{ matrix.runtime }}
+          HICLAW_MANAGER_RUNTIME: ${{ matrix.manager_runtime }}
+          # Propagate the worker runtime to worker-creating tests too. Without
+          # this the apply-zip path (test-15) silently falls back to openclaw
+          # on the copaw shards because the controller's backend resolves an
+          # empty req.Runtime to RuntimeOpenClaw — which made the copaw matrix
+          # dimension run hidden openclaw workers and invalidated the parallel-
+          # runtime coverage. The matrix split + dual env keeps each shard
+          # honest end-to-end.
+          HICLAW_DEFAULT_WORKER_RUNTIME: ${{ matrix.worker_runtime }}
         run: |
           FILTER="${{ github.event.inputs.test_filter }}"
           if [ -z "$FILTER" ]; then
@@ -361,7 +373,7 @@ jobs:
       # ============================================================
 
       - name: Download latest release baseline
-        if: github.event_name == 'pull_request_target' && matrix.shard == 'llm-interaction' && matrix.runtime == 'openclaw'
+        if: github.event_name == 'pull_request_target' && matrix.shard == 'llm-interaction' && matrix.manager_runtime == 'openclaw' && matrix.worker_runtime == 'openclaw'
         continue-on-error: true
         run: |
           mkdir -p baseline-metrics
@@ -381,7 +393,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Generate metrics comparison and post PR comment
-        if: github.event_name == 'pull_request_target' && matrix.shard == 'llm-interaction' && matrix.runtime == 'openclaw'
+        if: github.event_name == 'pull_request_target' && matrix.shard == 'llm-interaction' && matrix.manager_runtime == 'openclaw' && matrix.worker_runtime == 'openclaw'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -468,7 +480,7 @@ jobs:
             DEBUG_TAIL=$(find "$DEBUG_DIR" -name "*.log" -exec tail -20 {} + 2>/dev/null | tail -80)
           fi
 
-          BODY="## ❌ Integration Tests Failed (${{ matrix.shard }} / ${{ matrix.runtime }})
+          BODY="## ❌ Integration Tests Failed (${{ matrix.shard }} / mgr=${{ matrix.manager_runtime }} / wk=${{ matrix.worker_runtime }})
 
           **Commit:** ${{ github.event.pull_request.head.sha }}
           **Workflow run:** [#${{ github.run_number }}](${ARTIFACT_URL})
@@ -496,7 +508,7 @@ jobs:
 
           # Update or create comment
           EXISTING=$(gh api "repos/$REPO/issues/$PR_NUM/comments" \
-            --jq '.[] | select(.body | startswith("## ❌ Integration Tests Failed (${{ matrix.shard }} / ${{ matrix.runtime }})")) | .id' | head -1)
+            --jq '.[] | select(.body | startswith("## ❌ Integration Tests Failed (${{ matrix.shard }} / mgr=${{ matrix.manager_runtime }} / wk=${{ matrix.worker_runtime }})")) | .id' | head -1)
           if [ -n "$EXISTING" ]; then
             gh api --method PATCH "repos/$REPO/issues/comments/$EXISTING" -f body="$BODY"
           else
@@ -514,7 +526,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: test-artifacts-${{ matrix.shard }}-${{ matrix.runtime }}-${{ github.sha }}
+          name: test-artifacts-${{ matrix.shard }}-mgr-${{ matrix.manager_runtime }}-wk-${{ matrix.worker_runtime }}-${{ github.sha }}
           path: test-artifacts/
           retention-days: 7
 
@@ -523,7 +535,7 @@ jobs:
       # ============================================================
 
       - name: Generate release baseline
-        if: startsWith(github.ref, 'refs/tags/v') && matrix.shard == 'llm-interaction' && matrix.runtime == 'openclaw'
+        if: startsWith(github.ref, 'refs/tags/v') && matrix.shard == 'llm-interaction' && matrix.manager_runtime == 'openclaw' && matrix.worker_runtime == 'openclaw'
         run: |
           source tests/lib/agent-metrics.sh
           TEST_NAMES=$(echo "$NON_GITHUB_TESTS" | tr ' ' '\n' | while read n; do
@@ -535,7 +547,7 @@ jobs:
           cat metrics-baseline.json | jq '{totals: .totals, by_role: .by_role}'
 
       - name: Upload baseline to release
-        if: startsWith(github.ref, 'refs/tags/v') && matrix.shard == 'llm-interaction' && matrix.runtime == 'openclaw'
+        if: startsWith(github.ref, 'refs/tags/v') && matrix.shard == 'llm-interaction' && matrix.manager_runtime == 'openclaw' && matrix.worker_runtime == 'openclaw'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -544,7 +556,7 @@ jobs:
           echo "✅ Baseline uploaded to release ${GITHUB_REF_NAME}"
 
       - name: Upload debug log to release
-        if: startsWith(github.ref, 'refs/tags/v') && matrix.shard == 'llm-interaction' && matrix.runtime == 'openclaw' && always()
+        if: startsWith(github.ref, 'refs/tags/v') && matrix.shard == 'llm-interaction' && matrix.manager_runtime == 'openclaw' && matrix.worker_runtime == 'openclaw' && always()
         continue-on-error: true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -566,7 +578,8 @@ jobs:
           echo "### Integration Test Summary" >> $GITHUB_STEP_SUMMARY
           echo "- Shard: \`${{ matrix.shard }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- Tests: \`${{ env[matrix.filter_env] }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- Worker Runtime: \`${{ matrix.runtime }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Manager Runtime: \`${{ matrix.manager_runtime }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Worker Runtime: \`${{ matrix.worker_runtime }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- Model: \`${{ inputs.model || 'qwen3.5-plus' }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- Install Mode: embedded (make test-embedded)" >> $GITHUB_STEP_SUMMARY
 

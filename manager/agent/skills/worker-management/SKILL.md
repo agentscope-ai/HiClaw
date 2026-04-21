@@ -10,7 +10,7 @@ description: Use when admin requests hand-creating or resetting a Worker, starti
 Pass the SOUL content inline via `--soul`. Never write SOUL.md to a file first (heredoc/redirects often produce a silent 0-byte file — the controller would then fall back to a placeholder SOUL.md lacking the real role).
 
 ```bash
-hiclaw create worker --name <NAME> \
+hiclaw create worker --name <NAME> --no-wait \
   --soul "# Worker Agent - <NAME>
 
 ## AI Identity
@@ -25,6 +25,8 @@ hiclaw create worker --name <NAME> \
   --skills <skill1>,<skill2> -o json
 # Add --runtime copaw for Python workers
 ```
+
+> `--no-wait` returns as soon as the controller accepts the request (~1s). Poll `hiclaw get workers -o json` for `phase=Running` instead of letting the create call block — this lets you create N workers in one turn without each blocking up to 3 minutes.
 
 > Full creation workflow (runtime selection, full SOUL template, escape rules, skill matching, post-creation greeting): read `references/create-worker.md`
 
