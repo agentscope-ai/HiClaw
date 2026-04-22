@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	v1beta1 "github.com/hiclaw/hiclaw-controller/api/v1beta1"
+	"github.com/hiclaw/hiclaw-controller/internal/auth"
 	"github.com/hiclaw/hiclaw-controller/internal/backend"
 	"github.com/hiclaw/hiclaw-controller/internal/service"
 	corev1 "k8s.io/api/core/v1"
@@ -17,18 +18,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
-
-const managerPodPrefix = "hiclaw-manager-"
-
-// managerContainerName returns the container/pod name for a Manager.
-// The "default" manager uses "hiclaw-manager" (no suffix) for compatibility
-// with install/uninstall scripts; other managers use "hiclaw-manager-{name}".
-func managerContainerName(name string) string {
-	if name == "default" {
-		return "hiclaw-manager"
-	}
-	return managerPodPrefix + name
-}
 
 // ManagerEmbeddedConfig holds embedded-mode settings for the Manager Agent
 // container (workspace mount, host share, extra env from the controller's env).
@@ -48,6 +37,7 @@ type ManagerReconciler struct {
 	Backend          *backend.Registry
 	EnvBuilder       service.ManagerEnvBuilderI
 	ManagerResources *backend.ResourceRequirements
+	ResourcePrefix   auth.ResourcePrefix    // tenant prefix used to derive Pod names and labels
 	EmbeddedConfig   *ManagerEmbeddedConfig // non-nil in embedded mode only
 
 	// DefaultRuntime is the value passed to backend.CreateRequest.RuntimeFallback
@@ -55,6 +45,14 @@ type ManagerReconciler struct {
 	// (Config.ManagerRuntime). Distinct from WorkerReconciler.DefaultRuntime
 	// because Backend.Create is shared and cannot tell which env var applies.
 	DefaultRuntime string
+}
+
+// managerContainerName returns the container/pod name for a Manager CR.
+// Default Manager ("default") uses ManagerDefaultName (e.g. "hiclaw-manager")
+// for install-script / CMS service-name compatibility; other Managers use
+// "${prefix}manager-{name}".
+func (r *ManagerReconciler) managerContainerName(name string) string {
+	return r.ResourcePrefix.ManagerPodName(name)
 }
 
 func (r *ManagerReconciler) Reconcile(ctx context.Context, req reconcile.Request) (retres reconcile.Result, reterr error) {

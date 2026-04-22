@@ -5,21 +5,24 @@ import (
 	"fmt"
 )
 
-// DefaultContainerPrefix is the default prefix for worker container/app names.
+// DefaultContainerPrefix is the baked-in default for worker container/pod
+// names when no prefix is supplied — used as a last-resort fallback in
+// NewDockerBackend / NewK8sBackend. Production callers always pass
+// cfg.ContainerPrefix (which itself is derived from HICLAW_RESOURCE_PREFIX).
 const DefaultContainerPrefix = "hiclaw-worker-"
 
-// Registry holds all available backends and provides auto-detection.
+// Registry holds all available worker backends and provides auto-detection.
+//
+// Historically the registry also tracked a GatewayBackend slice, but
+// gateway selection moved to a dedicated gateway.Client implementation
+// (HigressClient / AIGatewayClient) wired directly in app/app.go.
 type Registry struct {
-	workerBackends  []WorkerBackend
-	gatewayBackends []GatewayBackend
+	workerBackends []WorkerBackend
 }
 
-// NewRegistry creates a Registry with the given backends.
-func NewRegistry(workers []WorkerBackend, gateways []GatewayBackend) *Registry {
-	return &Registry{
-		workerBackends:  workers,
-		gatewayBackends: gateways,
-	}
+// NewRegistry creates a Registry with the given worker backends.
+func NewRegistry(workers []WorkerBackend) *Registry {
+	return &Registry{workerBackends: workers}
 }
 
 // DetectWorkerBackend returns the first available worker backend.
@@ -51,31 +54,4 @@ func (r *Registry) GetWorkerBackend(ctx context.Context, name string) (WorkerBac
 		}
 	}
 	return nil, fmt.Errorf("unknown worker backend: %q", name)
-}
-
-// DetectGatewayBackend returns the first available gateway backend.
-func (r *Registry) DetectGatewayBackend(ctx context.Context) GatewayBackend {
-	for _, b := range r.gatewayBackends {
-		if b.Available(ctx) {
-			return b
-		}
-	}
-	return nil
-}
-
-// GetGatewayBackend returns a specific gateway backend by name, or auto-detects if name is empty.
-func (r *Registry) GetGatewayBackend(ctx context.Context, name string) (GatewayBackend, error) {
-	if name == "" {
-		b := r.DetectGatewayBackend(ctx)
-		if b == nil {
-			return nil, fmt.Errorf("no gateway backend available")
-		}
-		return b, nil
-	}
-	for _, b := range r.gatewayBackends {
-		if b.Name() == name {
-			return b, nil
-		}
-	}
-	return nil, fmt.Errorf("unknown gateway backend: %q", name)
 }

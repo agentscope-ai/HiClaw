@@ -6,6 +6,7 @@ import (
 	"time"
 
 	v1beta1 "github.com/hiclaw/hiclaw-controller/api/v1beta1"
+	authpkg "github.com/hiclaw/hiclaw-controller/internal/auth"
 	"github.com/hiclaw/hiclaw-controller/internal/gateway"
 	"github.com/hiclaw/hiclaw-controller/internal/matrix"
 	"github.com/hiclaw/hiclaw-controller/internal/oss"
@@ -81,29 +82,42 @@ type ProvisionerConfig struct {
 	MatrixDomain string
 	AdminUser    string
 
+	// ResourcePrefix is the tenant prefix used when creating SAs and their
+	// labels. Empty falls back to auth.DefaultResourcePrefix ("hiclaw-").
+	ResourcePrefix authpkg.ResourcePrefix
+
 	// Pre-generated Manager secrets (from install script env).
 	// When set, used instead of generating random credentials.
 	ManagerPassword   string
 	ManagerGatewayKey string
+
+	// ManagerEnabled reflects HICLAW_MANAGER_ENABLED. When false, no Manager
+	// CR is ever created, so the Matrix user `@manager:<domain>` does not
+	// exist on Tuwunel. Worker room creation must therefore skip inviting
+	// the manager; otherwise Conduwuit/Tuwunel returns HTTP 403 (it rejects
+	// invites to non-existent local users).
+	ManagerEnabled bool
 }
 
 // Provisioner orchestrates infrastructure provisioning and deprovisioning
 // for workers and teams: Matrix accounts/rooms, Gateway consumers, MinIO
 // users, K8s ServiceAccounts, and port exposure.
 type Provisioner struct {
-	matrix       matrix.Client
-	gateway      gateway.Client
-	ossAdmin     oss.StorageAdminClient
-	creds        CredentialStore
-	k8sClient    kubernetes.Interface
-	kubeMode     string
-	namespace    string
-	authAudience string
-	matrixDomain string
-	adminUser    string
+	matrix         matrix.Client
+	gateway        gateway.Client
+	ossAdmin       oss.StorageAdminClient
+	creds          CredentialStore
+	k8sClient      kubernetes.Interface
+	kubeMode       string
+	namespace      string
+	authAudience   string
+	matrixDomain   string
+	adminUser      string
+	resourcePrefix authpkg.ResourcePrefix
 
 	managerPassword   string
 	managerGatewayKey string
+	managerEnabled    bool
 }
 
 func NewProvisioner(cfg ProvisionerConfig) *Provisioner {
@@ -118,8 +132,10 @@ func NewProvisioner(cfg ProvisionerConfig) *Provisioner {
 		authAudience:      cfg.AuthAudience,
 		matrixDomain:      cfg.MatrixDomain,
 		adminUser:         cfg.AdminUser,
+		resourcePrefix:    cfg.ResourcePrefix.Or(authpkg.DefaultResourcePrefix),
 		managerPassword:   cfg.ManagerPassword,
 		managerGatewayKey: cfg.ManagerGatewayKey,
+		managerEnabled:    cfg.ManagerEnabled,
 	}
 }
 
@@ -284,11 +300,17 @@ func (p *Provisioner) ProvisionWorker(ctx context.Context, req WorkerProvisionRe
 	// Step 4: Create Matrix room
 	logger.Info("creating Matrix room", "name", workerName)
 
+	// Pick an authority for the room.
+	//   - Team worker  : the team leader (always provisioned before team workers).
+	//   - Standalone   : the Manager if enabled, else the admin user.
 	var authorityID string
-	if isTeamWorker {
+	switch {
+	case isTeamWorker:
 		authorityID = p.matrix.UserID(req.TeamLeaderName)
-	} else {
+	case p.managerEnabled:
 		authorityID = managerMatrixID
+	default:
+		authorityID = adminMatrixID
 	}
 
 	powerLevels := map[string]int{
@@ -298,10 +320,16 @@ func (p *Provisioner) ProvisionWorker(ctx context.Context, req WorkerProvisionRe
 		workerMatrixID:  0,
 	}
 
+	invite := []string{adminMatrixID}
+	if authorityID != adminMatrixID {
+		invite = append(invite, authorityID)
+	}
+	invite = append(invite, workerMatrixID)
+
 	roomInfo, err := p.matrix.CreateRoom(ctx, matrix.CreateRoomRequest{
 		Name:          fmt.Sprintf("Worker: %s", workerName),
 		Topic:         fmt.Sprintf("Communication channel for %s", workerName),
-		Invite:        []string{adminMatrixID, authorityID, workerMatrixID},
+		Invite:        invite,
 		PowerLevels:   powerLevels,
 		RoomAliasName: roomAliasLocalpart("worker", workerName),
 	})

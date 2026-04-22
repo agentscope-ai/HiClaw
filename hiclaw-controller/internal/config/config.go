@@ -25,14 +25,28 @@ type Config struct {
 	CRDDir    string
 	SkillsDir string
 
+	// ResourcePrefix is the tenant-level prefix used to derive Pod/SA/label/
+	// session names created by this controller. Default "hiclaw-". Set via
+	// HICLAW_RESOURCE_PREFIX to isolate multiple HiClaw instances that share
+	// a K8s namespace (different Helm releases). Downstream names are all
+	// derived from this value — see internal/auth.ResourcePrefix for the
+	// full list (worker/manager pods, ServiceAccounts, "app" labels, STS
+	// session names). Intentionally does NOT cover OPENCLAW_MDNS_HOSTNAME,
+	// CMS service name, or install-script hardcoded names.
+	ResourcePrefix string
+
 	// Docker proxy (embedded mode only)
 	SocketPath      string
-	ContainerPrefix string
+	ContainerPrefix string // worker container/pod name prefix; derived from ResourcePrefix when HICLAW_PROXY_CONTAINER_PREFIX is unset
 
 	// Auth
 	AuthAudience string // SA token audience for TokenReview
 
-	// Higress
+	// Provider selection (driven by Helm values)
+	GatewayProvider string // "higress" | "ai-gateway"
+	StorageProvider string // "minio"   | "oss"
+
+	// Higress (self-hosted gateway)
 	HigressBaseURL       string
 	HigressCookieFile    string
 	HigressAdminUser     string
@@ -41,19 +55,22 @@ type Config struct {
 	// Worker backend selection
 	WorkerBackend string
 
-	// Region (used by APIG, STS, etc.)
+	// Region (used by AI Gateway / OSS, etc.)
 	Region string
 
-	// APIG Gateway
+	// AI Gateway (Alibaba Cloud APIG) — only used when GatewayProvider == "ai-gateway"
 	GWGatewayID  string
 	GWModelAPIID string
 	GWEnvID      string
 
-	// STS
-	OSSBucket       string
-	STSRoleArn      string
-	OIDCProviderArn string
-	OIDCTokenFile   string
+	// Object storage bucket (shared by minio and oss backends)
+	OSSBucket string
+
+	// Credential provider sidecar (hiclaw-credential-provider) used by the
+	// controller to obtain STS tokens for its own cloud SDK clients (APIG,
+	// OSS) and for downstream worker credential issuance. Empty when the
+	// sidecar is not deployed (e.g. self-hosted higress+minio stack).
+	CredentialProviderURL string
 
 	// Kubernetes Backend
 	K8sNamespace    string
@@ -79,6 +96,13 @@ type Config struct {
 
 	// Controller URL (advertised to workers for STS refresh etc.)
 	ControllerURL string
+
+	// ControllerName identifies this controller instance. When multiple
+	// hiclaw-controller deployments live in the same namespace (e.g. separate
+	// Helm releases), each must use a distinct LeaderElection lease to avoid
+	// one instance blocking the other. Sourced from HICLAW_CONTROLLER_NAME;
+	// if empty, leader election falls back to the legacy global lease name.
+	ControllerName string
 
 	// Embedded-mode Manager Agent container mounts (host paths, read from env)
 	ManagerWorkspaceDir string // e.g. ~/hiclaw-manager — mounted as /root/manager-workspace
@@ -179,6 +203,12 @@ func LoadConfig() *Config {
 		}
 	}
 
+	resourcePrefix := envOrDefault("HICLAW_RESOURCE_PREFIX", "hiclaw-")
+	// ContainerPrefix defaults to "${resourcePrefix}worker-". HICLAW_PROXY_CONTAINER_PREFIX
+	// remains as an explicit override for callers that want to diverge the
+	// Docker-proxy container-name whitelist from the tenant prefix (rare).
+	containerPrefix := envOrDefault("HICLAW_PROXY_CONTAINER_PREFIX", resourcePrefix+"worker-")
+
 	cfg := &Config{
 		KubeMode:  envOrDefault("HICLAW_KUBE_MODE", "embedded"),
 		DataDir:   dataDir,
@@ -187,10 +217,17 @@ func LoadConfig() *Config {
 		CRDDir:    envOrDefault("HICLAW_CRD_DIR", "/opt/hiclaw/config/crd"),
 		SkillsDir: envOrDefault("HICLAW_SKILLS_DIR", "/opt/hiclaw/agent/skills"),
 
+		ResourcePrefix: resourcePrefix,
+
 		SocketPath:      envOrDefault("HICLAW_PROXY_SOCKET", "/var/run/docker.sock"),
-		ContainerPrefix: envOrDefault("HICLAW_PROXY_CONTAINER_PREFIX", "hiclaw-worker-"),
+		ContainerPrefix: containerPrefix,
 
 		AuthAudience: envOrDefault("HICLAW_AUTH_AUDIENCE", "hiclaw-controller"),
+
+		GatewayProvider: envOrDefault("HICLAW_GATEWAY_PROVIDER", "higress"),
+		StorageProvider: envOrDefault("HICLAW_STORAGE_PROVIDER", "minio"),
+
+		CredentialProviderURL: os.Getenv("HICLAW_CREDENTIAL_PROVIDER_URL"),
 
 		HigressBaseURL:    envOrDefault("HICLAW_AI_GATEWAY_ADMIN_URL", "http://127.0.0.1:8001"),
 		HigressCookieFile: os.Getenv("HIGRESS_COOKIE_FILE"),
@@ -209,10 +246,7 @@ func LoadConfig() *Config {
 		GWModelAPIID: os.Getenv("HICLAW_GW_MODEL_API_ID"),
 		GWEnvID:      os.Getenv("HICLAW_GW_ENV_ID"),
 
-		OSSBucket:       envOrDefault("HICLAW_FS_BUCKET", "hiclaw-storage"),
-		STSRoleArn:      os.Getenv("ALIBABA_CLOUD_ROLE_ARN"),
-		OIDCProviderArn: os.Getenv("ALIBABA_CLOUD_OIDC_PROVIDER_ARN"),
-		OIDCTokenFile:   os.Getenv("ALIBABA_CLOUD_OIDC_TOKEN_FILE"),
+		OSSBucket: envOrDefault("HICLAW_FS_BUCKET", "hiclaw-storage"),
 
 		K8sNamespace:    os.Getenv("HICLAW_K8S_NAMESPACE"),
 		K8sWorkerCPU:    envOrDefault("HICLAW_K8S_WORKER_CPU", "1000m"),
@@ -228,7 +262,8 @@ func LoadConfig() *Config {
 		K8sManagerCPU:           envOrDefault("HICLAW_K8S_MANAGER_CPU", "2"),
 		K8sManagerMemory:        envOrDefault("HICLAW_K8S_MANAGER_MEMORY", "4Gi"),
 
-		ControllerURL: os.Getenv("HICLAW_CONTROLLER_URL"),
+		ControllerURL:  os.Getenv("HICLAW_CONTROLLER_URL"),
+		ControllerName: os.Getenv("HICLAW_CONTROLLER_NAME"),
 
 		ManagerWorkspaceDir: os.Getenv("HICLAW_WORKSPACE_DIR"),
 		HostShareDir:        os.Getenv("HICLAW_HOST_SHARE_DIR"),
@@ -363,8 +398,17 @@ func (c *Config) DockerConfig() backend.DockerConfig {
 	}
 }
 
-func (c *Config) APIGConfig() backend.APIGConfig {
-	return backend.APIGConfig{
+func (c *Config) STSConfig() credentials.STSConfig {
+	return credentials.STSConfig{
+		OSSBucket:   c.OSSBucket,
+		OSSEndpoint: firstNonEmpty(os.Getenv("HICLAW_FS_ENDPOINT"), c.WorkerEnv.FSEndpoint),
+	}
+}
+
+// AIGatewayConfig returns the gateway.AIGatewayConfig used when
+// GatewayProvider == "ai-gateway".
+func (c *Config) AIGatewayConfig() gateway.AIGatewayConfig {
+	return gateway.AIGatewayConfig{
 		Region:     c.Region,
 		GatewayID:  c.GWGatewayID,
 		ModelAPIID: c.GWModelAPIID,
@@ -372,14 +416,16 @@ func (c *Config) APIGConfig() backend.APIGConfig {
 	}
 }
 
-func (c *Config) STSConfig() credentials.STSConfig {
-	return credentials.STSConfig{
-		Region:          c.Region,
-		RoleArn:         c.STSRoleArn,
-		OIDCProviderArn: c.OIDCProviderArn,
-		OIDCTokenFile:   c.OIDCTokenFile,
-		OSSBucket:       c.OSSBucket,
-	}
+// UsesAIGateway reports whether the controller should wire the AI Gateway
+// (APIG) implementation of gateway.Client.
+func (c *Config) UsesAIGateway() bool {
+	return c.GatewayProvider == "ai-gateway"
+}
+
+// UsesExternalOSS reports whether the controller should talk to Alibaba
+// Cloud OSS (existing bucket) instead of an embedded MinIO.
+func (c *Config) UsesExternalOSS() bool {
+	return c.StorageProvider == "oss"
 }
 
 func (c *Config) K8sConfig() backend.K8sConfig {
@@ -390,6 +436,8 @@ func (c *Config) K8sConfig() backend.K8sConfig {
 		HermesWorkerImage: envOrDefault("HICLAW_HERMES_WORKER_IMAGE", "hiclaw/hermes-worker:latest"),
 		WorkerCPU:         c.K8sWorkerCPU,
 		WorkerMemory:      c.K8sWorkerMemory,
+		ControllerName:    c.ControllerName,
+		ResourcePrefix:    c.ResourcePrefix,
 	}
 }
 

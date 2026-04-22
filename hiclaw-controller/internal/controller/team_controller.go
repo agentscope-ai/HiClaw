@@ -10,6 +10,7 @@ import (
 	"time"
 
 	v1beta1 "github.com/hiclaw/hiclaw-controller/api/v1beta1"
+	"github.com/hiclaw/hiclaw-controller/internal/auth"
 	"github.com/hiclaw/hiclaw-controller/internal/backend"
 	"github.com/hiclaw/hiclaw-controller/internal/executor"
 	"github.com/hiclaw/hiclaw-controller/internal/service"
@@ -54,6 +55,21 @@ type TeamReconciler struct {
 	DefaultRuntime string
 
 	AgentFSDir string // for writing inline configs to the local agent FS
+
+	// ControllerName, when non-empty, is merged as hiclaw.io/controller
+	// into the PodLabels of every team member MemberContext this reconciler
+	// builds, so the resulting Pods match the owning controller instance's
+	// label-scoped cache. Post-refactor (PR #666) Teams no longer create
+	// child Worker CRs, so the label is applied directly to Pods via
+	// MemberContext.PodLabels → backend.CreateRequest.Labels. Empty in
+	// embedded mode.
+	ControllerName string
+
+	// ResourcePrefix scopes team-member ServiceAccount and Pod names per
+	// HiClaw tenant instance. Forwarded into MemberDeps.ResourcePrefix so
+	// createMemberContainer uses it when computing saName. Empty collapses
+	// to DefaultResourcePrefix ("hiclaw-").
+	ResourcePrefix auth.ResourcePrefix
 }
 
 func (r *TeamReconciler) Reconcile(ctx context.Context, req reconcile.Request) (reconcile.Result, error) {
@@ -134,7 +150,7 @@ func (r *TeamReconciler) reconcileTeamNormal(ctx context.Context, t *v1beta1.Tea
 	}
 
 	// --- Step 3: Stale cleanup ---
-	desiredMembers := buildDesiredMembers(t)
+	desiredMembers := buildDesiredMembers(t, r.ControllerName)
 	desiredNames := make(map[string]struct{}, len(desiredMembers))
 	for _, m := range desiredMembers {
 		desiredNames[m.Name] = struct{}{}
@@ -144,6 +160,7 @@ func (r *TeamReconciler) reconcileTeamNormal(ctx context.Context, t *v1beta1.Tea
 		Deployer:       r.Deployer,
 		Backend:        r.Backend,
 		EnvBuilder:     r.EnvBuilder,
+		ResourcePrefix: r.ResourcePrefix,
 		DefaultRuntime: r.DefaultRuntime,
 	}
 	// staleCtx.Spec is intentionally left zero. The original TeamWorkerSpec
@@ -402,6 +419,7 @@ func (r *TeamReconciler) handleDelete(ctx context.Context, t *v1beta1.Team) erro
 		Deployer:       r.Deployer,
 		Backend:        r.Backend,
 		EnvBuilder:     r.EnvBuilder,
+		ResourcePrefix: r.ResourcePrefix,
 		DefaultRuntime: r.DefaultRuntime,
 	}
 
@@ -631,12 +649,25 @@ func observedMemberNames(s *v1beta1.TeamStatus) []string {
 // context (peer list inflated into ChannelPolicy, admin Matrix injections)
 // is intentionally excluded so adding/removing a peer does NOT recreate the
 // other members — only the newly added member gets a fresh container.
-func buildDesiredMembers(t *v1beta1.Team) []MemberContext {
+func buildDesiredMembers(t *v1beta1.Team, controllerName string) []MemberContext {
 	isObserved := func(name string) bool {
 		if ms := t.Status.MemberByName(name); ms != nil {
 			return ms.Observed
 		}
 		return false
+	}
+	// memberLabels returns the base PodLabels for a team member, optionally
+	// stamped with hiclaw.io/controller so the resulting Pod lands inside
+	// the owning controller's label-scoped informer cache.
+	memberLabels := func(role MemberRole) map[string]string {
+		labels := map[string]string{
+			"hiclaw.io/team": t.Name,
+			"hiclaw.io/role": role.String(),
+		}
+		if controllerName != "" {
+			labels[v1beta1.LabelController] = controllerName
+		}
+		return labels
 	}
 	members := make([]MemberContext, 0, 1+len(t.Spec.Workers))
 
@@ -653,10 +684,7 @@ func buildDesiredMembers(t *v1beta1.Team) []MemberContext {
 		TeamName:          t.Name,
 		TeamLeaderName:    "",
 		TeamAdminMatrixID: teamAdminMatrixID(t),
-		PodLabels: map[string]string{
-			"hiclaw.io/team": t.Name,
-			"hiclaw.io/role": RoleTeamLeader.String(),
-		},
+		PodLabels:         memberLabels(RoleTeamLeader),
 	})
 
 	for _, w := range t.Spec.Workers {
@@ -673,10 +701,7 @@ func buildDesiredMembers(t *v1beta1.Team) []MemberContext {
 			TeamName:          t.Name,
 			TeamLeaderName:    t.Spec.Leader.Name,
 			TeamAdminMatrixID: teamAdminMatrixID(t),
-			PodLabels: map[string]string{
-				"hiclaw.io/team": t.Name,
-				"hiclaw.io/role": RoleTeamWorker.String(),
-			},
+			PodLabels:         memberLabels(RoleTeamWorker),
 		})
 	}
 	return members

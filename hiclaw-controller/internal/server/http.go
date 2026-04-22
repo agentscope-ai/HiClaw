@@ -15,15 +15,16 @@ import (
 
 // ServerDeps aggregates all dependencies needed by the HTTP API handlers.
 type ServerDeps struct {
-	Client     client.Client
-	Backend    *backend.Registry
-	Gateway    gateway.Client
-	OSS        oss.StorageClient
-	STS        *credentials.STSService
-	AuthMw     *authpkg.Middleware
-	KubeMode   string
-	Namespace  string
-	SocketPath string // Docker proxy (embedded only)
+	Client         client.Client
+	Backend        *backend.Registry
+	Gateway        gateway.Client
+	OSS            oss.StorageClient
+	STS            *credentials.STSService
+	AuthMw         *authpkg.Middleware
+	KubeMode       string
+	Namespace      string
+	ControllerName string // HICLAW_CONTROLLER_NAME; empty in embedded mode
+	SocketPath     string // Docker proxy (embedded only)
 }
 
 // HTTPServer serves the unified controller REST API.
@@ -47,7 +48,7 @@ func NewHTTPServer(addr string, deps ServerDeps) *HTTPServer {
 	mux.Handle("GET /api/v1/version", mw.Authenticate(http.HandlerFunc(sh.Version)))
 
 	// --- Declarative resource CRUD ---
-	rh := NewResourceHandler(deps.Client, deps.Namespace, deps.Backend)
+	rh := NewResourceHandler(deps.Client, deps.Namespace, deps.Backend, deps.ControllerName)
 	nameFn := authpkg.NameFromPath
 
 	// Workers
@@ -98,7 +99,7 @@ func NewHTTPServer(addr string, deps ServerDeps) *HTTPServer {
 	// --- Credentials ---
 	// STS is self-scoped: no {name} in path; handler uses CallerIdentity to scope the issued token.
 	ch := NewCredentialsHandler(deps.STS)
-	mux.Handle("POST /api/v1/credentials/sts", mw.RequireAuthz(authpkg.ActionSTS, "worker", nil)(http.HandlerFunc(ch.RefreshSTS)))
+	mux.Handle("POST /api/v1/credentials/sts", mw.RequireAuthz(authpkg.ActionSTS, "credentials", nil)(http.HandlerFunc(ch.RefreshSTS)))
 
 	// --- Docker API passthrough (embedded mode only) ---
 	if deps.KubeMode == "embedded" && deps.SocketPath != "" {

@@ -20,7 +20,7 @@ import (
 func TestCreateWorkerRejectsTeamLeaderCaller(t *testing.T) {
 	scheme := newServerTestScheme(t)
 	k8sClient := fake.NewClientBuilder().WithScheme(scheme).Build()
-	handler := NewResourceHandler(k8sClient, "default", nil)
+	handler := NewResourceHandler(k8sClient, "default", nil, "")
 
 	body := []byte(`{"name":"alpha-temp","model":"qwen3.5-plus"}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/workers", bytes.NewReader(body))
@@ -48,7 +48,7 @@ func TestCreateWorkerRejectsExistingTeamMemberName(t *testing.T) {
 	team.Spec.Leader.Name = "alpha-lead"
 	team.Spec.Workers = []v1beta1.TeamWorkerSpec{{Name: "alpha-dev"}}
 	k8sClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(team).Build()
-	handler := NewResourceHandler(k8sClient, "default", nil)
+	handler := NewResourceHandler(k8sClient, "default", nil, "")
 
 	body := []byte(`{"name":"alpha-dev","model":"qwen3.5-plus"}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/workers", bytes.NewReader(body))
@@ -93,7 +93,7 @@ func TestGetWorkerSynthesizesTeamMember(t *testing.T) {
 		},
 	}
 	k8sClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(team).Build()
-	handler := NewResourceHandler(k8sClient, "default", nil)
+	handler := NewResourceHandler(k8sClient, "default", nil, "")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/workers/alpha-dev", nil)
 	req.SetPathValue("name", "alpha-dev")
@@ -134,7 +134,7 @@ func TestListWorkersAggregatesTeamMembers(t *testing.T) {
 	team.Spec.Workers = []v1beta1.TeamWorkerSpec{{Name: "alpha-dev", Model: "qwen3.5-plus"}}
 
 	k8sClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(standalone, team).Build()
-	handler := NewResourceHandler(k8sClient, "default", nil)
+	handler := NewResourceHandler(k8sClient, "default", nil, "")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/workers", nil)
 	rec := httptest.NewRecorder()
@@ -169,7 +169,7 @@ func TestUpdateWorkerRejectsTeamMember(t *testing.T) {
 	team.Spec.Leader.Name = "alpha-lead"
 	team.Spec.Workers = []v1beta1.TeamWorkerSpec{{Name: "alpha-dev"}}
 	k8sClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(team).Build()
-	handler := NewResourceHandler(k8sClient, "default", nil)
+	handler := NewResourceHandler(k8sClient, "default", nil, "")
 
 	req := httptest.NewRequest(http.MethodPut, "/api/v1/workers/alpha-dev", bytes.NewReader([]byte(`{"model":"new-model"}`)))
 	req.SetPathValue("name", "alpha-dev")
@@ -189,7 +189,7 @@ func TestDeleteWorkerRejectsTeamMember(t *testing.T) {
 	team.Spec.Leader.Name = "alpha-lead"
 	team.Spec.Workers = []v1beta1.TeamWorkerSpec{{Name: "alpha-dev"}}
 	k8sClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(team).Build()
-	handler := NewResourceHandler(k8sClient, "default", nil)
+	handler := NewResourceHandler(k8sClient, "default", nil, "")
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/v1/workers/alpha-dev", nil)
 	req.SetPathValue("name", "alpha-dev")
@@ -204,7 +204,7 @@ func TestDeleteWorkerRejectsTeamMember(t *testing.T) {
 func TestCreateAndUpdateTeamLeaderRuntimeConfig(t *testing.T) {
 	scheme := newServerTestScheme(t)
 	k8sClient := fake.NewClientBuilder().WithScheme(scheme).Build()
-	handler := NewResourceHandler(k8sClient, "default", nil)
+	handler := NewResourceHandler(k8sClient, "default", nil, "")
 
 	createBody := []byte(`{
 		"name":"alpha-team",
@@ -278,7 +278,7 @@ func TestCreateAndUpdateTeamLeaderRuntimeConfig(t *testing.T) {
 func TestCreateTeam_WithoutWorkers(t *testing.T) {
 	scheme := newServerTestScheme(t)
 	k8sClient := fake.NewClientBuilder().WithScheme(scheme).Build()
-	handler := NewResourceHandler(k8sClient, "default", nil)
+	handler := NewResourceHandler(k8sClient, "default", nil, "")
 
 	body := []byte(`{"name":"leader-only-team","leader":{"name":"lead","model":"qwen3.5-plus"}}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/teams", bytes.NewReader(body))
@@ -315,6 +315,125 @@ func TestCreateTeam_WithoutWorkers(t *testing.T) {
 	}
 	if stored.Spec.Leader.Name != "lead" {
 		t.Errorf("stored Leader.Name=%q, want %q", stored.Spec.Leader.Name, "lead")
+	}
+}
+
+// TestCreateWorker_StampsControllerLabel verifies that the HTTP API
+// force-overwrites the hiclaw.io/controller label on Create. A caller
+// attempting to smuggle a different controller value must not succeed:
+// the serving controller's own name always wins.
+func TestCreateWorker_StampsControllerLabel(t *testing.T) {
+	scheme := newServerTestScheme(t)
+	k8sClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+	handler := NewResourceHandler(k8sClient, "default", nil, "ctrl-a")
+
+	body := []byte(`{"name":"w1","model":"qwen3.5-plus"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/workers", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	handler.CreateWorker(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected %d, got %d: %s", http.StatusCreated, rec.Code, rec.Body.String())
+	}
+
+	var worker v1beta1.Worker
+	if err := k8sClient.Get(context.Background(), client.ObjectKey{Name: "w1", Namespace: "default"}, &worker); err != nil {
+		t.Fatalf("get worker: %v", err)
+	}
+	if got := worker.Labels[v1beta1.LabelController]; got != "ctrl-a" {
+		t.Fatalf("expected controller label ctrl-a, got %q", got)
+	}
+}
+
+func TestCreateTeam_StampsControllerLabel(t *testing.T) {
+	scheme := newServerTestScheme(t)
+	k8sClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+	handler := NewResourceHandler(k8sClient, "default", nil, "ctrl-a")
+
+	body := []byte(`{"name":"t1","leader":{"name":"l1"}}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/teams", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	handler.CreateTeam(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected %d, got %d: %s", http.StatusCreated, rec.Code, rec.Body.String())
+	}
+
+	var team v1beta1.Team
+	if err := k8sClient.Get(context.Background(), client.ObjectKey{Name: "t1", Namespace: "default"}, &team); err != nil {
+		t.Fatalf("get team: %v", err)
+	}
+	if got := team.Labels[v1beta1.LabelController]; got != "ctrl-a" {
+		t.Fatalf("expected controller label ctrl-a, got %q", got)
+	}
+}
+
+func TestCreateHuman_StampsControllerLabel(t *testing.T) {
+	scheme := newServerTestScheme(t)
+	k8sClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+	handler := NewResourceHandler(k8sClient, "default", nil, "ctrl-a")
+
+	body := []byte(`{"name":"h1","displayName":"Human One"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/humans", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	handler.CreateHuman(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected %d, got %d: %s", http.StatusCreated, rec.Code, rec.Body.String())
+	}
+
+	var human v1beta1.Human
+	if err := k8sClient.Get(context.Background(), client.ObjectKey{Name: "h1", Namespace: "default"}, &human); err != nil {
+		t.Fatalf("get human: %v", err)
+	}
+	if got := human.Labels[v1beta1.LabelController]; got != "ctrl-a" {
+		t.Fatalf("expected controller label ctrl-a, got %q", got)
+	}
+}
+
+func TestCreateManager_StampsControllerLabel(t *testing.T) {
+	scheme := newServerTestScheme(t)
+	k8sClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+	handler := NewResourceHandler(k8sClient, "default", nil, "ctrl-a")
+
+	body := []byte(`{"name":"m1","model":"qwen3.5-plus"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/managers", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	handler.CreateManager(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected %d, got %d: %s", http.StatusCreated, rec.Code, rec.Body.String())
+	}
+
+	var mgr v1beta1.Manager
+	if err := k8sClient.Get(context.Background(), client.ObjectKey{Name: "m1", Namespace: "default"}, &mgr); err != nil {
+		t.Fatalf("get manager: %v", err)
+	}
+	if got := mgr.Labels[v1beta1.LabelController]; got != "ctrl-a" {
+		t.Fatalf("expected controller label ctrl-a, got %q", got)
+	}
+}
+
+// TestCreate_EmptyControllerName_NoLabel verifies embedded-mode behavior:
+// when controllerName is empty, the handler does not stamp any controller
+// label (and does not introduce a stray labels map on resources that had
+// none), preserving existing embedded deployments.
+func TestCreate_EmptyControllerName_NoLabel(t *testing.T) {
+	scheme := newServerTestScheme(t)
+	k8sClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+	handler := NewResourceHandler(k8sClient, "default", nil, "")
+
+	body := []byte(`{"name":"h2","displayName":"Human Two"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/humans", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	handler.CreateHuman(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected %d, got %d: %s", http.StatusCreated, rec.Code, rec.Body.String())
+	}
+
+	var human v1beta1.Human
+	if err := k8sClient.Get(context.Background(), client.ObjectKey{Name: "h2", Namespace: "default"}, &human); err != nil {
+		t.Fatalf("get human: %v", err)
+	}
+	if _, present := human.Labels[v1beta1.LabelController]; present {
+		t.Fatalf("expected no controller label when controllerName is empty, got %q", human.Labels[v1beta1.LabelController])
 	}
 }
 

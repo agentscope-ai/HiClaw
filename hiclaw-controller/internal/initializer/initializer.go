@@ -30,16 +30,29 @@ type Config struct {
 	AdminUser      string
 	AdminPassword  string
 	Namespace      string
-	IsEmbedded     bool // embedded mode: use static service sources for local services
+	IsEmbedded     bool   // embedded mode: use static service sources for local services
 	AgentFSDir     string // local filesystem root for agent workspaces (embedded mode)
+	ControllerName string // HICLAW_CONTROLLER_NAME; stamped as hiclaw.io/controller label on created CRs in incluster mode
 
-	// Gateway initialization
+	// Provider selection — drives which initialization steps run.
+	GatewayProvider string // "higress" | "ai-gateway"
+	StorageProvider string // "minio"   | "oss"
+
+	// Gateway initialization (only consulted when GatewayProvider == "higress")
 	LLMProvider   string // e.g. "qwen", "openai"
 	LLMAPIKey     string
 	LLMApiURL     string // provider-specific base URL (optional)
 	OpenAIBaseURL string // custom base URL for openai-compat providers
 	TuwunelURL    string // internal Tuwunel URL, e.g. http://tuwunel:6167
 	ElementWebURL string // internal Element Web URL (optional)
+}
+
+func (c Config) managesGatewayRoutes() bool {
+	return c.GatewayProvider == "" || c.GatewayProvider == "higress"
+}
+
+func (c Config) managesStorage() bool {
+	return c.StorageProvider == "" || c.StorageProvider == "minio"
 }
 
 // Initializer performs one-time cluster bootstrap: waits for infrastructure,
@@ -83,10 +96,16 @@ func (i *Initializer) Run(ctx context.Context) error {
 		}
 		logger.Info("Gateway is ready")
 
-		if err := i.initGatewayRoutes(ctx); err != nil {
-			return fmt.Errorf("Gateway route init failed: %w", err)
+		if i.Config.managesGatewayRoutes() {
+			if err := i.initGatewayRoutes(ctx); err != nil {
+				return fmt.Errorf("Gateway route init failed: %w", err)
+			}
+			logger.Info("Gateway routes initialized")
+		} else {
+			logger.Info("skipping gateway route initialization",
+				"provider", i.Config.GatewayProvider,
+				"reason", "routes are managed out-of-band by the cloud platform")
 		}
-		logger.Info("Gateway routes initialized")
 	}
 
 	if i.Config.ManagerEnabled {
@@ -115,11 +134,19 @@ func (i *Initializer) Run(ctx context.Context) error {
 }
 
 // waitForOSS polls MinIO/OSS until the bucket is accessible.
+//
+// For the embedded MinIO (storage.provider == "minio") the bucket is
+// created on demand through BucketManager.EnsureBucket. For an
+// externally-managed OSS bucket the initializer does not try to create
+// or mutate anything — it just polls ListObjects to confirm that the
+// controller's credentials grant access to the configured bucket.
 func (i *Initializer) waitForOSS(ctx context.Context) error {
-	if bm, ok := i.OSS.(oss.BucketManager); ok {
-		return retry(ctx, 3*time.Second, 5*time.Minute, func() error {
-			return bm.EnsureBucket(ctx)
-		})
+	if i.Config.managesStorage() {
+		if bm, ok := i.OSS.(oss.BucketManager); ok {
+			return retry(ctx, 3*time.Second, 5*time.Minute, func() error {
+				return bm.EnsureBucket(ctx)
+			})
+		}
 	}
 	return retry(ctx, 3*time.Second, 5*time.Minute, func() error {
 		_, err := i.OSS.ListObjects(ctx, "")
@@ -377,15 +404,21 @@ func (i *Initializer) ensureManagerCR(ctx context.Context) error {
 		spec["image"] = i.Config.ManagerImage
 	}
 
+	metadata := map[string]interface{}{
+		"name":      name,
+		"namespace": ns,
+	}
+	if i.Config.ControllerName != "" {
+		metadata["labels"] = map[string]interface{}{
+			v1beta1.LabelController: i.Config.ControllerName,
+		}
+	}
 	obj := &unstructured.Unstructured{
 		Object: map[string]interface{}{
 			"apiVersion": v1beta1.GroupName + "/" + v1beta1.Version,
 			"kind":       "Manager",
-			"metadata": map[string]interface{}{
-				"name":      name,
-				"namespace": ns,
-			},
-			"spec": spec,
+			"metadata":   metadata,
+			"spec":       spec,
 		},
 	}
 

@@ -21,12 +21,11 @@
 source /opt/hiclaw/scripts/lib/base.sh 2>/dev/null || true
 
 # ── Runtime detection ─────────────────────────────────────────────────────────
-# Respect pre-set HICLAW_RUNTIME (e.g. from Dockerfile.aliyun ENV), only detect if unset
+# HICLAW_RUNTIME is normally pre-set by the deployment (Helm sets "k8s",
+# Dockerfile.aliyun sets "aliyun", local scripts leave it unset).
+# Only a minimal fallback is done here; cloud mode must be set explicitly.
 if [ -z "${HICLAW_RUNTIME:-}" ]; then
-    if [ -n "${ALIBABA_CLOUD_OIDC_TOKEN_FILE:-}" ] && \
-       [ -f "${ALIBABA_CLOUD_OIDC_TOKEN_FILE:-/nonexistent}" ]; then
-        HICLAW_RUNTIME="aliyun"
-    elif [ -S "${HICLAW_CONTAINER_SOCKET:-/var/run/docker.sock}" ]; then
+    if [ -S "${HICLAW_CONTAINER_SOCKET:-/var/run/docker.sock}" ]; then
         HICLAW_RUNTIME="docker"
     else
         HICLAW_RUNTIME="none"

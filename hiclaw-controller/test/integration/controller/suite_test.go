@@ -101,7 +101,6 @@ func TestMain(m *testing.M) {
 
 	workerBackendRegistry := backend.NewRegistry(
 		[]backend.WorkerBackend{mockBackend},
-		nil,
 	)
 
 	// Real LegacyCompat backed by an in-memory OSS so tests can assert
@@ -175,7 +174,6 @@ func TestMain(m *testing.M) {
 
 	mgrBackendRegistry := backend.NewRegistry(
 		[]backend.WorkerBackend{mockMgrBackend},
-		nil,
 	)
 
 	managerReconciler := &controller.ManagerReconciler{

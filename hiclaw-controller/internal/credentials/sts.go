@@ -2,149 +2,88 @@ package credentials
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
-	"net/url"
-	"os"
-	"strings"
-	"time"
+
+	"github.com/hiclaw/hiclaw-controller/internal/accessresolver"
+	"github.com/hiclaw/hiclaw-controller/internal/auth"
+	"github.com/hiclaw/hiclaw-controller/internal/credprovider"
 )
 
 // STSConfig holds configuration for the STS token service.
 type STSConfig struct {
-	Region          string
-	RoleArn         string
-	OIDCProviderArn string
-	OIDCTokenFile   string
-	OSSBucket       string
+	// OSSBucket is the primary workspace bucket name. It is returned
+	// to callers as part of STSToken.OSSBucket so they know which
+	// bucket the issued token is most relevant to. It is also used
+	// by the accessresolver to resolve `bucketRef: workspace` in
+	// AccessEntry scopes.
+	OSSBucket string
+
+	// OSSEndpoint is the public-facing OSS endpoint returned to worker
+	// callers in STSToken.OSSEndpoint. It is sourced from controller
+	// static config (HICLAW_FS_ENDPOINT / storage.oss.endpoint) and NOT
+	// from the credential-provider sidecar — endpoint is deployment-time
+	// configuration, orthogonal to the short-lived STS triple.
+	OSSEndpoint string
 }
 
-func (c STSConfig) endpoint() string {
-	return fmt.Sprintf("https://sts-vpc.%s.aliyuncs.com", c.Region)
-}
-
-// STSService issues scoped STS tokens to workers via AssumeRoleWithOIDC.
+// STSService issues scoped STS tokens for Worker/Manager callers.
+//
+// It accepts a CallerIdentity from the HTTP layer, asks the
+// accessresolver to turn the caller's CR-declared (or defaulted)
+// AccessEntries into a fully-resolved credprovider.IssueRequest, and
+// delegates to the credprovider.Client which forwards the request to
+// the hiclaw-credential-provider sidecar.
+//
+// The service is agnostic to how the sidecar actually produces the
+// tokens: the production sidecar calls AssumeRoleWithOIDC, the
+// mock-credential-provider calls AssumeRole with a long-lived AK/SK,
+// but both speak the same HTTP contract.
 type STSService struct {
-	config           STSConfig
-	httpClient       *http.Client
-	endpointOverride string // for testing
+	config   STSConfig
+	resolver *accessresolver.Resolver
+	provider credprovider.Client
 }
 
-// NewSTSService creates an STS service.
-func NewSTSService(config STSConfig) *STSService {
-	return &STSService{
-		config:     config,
-		httpClient: &http.Client{Timeout: 30 * time.Second},
-	}
+// NewSTSService constructs an STSService. When either resolver or
+// provider is nil the service is considered unconfigured and
+// IssueForCaller will fail; server wiring is expected to translate
+// that into HTTP 503.
+func NewSTSService(cfg STSConfig, resolver *accessresolver.Resolver, provider credprovider.Client) *STSService {
+	return &STSService{config: cfg, resolver: resolver, provider: provider}
 }
 
-// NewSTSServiceWithClient creates an STS service with a custom HTTP client (for testing).
-func NewSTSServiceWithClient(config STSConfig, client *http.Client) *STSService {
-	return &STSService{
-		config:     config,
-		httpClient: client,
-	}
+// Configured reports whether both the accessresolver and the
+// credential-provider client have been wired in. Callers can use this
+// to gate the exposure of credential-related HTTP endpoints in
+// deployments that do not run the sidecar.
+func (s *STSService) Configured() bool {
+	return s != nil && s.provider != nil && s.resolver != nil
 }
 
-// IssueWorkerToken calls AssumeRoleWithOIDC with an inline policy scoped to the worker.
-func (s *STSService) IssueWorkerToken(ctx context.Context, workerName string) (*STSToken, error) {
-	oidcToken, err := os.ReadFile(s.config.OIDCTokenFile)
+// IssueForCaller asks the sidecar for an STS triple whose inline
+// policy matches the caller's resolved AccessEntries.
+func (s *STSService) IssueForCaller(ctx context.Context, caller *auth.CallerIdentity) (*STSToken, error) {
+	if !s.Configured() {
+		return nil, fmt.Errorf("STS service not configured: no credential provider URL set")
+	}
+	sessionName, entries, err := s.resolver.ResolveForCaller(ctx, caller)
 	if err != nil {
-		return nil, fmt.Errorf("read OIDC token file: %w", err)
+		return nil, fmt.Errorf("resolve access entries: %w", err)
 	}
-
-	policy := BuildWorkerPolicy(s.config.OSSBucket, workerName)
-	endpoint := s.config.endpoint()
-	if s.endpointOverride != "" {
-		endpoint = s.endpointOverride
-	}
-
-	form := url.Values{
-		"Action":          {"AssumeRoleWithOIDC"},
-		"Format":          {"JSON"},
-		"Version":         {"2015-04-01"},
-		"Timestamp":       {time.Now().UTC().Format("2006-01-02T15:04:05Z")},
-		"RoleArn":         {s.config.RoleArn},
-		"OIDCProviderArn": {s.config.OIDCProviderArn},
-		"OIDCToken":       {strings.TrimSpace(string(oidcToken))},
-		"RoleSessionName": {fmt.Sprintf("hiclaw-worker-%s", workerName)},
-		"DurationSeconds": {"3600"},
-		"Policy":          {policy},
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(form.Encode()))
+	resp, err := s.provider.Issue(ctx, credprovider.IssueRequest{
+		SessionName: sessionName,
+		Entries:     entries,
+	})
 	if err != nil {
-		return nil, fmt.Errorf("build STS request: %w", err)
+		return nil, err
 	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-
-	resp, err := s.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("STS request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("STS returned %d: %s", resp.StatusCode, string(body))
-	}
-
-	var stsResp struct {
-		Credentials struct {
-			AccessKeyId     string `json:"AccessKeyId"`
-			AccessKeySecret string `json:"AccessKeySecret"`
-			SecurityToken   string `json:"SecurityToken"`
-			Expiration      string `json:"Expiration"`
-		} `json:"Credentials"`
-	}
-	if err := json.Unmarshal(body, &stsResp); err != nil {
-		return nil, fmt.Errorf("parse STS response: %w", err)
-	}
-
-	ossEndpoint := fmt.Sprintf("oss-%s-internal.aliyuncs.com", s.config.Region)
-
 	return &STSToken{
-		AccessKeyID:     stsResp.Credentials.AccessKeyId,
-		AccessKeySecret: stsResp.Credentials.AccessKeySecret,
-		SecurityToken:   stsResp.Credentials.SecurityToken,
-		Expiration:      stsResp.Credentials.Expiration,
-		ExpiresInSec:    3600,
-		OSSEndpoint:     ossEndpoint,
+		AccessKeyID:     resp.AccessKeyID,
+		AccessKeySecret: resp.AccessKeySecret,
+		SecurityToken:   resp.SecurityToken,
+		Expiration:      resp.Expiration,
+		ExpiresInSec:    resp.ExpiresInSec,
+		OSSEndpoint:     s.config.OSSEndpoint,
 		OSSBucket:       s.config.OSSBucket,
 	}, nil
-}
-
-// BuildWorkerPolicy generates an OSS inline policy restricting access to
-// agents/{workerName}/* and shared/*.
-func BuildWorkerPolicy(bucket, workerName string) string {
-	policy := map[string]interface{}{
-		"Version": "1",
-		"Statement": []map[string]interface{}{
-			{
-				"Effect":   "Allow",
-				"Action":   []string{"oss:ListObjects"},
-				"Resource": []string{fmt.Sprintf("acs:oss:*:*:%s", bucket)},
-				"Condition": map[string]interface{}{
-					"StringLike": map[string]interface{}{
-						"oss:Prefix": []string{
-							fmt.Sprintf("agents/%s/*", workerName),
-							"shared/*",
-						},
-					},
-				},
-			},
-			{
-				"Effect": "Allow",
-				"Action": []string{"oss:GetObject", "oss:PutObject", "oss:DeleteObject"},
-				"Resource": []string{
-					fmt.Sprintf("acs:oss:*:*:%s/agents/%s/*", bucket, workerName),
-					fmt.Sprintf("acs:oss:*:*:%s/shared/*", bucket),
-				},
-			},
-		},
-	}
-	b, _ := json.Marshal(policy)
-	return string(b)
 }

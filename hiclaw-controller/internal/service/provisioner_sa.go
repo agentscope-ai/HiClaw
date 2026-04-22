@@ -18,7 +18,7 @@ func (p *Provisioner) EnsureServiceAccount(ctx context.Context, workerName strin
 	if p.k8sClient == nil {
 		return nil
 	}
-	saName := authpkg.SAName(authpkg.RoleWorker, workerName)
+	saName := p.resourcePrefix.SAName(authpkg.RoleWorker, workerName)
 	ns := p.namespace
 
 	_, err := p.k8sClient.CoreV1().ServiceAccounts(ns).Get(ctx, saName, metav1.GetOptions{})
@@ -34,7 +34,7 @@ func (p *Provisioner) EnsureServiceAccount(ctx context.Context, workerName strin
 			Name:      saName,
 			Namespace: ns,
 			Labels: map[string]string{
-				"app":              "hiclaw-worker",
+				"app":              p.resourcePrefix.WorkerAppLabel(),
 				"hiclaw.io/worker": workerName,
 			},
 		},
@@ -53,7 +53,7 @@ func (p *Provisioner) DeleteServiceAccount(ctx context.Context, workerName strin
 	if p.k8sClient == nil {
 		return nil
 	}
-	saName := authpkg.SAName(authpkg.RoleWorker, workerName)
+	saName := p.resourcePrefix.SAName(authpkg.RoleWorker, workerName)
 	ns := p.namespace
 
 	err := p.k8sClient.CoreV1().ServiceAccounts(ns).Delete(ctx, saName, metav1.DeleteOptions{})
@@ -68,7 +68,7 @@ func (p *Provisioner) EnsureManagerServiceAccount(ctx context.Context, managerNa
 	if p.k8sClient == nil {
 		return nil
 	}
-	saName := authpkg.SAName(authpkg.RoleManager, managerName)
+	saName := p.resourcePrefix.SAName(authpkg.RoleManager, managerName)
 	ns := p.namespace
 
 	_, err := p.k8sClient.CoreV1().ServiceAccounts(ns).Get(ctx, saName, metav1.GetOptions{})
@@ -84,7 +84,7 @@ func (p *Provisioner) EnsureManagerServiceAccount(ctx context.Context, managerNa
 			Name:      saName,
 			Namespace: ns,
 			Labels: map[string]string{
-				"app":               "hiclaw-manager",
+				"app":               p.resourcePrefix.ManagerAppLabel(),
 				"hiclaw.io/manager": managerName,
 			},
 		},
@@ -103,7 +103,7 @@ func (p *Provisioner) DeleteManagerServiceAccount(ctx context.Context, managerNa
 	if p.k8sClient == nil {
 		return nil
 	}
-	saName := authpkg.SAName(authpkg.RoleManager, managerName)
+	saName := p.resourcePrefix.SAName(authpkg.RoleManager, managerName)
 	ns := p.namespace
 
 	err := p.k8sClient.CoreV1().ServiceAccounts(ns).Delete(ctx, saName, metav1.DeleteOptions{})
@@ -118,7 +118,7 @@ func (p *Provisioner) RequestManagerSAToken(ctx context.Context, managerName str
 	if p.k8sClient == nil {
 		return "", nil
 	}
-	saName := authpkg.SAName(authpkg.RoleManager, managerName)
+	saName := p.resourcePrefix.SAName(authpkg.RoleManager, managerName)
 	audience := p.authAudience
 	if audience == "" {
 		audience = authpkg.DefaultAudience
@@ -146,7 +146,7 @@ func (p *Provisioner) RequestSAToken(ctx context.Context, workerName string) (st
 	if p.k8sClient == nil {
 		return "", nil
 	}
-	saName := authpkg.SAName(authpkg.RoleWorker, workerName)
+	saName := p.resourcePrefix.SAName(authpkg.RoleWorker, workerName)
 	audience := p.authAudience
 	if audience == "" {
 		audience = authpkg.DefaultAudience

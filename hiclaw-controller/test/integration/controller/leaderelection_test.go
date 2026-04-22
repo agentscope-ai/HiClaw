@@ -68,7 +68,7 @@ func TestLeaderElection_SingleInstance_BecomesLeader(t *testing.T) {
 		Client:      mgr.GetClient(),
 		Provisioner: prov,
 		Deployer:    deploy,
-		Backend:     backend.NewRegistry([]backend.WorkerBackend{be}, nil),
+		Backend:     backend.NewRegistry([]backend.WorkerBackend{be}),
 		EnvBuilder:  env,
 	}
 	if err := reconciler.SetupWithManager(mgr); err != nil {
@@ -150,7 +150,7 @@ func TestLeaderElection_TwoInstances_OnlyOneReconciles(t *testing.T) {
 		Client:      mgrA.GetClient(),
 		Provisioner: provA,
 		Deployer:    deployA,
-		Backend:     backend.NewRegistry([]backend.WorkerBackend{beA}, nil),
+		Backend:     backend.NewRegistry([]backend.WorkerBackend{beA}),
 		EnvBuilder:  envA,
 	}
 	if err := recA.SetupWithManager(mgrA); err != nil {
@@ -161,7 +161,7 @@ func TestLeaderElection_TwoInstances_OnlyOneReconciles(t *testing.T) {
 		Client:      mgrB.GetClient(),
 		Provisioner: provB,
 		Deployer:    deployB,
-		Backend:     backend.NewRegistry([]backend.WorkerBackend{beB}, nil),
+		Backend:     backend.NewRegistry([]backend.WorkerBackend{beB}),
 		EnvBuilder:  envB,
 	}
 	if err := recB.SetupWithManager(mgrB); err != nil {

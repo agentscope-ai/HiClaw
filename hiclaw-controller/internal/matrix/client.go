@@ -146,7 +146,7 @@ func (c *TuwunelClient) EnsureUser(ctx context.Context, req EnsureUserRequest) (
 		Error       string `json:"error"`
 	}
 
-	statusCode, err := c.doJSON(ctx, http.MethodPost,
+	statusCode, _, err := c.doJSON(ctx, http.MethodPost,
 		"/_matrix/client/v3/register", "", regBody, &regResp)
 	if err != nil {
 		return nil, fmt.Errorf("register user %s: %w", req.Username, err)
@@ -229,13 +229,13 @@ func (c *TuwunelClient) Login(ctx context.Context, username, password string) (s
 		AccessToken string `json:"access_token"`
 	}
 
-	statusCode, err := c.doJSON(ctx, http.MethodPost,
+	statusCode, respBody, err := c.doJSON(ctx, http.MethodPost,
 		"/_matrix/client/v3/login", "", body, &resp)
 	if err != nil {
 		return "", fmt.Errorf("login %s: %w", username, err)
 	}
 	if statusCode != http.StatusOK {
-		return "", fmt.Errorf("login %s: HTTP %d", username, statusCode)
+		return "", fmt.Errorf("login %s: HTTP %d: %s", username, statusCode, truncate(respBody, 500))
 	}
 	if resp.AccessToken == "" {
 		return "", fmt.Errorf("login %s: empty access token", username)
@@ -289,7 +289,7 @@ func (c *TuwunelClient) CreateRoom(ctx context.Context, req CreateRoomRequest) (
 		Error   string `json:"error"`
 	}
 
-	statusCode, err := c.doJSON(ctx, http.MethodPost,
+	statusCode, respBody, err := c.doJSON(ctx, http.MethodPost,
 		"/_matrix/client/v3/createRoom", token, body, &resp)
 	if err != nil {
 		return nil, fmt.Errorf("create room %q: %w", req.Name, err)
@@ -319,8 +319,8 @@ func (c *TuwunelClient) CreateRoom(ctx context.Context, req CreateRoomRequest) (
 		return &RoomInfo{RoomID: existingID, Created: false}, nil
 	}
 
-	return nil, fmt.Errorf("create room %q: HTTP %d %s %s",
-		req.Name, statusCode, resp.ErrCode, resp.Error)
+	return nil, fmt.Errorf("create room %q: HTTP %d %s %s: %s",
+		req.Name, statusCode, resp.ErrCode, resp.Error, truncate(respBody, 500))
 }
 
 // ResolveRoomAlias implements Client.ResolveRoomAlias.
@@ -336,7 +336,7 @@ func (c *TuwunelClient) ResolveRoomAlias(ctx context.Context, alias string) (str
 		Error   string `json:"error"`
 	}
 
-	statusCode, err := c.doJSON(ctx, http.MethodGet,
+	statusCode, respBody, err := c.doJSON(ctx, http.MethodGet,
 		"/_matrix/client/v3/directory/room/"+encodeAlias(alias),
 		token, nil, &resp)
 	if err != nil {
@@ -351,8 +351,8 @@ func (c *TuwunelClient) ResolveRoomAlias(ctx context.Context, alias string) (str
 	if statusCode == http.StatusNotFound || resp.ErrCode == "M_NOT_FOUND" {
 		return "", false, nil
 	}
-	return "", false, fmt.Errorf("resolve alias %s: HTTP %d %s %s",
-		alias, statusCode, resp.ErrCode, resp.Error)
+	return "", false, fmt.Errorf("resolve alias %s: HTTP %d %s %s: %s",
+		alias, statusCode, resp.ErrCode, resp.Error, truncate(respBody, 500))
 }
 
 // DeleteRoomAlias implements Client.DeleteRoomAlias.
@@ -367,7 +367,7 @@ func (c *TuwunelClient) DeleteRoomAlias(ctx context.Context, alias string) error
 		Error   string `json:"error"`
 	}
 
-	statusCode, err := c.doJSON(ctx, http.MethodDelete,
+	statusCode, respBody, err := c.doJSON(ctx, http.MethodDelete,
 		"/_matrix/client/v3/directory/room/"+encodeAlias(alias),
 		token, nil, &resp)
 	if err != nil {
@@ -379,20 +379,20 @@ func (c *TuwunelClient) DeleteRoomAlias(ctx context.Context, alias string) error
 	if statusCode == http.StatusNotFound || resp.ErrCode == "M_NOT_FOUND" {
 		return nil
 	}
-	return fmt.Errorf("delete alias %s: HTTP %d %s %s",
-		alias, statusCode, resp.ErrCode, resp.Error)
+	return fmt.Errorf("delete alias %s: HTTP %d %s %s: %s",
+		alias, statusCode, resp.ErrCode, resp.Error, truncate(respBody, 500))
 }
 
 func (c *TuwunelClient) JoinRoom(ctx context.Context, roomID, userToken string) error {
 	encodedRoom := encodeRoomID(roomID)
-	statusCode, err := c.doJSON(ctx, http.MethodPost,
+	statusCode, respBody, err := c.doJSON(ctx, http.MethodPost,
 		fmt.Sprintf("/_matrix/client/v3/rooms/%s/join", encodedRoom),
 		userToken, map[string]interface{}{}, nil)
 	if err != nil {
 		return fmt.Errorf("join room %s: %w", roomID, err)
 	}
 	if statusCode != http.StatusOK && statusCode != http.StatusCreated {
-		return fmt.Errorf("join room %s: HTTP %d", roomID, statusCode)
+		return fmt.Errorf("join room %s: HTTP %d: %s", roomID, statusCode, truncate(respBody, 500))
 	}
 	return nil
 }
@@ -407,14 +407,14 @@ func (c *TuwunelClient) LeaveRoom(ctx context.Context, roomID, userToken string)
 		}
 	}
 	encodedRoom := encodeRoomID(roomID)
-	statusCode, err := c.doJSON(ctx, http.MethodPost,
+	statusCode, respBody, err := c.doJSON(ctx, http.MethodPost,
 		fmt.Sprintf("/_matrix/client/v3/rooms/%s/leave", encodedRoom),
 		token, map[string]interface{}{}, nil)
 	if err != nil {
 		return fmt.Errorf("leave room %s: %w", roomID, err)
 	}
 	if statusCode != http.StatusOK && statusCode != http.StatusCreated {
-		return fmt.Errorf("leave room %s: HTTP %d", roomID, statusCode)
+		return fmt.Errorf("leave room %s: HTTP %d: %s", roomID, statusCode, truncate(respBody, 500))
 	}
 	return nil
 }
@@ -427,14 +427,14 @@ func (c *TuwunelClient) SendMessage(ctx context.Context, roomID, token, body str
 		"body":    body,
 	}
 
-	statusCode, err := c.doJSON(ctx, http.MethodPut,
+	statusCode, respBody, err := c.doJSON(ctx, http.MethodPut,
 		fmt.Sprintf("/_matrix/client/v3/rooms/%s/send/m.room.message/%s", encodedRoom, txnID),
 		token, msg, nil)
 	if err != nil {
 		return fmt.Errorf("send message to %s: %w", roomID, err)
 	}
 	if statusCode != http.StatusOK && statusCode != http.StatusCreated {
-		return fmt.Errorf("send message to %s: HTTP %d", roomID, statusCode)
+		return fmt.Errorf("send message to %s: HTTP %d: %s", roomID, statusCode, truncate(respBody, 500))
 	}
 	return nil
 }
@@ -452,12 +452,12 @@ func (c *TuwunelClient) ensureAdminRoomID(ctx context.Context) (string, error) {
 	var resp struct {
 		RoomID string `json:"room_id"`
 	}
-	statusCode, err := c.doJSON(ctx, http.MethodGet, path, "", nil, &resp)
+	statusCode, respBody, err := c.doJSON(ctx, http.MethodGet, path, "", nil, &resp)
 	if err != nil {
 		return "", fmt.Errorf("resolve admin room alias %s: %w", alias, err)
 	}
 	if statusCode != http.StatusOK {
-		return "", fmt.Errorf("resolve admin room alias %s: HTTP %d", alias, statusCode)
+		return "", fmt.Errorf("resolve admin room alias %s: HTTP %d: %s", alias, statusCode, truncate(respBody, 500))
 	}
 	if resp.RoomID == "" {
 		return "", fmt.Errorf("resolve admin room alias %s: empty room_id", alias)
@@ -502,15 +502,15 @@ func (c *TuwunelClient) ListRoomMembers(ctx context.Context, roomID string) ([]R
 		Error   string `json:"error"`
 	}
 
-	statusCode, err := c.doJSON(ctx, http.MethodGet,
+	statusCode, respBody, err := c.doJSON(ctx, http.MethodGet,
 		fmt.Sprintf("/_matrix/client/v3/rooms/%s/members", encodedRoom),
 		token, nil, &resp)
 	if err != nil {
 		return nil, fmt.Errorf("list members %s: %w", roomID, err)
 	}
 	if statusCode != http.StatusOK {
-		return nil, fmt.Errorf("list members %s: HTTP %d %s %s",
-			roomID, statusCode, resp.ErrCode, resp.Error)
+		return nil, fmt.Errorf("list members %s: HTTP %d %s %s: %s",
+			roomID, statusCode, resp.ErrCode, resp.Error, truncate(respBody, 500))
 	}
 
 	members := make([]RoomMember, 0, len(resp.Chunk))
@@ -541,7 +541,7 @@ func (c *TuwunelClient) InviteToRoom(ctx context.Context, roomID, userID string)
 		Error   string `json:"error"`
 	}
 
-	statusCode, err := c.doJSON(ctx, http.MethodPost,
+	statusCode, respBody, err := c.doJSON(ctx, http.MethodPost,
 		fmt.Sprintf("/_matrix/client/v3/rooms/%s/invite", encodedRoom),
 		token, map[string]string{"user_id": userID}, &resp)
 	if err != nil {
@@ -557,8 +557,8 @@ func (c *TuwunelClient) InviteToRoom(ctx context.Context, roomID, userID string)
 			return nil
 		}
 	}
-	return fmt.Errorf("invite %s to %s: HTTP %d %s %s",
-		userID, roomID, statusCode, resp.ErrCode, resp.Error)
+	return fmt.Errorf("invite %s to %s: HTTP %d %s %s: %s",
+		userID, roomID, statusCode, resp.ErrCode, resp.Error, truncate(respBody, 500))
 }
 
 func (c *TuwunelClient) KickFromRoom(ctx context.Context, roomID, userID, reason string) error {
@@ -578,7 +578,7 @@ func (c *TuwunelClient) KickFromRoom(ctx context.Context, roomID, userID, reason
 		Error   string `json:"error"`
 	}
 
-	statusCode, err := c.doJSON(ctx, http.MethodPost,
+	statusCode, respBody, err := c.doJSON(ctx, http.MethodPost,
 		fmt.Sprintf("/_matrix/client/v3/rooms/%s/kick", encodedRoom),
 		token, body, &resp)
 	if err != nil {
@@ -598,8 +598,8 @@ func (c *TuwunelClient) KickFromRoom(ctx context.Context, roomID, userID, reason
 			return nil
 		}
 	}
-	return fmt.Errorf("kick %s from %s: HTTP %d %s %s",
-		userID, roomID, statusCode, resp.ErrCode, resp.Error)
+	return fmt.Errorf("kick %s from %s: HTTP %d %s %s: %s",
+		userID, roomID, statusCode, resp.ErrCode, resp.Error, truncate(respBody, 500))
 }
 
 // ListJoinedRooms returns the room IDs joined by the user identified by
@@ -608,26 +608,28 @@ func (c *TuwunelClient) ListJoinedRooms(ctx context.Context, userToken string) (
 	var resp struct {
 		JoinedRooms []string `json:"joined_rooms"`
 	}
-	statusCode, err := c.doJSON(ctx, http.MethodGet,
+	statusCode, respBody, err := c.doJSON(ctx, http.MethodGet,
 		"/_matrix/client/v3/joined_rooms", userToken, nil, &resp)
 	if err != nil {
 		return nil, fmt.Errorf("list joined rooms: %w", err)
 	}
 	if statusCode != http.StatusOK {
-		return nil, fmt.Errorf("list joined rooms: HTTP %d", statusCode)
+		return nil, fmt.Errorf("list joined rooms: HTTP %d: %s", statusCode, truncate(respBody, 500))
 	}
 	return resp.JoinedRooms, nil
 }
 
 // doJSON performs an HTTP request with JSON body/response.
-// Returns the HTTP status code and any transport/decode error.
-// If respOut is nil, the response body is discarded.
-func (c *TuwunelClient) doJSON(ctx context.Context, method, path, token string, reqBody interface{}, respOut interface{}) (int, error) {
+// Returns the HTTP status code, the raw response body, and any transport/decode error.
+// If respOut is nil, the response body is not decoded (but still read and returned).
+// The raw body is always returned (possibly nil) so callers can include it in
+// diagnostic error messages even when respOut is set.
+func (c *TuwunelClient) doJSON(ctx context.Context, method, path, token string, reqBody interface{}, respOut interface{}) (int, []byte, error) {
 	var bodyReader io.Reader
 	if reqBody != nil {
 		data, err := json.Marshal(reqBody)
 		if err != nil {
-			return 0, fmt.Errorf("marshal request: %w", err)
+			return 0, nil, fmt.Errorf("marshal request: %w", err)
 		}
 		bodyReader = bytes.NewReader(data)
 	}
@@ -635,7 +637,7 @@ func (c *TuwunelClient) doJSON(ctx context.Context, method, path, token string, 
 	url := strings.TrimRight(c.config.ServerURL, "/") + path
 	req, err := http.NewRequestWithContext(ctx, method, url, bodyReader)
 	if err != nil {
-		return 0, err
+		return 0, nil, err
 	}
 	if reqBody != nil {
 		req.Header.Set("Content-Type", "application/json")
@@ -646,7 +648,7 @@ func (c *TuwunelClient) doJSON(ctx context.Context, method, path, token string, 
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return 0, err
+		return 0, nil, err
 	}
 	defer resp.Body.Close()
 
@@ -659,11 +661,11 @@ func (c *TuwunelClient) doJSON(ctx context.Context, method, path, token string, 
 
 	if respOut != nil && len(respBody) > 0 {
 		if err := json.Unmarshal(respBody, respOut); err != nil {
-			return resp.StatusCode, fmt.Errorf("decode response: %w (body: %s)", err, truncate(respBody, 200))
+			return resp.StatusCode, respBody, fmt.Errorf("decode response: %w (body: %s)", err, truncate(respBody, 200))
 		}
 	}
 
-	return resp.StatusCode, nil
+	return resp.StatusCode, respBody, nil
 }
 
 // encodeRoomID percent-encodes the "!" in room IDs for URL paths.

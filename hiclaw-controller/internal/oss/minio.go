@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"strings"
@@ -12,8 +13,18 @@ import (
 // MinIOClient implements StorageClient using the mc (MinIO Client) CLI.
 // This provides zero-migration-risk compatibility with the existing shell scripts
 // while hiding the mc implementation detail behind the StorageClient interface.
+//
+// The client supports two credential modes:
+//
+//   - Static (default): AccessKey/SecretKey from Config are installed once via
+//     `mc alias set` and reused for every subsequent command.
+//   - Dynamic (credSource != nil): the client skips persistent alias setup and
+//     instead exports MC_HOST_<alias> on every invocation, populated from
+//     CredentialSource.Resolve. This mode is what the external-OSS deployment
+//     uses to feed STS triples from the credential-provider sidecar.
 type MinIOClient struct {
 	config     Config
+	credSource CredentialSource
 	aliasReady bool
 }
 
@@ -28,7 +39,22 @@ func NewMinIOClient(cfg Config) *MinIOClient {
 	return &MinIOClient{config: cfg}
 }
 
+// WithCredentialSource returns a copy of the client that fetches credentials
+// dynamically on every mc invocation. Intended for external-OSS deployments
+// where STS tokens expire periodically.
+func (c *MinIOClient) WithCredentialSource(src CredentialSource) *MinIOClient {
+	clone := *c
+	clone.credSource = src
+	clone.aliasReady = false
+	return &clone
+}
+
 func (c *MinIOClient) ensureAlias(ctx context.Context) error {
+	if c.credSource != nil {
+		// Dynamic mode: no persistent alias. MC_HOST_* env vars are
+		// prepared per call in runMC.
+		return nil
+	}
 	if c.aliasReady || c.config.Endpoint == "" {
 		return nil
 	}
@@ -180,9 +206,62 @@ func (c *MinIOClient) runMC(ctx context.Context, args ...string) (string, error)
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
+	if c.credSource != nil {
+		creds, err := c.credSource.Resolve(ctx)
+		if err != nil {
+			return "", fmt.Errorf("resolve oss credentials: %w", err)
+		}
+		hostEnv, herr := buildMCHostEnv(c.config.Alias, c.config.Endpoint, creds)
+		if herr != nil {
+			return "", herr
+		}
+		cmd.Env = append(os.Environ(), hostEnv)
+	}
+
 	if err := cmd.Run(); err != nil {
 		return "", fmt.Errorf("mc %s: %w (stderr: %s)",
 			strings.Join(args, " "), err, strings.TrimSpace(stderr.String()))
 	}
 	return stdout.String(), nil
+}
+
+// buildMCHostEnv renders a single MC_HOST_<alias>=<scheme>://<ak>:<sk>[:<token>]@<host>
+// environment-variable binding. The mc CLI accepts this form as an
+// alternative to persistent ~/.mc/config.json alias entries, and
+// honours the security-token component when present.
+//
+// The endpoint is supplied by the caller (normally MinIOClient.config.Endpoint,
+// sourced from HICLAW_FS_ENDPOINT). A bare hostname (e.g.
+// "oss-cn-hangzhou.aliyuncs.com") without a URL scheme is accepted; in
+// that case we default to https.
+//
+// IMPORTANT: mc (tested with RELEASE.2025-08-13) does NOT URL-decode the
+// userinfo segment of MC_HOST_* before using the values. Any percent-
+// encoding applied here is forwarded verbatim into the X-Amz-Security-
+// Token header (and the signed AK/SK), which Alibaba Cloud OSS rejects
+// with InvalidSecurityToken. We therefore pass the triple raw; STS
+// credentials issued by Alibaba Cloud contain only characters (base64
+// alphabet plus "+/=") that Go's url.Parse accepts inside userinfo.
+func buildMCHostEnv(alias string, endpoint string, c Credentials) (string, error) {
+	if endpoint == "" {
+		return "", fmt.Errorf("storage endpoint is not configured (HICLAW_FS_ENDPOINT is empty)")
+	}
+	normalized := endpoint
+	if !strings.HasPrefix(normalized, "http://") && !strings.HasPrefix(normalized, "https://") {
+		normalized = "https://" + normalized
+	}
+	u, err := url.Parse(normalized)
+	if err != nil {
+		return "", fmt.Errorf("parse endpoint %q: %w", endpoint, err)
+	}
+	if u.Scheme == "" || u.Host == "" {
+		return "", fmt.Errorf("endpoint %q must include scheme and host", endpoint)
+	}
+
+	userinfo := c.AccessKeyID + ":" + c.AccessKeySecret
+	if c.SecurityToken != "" {
+		userinfo += ":" + c.SecurityToken
+	}
+	value := fmt.Sprintf("%s://%s@%s", u.Scheme, userinfo, u.Host)
+	return fmt.Sprintf("MC_HOST_%s=%s", alias, value), nil
 }

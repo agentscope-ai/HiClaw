@@ -1,5 +1,7 @@
 package oss
 
+import "context"
+
 // Config holds connection parameters for object storage.
 type Config struct {
 	MCBinary      string // mc binary path, default "mc"
@@ -9,6 +11,30 @@ type Config struct {
 	SecretKey     string // MinIO root secret key
 	StoragePrefix string // full mc prefix, e.g. "hiclaw/hiclaw-storage"
 	Bucket        string // bucket name for policy generation, e.g. "hiclaw-storage"
+}
+
+// CredentialSource provides per-invocation credentials for object storage.
+//
+// When a MinIOClient is constructed with a non-nil CredentialSource, every
+// mc invocation resolves the current credentials via Resolve and injects
+// them into the process environment as MC_HOST_<alias>=<scheme>://<ak>:<sk>[:<token>]@<host>.
+// The <host> component comes from MinIOClient.config.Endpoint, NOT from
+// the CredentialSource — endpoint is a deployment-time static value and
+// is kept orthogonal to the short-lived STS triple on purpose.
+// This is the canonical way to drive mc against Alibaba Cloud OSS with
+// refreshable STS tokens: the alias file on disk is never written and
+// tokens are never cached beyond the TokenManager's own expiry.
+type CredentialSource interface {
+	Resolve(ctx context.Context) (Credentials, error)
+}
+
+// Credentials is the per-call credential bundle that CredentialSource returns.
+// Endpoint is intentionally NOT carried here: the OSS endpoint is a static
+// deployment config read from MinIOClient.config.Endpoint.
+type Credentials struct {
+	AccessKeyID     string
+	AccessKeySecret string
+	SecurityToken   string // optional
 }
 
 // MirrorOptions controls the behavior of Mirror operations.

@@ -30,6 +30,9 @@ materialized condition flag.
 {{- define "hiclaw.gateway.internalURL" -}}
 {{- if and (eq .Values.gateway.provider "higress") (eq .Values.gateway.mode "managed") -}}
 {{- include "hiclaw.higress.gatewayURL" . -}}
+{{- else if eq .Values.gateway.provider "ai-gateway" -}}
+{{/* External APIG: workers reach the gateway via its public URL. */ -}}
+{{- include "hiclaw.gateway.publicURL" . -}}
 {{- else -}}
 {{- fail (printf "unsupported gateway combination %s/%s" .Values.gateway.provider .Values.gateway.mode) -}}
 {{- end -}}
@@ -38,6 +41,11 @@ materialized condition flag.
 {{- define "hiclaw.gateway.adminURL" -}}
 {{- if and (eq .Values.gateway.provider "higress") (eq .Values.gateway.mode "managed") -}}
 {{- include "hiclaw.higress.consoleURL" . -}}
+{{- else if eq .Values.gateway.provider "ai-gateway" -}}
+{{/* APIG does not expose a console URL from within the cluster: the
+     controller talks to it via the regional Aliyun OpenAPI endpoint, so
+     no admin URL is meaningful here. Leave empty to mean "unset" and let
+     callers decide whether to guard emission of HICLAW_AI_GATEWAY_ADMIN_URL. */ -}}
 {{- else -}}
 {{- fail (printf "unsupported gateway admin combination %s/%s" .Values.gateway.provider .Values.gateway.mode) -}}
 {{- end -}}
@@ -50,6 +58,13 @@ materialized condition flag.
 {{- define "hiclaw.storage.endpoint" -}}
 {{- if and (eq .Values.storage.provider "minio") (eq .Values.storage.mode "managed") -}}
 {{- include "hiclaw.minio.internalURL" . -}}
+{{- else if eq .Values.storage.provider "oss" -}}
+{{/* External OSS: the authoritative endpoint is returned by the
+     credential-provider sidecar alongside each STS token. If the chart
+     user supplies an override (storage.oss.endpoint) we honour it so that
+     worker scripts can hard-code mc hosts when the provider isn't
+     reachable from the worker network (rare). */ -}}
+{{- .Values.storage.oss.endpoint | default "" -}}
 {{- else -}}
 {{- fail (printf "unsupported storage combination %s/%s" .Values.storage.provider .Values.storage.mode) -}}
 {{- end -}}

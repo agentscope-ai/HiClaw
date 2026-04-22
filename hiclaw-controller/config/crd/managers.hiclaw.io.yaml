@@ -64,6 +64,38 @@ spec:
                     notifyChannel:
                       type: string
                       description: "Notification channel (default: admin-dm)"
+                accessEntries:
+                  type: array
+                  description: >
+                    Cloud credential scope declarations. Only honored when the controller
+                    runs with a credential-provider sidecar (gateway.provider=ai-gateway
+                    or storage.provider=oss). Ignored in local higress+minio deployments.
+                    When empty the controller applies sensible defaults equivalent to the
+                    legacy manager role (agents/manager/*, shared/*, manager/* on the
+                    configured bucket).
+                  items:
+                    type: object
+                    required: [service]
+                    properties:
+                      service:
+                        type: string
+                        enum: [object-storage, ai-gateway]
+                        description: Logical cloud service identifier
+                      permissions:
+                        type: array
+                        items:
+                          type: string
+                          enum: [read, write, list, delete]
+                      scope:
+                        type: object
+                        description: >
+                          Schema-less scope blob. For object-storage use keys
+                          bucketRef|bucket and prefixes (list of strings). For
+                          ai-gateway use keys gatewayRef|gatewayId and resources
+                          (list of strings). Template vars ${self.name} /
+                          ${self.kind} / ${self.namespace} are expanded by the
+                          controller before the request reaches the provider.
+                        x-kubernetes-preserve-unknown-fields: true
             status:
               type: object
               properties:

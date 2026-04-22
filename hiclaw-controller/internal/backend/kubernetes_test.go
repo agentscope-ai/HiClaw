@@ -12,22 +12,50 @@ import (
 )
 
 type fakeK8sCoreClient struct {
-	pods map[string]map[string]*corev1.Pod
+	pods       map[string]map[string]*corev1.Pod
+	configMaps map[string]map[string]*corev1.ConfigMap
+	cmGetErr   error          // if non-nil, every ConfigMap Get returns this error
+	getCalls   map[string]int // key: "namespace/name" -> count (for caching-behavior tests)
 }
 
 func newFakeK8sCoreClient(objects ...*corev1.Pod) *fakeK8sCoreClient {
-	client := &fakeK8sCoreClient{pods: map[string]map[string]*corev1.Pod{}}
+	client := &fakeK8sCoreClient{
+		pods:       map[string]map[string]*corev1.Pod{},
+		configMaps: map[string]map[string]*corev1.ConfigMap{},
+		getCalls:   map[string]int{},
+	}
 	for _, obj := range objects {
-		ns := obj.Namespace
-		if ns == "" {
-			ns = "default"
-		}
-		if client.pods[ns] == nil {
-			client.pods[ns] = map[string]*corev1.Pod{}
-		}
-		client.pods[ns][obj.Name] = obj.DeepCopy()
+		client.injectPod(obj)
 	}
 	return client
+}
+
+func (f *fakeK8sCoreClient) injectPod(pod *corev1.Pod) {
+	ns := pod.Namespace
+	if ns == "" {
+		ns = "default"
+	}
+	if f.pods[ns] == nil {
+		f.pods[ns] = map[string]*corev1.Pod{}
+	}
+	f.pods[ns][pod.Name] = pod.DeepCopy()
+}
+
+// injectConfigMap stores a ConfigMap under its namespace/name so that fake
+// ConfigMaps(ns).Get(name) returns it. Used by agent-pod-template tests.
+func (f *fakeK8sCoreClient) injectConfigMap(cm *corev1.ConfigMap) {
+	ns := cm.Namespace
+	if ns == "" {
+		ns = "default"
+	}
+	if f.configMaps[ns] == nil {
+		f.configMaps[ns] = map[string]*corev1.ConfigMap{}
+	}
+	f.configMaps[ns][cm.Name] = cm.DeepCopy()
+}
+
+func (f *fakeK8sCoreClient) getCount(namespace, name string) int {
+	return f.getCalls[namespace+"/"+name]
 }
 
 func (f *fakeK8sCoreClient) Pods(namespace string) K8sPodClient {
@@ -37,15 +65,45 @@ func (f *fakeK8sCoreClient) Pods(namespace string) K8sPodClient {
 	return &fakeK8sPodClient{
 		namespace: namespace,
 		store:     f.pods[namespace],
+		getCalls:  f.getCalls,
 	}
+}
+
+func (f *fakeK8sCoreClient) ConfigMaps(namespace string) K8sConfigMapClient {
+	if f.configMaps[namespace] == nil {
+		f.configMaps[namespace] = map[string]*corev1.ConfigMap{}
+	}
+	return &fakeK8sConfigMapClient{
+		namespace: namespace,
+		store:     f.configMaps[namespace],
+		forcedErr: f.cmGetErr,
+	}
+}
+
+type fakeK8sConfigMapClient struct {
+	namespace string
+	store     map[string]*corev1.ConfigMap
+	forcedErr error
+}
+
+func (f *fakeK8sConfigMapClient) Get(_ context.Context, name string, _ metav1.GetOptions) (*corev1.ConfigMap, error) {
+	if f.forcedErr != nil {
+		return nil, f.forcedErr
+	}
+	if cm, ok := f.store[name]; ok {
+		return cm.DeepCopy(), nil
+	}
+	return nil, apierrors.NewNotFound(schema.GroupResource{Resource: "configmaps"}, name)
 }
 
 type fakeK8sPodClient struct {
 	namespace string
 	store     map[string]*corev1.Pod
+	getCalls  map[string]int
 }
 
 func (f *fakeK8sPodClient) Get(_ context.Context, name string, _ metav1.GetOptions) (*corev1.Pod, error) {
+	f.getCalls[f.namespace+"/"+name]++
 	if pod, ok := f.store[name]; ok {
 		return pod.DeepCopy(), nil
 	}
@@ -74,8 +132,17 @@ func (f *fakeK8sPodClient) Delete(_ context.Context, name string, _ metav1.Delet
 
 func (f *fakeK8sPodClient) List(_ context.Context, opts metav1.ListOptions) (*corev1.PodList, error) {
 	list := &corev1.PodList{}
+	var wantApp string
+	if idx := strings.Index(opts.LabelSelector, "app="); idx >= 0 {
+		rest := opts.LabelSelector[idx+len("app="):]
+		if comma := strings.IndexAny(rest, ",;"); comma >= 0 {
+			wantApp = rest[:comma]
+		} else {
+			wantApp = rest
+		}
+	}
 	for _, pod := range f.store {
-		if opts.LabelSelector != "" && strings.Contains(opts.LabelSelector, "app=hiclaw-worker") && pod.Labels["app"] != "hiclaw-worker" {
+		if wantApp != "" && pod.Labels["app"] != wantApp {
 			continue
 		}
 		list.Items = append(list.Items, *pod.DeepCopy())
@@ -84,14 +151,23 @@ func (f *fakeK8sPodClient) List(_ context.Context, opts metav1.ListOptions) (*co
 }
 
 func newTestK8sBackend(objects ...*corev1.Pod) *K8sBackend {
+	b, _ := newTestK8sBackendWithFake(K8sConfig{}, objects...)
+	return b
+}
+
+// newTestK8sBackendWithFake returns both the backend and the underlying fake
+// client so tests can inspect Get call counts and inject the controller Pod.
+func newTestK8sBackendWithFake(extra K8sConfig, objects ...*corev1.Pod) (*K8sBackend, *fakeK8sCoreClient) {
 	client := newFakeK8sCoreClient(objects...)
-	return NewK8sBackendWithClient(client, K8sConfig{
+	cfg := K8sConfig{
 		Namespace:        "hiclaw",
 		WorkerImage:      "hiclaw/worker-agent:latest",
 		CopawWorkerImage: "hiclaw/copaw-worker:latest",
 		WorkerCPU:        "1000m",
 		WorkerMemory:     "2Gi",
-	}, "hiclaw-worker-")
+		ControllerName:   extra.ControllerName,
+	}
+	return NewK8sBackendWithClient(client, cfg, "hiclaw-worker-"), client
 }
 
 func TestK8sCreate(t *testing.T) {
@@ -504,5 +580,438 @@ func TestK8sCreateResolvesImageFromRuntime(t *testing.T) {
 				t.Fatalf("runtime label = %q, want %q", got, tc.wantLabel)
 			}
 		})
+	}
+}
+
+// ── Integration tests: K8sBackend.Create + PodTemplate + ownerRefs ───────
+
+// testControllerName is the canonical ControllerName used across integration
+// tests that exercise the agent PodTemplate ConfigMap lookup path.
+const testControllerName = "hiclaw-ctl"
+
+// injectTemplateConfigMap installs a ConfigMap named testControllerName in
+// the "hiclaw" namespace with the PodTemplateSpec YAML under the canonical
+// data key, mirroring what a real user's `kubectl apply -f cm.yaml` does.
+func injectTemplateConfigMap(t *testing.T, fake *fakeK8sCoreClient, content string) {
+	t.Helper()
+	fake.injectConfigMap(&corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      testControllerName,
+			Namespace: "hiclaw",
+		},
+		Data: map[string]string{AgentPodTemplateConfigMapKey: content},
+	})
+}
+
+// K1: End-to-end Aliyun-shaped template — SG annotation, ANSM label,
+// imagePullSecrets, nodeSelector, tolerations, sysctls, kubeone annotation
+// all flow through unchanged while overlay.labels/annotations still merge.
+func TestK8sCreate_TemplateEndToEndAliyunShape(t *testing.T) {
+	b, fake := newTestK8sBackendWithFake(K8sConfig{ControllerName: testControllerName})
+	injectTemplateConfigMap(t, fake, `metadata:
+  annotations:
+    network.alibabacloud.com/security-group-ids: sg-bp1xxx
+    kubeone.ali/appinstance-name: magic-ctl
+  labels:
+    nsm.alibabacloud.com/inject-sidecar: ansm-magic-xxx
+spec:
+  securityContext:
+    sysctls:
+      - name: net.ipv4.fib_multipath_hash_policy
+        value: "1"
+  imagePullSecrets:
+    - name: regsecret
+  nodeSelector:
+    type: virtual-kubelet
+  tolerations:
+    - key: virtual-kubelet.io/provider
+      operator: Exists
+      effect: NoSchedule
+    - key: virtual-kubelet.io/compute-type
+      value: acs
+      effect: NoSchedule
+`)
+
+	if _, err := b.Create(context.Background(), CreateRequest{Name: "alice"}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	pod, err := b.client.Pods("hiclaw").Get(context.Background(), "hiclaw-worker-alice", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+
+	if pod.Annotations["network.alibabacloud.com/security-group-ids"] != "sg-bp1xxx" {
+		t.Fatalf("SG annotation: %+v", pod.Annotations)
+	}
+	if pod.Annotations["kubeone.ali/appinstance-name"] != "magic-ctl" {
+		t.Fatalf("appinstance annotation: %+v", pod.Annotations)
+	}
+	if pod.Annotations["hiclaw.io/created-by"] != "controller" {
+		t.Fatalf("overlay annotation missing: %+v", pod.Annotations)
+	}
+	if pod.Labels["nsm.alibabacloud.com/inject-sidecar"] != "ansm-magic-xxx" {
+		t.Fatalf("ANSM label: %+v", pod.Labels)
+	}
+	if pod.Labels["hiclaw.io/worker"] != "alice" || pod.Labels["app"] != "hiclaw-worker" {
+		t.Fatalf("overlay labels: %+v", pod.Labels)
+	}
+	if pod.Spec.SecurityContext == nil || len(pod.Spec.SecurityContext.Sysctls) != 1 {
+		t.Fatalf("sysctls: %+v", pod.Spec.SecurityContext)
+	}
+	if len(pod.Spec.ImagePullSecrets) != 1 || pod.Spec.ImagePullSecrets[0].Name != "regsecret" {
+		t.Fatalf("imagePullSecrets: %+v", pod.Spec.ImagePullSecrets)
+	}
+	if pod.Spec.NodeSelector["type"] != "virtual-kubelet" {
+		t.Fatalf("nodeSelector: %+v", pod.Spec.NodeSelector)
+	}
+	if len(pod.Spec.Tolerations) != 2 {
+		t.Fatalf("tolerations: %+v", pod.Spec.Tolerations)
+	}
+}
+
+// K2: No ControllerName (nothing to look up) → backend produces the same Pod
+// shape it always did (hiclaw-token projected volume, SA override,
+// automount=false, default resources).
+func TestK8sCreate_NoTemplateBackwardCompat(t *testing.T) {
+	b, _ := newTestK8sBackendWithFake(K8sConfig{})
+	if _, err := b.Create(context.Background(), CreateRequest{Name: "bob"}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	pod, err := b.client.Pods("hiclaw").Get(context.Background(), "hiclaw-worker-bob", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if pod.Spec.ServiceAccountName != "hiclaw-worker-bob" {
+		t.Fatalf("SA: %q", pod.Spec.ServiceAccountName)
+	}
+	if pod.Spec.AutomountServiceAccountToken == nil || *pod.Spec.AutomountServiceAccountToken {
+		t.Fatalf("automount must be false")
+	}
+	if len(pod.Spec.Volumes) != 1 || pod.Spec.Volumes[0].Name != "hiclaw-token" {
+		t.Fatalf("volumes: %+v", pod.Spec.Volumes)
+	}
+	if pod.Spec.Containers[0].Resources.Limits.Cpu().String() != "1" {
+		t.Fatalf("cpu: %+v", pod.Spec.Containers[0].Resources)
+	}
+}
+
+// K3: ControllerName is set but the ConfigMap does not exist → degrades
+// gracefully to empty-template behavior, equivalent to K2.
+func TestK8sCreate_TemplateConfigMapMissing(t *testing.T) {
+	b, _ := newTestK8sBackendWithFake(K8sConfig{ControllerName: testControllerName})
+	if _, err := b.Create(context.Background(), CreateRequest{Name: "carol"}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+}
+
+// K4: Template YAML malformed → logs but does NOT fail Create.
+func TestK8sCreate_TemplateMalformed(t *testing.T) {
+	b, fake := newTestK8sBackendWithFake(K8sConfig{ControllerName: testControllerName})
+	injectTemplateConfigMap(t, fake, "this: is: not: valid: yaml: : :")
+	if _, err := b.Create(context.Background(), CreateRequest{Name: "dave"}); err != nil {
+		t.Fatalf("Create should tolerate malformed template: %v", err)
+	}
+}
+
+// K5: OwnerReferences inheritance — controller Pod exists with StatefulSet +
+// ReplicaSet owners; child Pod inherits only the StatefulSet owner.
+func TestK8sCreate_OwnerRefsInheritsFromControllerPod(t *testing.T) {
+	t.Setenv("HOSTNAME", "hiclaw-controller-abc123")
+	controllerPod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "hiclaw-controller-abc123",
+			Namespace: "hiclaw",
+			OwnerReferences: []metav1.OwnerReference{
+				{APIVersion: "apps/v1", Kind: "StatefulSet", Name: "hiclaw-ctl", UID: "sts-uid"},
+				{APIVersion: "apps/v1", Kind: "ReplicaSet", Name: "hiclaw-ctl-rs", UID: "rs-uid"},
+			},
+		},
+	}
+	b, _ := newTestK8sBackendWithFake(K8sConfig{}, controllerPod)
+
+	if _, err := b.Create(context.Background(), CreateRequest{Name: "eve"}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	pod, err := b.client.Pods("hiclaw").Get(context.Background(), "hiclaw-worker-eve", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if len(pod.OwnerReferences) != 1 {
+		t.Fatalf("expected 1 ownerRef (ReplicaSet filtered), got %+v", pod.OwnerReferences)
+	}
+	if pod.OwnerReferences[0].UID != "sts-uid" {
+		t.Fatalf("wrong owner: %+v", pod.OwnerReferences[0])
+	}
+}
+
+// K6: ownerRefs cache — the controller Pod is fetched exactly once across
+// multiple Create calls.
+func TestK8sCreate_OwnerRefsCachedAcrossCreates(t *testing.T) {
+	t.Setenv("HOSTNAME", "hiclaw-controller-abc123")
+	controllerPod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "hiclaw-controller-abc123",
+			Namespace: "hiclaw",
+			OwnerReferences: []metav1.OwnerReference{
+				{APIVersion: "apps/v1", Kind: "StatefulSet", Name: "ctl", UID: "u"},
+			},
+		},
+	}
+	b, fake := newTestK8sBackendWithFake(K8sConfig{}, controllerPod)
+
+	for _, name := range []string{"w1", "w2", "w3"} {
+		if _, err := b.Create(context.Background(), CreateRequest{Name: name}); err != nil {
+			t.Fatalf("Create %s: %v", name, err)
+		}
+	}
+	if c := fake.getCount("hiclaw", "hiclaw-controller-abc123"); c != 1 {
+		t.Fatalf("controller Pod Get should be cached, got %d calls", c)
+	}
+}
+
+// K7: ownerRefs retry — first Create finds no controller Pod (lookup fails,
+// not cached) → no ownerRefs. Pod gets injected later, next Create fetches
+// successfully and caches.
+func TestK8sCreate_OwnerRefsRetriesWhenLookupFails(t *testing.T) {
+	t.Setenv("HOSTNAME", "hiclaw-controller-abc123")
+	b, fake := newTestK8sBackendWithFake(K8sConfig{})
+
+	// First Create: controller Pod doesn't exist yet.
+	if _, err := b.Create(context.Background(), CreateRequest{Name: "w1"}); err != nil {
+		t.Fatalf("Create w1: %v", err)
+	}
+	pod, _ := b.client.Pods("hiclaw").Get(context.Background(), "hiclaw-worker-w1", metav1.GetOptions{})
+	if len(pod.OwnerReferences) != 0 {
+		t.Fatalf("expected no ownerRefs on first create, got %+v", pod.OwnerReferences)
+	}
+
+	// Inject controller Pod and retry.
+	fake.injectPod(&corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "hiclaw-controller-abc123",
+			Namespace: "hiclaw",
+			OwnerReferences: []metav1.OwnerReference{
+				{APIVersion: "apps/v1", Kind: "StatefulSet", Name: "ctl", UID: "u"},
+			},
+		},
+	})
+
+	if _, err := b.Create(context.Background(), CreateRequest{Name: "w2"}); err != nil {
+		t.Fatalf("Create w2: %v", err)
+	}
+	pod2, _ := b.client.Pods("hiclaw").Get(context.Background(), "hiclaw-worker-w2", metav1.GetOptions{})
+	if len(pod2.OwnerReferences) != 1 || pod2.OwnerReferences[0].UID != "u" {
+		t.Fatalf("expected ownerRef after retry, got %+v", pod2.OwnerReferences)
+	}
+}
+
+// TestFilterOutReplicaSetOwners exercises the filter helper directly.
+func TestFilterOutReplicaSetOwners(t *testing.T) {
+	refs := filterOutReplicaSetOwners([]metav1.OwnerReference{
+		{Kind: "StatefulSet", Name: "a", UID: "1"},
+		{Kind: "ReplicaSet", Name: "b", UID: "2"},
+		{Kind: "Deployment", Name: "c", UID: "3"},
+	})
+	if len(refs) != 2 {
+		t.Fatalf("expected 2, got %+v", refs)
+	}
+	for _, r := range refs {
+		if r.Kind == "ReplicaSet" {
+			t.Fatalf("ReplicaSet should be filtered: %+v", r)
+		}
+	}
+}
+
+// K8: CreateRequest.Resources overrides the K8sConfig worker CPU/Memory
+// defaults on the final Pod. Exercises the full overlay.ResourcesOverride
+// path through ApplyPodTemplate.
+func TestK8sCreate_ResourcesOverrideFromCreateRequest(t *testing.T) {
+	b, _ := newTestK8sBackendWithFake(K8sConfig{})
+
+	if _, err := b.Create(context.Background(), CreateRequest{
+		Name: "frank",
+		Resources: &ResourceRequirements{
+			CPULimit:      "4",
+			MemoryLimit:   "8Gi",
+			CPURequest:    "500m",
+			MemoryRequest: "1Gi",
+		},
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	pod, err := b.client.Pods("hiclaw").Get(context.Background(), "hiclaw-worker-frank", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	res := pod.Spec.Containers[0].Resources
+	if got := res.Limits.Cpu().String(); got != "4" {
+		t.Fatalf("cpu limit: got %q, want 4", got)
+	}
+	if got := res.Limits.Memory().String(); got != "8Gi" {
+		t.Fatalf("mem limit: got %q, want 8Gi", got)
+	}
+	if got := res.Requests.Cpu().String(); got != "500m" {
+		t.Fatalf("cpu request: got %q, want 500m", got)
+	}
+	if got := res.Requests.Memory().String(); got != "1Gi" {
+		t.Fatalf("mem request: got %q, want 1Gi", got)
+	}
+}
+
+// K9: Partial CreateRequest.Resources (only CPU limit set) merges onto
+// defaults: overridden field wins, unmentioned fields fall back to defaults.
+func TestK8sCreate_ResourcesOverridePartial(t *testing.T) {
+	b, _ := newTestK8sBackendWithFake(K8sConfig{})
+
+	if _, err := b.Create(context.Background(), CreateRequest{
+		Name:      "grace",
+		Resources: &ResourceRequirements{CPULimit: "3"},
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	pod, _ := b.client.Pods("hiclaw").Get(context.Background(), "hiclaw-worker-grace", metav1.GetOptions{})
+	res := pod.Spec.Containers[0].Resources
+	if got := res.Limits.Cpu().String(); got != "3" {
+		t.Fatalf("cpu limit (override): got %q, want 3", got)
+	}
+	if got := res.Limits.Memory().String(); got != "2Gi" {
+		t.Fatalf("mem limit (default): got %q, want 2Gi", got)
+	}
+	if got := res.Requests.Cpu().String(); got != "100m" {
+		t.Fatalf("cpu request (default): got %q, want 100m", got)
+	}
+}
+
+// K10: Resources override wins over a template that also specifies resources
+// (overlay.ResourcesOverride takes precedence over template container.Resources).
+func TestK8sCreate_ResourcesOverrideBeatsTemplate(t *testing.T) {
+	b, fake := newTestK8sBackendWithFake(K8sConfig{ControllerName: testControllerName})
+	injectTemplateConfigMap(t, fake, `spec:
+  containers:
+    - name: worker
+      resources:
+        limits:
+          cpu: "4"
+          memory: 8Gi
+`)
+
+	if _, err := b.Create(context.Background(), CreateRequest{
+		Name:      "henry",
+		Resources: &ResourceRequirements{CPULimit: "8"},
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	pod, _ := b.client.Pods("hiclaw").Get(context.Background(), "hiclaw-worker-henry", metav1.GetOptions{})
+	got := pod.Spec.Containers[0].Resources.Limits.Cpu().String()
+	if got != "8" {
+		t.Fatalf("expected override=8 to win over template=4, got %q", got)
+	}
+}
+
+// TestBuildDefaultResources_EmptyFallback covers the "K8sConfig fields empty"
+// branch in buildDefaultResources.
+func TestBuildDefaultResources_EmptyFallback(t *testing.T) {
+	r := buildDefaultResources("", "")
+	if got := r.Limits.Cpu().String(); got != "1" {
+		t.Fatalf("default cpu: %q", got)
+	}
+	if got := r.Limits.Memory().String(); got != "2Gi" {
+		t.Fatalf("default mem: %q", got)
+	}
+}
+
+// TestClassifyAPIError covers each classification branch.
+func TestClassifyAPIError(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"not-found", apierrors.NewNotFound(schema.GroupResource{Resource: "pods"}, "x"), "not-found"},
+		{"forbidden", apierrors.NewForbidden(schema.GroupResource{Resource: "pods"}, "x", nil), "forbidden"},
+		{"unauthorized", apierrors.NewUnauthorized("no"), "forbidden"},
+		{"timeout", apierrors.NewServerTimeout(schema.GroupResource{Resource: "pods"}, "get", 1), "transient"},
+		{"unavailable", apierrors.NewServiceUnavailable("down"), "transient"},
+		{"other", apierrors.NewBadRequest("bad"), "unknown"},
+	}
+	for _, tc := range cases {
+		if got := classifyAPIError(tc.err); got != tc.want {
+			t.Fatalf("%s: got %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}
+
+// TestK8sCreate_CustomResourcePrefix verifies that the worker pod's "app"
+// label and the default SA-name fallback derive from K8sConfig.ResourcePrefix
+// — critical for multi-tenant deployments sharing a namespace where the
+// hard-coded "hiclaw-worker" value would cause List selector collisions
+// across tenants.
+func TestK8sCreate_CustomResourcePrefix(t *testing.T) {
+	client := newFakeK8sCoreClient()
+	cfg := K8sConfig{
+		Namespace:      "hiclaw",
+		WorkerImage:    "hiclaw/worker-agent:latest",
+		WorkerCPU:      "1000m",
+		WorkerMemory:   "2Gi",
+		ResourcePrefix: "teamB-",
+	}
+	b := NewK8sBackendWithClient(client, cfg, "teamB-worker-")
+
+	if _, err := b.Create(context.Background(), CreateRequest{
+		Name:               "alice",
+		ServiceAccountName: "teamB-worker-alice",
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	pod, err := b.client.Pods("hiclaw").Get(context.Background(), "teamB-worker-alice", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("pod lookup: %v", err)
+	}
+	if pod.Labels["app"] != "teamB-worker" {
+		t.Fatalf("app label = %q, want teamB-worker", pod.Labels["app"])
+	}
+
+	// List must filter on the tenant-specific label and only return pods
+	// from this tenant, even if another tenant's pod sits in the same
+	// namespace with a different "app" label.
+	injected := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "hiclaw-worker-other",
+			Namespace: "hiclaw",
+			Labels:    map[string]string{"app": "hiclaw-worker"},
+		},
+	}
+	client.injectPod(injected)
+
+	results, err := b.List(context.Background())
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(results) != 1 || results[0].Name != "alice" {
+		t.Fatalf("List should have returned only teamB pod, got %+v", results)
+	}
+}
+
+// TestK8sCreate_DefaultSAFallback verifies that when ServiceAccountName is
+// omitted from a CreateRequest, the backend falls back to "${prefix}worker-<name>".
+func TestK8sCreate_DefaultSAFallback(t *testing.T) {
+	client := newFakeK8sCoreClient()
+	cfg := K8sConfig{
+		Namespace:      "hiclaw",
+		WorkerImage:    "hiclaw/worker-agent:latest",
+		ResourcePrefix: "acme-",
+	}
+	b := NewK8sBackendWithClient(client, cfg, "acme-worker-")
+
+	if _, err := b.Create(context.Background(), CreateRequest{Name: "bob"}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	pod, err := b.client.Pods("hiclaw").Get(context.Background(), "acme-worker-bob", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("pod lookup: %v", err)
+	}
+	if pod.Spec.ServiceAccountName != "acme-worker-bob" {
+		t.Fatalf("SA = %q, want acme-worker-bob", pod.Spec.ServiceAccountName)
 	}
 }

@@ -23,7 +23,7 @@ const (
 // AuthzRequest describes the resource being accessed.
 type AuthzRequest struct {
 	Action       Action
-	ResourceKind string // "worker" | "team" | "human" | "manager" | "gateway" | "status"
+	ResourceKind string // "worker" | "team" | "human" | "manager" | "gateway" | "status" | "credentials"
 	ResourceName string // target resource name (empty for list operations)
 	ResourceTeam string // target resource's team (resolved by handler/middleware)
 }
@@ -98,6 +98,16 @@ func (a *Authorizer) authorizeWorker(caller *CallerIdentity, req AuthzRequest) e
 
 	case "worker":
 		return a.authorizeWorkerSelfAction(caller, req)
+
+	case "credentials":
+		// Credential endpoints (STS refresh) are always self-scoped: the
+		// issued token carries policy based on the calling worker's
+		// identity. We don't check ResourceName because these endpoints
+		// never embed one.
+		if req.Action == ActionSTS {
+			return nil
+		}
+		return deny(caller, req)
 
 	default:
 		return deny(caller, req)

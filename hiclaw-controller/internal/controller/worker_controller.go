@@ -5,6 +5,7 @@ import (
 	"time"
 
 	v1beta1 "github.com/hiclaw/hiclaw-controller/api/v1beta1"
+	"github.com/hiclaw/hiclaw-controller/internal/auth"
 	"github.com/hiclaw/hiclaw-controller/internal/backend"
 	"github.com/hiclaw/hiclaw-controller/internal/service"
 	corev1 "k8s.io/api/core/v1"
@@ -32,11 +33,12 @@ const (
 type WorkerReconciler struct {
 	client.Client
 
-	Provisioner service.WorkerProvisioner
-	Deployer    service.WorkerDeployer
-	Backend     *backend.Registry
-	EnvBuilder  service.WorkerEnvBuilderI
-	Legacy      *service.LegacyCompat // nil in incluster mode
+	Provisioner    service.WorkerProvisioner
+	Deployer       service.WorkerDeployer
+	Backend        *backend.Registry
+	EnvBuilder     service.WorkerEnvBuilderI
+	ResourcePrefix auth.ResourcePrefix   // tenant prefix used to derive SA names
+	Legacy         *service.LegacyCompat // nil in incluster mode
 
 	// DefaultRuntime is the value passed to backend.CreateRequest.RuntimeFallback
 	// when a Worker CR omits spec.runtime. Sourced from
@@ -104,6 +106,7 @@ func (r *WorkerReconciler) reconcileNormal(ctx context.Context, w *v1beta1.Worke
 		Deployer:       r.Deployer,
 		Backend:        r.Backend,
 		EnvBuilder:     r.EnvBuilder,
+		ResourcePrefix: r.ResourcePrefix,
 		DefaultRuntime: r.DefaultRuntime,
 	}
 	mctx := workerMemberContext(w)
@@ -152,6 +155,7 @@ func (r *WorkerReconciler) reconcileDelete(ctx context.Context, w *v1beta1.Worke
 		Deployer:       r.Deployer,
 		Backend:        r.Backend,
 		EnvBuilder:     r.EnvBuilder,
+		ResourcePrefix: r.ResourcePrefix,
 		DefaultRuntime: r.DefaultRuntime,
 	}
 	mctx := workerMemberContext(w)
