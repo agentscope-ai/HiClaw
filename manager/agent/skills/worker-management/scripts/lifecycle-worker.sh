@@ -163,10 +163,7 @@ _worker_has_cron_jobs() {
 action_sync_status() {
     _init_lifecycle_file
 
-    local backend
-    backend=$(_detect_worker_backend)
-
-    if [ "$backend" = "none" ]; then
+    if ! container_api_available 2>/dev/null; then
         _log "No worker backend available — marking all workers as remote"
         local workers
         workers=$(_get_all_workers)
@@ -188,7 +185,7 @@ action_sync_status() {
         _ensure_worker_entry "$worker"
         local status
         status=$(worker_backend_status "$worker")
-        _log "Worker $worker: status=$status (backend=$backend)"
+        _log "Worker $worker: status=$status"
         local tmp
         tmp=$(mktemp)
         jq --arg w "$worker" --arg s "$status" --arg ts "$(_ts)" \
@@ -312,14 +309,12 @@ action_stop() {
     _init_lifecycle_file
     _ensure_worker_entry "$worker"
 
-    local backend
-    backend=$(_detect_worker_backend)
-    if [ "$backend" = "none" ]; then
+    if ! container_api_available 2>/dev/null; then
         _log "ERROR: No worker backend available"
         return 1
     fi
 
-    _log "Stopping worker $worker (backend=$backend)"
+    _log "Stopping worker $worker"
     if worker_backend_stop "$worker"; then
         local tmp
         tmp=$(mktemp)
@@ -341,19 +336,17 @@ action_delete() {
     _init_lifecycle_file
     _ensure_worker_entry "$worker"
 
-    local backend
-    backend=$(_detect_worker_backend)
-    if [ "$backend" = "none" ]; then
+    if ! container_api_available 2>/dev/null; then
         _log "ERROR: No worker backend available"
         return 1
     fi
 
     # Stop first (ignore errors — may already be stopped)
-    _log "Stopping worker $worker before delete (backend=$backend)"
+    _log "Stopping worker $worker before delete"
     worker_backend_stop "$worker" 2>/dev/null || true
 
     # Delete container
-    _log "Deleting worker $worker container (backend=$backend)"
+    _log "Deleting worker $worker container"
     if worker_backend_delete "$worker"; then
         _log "Worker $worker container deleted"
     else
@@ -386,8 +379,7 @@ action_start() {
     fi
 
     local backend
-    backend=$(_detect_worker_backend)
-    if [ "$backend" = "none" ]; then
+    if ! container_api_available 2>/dev/null; then
         _log "ERROR: No worker backend available"
         return 1
     fi
@@ -397,24 +389,42 @@ action_start() {
 
     local ok=false
     if [ "$status" = "not_found" ]; then
-        _log "Worker $worker not found — recreating (backend=$backend)"
+        _log "Worker $worker not found — recreating"
         local creds_file="/data/worker-creds/${worker}.env"
         if [ -f "$creds_file" ]; then
             source "$creds_file"
         fi
         local runtime
         runtime=$(jq -r --arg w "$worker" '.workers[$w].runtime // "openclaw"' "$REGISTRY_FILE" 2>/dev/null)
-        if [ "$backend" = "docker" ]; then
-            if [ "$runtime" = "copaw" ]; then
-                container_create_copaw_worker "$worker" "$worker" "${WORKER_MINIO_PASSWORD:-}" 2>&1 && ok=true
-            else
-                container_create_worker "$worker" "$worker" "${WORKER_MINIO_PASSWORD:-}" 2>&1 && ok=true
-            fi
-        else
-            worker_backend_create "$worker" "" "" "[]" 2>&1 && ok=true
-        fi
+
+        # Build create request for controller (include env vars for worker to function)
+        local env_map
+        env_map=$(jq -cn \
+            --arg name "$worker" \
+            --arg fak "$worker" \
+            --arg fsk "${WORKER_MINIO_PASSWORD:-}" \
+            --arg fs_domain "${HICLAW_FS_DOMAIN:-fs-local.hiclaw.io}" \
+            --arg fs_endpoint "${HICLAW_FS_ENDPOINT:-}" \
+            --arg fs_bucket "${HICLAW_FS_BUCKET:-}" \
+            --arg controller_url "${HICLAW_CONTROLLER_URL:-}" \
+            '{
+                "HICLAW_WORKER_NAME": $name,
+                "HICLAW_FS_ENDPOINT": (if $fs_endpoint != "" then $fs_endpoint else ("http://" + ($fs_domain | split(":")[0]) + ":8080") end),
+                "HICLAW_FS_ACCESS_KEY": $fak,
+                "HICLAW_FS_SECRET_KEY": $fsk
+            }
+            | if $controller_url != "" then . + {"HICLAW_CONTROLLER_URL": $controller_url} else . end
+            | if $fs_bucket != "" then . + {"HICLAW_FS_BUCKET": $fs_bucket} else . end')
+
+        local create_body
+        create_body=$(jq -cn \
+            --arg name "$worker" \
+            --arg runtime "$runtime" \
+            --argjson env "$env_map" \
+            '{name: $name, runtime: $runtime, env: $env}')
+        worker_backend_create "$create_body" > /dev/null 2>&1 && ok=true
     else
-        _log "Starting worker $worker (status: $status, backend=$backend)"
+        _log "Starting worker $worker (status: $status)"
         worker_backend_start "$worker" && ok=true
     fi
 
@@ -458,8 +468,8 @@ action_ensure_ready() {
     fi
 
     local status
-    status=$(container_status_worker "$worker")
-    _log "Worker $worker container_status=$status"
+    status=$(worker_backend_status "$worker")
+    _log "Worker $worker status=$status"
 
     if [ "$status" = "running" ]; then
         echo "{\"worker\":\"$worker\",\"status\":\"ready\",\"container_status\":\"running\"}"

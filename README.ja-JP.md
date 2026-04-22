@@ -30,9 +30,11 @@
 
 ## ニュース
 
-- **2026-03-14**: HiClaw 1.0.6 — エンタープライズグレードの MCP Server 管理、認証情報のゼロ露出。[ブログ](blog/hiclaw-1.0.6-release.md)
-- **2026-03-10**: HiClaw 1.0.4 — CoPaw Worker サポート、メモリ使用量 80% 削減。[ブログ](blog/hiclaw-1.0.4-release.md)
-- **2026-03-04**: HiClaw オープンソース化。[アナウンス](blog/hiclaw-announcement.md)
+- **2026-04-14**: [English](blog/hiclaw-k8s-native-multi-agent-collaboration.md) | [中文](blog/zh-cn/hiclaw-k8s-native-multi-agent-collaboration.zh-CN.md) — Kubernetes ネイティブなマルチ Agent 協調オーケストレーションとしての HiClaw の解説。
+- **2026-04-03**: [English](docs/declarative-resource-management.md) | [中文](docs/zh-cn/declarative-resource-management.md) — HiClaw 1.0.9：宣言型リソース管理、Worker テンプレートマーケット、Manager CoPaw、Nacos Skills 登録センターなど。
+- **2026-03-14**: [English](blog/hiclaw-1.0.6-release.md) | [中文](blog/zh-cn/hiclaw-1.0.6-release.md) — HiClaw 1.0.6：エンタープライズ MCP Server 管理、認証情報ゼロ露出。
+- **2026-03-10**: [English](blog/hiclaw-1.0.4-release.md) | [中文](blog/zh-cn/hiclaw-1.0.4-release.md) — HiClaw 1.0.4：CoPaw Worker、メモリ約 80% 削減。
+- **2026-03-04**: [English](blog/hiclaw-announcement.md) | [中文](blog/zh-cn/hiclaw-announcement.md) — HiClaw オープンソース化。
 
 ## HiClaw を選ぶ理由
 
@@ -89,6 +91,20 @@ bash <(curl -sSL https://higress.ai/hiclaw/install.sh)
 # 特定バージョンにアップグレード
 HICLAW_VERSION=v1.0.5 bash <(curl -sSL https://higress.ai/hiclaw/install.sh)
 ```
+
+## アンインストール
+
+**macOS / Linux:**
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/higress-group/hiclaw/main/install/hiclaw-install.sh) uninstall
+```
+
+**Windows (PowerShell):**
+```powershell
+Set-ExecutionPolicy Bypass -Scope Process -Force; $wc=New-Object Net.WebClient; $wc.Encoding=[Text.Encoding]::UTF8; $s=$wc.DownloadString('https://raw.githubusercontent.com/higress-group/hiclaw/main/install/hiclaw-install.ps1'); & ([scriptblock]::Create($s)) uninstall
+```
+
+すべての HiClaw コンテナ（Manager、Worker、docker-proxy）、Docker ボリューム、ネットワーク、env ファイル、ワークスペースディレクトリ、インストールログが削除されます。
 
 ## 仕組み
 

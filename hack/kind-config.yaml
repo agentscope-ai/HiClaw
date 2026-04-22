@@ -1,0 +1,16 @@
+# kind cluster configuration for local HiClaw development.
+#
+# Port mappings expose services on the host:
+#   - 18080: Higress Gateway (AI Gateway / Matrix proxy / Element Web)
+#
+# Usage:
+#   kind create cluster --name hiclaw --config hack/kind-config.yaml
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+  - role: control-plane
+    extraPortMappings:
+      # Higress Gateway (NodePort 30080 -> host 18080)
+      - containerPort: 30080
+        hostPort: 18080
+        protocol: TCP

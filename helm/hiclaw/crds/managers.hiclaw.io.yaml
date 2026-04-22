@@ -1,0 +1,136 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: managers.hiclaw.io
+spec:
+  group: hiclaw.io
+  versions:
+    - name: v1beta1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              required: [model]
+              properties:
+                model:
+                  type: string
+                  description: LLM model ID (e.g. qwen3.5-plus, claude-sonnet-4-6)
+                runtime:
+                  type: string
+                  enum: [openclaw, copaw]
+                  description: |
+                    Manager runtime. When omitted the controller falls back to
+                    HICLAW_MANAGER_RUNTIME (set at install time), and finally
+                    to "openclaw" if neither is set.
+                image:
+                  type: string
+                  description: Custom Docker image for the Manager agent
+                soul:
+                  type: string
+                  description: Custom SOUL.md content (overrides image default)
+                agents:
+                  type: string
+                  description: Custom AGENTS.md content (overrides image default)
+                skills:
+                  type: array
+                  items:
+                    type: string
+                  description: On-demand skills to enable
+                mcpServers:
+                  type: array
+                  items:
+                    type: string
+                  description: MCP Servers to authorize via Gateway
+                package:
+                  type: string
+                  description: "Package URI: file://, http(s)://, nacos://, or packages/{name}.zip"
+                config:
+                  type: object
+                  properties:
+                    heartbeatInterval:
+                      type: string
+                      description: "Heartbeat check interval (default: 15m)"
+                    workerIdleTimeout:
+                      type: string
+                      description: "Worker idle timeout before auto-sleep (default: 720m)"
+                    notifyChannel:
+                      type: string
+                      description: "Admin notification channel (default: admin-dm)"
+                accessEntries:
+                  type: array
+                  description: >
+                    Cloud credential scope declarations. Only honored when the controller
+                    runs with a credential-provider sidecar (gateway.provider=ai-gateway
+                    or storage.provider=oss). Ignored in local higress+minio deployments.
+                    When empty the controller applies sensible defaults equivalent to the
+                    legacy manager role (agents/manager/*, shared/*, manager/* on the
+                    configured bucket).
+                  items:
+                    type: object
+                    required: [service]
+                    properties:
+                      service:
+                        type: string
+                        enum: [object-storage, ai-gateway]
+                        description: Logical cloud service identifier
+                      permissions:
+                        type: array
+                        items:
+                          type: string
+                          enum: [read, write, list, delete]
+                      scope:
+                        type: object
+                        description: >
+                          Schema-less scope blob. For object-storage use keys
+                          bucketRef|bucket and prefixes (list of strings). For
+                          ai-gateway use keys gatewayRef|gatewayId and resources
+                          (list of strings). Template vars ${self.name} /
+                          ${self.kind} / ${self.namespace} are expanded by the
+                          controller before the request reaches the provider.
+                        x-kubernetes-preserve-unknown-fields: true
+            status:
+              type: object
+              properties:
+                observedGeneration:
+                  type: integer
+                  format: int64
+                  description: Last spec generation reconciled by the controller
+                phase:
+                  type: string
+                  enum: [Pending, Running, Updating, Failed]
+                matrixUserID:
+                  type: string
+                roomID:
+                  type: string
+                  description: Admin DM room ID
+                containerState:
+                  type: string
+                version:
+                  type: string
+                message:
+                  type: string
+      subresources:
+        status: {}
+      additionalPrinterColumns:
+        - name: Model
+          type: string
+          jsonPath: .spec.model
+        - name: Phase
+          type: string
+          jsonPath: .status.phase
+        - name: Runtime
+          type: string
+          jsonPath: .spec.runtime
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp
+  scope: Namespaced
+  names:
+    plural: managers
+    singular: manager
+    kind: Manager
+    shortNames: [mgr]

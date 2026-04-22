@@ -16,6 +16,13 @@ export CONDUWUIT_DB_POOL_WORKERS_LIMIT=32
 # Increase default cache capacity to prevent RocksDB thrashing (tuwunel#123)
 export CONDUWUIT_CACHE_CAPACITY_MODIFIER="${CONDUWUIT_CACHE_CAPACITY_MODIFIER:-2.0}"
 
+# Agent lifecycle cleanup: collapse rooms once their last local member
+# leaves and force a /forget on leave so a recreated same-named
+# worker/manager/human starts from a clean room state. See
+# hiclaw-controller LeaveAll*Rooms / DeleteRoom flows.
+export CONDUWUIT_DELETE_ROOMS_AFTER_LEAVE="${CONDUWUIT_DELETE_ROOMS_AFTER_LEAVE:-true}"
+export CONDUWUIT_FORGET_FORCED_UPON_LEAVE="${CONDUWUIT_FORGET_FORCED_UPON_LEAVE:-true}"
+
 # User creation is handled by start-manager-agent.sh via Registration API
 # (single-step registration, no UIAA flow needed)
 

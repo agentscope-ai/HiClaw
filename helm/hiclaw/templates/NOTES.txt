@@ -1,0 +1,22 @@
+========================================================================
+HiClaw — {{ .Chart.Name }} / {{ .Release.Name }}
+========================================================================
+
+Namespace: {{ include "hiclaw.namespace" . }}
+
+1. Access services via Higress Gateway:
+
+   kubectl port-forward svc/higress-gateway 18080:80 -n {{ include "hiclaw.namespace" . }}
+
+   Element Web (IM login): http://localhost:18080
+
+2. Login with admin credentials:
+
+   Username: {{ .Values.credentials.adminUser }}
+   Password: (the password you set in credentials.adminPassword)
+
+3. Access Higress Console (gateway management):
+
+   kubectl port-forward svc/higress-console 18081:8080 -n {{ include "hiclaw.namespace" . }}
+
+   Then open: http://localhost:18081, same Username and Password as step 2

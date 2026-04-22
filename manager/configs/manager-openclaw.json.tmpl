@@ -2,6 +2,7 @@
   "gateway": {
     "mode": "local",
     "port": 18799,
+    "bind": "lan",
     "auth": {
       "token": "${MANAGER_GATEWAY_KEY}"
     },
@@ -9,16 +10,21 @@
       "token": "${MANAGER_GATEWAY_KEY}"
     },
     "controlUi": {
-      "dangerouslyDisableDeviceAuth": true
+      "dangerouslyDisableDeviceAuth": true,
+      "allowInsecureAuth": true,
+      "allowedOrigins": ["*"]
     }
   },
 
   "channels": {
     "matrix": {
       "enabled": true,
-      "homeserver": "${HICLAW_MATRIX_SERVER}",
+      "homeserver": "${HICLAW_MATRIX_URL}",
+      "userId": "@manager:${HICLAW_MATRIX_DOMAIN}",
       "accessToken": "${MANAGER_MATRIX_TOKEN}",
       "encryption": ${MATRIX_E2EE_ENABLED},
+      "network": { "dangerouslyAllowPrivateNetwork": true },
+      "autoJoin": "always",
       "dm": {
         "policy": "allowlist",
         "allowFrom": [
@@ -39,7 +45,7 @@
     "mode": "merge",
     "providers": {
       "hiclaw-gateway": {
-        "baseUrl": "http://${HICLAW_AI_GATEWAY_DOMAIN}:8080/v1",
+        "baseUrl": "${HICLAW_AI_GATEWAY_URL}/v1",
         "apiKey": "${MANAGER_GATEWAY_KEY}",
         "api": "openai-completions",
         "models": [

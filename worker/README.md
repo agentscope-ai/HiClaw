@@ -52,8 +52,11 @@ worker/
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `HICLAW_WORKER_NAME` | Yes | Worker name (e.g., `alice`) |
-| `HICLAW_MATRIX_SERVER` | Yes | Matrix Homeserver URL |
-| `HICLAW_AI_GATEWAY` | Yes | AI Gateway URL |
+| `HICLAW_MATRIX_URL` | No | Matrix Homeserver URL injected by controller-managed deployments |
+| `HICLAW_AI_GATEWAY_URL` | No | AI Gateway URL injected by controller-managed deployments |
 | `HICLAW_FS_ENDPOINT` | Yes | MinIO/HTTP file system URL |
+| `HICLAW_FS_BUCKET` | No | Bucket name for CoPaw or non-default storage layouts |
 | `HICLAW_FS_ACCESS_KEY` | Yes | MinIO access key |
 | `HICLAW_FS_SECRET_KEY` | Yes | MinIO secret key |
+
+Runtime scripts now consume `HICLAW_MATRIX_URL` and `HICLAW_AI_GATEWAY_URL` directly; legacy aliases are no longer part of the main contract.

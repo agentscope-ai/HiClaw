@@ -179,6 +179,8 @@ worker-package.zip
   },
   "worker": {
     "suggested_name": "my-worker",
+    "model": "qwen3.5-plus",
+    "runtime": "openclaw",
     "base_image": "hiclaw/worker-agent:latest",
     "apt_packages": ["ffmpeg", "imagemagick"],
     "pip_packages": [],
@@ -186,6 +188,10 @@ worker-package.zip
   }
 }
 ```
+
+`worker.runtime` (`openclaw` or `copaw`) is honored by `hiclaw apply worker --zip`
+and overridden by an explicit `--runtime` flag. When neither is set the controller
+falls back to its default runtime (`openclaw`).
 
 ## Scenario 1: Migrate a Standalone OpenClaw
 

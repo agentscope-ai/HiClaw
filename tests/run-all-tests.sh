@@ -64,7 +64,7 @@ HICLAW_PORT_GATEWAY)        export TEST_GATEWAY_PORT="${value}" ;;
             esac
         done < "${env_file}"
     fi
-    export TEST_MANAGER_CONTAINER="hiclaw-manager"
+    export TEST_CONTROLLER_CONTAINER="hiclaw-controller"
 }
 
 if [ "${USE_EXISTING}" = true ]; then
@@ -94,6 +94,9 @@ cleanup() {
     fi
 
     log "Cleaning up..."
+    docker stop hiclaw-controller 2>/dev/null || true
+    docker rm hiclaw-controller 2>/dev/null || true
+    # Legacy container name
     docker stop hiclaw-manager 2>/dev/null || true
     docker rm hiclaw-manager 2>/dev/null || true
 
@@ -130,14 +133,17 @@ if [ "${USE_EXISTING}" = true ]; then
     log "  Manager host: ${TEST_MANAGER_HOST}"
 
     # Verify the Manager is actually running (Matrix is not exposed; check via docker exec)
-    if ! docker exec "${TEST_MANAGER_CONTAINER}" curl -sf "http://127.0.0.1:6167/_matrix/client/versions" > /dev/null 2>&1; then
-        error "Manager does not appear to be running (container: ${TEST_MANAGER_CONTAINER}). Start it with 'make install' first."
+    if ! docker exec "${TEST_CONTROLLER_CONTAINER}" curl -sf "http://127.0.0.1:6167/_matrix/client/versions" > /dev/null 2>&1; then
+        error "Manager does not appear to be running (container: ${TEST_CONTROLLER_CONTAINER}). Start it with 'make install' first."
     fi
     log "Manager is reachable"
 
     # Enable YOLO mode for test run (auto-decision, no interactive prompts)
-    docker exec "${TEST_MANAGER_CONTAINER}" touch /root/manager-workspace/yolo-mode 2>/dev/null && \
-        log "YOLO mode enabled (${TEST_MANAGER_CONTAINER})" || \
+    # Try agent container first (embedded mode), fall back to manager container (legacy mode)
+    agent_container="$(docker ps --format '{{.Names}}' 2>/dev/null | grep -E '^hiclaw-manager(-|$)' | head -1)"
+    agent_container="${agent_container:-${TEST_CONTROLLER_CONTAINER}}"
+    docker exec "${agent_container}" touch /root/manager-workspace/yolo-mode 2>/dev/null && \
+        log "YOLO mode enabled (${agent_container})" || \
         log "WARNING: Could not enable YOLO mode (container may differ)"
 else
     log "Installing Manager via install script..."
@@ -165,8 +171,10 @@ else
     log "  Console port:   ${TEST_CONSOLE_PORT}"
 
     # Enable YOLO mode for test run
-    docker exec "${TEST_MANAGER_CONTAINER}" touch /root/manager-workspace/yolo-mode 2>/dev/null && \
-        log "YOLO mode enabled (${TEST_MANAGER_CONTAINER})" || true
+    agent_container="$(docker ps --format '{{.Names}}' 2>/dev/null | grep -E '^hiclaw-manager(-|$)' | head -1)"
+    agent_container="${agent_container:-${TEST_CONTROLLER_CONTAINER}}"
+    docker exec "${agent_container}" touch /root/manager-workspace/yolo-mode 2>/dev/null && \
+        log "YOLO mode enabled (${agent_container})" || true
 fi
 
 # ============================================================
@@ -176,6 +184,7 @@ fi
 # so Manager uses English regardless of host timezone/locale.
 
 source "${SCRIPT_DIR}/lib/matrix-client.sh"
+source "${SCRIPT_DIR}/lib/agent-metrics.sh"
 
 _setup_manager_identity() {
     log "Configuring Manager identity (English)..."
@@ -195,7 +204,12 @@ _setup_manager_identity() {
     fi
 
     # Check if identity is already configured
-    if docker exec "${TEST_MANAGER_CONTAINER}" test -f /root/manager-workspace/soul-configured 2>/dev/null; then
+    # Check in agent container (embedded mode) or manager container (legacy mode)
+    local _agent
+    _agent="$(docker ps --format '{{.Names}}' 2>/dev/null | grep -E '^hiclaw-manager(-|$)' | head -1)"
+    _agent="${_agent:-${TEST_CONTROLLER_CONTAINER}}"
+
+    if docker exec "${_agent}" test -f /root/manager-workspace/soul-configured 2>/dev/null; then
         log "Manager identity already configured, skipping"
         return 0
     fi
@@ -205,6 +219,55 @@ _setup_manager_identity() {
         log "WARNING: Manager not ready for identity setup"
         return 0
     }
+
+    # Verify Gateway consumer and AI route authorization before sending messages
+    log "Verifying Gateway authorization for Manager..."
+    local _gw_ready=false _gw_elapsed=0
+    local _console_url="http://${TEST_MANAGER_HOST}:${TEST_CONSOLE_PORT:-18001}"
+    local _gw_url="http://${TEST_MANAGER_HOST}:${TEST_GATEWAY_PORT:-18080}"
+    local _cookie_file="/tmp/higress-test-cookie-$$"
+    local _mgr_key
+    _mgr_key=$(grep HICLAW_MANAGER_GATEWAY_KEY "${HICLAW_ENV_FILE:-${HOME}/hiclaw-manager.env}" 2>/dev/null | cut -d= -f2-)
+    while [ "${_gw_elapsed}" -lt 60 ]; do
+        # Login to Higress console and check manager consumer
+        curl -sf -X POST "${_console_url}/session/login" \
+            -H 'Content-Type: application/json' \
+            -c "${_cookie_file}" \
+            -d '{"username":"'"${TEST_ADMIN_USER}"'","password":"'"${TEST_ADMIN_PASSWORD}"'"}' >/dev/null 2>&1 || true
+        if curl -sf "${_console_url}/v1/consumers" -b "${_cookie_file}" 2>/dev/null | grep -q '"manager"'; then
+            if [ -n "${_mgr_key}" ]; then
+                # Test actual LLM call through gateway with a minimal chat completion request
+                local _gw_resp _gw_code
+                _gw_resp=$(curl -s -w "\n%{http_code}" \
+                    -X POST "${_gw_url}/v1/chat/completions" \
+                    -H "Authorization: Bearer ${_mgr_key}" \
+                    -H "Content-Type: application/json" \
+                    -d '{"model":"'"${HICLAW_DEFAULT_MODEL:-qwen3.5-plus}"'","messages":[{"role":"user","content":"hi"}],"max_tokens":1}' 2>/dev/null || echo -e "\n000")
+                _gw_code=$(echo "${_gw_resp}" | tail -1)
+                if [ "${_gw_code}" = "200" ]; then
+                    _gw_ready=true
+                    break
+                elif [ "${_gw_code}" != "401" ] && [ "${_gw_code}" != "403" ]; then
+                    # Non-auth error (e.g. 400, 500) — gateway auth is working, model may just be wrong
+                    log "Gateway returned HTTP ${_gw_code} (non-auth error, authorization is working)"
+                    _gw_ready=true
+                    break
+                fi
+                log "Gateway returned HTTP ${_gw_code}, retrying... (${_gw_elapsed}s/60s)"
+            fi
+        fi
+        sleep 2
+        _gw_elapsed=$((_gw_elapsed + 2))
+    done
+    rm -f "${_cookie_file}"
+    if [ "${_gw_ready}" != "true" ]; then
+        local _last_body
+        _last_body=$(echo "${_gw_resp}" | sed '$d')
+        error "Gateway authorization not ready after 60s (HTTP ${_gw_code})"
+        error "Response: ${_last_body}"
+        exit 1
+    fi
+    log "Gateway authorization verified"
 
     # Send identity setup message
     matrix_send_message "${admin_token}" "${dm_room}" \
@@ -221,7 +284,7 @@ Please update your SOUL.md with these preferences, then run: touch ~/soul-config
     # Wait for Manager to process and touch soul-configured (up to 120s)
     local elapsed=0
     while [ "${elapsed}" -lt 120 ]; do
-        if docker exec "${TEST_MANAGER_CONTAINER}" test -f /root/manager-workspace/soul-configured 2>/dev/null; then
+        if docker exec "${_agent}" test -f /root/manager-workspace/soul-configured 2>/dev/null; then
             # soul-configured exists, but Manager's Matrix reply may still be in flight.
             # Wait for the reply to arrive in the DM room so subsequent tests don't
             # pick it up as their own reply (race condition with test-02).
@@ -276,6 +339,9 @@ done
 for test_file in "${TESTS[@]}"; do
     test_name=$(basename "${test_file}" .sh)
     log "Running: ${test_name}"
+
+    # Wait for Manager to finish processing previous test before starting next
+    wait_for_session_stable 10 120
 
     if bash "${test_file}"; then
         RESULTS+=("PASS: ${test_name}")

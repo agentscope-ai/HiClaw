@@ -123,10 +123,7 @@ class FileSync:
         self.local_dir.mkdir(parents=True, exist_ok=True)
         self._prefix = f"agents/{worker_name}"
         self._alias_set = False
-        self._cloud_mode = bool(
-            os.environ.get("ALIBABA_CLOUD_OIDC_TOKEN_FILE")
-            and Path(os.environ.get("ALIBABA_CLOUD_OIDC_TOKEN_FILE", "")).is_file()
-        )
+        self._cloud_mode = os.environ.get("HICLAW_RUNTIME") == "aliyun"
 
     # ------------------------------------------------------------------
     # mc alias management
@@ -527,14 +524,14 @@ def push_local(sync: FileSync, since: float = 0) -> list[str]:
         return pushed
 
     # ── Inner → Outer sync ──────────────────────────────────────────────
-    # CoPaw Agent reads/writes .copaw/AGENTS.md and .copaw/SOUL.md at
+    # CoPaw Agent reads/writes workspaces/default/AGENTS.md and SOUL.md at
     # runtime.  These are "inner" copies derived from the "outer" files at
     # the sync root.  If the Agent modifies them, propagate changes back to
     # the outer layer so the normal push cycle uploads them to MinIO.
     _INNER_OUTER_FILES = ("AGENTS.md", "SOUL.md")
-    copaw_dir = local_dir / ".copaw"
+    copaw_ws_dir = local_dir / ".copaw" / "workspaces" / "default"
     for name in _INNER_OUTER_FILES:
-        inner = copaw_dir / name
+        inner = copaw_ws_dir / name
         outer = local_dir / name
         if not inner.exists():
             continue
@@ -549,7 +546,7 @@ def push_local(sync: FileSync, since: float = 0) -> list[str]:
             outer_content = outer.read_text(errors="replace") if outer.exists() else ""
             if inner_content != outer_content:
                 outer.write_text(inner_content)
-                logger.debug("Inner→Outer sync: .copaw/%s → %s", name, name)
+                logger.debug("Inner→Outer sync: .copaw/workspaces/default/%s → %s", name, name)
 
     sync._ensure_alias()
 
@@ -575,8 +572,9 @@ def push_local(sync: FileSync, since: float = 0) -> list[str]:
         # Skip transient runtime files by extension (e.g. .lock)
         if rel.suffix in _EXCLUDE_EXTENSIONS:
             continue
-        # Skip derived files inside .copaw/
-        if rel.parts[0] == ".copaw" and rel.name in _COPAW_DERIVED_FILES:
+        # Skip derived files directly inside .copaw/ (not in workspaces/)
+        # Files in .copaw/workspaces/default/ are Agent-managed and must be pushed.
+        if len(rel.parts) == 2 and rel.parts[0] == ".copaw" and rel.name in _COPAW_DERIVED_FILES:
             continue
 
         key = f"{sync._prefix}/{rel.as_posix()}"
@@ -600,8 +598,13 @@ async def push_loop(sync: FileSync, check_interval: int = 5) -> None:
 
     Tracks last push timestamp and only triggers push_local when files with
     newer mtime are detected, similar to openclaw's find-newermt approach.
+
+    The first iteration is a full scan (``since=0``) so that files written
+    by bridge/bootstrap BEFORE push_loop was started (e.g. agent.json,
+    AGENTS.md, SOUL.md) still get uploaded. Otherwise their mtime is always
+    ≤ ``last_push_time`` and they'd never be pushed.
     """
-    last_push_time: float = time.time()
+    last_push_time: float = 0.0
 
     while True:
         await asyncio.sleep(check_interval)

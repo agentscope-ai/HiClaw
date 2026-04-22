@@ -145,13 +145,16 @@ Manager 自动管理 Worker 容器的生命周期：
 | 变量 | 说明 | 示例值 |
 |------|------|--------|
 | `HICLAW_WORKER_NAME` | Worker 标识符 | `alice` |
-| `HICLAW_MATRIX_SERVER` | Matrix Homeserver URL | `http://matrix-local.hiclaw.io:18080` |
-| `HICLAW_AI_GATEWAY` | AI 网关 URL | `http://aigw-local.hiclaw.io:18080` |
+| `HICLAW_MATRIX_URL` | Matrix Homeserver URL | `http://matrix-local.hiclaw.io:18080` |
+| `HICLAW_AI_GATEWAY_URL` | AI 网关 URL | `http://aigw-local.hiclaw.io:18080` |
 | `HICLAW_FS_ENDPOINT` | MinIO 端点 URL | `http://<MANAGER_HOST>:9000` |
+| `HICLAW_FS_BUCKET` | 非默认存储布局下的 bucket 名称 | `hiclaw-storage` |
 | `HICLAW_FS_ACCESS_KEY` | MinIO 访问密钥（由 Manager 生成，Worker 专用） | - |
 | `HICLAW_FS_SECRET_KEY` | MinIO 密钥（由 Manager 生成，Worker 专用） | - |
 
 > 所有参数值均由 Manager 生成，并在 `docker run` 命令中提供，或在直接创建时自动设置。通常无需手动配置。
+>
+> 运行时脚本现在直接使用 `HICLAW_MATRIX_URL` 和 `HICLAW_AI_GATEWAY_URL`；旧别名已经不再属于主契约。
 
 ### 手动同步文件
 

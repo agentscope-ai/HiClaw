@@ -1,282 +1,118 @@
 package server
 
 import (
-	"encoding/json"
-	"fmt"
-	"io"
 	"net/http"
-	"os"
-	"os/exec"
-	"strings"
 
+	authpkg "github.com/hiclaw/hiclaw-controller/internal/auth"
+	"github.com/hiclaw/hiclaw-controller/internal/backend"
+	"github.com/hiclaw/hiclaw-controller/internal/credentials"
+	"github.com/hiclaw/hiclaw-controller/internal/gateway"
+	"github.com/hiclaw/hiclaw-controller/internal/oss"
+	"github.com/hiclaw/hiclaw-controller/internal/proxy"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
-// HTTPServer provides a REST API for cloud management integration.
-// In embedded mode, it writes YAML to MinIO (controller picks up via file watcher).
-// In incluster mode, it operates K8s API directly.
-type HTTPServer struct {
-	KubeMode      string // "embedded" or "incluster"
-	StoragePrefix string // e.g. "hiclaw/hiclaw-storage"
-	Addr          string
+// ServerDeps aggregates all dependencies needed by the HTTP API handlers.
+type ServerDeps struct {
+	Client         client.Client
+	Backend        *backend.Registry
+	Gateway        gateway.Client
+	OSS            oss.StorageClient
+	STS            *credentials.STSService
+	AuthMw         *authpkg.Middleware
+	KubeMode       string
+	Namespace      string
+	ControllerName string // HICLAW_CONTROLLER_NAME; empty in embedded mode
+	SocketPath     string // Docker proxy (embedded only)
 }
 
-func NewHTTPServer(addr, kubeMode string) *HTTPServer {
-	prefix := os.Getenv("HICLAW_STORAGE_PREFIX")
-	if prefix == "" {
-		prefix = "hiclaw/hiclaw-storage"
+// HTTPServer serves the unified controller REST API.
+type HTTPServer struct {
+	Addr string
+	Mux  *http.ServeMux
+}
+
+func NewHTTPServer(addr string, deps ServerDeps) *HTTPServer {
+	mux := http.NewServeMux()
+	s := &HTTPServer{Addr: addr, Mux: mux}
+
+	mw := deps.AuthMw
+
+	// --- Status / health (no auth) ---
+	sh := NewStatusHandler(deps.Client, deps.Namespace, deps.KubeMode)
+	mux.HandleFunc("GET /healthz", sh.Healthz)
+
+	// --- Status endpoints (authenticated, any role) ---
+	mux.Handle("GET /api/v1/status", mw.RequireAuthz(authpkg.ActionGet, "status", nil)(http.HandlerFunc(sh.ClusterStatus)))
+	mux.Handle("GET /api/v1/version", mw.Authenticate(http.HandlerFunc(sh.Version)))
+
+	// --- Declarative resource CRUD ---
+	rh := NewResourceHandler(deps.Client, deps.Namespace, deps.Backend, deps.ControllerName)
+	nameFn := authpkg.NameFromPath
+
+	// Workers
+	mux.Handle("POST /api/v1/workers", mw.RequireAuthz(authpkg.ActionCreate, "worker", nil)(http.HandlerFunc(rh.CreateWorker)))
+	mux.Handle("GET /api/v1/workers", mw.RequireAuthz(authpkg.ActionList, "worker", nil)(http.HandlerFunc(rh.ListWorkers)))
+	mux.Handle("GET /api/v1/workers/{name}", mw.RequireAuthz(authpkg.ActionGet, "worker", nameFn)(http.HandlerFunc(rh.GetWorker)))
+	mux.Handle("PUT /api/v1/workers/{name}", mw.RequireAuthz(authpkg.ActionUpdate, "worker", nameFn)(http.HandlerFunc(rh.UpdateWorker)))
+	mux.Handle("DELETE /api/v1/workers/{name}", mw.RequireAuthz(authpkg.ActionDelete, "worker", nameFn)(http.HandlerFunc(rh.DeleteWorker)))
+
+	// Teams
+	mux.Handle("POST /api/v1/teams", mw.RequireAuthz(authpkg.ActionCreate, "team", nil)(http.HandlerFunc(rh.CreateTeam)))
+	mux.Handle("GET /api/v1/teams", mw.RequireAuthz(authpkg.ActionList, "team", nil)(http.HandlerFunc(rh.ListTeams)))
+	mux.Handle("GET /api/v1/teams/{name}", mw.RequireAuthz(authpkg.ActionGet, "team", nameFn)(http.HandlerFunc(rh.GetTeam)))
+	mux.Handle("PUT /api/v1/teams/{name}", mw.RequireAuthz(authpkg.ActionUpdate, "team", nameFn)(http.HandlerFunc(rh.UpdateTeam)))
+	mux.Handle("DELETE /api/v1/teams/{name}", mw.RequireAuthz(authpkg.ActionDelete, "team", nameFn)(http.HandlerFunc(rh.DeleteTeam)))
+
+	// Humans
+	mux.Handle("POST /api/v1/humans", mw.RequireAuthz(authpkg.ActionCreate, "human", nil)(http.HandlerFunc(rh.CreateHuman)))
+	mux.Handle("GET /api/v1/humans", mw.RequireAuthz(authpkg.ActionList, "human", nil)(http.HandlerFunc(rh.ListHumans)))
+	mux.Handle("GET /api/v1/humans/{name}", mw.RequireAuthz(authpkg.ActionGet, "human", nameFn)(http.HandlerFunc(rh.GetHuman)))
+	mux.Handle("DELETE /api/v1/humans/{name}", mw.RequireAuthz(authpkg.ActionDelete, "human", nameFn)(http.HandlerFunc(rh.DeleteHuman)))
+
+	// Managers
+	mux.Handle("POST /api/v1/managers", mw.RequireAuthz(authpkg.ActionCreate, "manager", nil)(http.HandlerFunc(rh.CreateManager)))
+	mux.Handle("GET /api/v1/managers", mw.RequireAuthz(authpkg.ActionList, "manager", nil)(http.HandlerFunc(rh.ListManagers)))
+	mux.Handle("GET /api/v1/managers/{name}", mw.RequireAuthz(authpkg.ActionGet, "manager", nameFn)(http.HandlerFunc(rh.GetManager)))
+	mux.Handle("PUT /api/v1/managers/{name}", mw.RequireAuthz(authpkg.ActionUpdate, "manager", nameFn)(http.HandlerFunc(rh.UpdateManager)))
+	mux.Handle("DELETE /api/v1/managers/{name}", mw.RequireAuthz(authpkg.ActionDelete, "manager", nameFn)(http.HandlerFunc(rh.DeleteManager)))
+
+	// --- Package upload ---
+	ph := NewPackageHandler(deps.OSS)
+	mux.Handle("POST /api/v1/packages", mw.RequireAuthz(authpkg.ActionCreate, "worker", nil)(http.HandlerFunc(ph.Upload)))
+
+	// --- Imperative lifecycle ---
+	lh := NewLifecycleHandler(deps.Client, deps.Backend, deps.Namespace)
+	mux.Handle("POST /api/v1/workers/{name}/wake", mw.RequireAuthz(authpkg.ActionWake, "worker", nameFn)(http.HandlerFunc(lh.Wake)))
+	mux.Handle("POST /api/v1/workers/{name}/sleep", mw.RequireAuthz(authpkg.ActionSleep, "worker", nameFn)(http.HandlerFunc(lh.Sleep)))
+	mux.Handle("POST /api/v1/workers/{name}/ensure-ready", mw.RequireAuthz(authpkg.ActionEnsureReady, "worker", nameFn)(http.HandlerFunc(lh.EnsureReady)))
+	mux.Handle("POST /api/v1/workers/{name}/ready", mw.RequireAuthz(authpkg.ActionReady, "worker", nameFn)(http.HandlerFunc(lh.Ready)))
+	mux.Handle("GET /api/v1/workers/{name}/status", mw.RequireAuthz(authpkg.ActionStatus, "worker", nameFn)(http.HandlerFunc(lh.GetWorkerRuntimeStatus)))
+
+	// --- Gateway ---
+	gh := NewGatewayHandler(deps.Gateway)
+	mux.Handle("POST /api/v1/gateway/consumers", mw.RequireAuthz(authpkg.ActionCreate, "gateway", nil)(http.HandlerFunc(gh.CreateConsumer)))
+	mux.Handle("POST /api/v1/gateway/consumers/{id}/bind", mw.RequireAuthz(authpkg.ActionUpdate, "gateway", nil)(http.HandlerFunc(gh.BindConsumer)))
+	mux.Handle("DELETE /api/v1/gateway/consumers/{id}", mw.RequireAuthz(authpkg.ActionDelete, "gateway", nil)(http.HandlerFunc(gh.DeleteConsumer)))
+
+	// --- Credentials ---
+	// STS is self-scoped: no {name} in path; handler uses CallerIdentity to scope the issued token.
+	ch := NewCredentialsHandler(deps.STS)
+	mux.Handle("POST /api/v1/credentials/sts", mw.RequireAuthz(authpkg.ActionSTS, "credentials", nil)(http.HandlerFunc(ch.RefreshSTS)))
+
+	// --- Docker API passthrough (embedded mode only) ---
+	if deps.KubeMode == "embedded" && deps.SocketPath != "" {
+		validator := proxy.NewSecurityValidator()
+		proxyHandler := proxy.NewHandler(deps.SocketPath, validator)
+		mux.Handle("/docker/", mw.RequireAuthz(authpkg.ActionGateway, "gateway", nil)(http.StripPrefix("/docker", proxyHandler)))
 	}
-	return &HTTPServer{
-		KubeMode:      kubeMode,
-		StoragePrefix: prefix,
-		Addr:          addr,
-	}
+
+	return s
 }
 
 func (s *HTTPServer) Start() error {
-	mux := http.NewServeMux()
-
-	mux.HandleFunc("/healthz", s.handleHealthz)
-	mux.HandleFunc("/api/v1/apply", s.handleApply)
-	mux.HandleFunc("/api/v1/workers", s.handleList("worker"))
-	mux.HandleFunc("/api/v1/teams", s.handleList("team"))
-	mux.HandleFunc("/api/v1/humans", s.handleList("human"))
-	// Single resource: /api/v1/workers/{name}
-	mux.HandleFunc("/api/v1/workers/", s.handleResource("worker"))
-	mux.HandleFunc("/api/v1/teams/", s.handleResource("team"))
-	mux.HandleFunc("/api/v1/humans/", s.handleResource("human"))
-
 	logger := log.Log.WithName("http-server")
-	logger.Info("starting HTTP API server", "addr", s.Addr, "mode", s.KubeMode)
-	return http.ListenAndServe(s.Addr, mux)
-}
-
-func (s *HTTPServer) handleHealthz(w http.ResponseWriter, r *http.Request) {
-	w.WriteHeader(http.StatusOK)
-	fmt.Fprint(w, "ok")
-}
-
-// handleApply accepts YAML body, splits multi-doc, writes each to MinIO.
-func (s *HTTPServer) handleApply(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		http.Error(w, "failed to read body", http.StatusBadRequest)
-		return
-	}
-	defer r.Body.Close()
-
-	prune := r.URL.Query().Get("prune") == "true"
-
-	docs := splitYAMLDocs(string(body))
-	applied := make(map[string]map[string]bool)
-	applied["worker"] = map[string]bool{}
-	applied["team"] = map[string]bool{}
-	applied["human"] = map[string]bool{}
-
-	var results []map[string]string
-
-	for _, doc := range docs {
-		doc = strings.TrimSpace(doc)
-		if doc == "" {
-			continue
-		}
-
-		kind, name := extractKindName(doc)
-		if kind == "" || name == "" {
-			results = append(results, map[string]string{"error": "missing kind or name in document"})
-			continue
-		}
-
-		kindLower := strings.ToLower(kind)
-		dest := fmt.Sprintf("%s/hiclaw-config/%ss/%s.yaml", s.StoragePrefix, kindLower, name)
-
-		if err := s.writeToMinIO(doc, dest); err != nil {
-			results = append(results, map[string]string{
-				"kind": kind, "name": name, "status": "error", "message": err.Error(),
-			})
-			continue
-		}
-
-		results = append(results, map[string]string{
-			"kind": kind, "name": name, "status": "applied",
-		})
-		if applied[kindLower] != nil {
-			applied[kindLower][name] = true
-		}
-	}
-
-	// Prune: delete resources in MinIO not present in YAML
-	if prune {
-		for _, kind := range []string{"human", "worker", "team"} {
-			existing := s.listMinIONames(kind)
-			for _, name := range existing {
-				if !applied[kind][name] {
-					dest := fmt.Sprintf("%s/hiclaw-config/%ss/%s.yaml", s.StoragePrefix, kind, name)
-					if err := mcRm(dest); err == nil {
-						results = append(results, map[string]string{
-							"kind": kind, "name": name, "status": "deleted",
-						})
-					}
-				}
-			}
-		}
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"status":  "ok",
-		"results": results,
-	})
-}
-
-func (s *HTTPServer) handleList(kind string) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-
-		names := s.listMinIONames(kind)
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"kind":  kind,
-			"items": names,
-			"total": len(names),
-		})
-	}
-}
-
-func (s *HTTPServer) handleResource(kind string) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		// Extract name from URL: /api/v1/workers/alice → alice
-		parts := strings.Split(strings.TrimRight(r.URL.Path, "/"), "/")
-		if len(parts) == 0 {
-			http.Error(w, "missing resource name", http.StatusBadRequest)
-			return
-		}
-		name := parts[len(parts)-1]
-		path := fmt.Sprintf("%s/hiclaw-config/%ss/%s.yaml", s.StoragePrefix, kind, name)
-
-		switch r.Method {
-		case http.MethodGet:
-			out, err := mcCat(path)
-			if err != nil {
-				http.Error(w, fmt.Sprintf("%s/%s not found", kind, name), http.StatusNotFound)
-				return
-			}
-			w.Header().Set("Content-Type", "application/yaml")
-			fmt.Fprint(w, out)
-
-		case http.MethodDelete:
-			if err := mcRm(path); err != nil {
-				http.Error(w, fmt.Sprintf("failed to delete %s/%s: %v", kind, name, err), http.StatusInternalServerError)
-				return
-			}
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]string{
-				"kind": kind, "name": name, "status": "deleted",
-			})
-
-		default:
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		}
-	}
-}
-
-// --- MinIO helpers ---
-
-func (s *HTTPServer) writeToMinIO(yamlContent, dest string) error {
-	tmpFile, err := os.CreateTemp("", "hiclaw-api-*.yaml")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(tmpFile.Name())
-
-	if _, err := tmpFile.WriteString(yamlContent); err != nil {
-		tmpFile.Close()
-		return err
-	}
-	tmpFile.Close()
-
-	cmd := exec.Command("mc", "cp", tmpFile.Name(), dest)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("mc cp failed: %s: %w", string(out), err)
-	}
-	return nil
-}
-
-func (s *HTTPServer) listMinIONames(kind string) []string {
-	dir := fmt.Sprintf("%s/hiclaw-config/%ss/", s.StoragePrefix, kind)
-	cmd := exec.Command("mc", "ls", dir)
-	out, err := cmd.Output()
-	if err != nil {
-		return nil
-	}
-
-	var names []string
-	for _, line := range strings.Split(string(out), "\n") {
-		line = strings.TrimSpace(line)
-		// mc ls output: "[date] [size] filename.yaml"
-		parts := strings.Fields(line)
-		if len(parts) < 1 {
-			continue
-		}
-		filename := parts[len(parts)-1]
-		if (strings.HasSuffix(filename, ".yaml") || strings.HasSuffix(filename, ".yml")) && filename != ".gitkeep" {
-			name := strings.TrimSuffix(strings.TrimSuffix(filename, ".yaml"), ".yml")
-			names = append(names, name)
-		}
-	}
-	return names
-}
-
-func mcCat(path string) (string, error) {
-	cmd := exec.Command("mc", "cat", path)
-	out, err := cmd.Output()
-	return string(out), err
-}
-
-func mcRm(path string) error {
-	cmd := exec.Command("mc", "rm", path)
-	_, err := cmd.CombinedOutput()
-	return err
-}
-
-// --- YAML helpers ---
-
-func splitYAMLDocs(content string) []string {
-	var docs []string
-	current := ""
-	for _, line := range strings.Split(content, "\n") {
-		if strings.TrimSpace(line) == "---" {
-			if strings.TrimSpace(current) != "" {
-				docs = append(docs, current)
-			}
-			current = ""
-			continue
-		}
-		current += line + "\n"
-	}
-	if strings.TrimSpace(current) != "" {
-		docs = append(docs, current)
-	}
-	return docs
-}
-
-func extractKindName(doc string) (kind, name string) {
-	for _, line := range strings.Split(doc, "\n") {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "kind:") {
-			kind = strings.TrimSpace(strings.TrimPrefix(line, "kind:"))
-		}
-		if strings.HasPrefix(line, "  name:") && name == "" {
-			name = strings.TrimSpace(strings.TrimPrefix(line, "  name:"))
-		}
-	}
-	return
+	logger.Info("starting unified REST API server", "addr", s.Addr)
+	return http.ListenAndServe(s.Addr, s.Mux)
 }

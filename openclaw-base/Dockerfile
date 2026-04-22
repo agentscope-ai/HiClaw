@@ -1,29 +1,34 @@
 # ============================================================
 # OpenClaw Base Image - Shared base for Manager and Worker
 # ============================================================
-# Based on higress/all-in-one so that Manager and Worker share
-# the same base layers, avoiding ~900MB duplicate downloads.
+# Based on a plain Ubuntu 24.04 image (mirrored from the higress
+# registry for in-China pull speed). The previous all-in-one base
+# carried Higress + Envoy + Pilot + Console (~1.7 GB) which the
+# modern Manager and Worker do not run — Higress lives in the
+# embedded controller image, not here.
 #
-# Includes: all-in-one (Higress) + Node.js 22 + OpenClaw + mcporter
-#           + common tools (git, jq, nginx, etc.)
+# Includes: Ubuntu 24.04 + Node.js 22 + OpenClaw + mcporter
+#           + common tools (git, jq, etc.)
 #
 # Build args:
 #   HIGRESS_REGISTRY  - base image registry (default: cn-hangzhou)
-#   APT_MIRROR        - APT mirror host (default: mirrors.aliyun.com, set to empty to use official)
+#   APT_MIRROR        - APT mirror host (default: empty; set to mirrors.aliyun.com for China)
+#   OPENCLAW_REPO_URL - OpenClaw git repository URL (default: https://github.com/johnlanni/openclaw.git)
 # ============================================================
 
 ARG HIGRESS_REGISTRY=higress-registry.cn-hangzhou.cr.aliyuncs.com
 
-# Based on all-in-one (Ubuntu 22.04) for layer sharing with Manager
-FROM ${HIGRESS_REGISTRY}/higress/all-in-one:sha-d32debd
+# Plain Ubuntu 24.04 (Noble), ~100MB instead of all-in-one's ~1.79GB
+FROM ${HIGRESS_REGISTRY}/higress/ubuntu:24.04
 
 # Build args (must be declared BEFORE any RUN that uses them)
-ARG APT_MIRROR=mirrors.aliyun.com
+ARG APT_MIRROR=
 ARG HTTP_PROXY
 ARG HTTPS_PROXY
 ARG http_proxy
 ARG https_proxy
 ARG NPM_REGISTRY=https://registry.npmjs.org/
+ARG OPENCLAW_REPO_URL=https://github.com/johnlanni/openclaw.git
 
 # Set proxy as environment variables to ensure all tools can use them
 ENV HTTP_PROXY=${HTTP_PROXY} \
@@ -31,17 +36,26 @@ ENV HTTP_PROXY=${HTTP_PROXY} \
     http_proxy=${http_proxy} \
     https_proxy=${https_proxy}
 
-# all-in-one is based on Ubuntu 22.04, uses sources.list (not ubuntu.sources)
+# Ubuntu 24.04 ships APT sources in deb822 format at
+# /etc/apt/sources.list.d/ubuntu.sources. Older Ubuntu (22.04 and
+# earlier) used a single-line /etc/apt/sources.list. Rewrite both
+# so the mirror flag stays compatible if the base image is ever
+# downgraded or rebased.
 RUN if [ -n "${APT_MIRROR}" ]; then \
-        sed -i "s|archive.ubuntu.com|${APT_MIRROR}|g; s|security.ubuntu.com|${APT_MIRROR}|g" \
-            /etc/apt/sources.list 2>/dev/null || true; \
+        for _src in /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources; do \
+            [ -f "${_src}" ] && sed -i \
+                "s|archive.ubuntu.com|${APT_MIRROR}|g; \
+                 s|security.ubuntu.com|${APT_MIRROR}|g; \
+                 s|ports.ubuntu.com|${APT_MIRROR}|g" "${_src}" || true; \
+        done; \
     fi && \
     apt-get update && apt-get install -y \
     git python3 make g++ curl \
-    jq nginx gettext-base openssh-client ca-certificates procps tzdata \
+    jq gettext-base openssh-client ca-certificates procps tzdata \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Node.js 22 (all-in-one doesn't include Node.js)
+# Install Node.js 22 via NodeSource (the base image does not ship Node.js).
+# setup_22.x auto-installs gnupg / apt-transport-https if missing.
 RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
     apt-get install -y nodejs && \
     npm install -g pnpm && \
@@ -51,20 +65,43 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
 # 1. Clone with single branch to minimize .git size
 # 2. Install dependencies and build
 # 3. Remove unnecessary files (tests, .git, etc.) - keep all node_modules for extensions
-RUN git clone --depth 1 --single-branch -b hiclaw-v1 \
-        https://github.com/johnlanni/openclaw.git /opt/openclaw && \
+RUN git clone --depth 1 --single-branch -b hiclaw-2026.4.14 \
+        ${OPENCLAW_REPO_URL} /opt/openclaw && \
     cd /opt/openclaw && \
-    git fetch --depth 1 origin 86dad1383c12629ad3aa48575f2dd350fc0775d4 && \
-    git checkout 86dad1383c12629ad3aa48575f2dd350fc0775d4 && \
+    git fetch --depth 1 origin 2f35b6fa6b65d012e3b0c9f24af3f8a4b617a6e0 && \
+    git checkout 2f35b6fa6b65d012e3b0c9f24af3f8a4b617a6e0 && \
     pnpm config set registry ${NPM_REGISTRY} && \
     pnpm install && \
     pnpm build && \
     pnpm ui:build && \
     echo "==> Verifying critical native addons..." && \
-    ADDON_DIR=/opt/openclaw/node_modules/.pnpm/@matrix-org+matrix-sdk-crypto-nodejs@0.4.0/node_modules/@matrix-org/matrix-sdk-crypto-nodejs && \
-    ls "$ADDON_DIR"/matrix-sdk-crypto.linux-*.node 2>/dev/null | grep -q . \
-        || (echo "ERROR: matrix-sdk-crypto native addon missing (pnpm install may have silently failed on this arch)" && exit 1) && \
-    echo "==> Native addon check passed: $(ls $ADDON_DIR/matrix-sdk-crypto.linux-*.node)" && \
+    MSC_DIR=/opt/openclaw/node_modules/@matrix-org/matrix-sdk-crypto-nodejs && \
+    MSC_VER=$(jq -r .version ${MSC_DIR}/package.json) && \
+    MSC_ARCH=$(uname -m) && \
+    case "${MSC_ARCH}" in \
+        x86_64)  MSC_FILE=matrix-sdk-crypto.linux-x64-gnu.node ;; \
+        aarch64) MSC_FILE=matrix-sdk-crypto.linux-arm64-gnu.node ;; \
+        *)       echo "Unsupported arch: ${MSC_ARCH}" && exit 1 ;; \
+    esac && \
+    if [ ! -f "${MSC_DIR}/${MSC_FILE}" ]; then \
+        echo "==> matrix-sdk-crypto native addon missing — fetching ${MSC_FILE} v${MSC_VER}..."; \
+        for i in 1 2 3 4 5; do \
+            curl -fsSL --retry 3 --retry-delay 2 \
+                "https://github.com/matrix-org/matrix-rust-sdk-crypto-nodejs/releases/download/v${MSC_VER}/${MSC_FILE}" \
+                -o "${MSC_DIR}/${MSC_FILE}" && break; \
+            echo "==> attempt $i failed, retrying..."; \
+            sleep $((i * 3)); \
+        done; \
+    fi && \
+    if [ ! -f "${MSC_DIR}/${MSC_FILE}" ] || [ ! -s "${MSC_DIR}/${MSC_FILE}" ]; then \
+        echo "ERROR: failed to fetch matrix-sdk-crypto native addon"; \
+        ls -la ${MSC_DIR}/ 2>/dev/null | head -20; \
+        exit 1; \
+    fi && \
+    echo "==> Native addon present: ${MSC_DIR}/${MSC_FILE} ($(stat -c%s ${MSC_DIR}/${MSC_FILE}) bytes)" && \
+    chmod +x /opt/openclaw/openclaw.mjs && \
+    ln -sf /opt/openclaw/openclaw.mjs /usr/local/bin/openclaw && \
+    echo "==> Linked openclaw CLI to /usr/local/bin/openclaw" && \
     rm -rf \
         .git .github \
         test \

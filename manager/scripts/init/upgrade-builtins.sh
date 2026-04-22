@@ -182,6 +182,8 @@ if [ -d "${WORKER_AGENT_SRC}" ] && mc alias ls hiclaw > /dev/null 2>&1; then
                 _worker_agent_src="${AGENT_SRC}/team-leader-agent"
             elif [ "${_worker_runtime}" = "copaw" ]; then
                 _worker_agent_src="${AGENT_SRC}/copaw-worker-agent"
+            elif [ "${_worker_runtime}" = "hermes" ]; then
+                _worker_agent_src="${AGENT_SRC}/hermes-worker-agent"
             else
                 _worker_agent_src="${WORKER_AGENT_SRC}"
             fi
@@ -192,6 +194,13 @@ if [ -d "${WORKER_AGENT_SRC}" ] && mc alias ls hiclaw > /dev/null 2>&1; then
                 "${_worker_agent_src}/AGENTS.md" \
                 && log "    Merged AGENTS.md" \
                 || log "    WARNING: Failed to merge AGENTS.md"
+
+            if [ -f "${_worker_agent_src}/HEARTBEAT.md" ]; then
+                mc cp "${_worker_agent_src}/HEARTBEAT.md" \
+                    "${HICLAW_STORAGE_PREFIX}/agents/${_worker_name}/HEARTBEAT.md" 2>/dev/null \
+                    && log "    Updated HEARTBEAT.md" \
+                    || log "    WARNING: Failed to sync HEARTBEAT.md"
+            fi
 
             # Push all builtin skills from runtime-specific agent dir
             if [ -d "${_worker_agent_src}/skills" ]; then

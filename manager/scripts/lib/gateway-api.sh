@@ -1,8 +1,7 @@
 #!/bin/bash
 # gateway-api.sh - Unified gateway consumer/route/MCP authorization abstraction
 #
-# Dispatches to Higress Console REST API (local) or AI Gateway API (cloud).
-# Follows the same pattern as worker_backend_* in container-api.sh.
+# Dispatches to Higress Console REST API (local) or controller API (cloud).
 #
 # Provides:
 #   gateway_ensure_session()                  — ensure Higress cookie (local) / no-op (cloud)
@@ -12,19 +11,12 @@
 #
 # Prerequisites:
 #   - source hiclaw-env.sh (for HICLAW_RUNTIME)
-#   - HICLAW_ADMIN_USER, HICLAW_ADMIN_PASSWORD (for Higress login)
-#   - HIGRESS_COOKIE_FILE (set by start-manager-agent.sh or gateway_ensure_session)
-#
-# Usage:
-#   source /opt/hiclaw/scripts/lib/gateway-api.sh
-
-# ── Load cloud providers (additive) ──────────────────────────────────────────
-for _gw_provider_file in /opt/hiclaw/scripts/lib/cloud/*.sh; do
-    [ -f "${_gw_provider_file}" ] && source "${_gw_provider_file}"
-done
-unset _gw_provider_file
+#   - source container-api.sh (for _orch_api)
 
 # ── Backend detection ─────────────────────────────────────────────────────────
+
+# Higress Console URL: k8s mode uses cluster-internal service, docker uses localhost
+_HIGRESS_CONSOLE_URL="${HIGRESS_CONSOLE_URL:-${HICLAW_HIGRESS_CONSOLE_URL:-http://127.0.0.1:8001}}"
 
 _detect_gateway_backend() {
     if [ "${HICLAW_RUNTIME:-}" = "aliyun" ]; then
@@ -36,15 +28,11 @@ _detect_gateway_backend() {
 
 # ── Session management ────────────────────────────────────────────────────────
 
-# Ensure a valid Higress Console session cookie exists.
-# In cloud mode this is a no-op (no local Higress).
-# Sets HIGRESS_COOKIE_FILE as a side effect.
 gateway_ensure_session() {
     local backend
     backend=$(_detect_gateway_backend)
     [ "${backend}" != "higress" ] && return 0
 
-    # Already have a valid cookie
     if [ -n "${HIGRESS_COOKIE_FILE:-}" ] && [ -s "${HIGRESS_COOKIE_FILE:-}" ]; then
         return 0
     fi
@@ -53,7 +41,7 @@ gateway_ensure_session() {
     local admin_user="${HICLAW_ADMIN_USER:-admin}"
     local admin_password="${HICLAW_ADMIN_PASSWORD:-admin}"
 
-    curl -sf -o /dev/null -X POST http://127.0.0.1:8001/session/login \
+    curl -sf -o /dev/null -X POST "${_HIGRESS_CONSOLE_URL}/session/login" \
         -H 'Content-Type: application/json' \
         -c "${HIGRESS_COOKIE_FILE}" \
         -d '{"username":"'"${admin_user}"'","password":"'"${admin_password}"'"}' 2>/dev/null \
@@ -87,7 +75,7 @@ _gateway_cloud_create_consumer() {
     local credential_key="$2"
 
     local resp
-    resp=$(cloud_create_consumer "${consumer_name}" 2>/dev/null) || true
+    resp=$(_orch_api POST /gateway/consumers "{\"name\":\"${consumer_name}\"}") || true
     local status
     status=$(echo "${resp}" | jq -r '.status // "error"' 2>/dev/null)
 
@@ -109,7 +97,7 @@ _gateway_higress_create_consumer() {
     local consumer_name="$1"
     local credential_key="$2"
 
-    curl -sf -X POST http://127.0.0.1:8001/v1/consumers \
+    curl -sf -X POST ${_HIGRESS_CONSOLE_URL}/v1/consumers \
         -b "${HIGRESS_COOKIE_FILE}" \
         -H 'Content-Type: application/json' \
         -d '{
@@ -128,9 +116,6 @@ _gateway_higress_create_consumer() {
 
 # ── Route authorization ───────────────────────────────────────────────────────
 
-# gateway_authorize_routes <consumer_name>
-# Cloud: binds consumer to model API via cloud_bind_consumer (if env vars set)
-# Local: iterates all AI routes and adds consumer to allowedConsumers
 gateway_authorize_routes() {
     local consumer_name="$1"
     local backend
@@ -148,12 +133,11 @@ gateway_authorize_routes() {
 
 _gateway_cloud_authorize_routes() {
     local consumer_name="$1"
-
-    # consumer_id is passed via GATEWAY_CONSUMER_ID (set by caller after gateway_create_consumer)
     local consumer_id="${GATEWAY_CONSUMER_ID:-}"
+
     if [ -n "${consumer_id}" ] && [ -n "${HICLAW_GW_MODEL_API_ID:-}" ] && [ -n "${HICLAW_GW_ENV_ID:-}" ]; then
-        local bind_result
-        bind_result=$(cloud_bind_consumer "${consumer_id}" "${HICLAW_GW_MODEL_API_ID}" "${HICLAW_GW_ENV_ID}" 2>/dev/null) || true
+        _orch_api POST "/gateway/consumers/${consumer_id}/bind" \
+            "{\"model_api_id\":\"${HICLAW_GW_MODEL_API_ID}\",\"env_id\":\"${HICLAW_GW_ENV_ID}\"}" > /dev/null 2>&1 || true
     else
         local skip_reason=""
         [ -z "${consumer_id}" ] && skip_reason="consumer_id empty"
@@ -168,7 +152,7 @@ _gateway_higress_authorize_routes() {
     local max_retries=5
 
     local ai_routes
-    ai_routes=$(curl -sf http://127.0.0.1:8001/v1/ai/routes \
+    ai_routes=$(curl -sf ${_HIGRESS_CONSOLE_URL}/v1/ai/routes \
         -b "${HIGRESS_COOKIE_FILE}" 2>/dev/null) \
         || { echo "[gateway-api] ERROR: Failed to list AI routes" >&2; return 1; }
 
@@ -180,7 +164,7 @@ _gateway_higress_authorize_routes() {
         local attempt=0
         while [ "${attempt}" -lt "${max_retries}" ]; do
             local route_resp route
-            route_resp=$(curl -sf "http://127.0.0.1:8001/v1/ai/routes/${route_name}" \
+            route_resp=$(curl -sf "${_HIGRESS_CONSOLE_URL}/v1/ai/routes/${route_name}" \
                 -b "${HIGRESS_COOKIE_FILE}" 2>/dev/null) || break
             route=$(echo "${route_resp}" | jq '.data // .' 2>/dev/null)
 
@@ -195,7 +179,7 @@ _gateway_higress_authorize_routes() {
 
             local http_code
             http_code=$(curl -s -o /dev/null -w '%{http_code}' -X PUT \
-                "http://127.0.0.1:8001/v1/ai/routes/${route_name}" \
+                "${_HIGRESS_CONSOLE_URL}/v1/ai/routes/${route_name}" \
                 -b "${HIGRESS_COOKIE_FILE}" \
                 -H 'Content-Type: application/json' \
                 -d "${updated}")
@@ -220,10 +204,6 @@ _gateway_higress_authorize_routes() {
 
 # ── MCP server authorization ─────────────────────────────────────────────────
 
-# gateway_authorize_mcp <consumer_name> <mcp_servers_csv>
-# Cloud: no-op (MCP servers managed via AI Gateway console)
-# Local: iterates MCP servers and adds consumer to allowedConsumers
-# Sets TARGET_MCP_LIST as a side effect (resolved list of MCP server names)
 gateway_authorize_mcp() {
     local consumer_name="$1"
     local mcp_servers_csv="${2:-}"
@@ -232,7 +212,6 @@ gateway_authorize_mcp() {
 
     case "${backend}" in
         aliyun)
-            # Cloud: MCP authorization is managed via AI Gateway console
             TARGET_MCP_LIST="${mcp_servers_csv}"
             ;;
         higress)
@@ -246,11 +225,10 @@ _gateway_higress_authorize_mcp() {
     local mcp_servers_csv="${2:-}"
 
     local all_mcp_raw all_mcp
-    all_mcp_raw=$(curl -sf http://127.0.0.1:8001/v1/mcpServer \
+    all_mcp_raw=$(curl -sf ${_HIGRESS_CONSOLE_URL}/v1/mcpServer \
         -b "${HIGRESS_COOKIE_FILE}" 2>/dev/null) || true
     all_mcp=$(echo "${all_mcp_raw}" | jq '.data // .' 2>/dev/null || echo "${all_mcp_raw}")
 
-    # Resolve target list: use provided CSV or default to all existing MCP servers
     if [ -n "${mcp_servers_csv}" ]; then
         TARGET_MCP_LIST="${mcp_servers_csv}"
     else
@@ -262,7 +240,6 @@ _gateway_higress_authorize_mcp() {
         return 0
     fi
 
-    # Build a set of existing MCP server names for quick lookup
     local existing_names
     existing_names=$(echo "${all_mcp}" | jq -r '.[].name // empty' 2>/dev/null || true)
 
@@ -273,9 +250,8 @@ _gateway_higress_authorize_mcp() {
         mcp_name=$(echo "${mcp_name}" | tr -d ' ')
         [ -z "${mcp_name}" ] && continue
 
-        # Check if the MCP server actually exists before trying to authorize
-        if ! echo "${existing_names}" | grep -qx "${mcp_name}"; then
-            echo "[gateway-api] SKIPPED: MCP server '${mcp_name}' does not exist — create it first via mcp-server-management skill, then authorize this worker" >&2
+        if ! echo "${existing_names}" | grep -Fqx "${mcp_name}"; then
+            echo "[gateway-api] SKIPPED: MCP server '${mcp_name}' does not exist" >&2
             continue
         fi
 
@@ -283,7 +259,7 @@ _gateway_higress_authorize_mcp() {
         # Re-fetch the latest state right before each update to minimize the race window.
         # TODO: Add version-based conflict detection to the Higress mcpServer/consumers API.
         local fresh_mcp_raw fresh_mcp
-        fresh_mcp_raw=$(curl -sf http://127.0.0.1:8001/v1/mcpServer \
+        fresh_mcp_raw=$(curl -sf ${_HIGRESS_CONSOLE_URL}/v1/mcpServer \
             -b "${HIGRESS_COOKIE_FILE}" 2>/dev/null) || true
         fresh_mcp=$(echo "${fresh_mcp_raw}" | jq '.data // .' 2>/dev/null || echo "${fresh_mcp_raw}")
 
@@ -298,7 +274,7 @@ _gateway_higress_authorize_mcp() {
         done
         consumer_list="${consumer_list},\"${consumer_name}\"]"
 
-        curl -sf -X PUT http://127.0.0.1:8001/v1/mcpServer/consumers \
+        curl -sf -X PUT ${_HIGRESS_CONSOLE_URL}/v1/mcpServer/consumers \
             -b "${HIGRESS_COOKIE_FILE}" \
             -H 'Content-Type: application/json' \
             -d '{"mcpServerName":"'"${mcp_name}"'","consumers":'"${consumer_list}"'}' > /dev/null 2>&1 \
@@ -307,6 +283,5 @@ _gateway_higress_authorize_mcp() {
         resolved_list="${resolved_list:+${resolved_list},}${mcp_name}"
     done
 
-    # Update TARGET_MCP_LIST to only include servers that actually exist
     TARGET_MCP_LIST="${resolved_list}"
 }

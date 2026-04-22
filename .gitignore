@@ -40,3 +40,20 @@ node_modules/
 package.json
 pnpm-lock.yaml
 .cursor/
+
+# Claude Code
+CLAUDE.md
+
+
+# Compiled binaries
+hiclaw-controller/controller
+hiclaw-controller/hiclaw
+
+# Build-time agent templates (copied from manager/agent/ during docker build)
+hiclaw-controller/agent/
+
+# Helm dependency artifacts
+helm/hiclaw/charts/*.tgz
+
+# GitNexus
+.gitnexus/

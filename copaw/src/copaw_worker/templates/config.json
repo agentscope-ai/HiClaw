@@ -1,0 +1,20 @@
+{
+  "security": {
+    "tool_guard": {
+      "enabled": false,
+      "guarded_tools": [],
+      "denied_tools": [],
+      "custom_rules": [],
+      "disabled_rules": []
+    },
+    "file_guard": {
+      "enabled": false,
+      "sensitive_files": []
+    },
+    "skill_scanner": {
+      "mode": "off",
+      "timeout": 30,
+      "whitelist": []
+    }
+  }
+}

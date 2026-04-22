@@ -30,10 +30,11 @@ _cleanup() {
         return
     fi
     log_info "All tests passed — cleaning up test worker: ${TEST_WORKER}"
-    exec_in_manager hiclaw delete worker "${TEST_WORKER}" 2>/dev/null || true
+    exec_in_agent hiclaw delete worker "${TEST_WORKER}" 2>/dev/null || true
     exec_in_manager mc rm "${STORAGE_PREFIX}/hiclaw-config/packages/${TEST_WORKER}*.zip" 2>/dev/null || true
     sleep 5
     docker rm -f "hiclaw-worker-${TEST_WORKER}" 2>/dev/null || true
+    exec_in_agent rm -rf "/tmp/hiclaw-test-${TEST_WORKER}" 2>/dev/null || true
     exec_in_manager rm -rf "/root/hiclaw-fs/agents/${TEST_WORKER}" 2>/dev/null || true
     exec_in_manager rm -rf "/tmp/hiclaw-test-${TEST_WORKER}" 2>/dev/null || true
     exec_in_manager mc rm -r --force "${STORAGE_PREFIX}/agents/${TEST_WORKER}/" 2>/dev/null || true
@@ -59,11 +60,11 @@ else
     log_fail "kube-apiserver process is not running"
 fi
 
-HICLAW_HELP=$(exec_in_manager hiclaw --help 2>&1 | head -1 || echo "")
+HICLAW_HELP=$(exec_in_agent hiclaw --help 2>&1 | head -1 || echo "")
 if echo "${HICLAW_HELP}" | grep -qi "hiclaw\|declarative\|resource"; then
-    log_pass "hiclaw CLI is available"
+    log_pass "hiclaw CLI is available (in agent container)"
 else
-    log_fail "hiclaw CLI is not available"
+    log_fail "hiclaw CLI is not available (in agent container)"
 fi
 
 # ============================================================
@@ -72,6 +73,13 @@ fi
 log_section "Create Test ZIP Package"
 
 WORK_DIR="/tmp/hiclaw-test-${TEST_WORKER}"
+
+# Track the matrix runtime so the worker we import here matches the runtime
+# being exercised by this CI shard. Without this the apply-zip path always
+# defaults to openclaw on the controller side (defaultRuntime("") returns
+# RuntimeOpenClaw), which makes the "copaw shard" run a hidden openclaw
+# worker -- defeating the point of the matrix expansion.
+TEST_WORKER_RUNTIME="${HICLAW_DEFAULT_WORKER_RUNTIME:-openclaw}"
 
 exec_in_manager bash -c "
     mkdir -p ${WORK_DIR}/package/config ${WORK_DIR}/package/skills/test-skill
@@ -82,7 +90,8 @@ exec_in_manager bash -c "
   \"version\": 1,
   \"worker\": {
     \"suggested_name\": \"${TEST_WORKER}\",
-    \"model\": \"qwen3.5-plus\"
+    \"model\": \"qwen3.5-plus\",
+    \"runtime\": \"${TEST_WORKER_RUNTIME}\"
   },
   \"source\": {
     \"hostname\": \"integration-test\"
@@ -127,12 +136,15 @@ else
     log_fail "Failed to create test ZIP package"
 fi
 
+# Copy ZIP from controller to agent container (tar pipe avoids macOS /tmp symlink issues)
+copy_to_agent "${WORK_DIR}/${TEST_WORKER}.zip" "${WORK_DIR}/${TEST_WORKER}.zip"
+
 # ============================================================
 # Section 3: Import via hiclaw apply worker --zip
 # ============================================================
 log_section "Import Worker via hiclaw apply worker --zip"
 
-APPLY_OUTPUT=$(exec_in_manager hiclaw apply worker --zip "${WORK_DIR}/${TEST_WORKER}.zip" --name "${TEST_WORKER}" 2>&1)
+APPLY_OUTPUT=$(exec_in_agent hiclaw apply worker --zip "${WORK_DIR}/${TEST_WORKER}.zip" --name "${TEST_WORKER}" 2>&1)
 APPLY_EXIT=$?
 
 if [ ${APPLY_EXIT} -eq 0 ]; then
@@ -148,14 +160,17 @@ else
 fi
 
 # ============================================================
-# Section 4: Verify YAML + ZIP in MinIO
+# Section 4: Verify CRD + ZIP in MinIO
 # ============================================================
-log_section "Verify MinIO State"
+log_section "Verify Resource State"
 
-YAML_CONTENT=$(exec_in_manager mc cat "${STORAGE_PREFIX}/hiclaw-config/workers/${TEST_WORKER}.yaml" 2>/dev/null || echo "")
-assert_not_empty "${YAML_CONTENT}" "YAML file exists in MinIO hiclaw-config/workers/"
-assert_contains "${YAML_CONTENT}" "kind: Worker" "YAML contains kind: Worker"
-assert_contains "${YAML_CONTENT}" "name: ${TEST_WORKER}" "YAML contains correct name"
+# Brief pause for CR to propagate through kube-apiserver
+sleep 2
+
+WORKER_JSON=$(exec_in_agent hiclaw get workers "${TEST_WORKER}" -o json 2>/dev/null || echo "")
+assert_not_empty "${WORKER_JSON}" "Worker CR exists (hiclaw get workers)"
+WORKER_NAME_CHK=$(echo "${WORKER_JSON}" | jq -r '.name // empty' 2>/dev/null)
+assert_eq "${TEST_WORKER}" "${WORKER_NAME_CHK}" "Worker CR has correct name"
 
 PKG_EXISTS=$(exec_in_manager bash -c "mc ls '${STORAGE_PREFIX}/hiclaw-config/packages/${TEST_WORKER}.zip' >/dev/null 2>&1 && echo yes || echo no")
 if [ "${PKG_EXISTS}" = "yes" ]; then
@@ -169,7 +184,7 @@ fi
 # ============================================================
 log_section "Verify hiclaw get"
 
-GET_LIST=$(exec_in_manager hiclaw get workers 2>&1)
+GET_LIST=$(exec_in_agent hiclaw get workers 2>&1)
 assert_contains "${GET_LIST}" "${TEST_WORKER}" "Worker visible in 'hiclaw get workers'"
 
 # ============================================================
@@ -177,7 +192,7 @@ assert_contains "${GET_LIST}" "${TEST_WORKER}" "Worker visible in 'hiclaw get wo
 # ============================================================
 log_section "Idempotency"
 
-REIMPORT_OUTPUT=$(exec_in_manager hiclaw apply worker --zip "${WORK_DIR}/${TEST_WORKER}.zip" --name "${TEST_WORKER}" 2>&1)
+REIMPORT_OUTPUT=$(exec_in_agent hiclaw apply worker --zip "${WORK_DIR}/${TEST_WORKER}.zip" --name "${TEST_WORKER}" 2>&1)
 if echo "${REIMPORT_OUTPUT}" | grep -q "updated\|configured"; then
     log_pass "Re-import correctly reports 'updated' (idempotent)"
 else
@@ -191,44 +206,42 @@ log_section "Controller Reconcile"
 
 log_info "Waiting for mc mirror (10s) + fsnotify + reconcile + create-worker.sh..."
 
-RECONCILE_TIMEOUT=120
-RECONCILE_ELAPSED=0
-WORKER_CREATED=false
-
-while [ "${RECONCILE_ELAPSED}" -lt "${RECONCILE_TIMEOUT}" ]; do
-    if exec_in_manager cat /var/log/hiclaw/hiclaw-controller-error.log 2>/dev/null | grep -q "worker created.*${TEST_WORKER}"; then
-        WORKER_CREATED=true
-        break
-    fi
-    sleep 5
-    RECONCILE_ELAPSED=$((RECONCILE_ELAPSED + 5))
-    printf "\r[TEST INFO] Waiting for reconcile... (%ds/%ds)" "${RECONCILE_ELAPSED}" "${RECONCILE_TIMEOUT}"
-done
-echo ""
-
-if [ "${WORKER_CREATED}" = true ]; then
-    log_pass "WorkerReconciler created worker (took ~${RECONCILE_ELAPSED}s)"
+if wait_worker_provisioned "${TEST_WORKER}" 120; then
+    log_pass "WorkerReconciler provisioned worker"
 else
-    log_fail "WorkerReconciler did not create worker within ${RECONCILE_TIMEOUT}s"
-    exec_in_manager cat /var/log/hiclaw/hiclaw-controller-error.log 2>/dev/null | grep "${TEST_WORKER}" | tail -5
+    log_fail "WorkerReconciler did not provision worker within 120s"
+    exec_in_agent hiclaw get workers "${TEST_WORKER}" -o json 2>/dev/null | jq -r '.phase, .message' | head -5
 fi
 
-# Verify file watcher detected the change
-SYNC_LOG=$(exec_in_manager cat /var/log/hiclaw/hiclaw-controller-error.log 2>/dev/null | grep "syncing resource.*${TEST_WORKER}" || echo "")
-assert_not_empty "${SYNC_LOG}" "File watcher detected and synced resource"
+# Verify the API surface confirms the worker is present with credentials
+# (roomID + matrixUserID). Older iteration of this test grepped a
+# "worker created" log line; polling the CR status is both more stable
+# and independent of log-rotation.
+WORKER_API_JSON=$(exec_in_agent hiclaw get workers "${TEST_WORKER}" -o json 2>/dev/null)
+WORKER_API_ROOM=$(echo "${WORKER_API_JSON}" | jq -r '.roomID // empty')
+assert_not_empty "${WORKER_API_ROOM}" "Worker API response contains roomID"
 
 # ============================================================
 # Section 8: Verify Worker infrastructure
 # ============================================================
 log_section "Verify Worker Infrastructure"
 
-# workers-registry.json
-REGISTRY_ENTRY=$(exec_in_manager jq -r --arg w "${TEST_WORKER}" '.workers[$w] // empty' /root/manager-workspace/workers-registry.json 2>/dev/null)
+# workers-registry.json (in MinIO, written by controller)
+REGISTRY_JSON=$(exec_in_manager mc cat "${STORAGE_PREFIX}/agents/manager/workers-registry.json" 2>/dev/null || echo "{}")
+REGISTRY_ENTRY=$(echo "${REGISTRY_JSON}" | jq -r --arg w "${TEST_WORKER}" '.workers[$w] // empty' 2>/dev/null)
 assert_not_empty "${REGISTRY_ENTRY}" "Worker registered in workers-registry.json"
 
-# Matrix Room
-ROOM_ID=$(echo "${REGISTRY_ENTRY}" | jq -r '.room_id // empty' 2>/dev/null)
+# Matrix Room (from CRD status)
+WORKER_JSON_AFTER_RECONCILE=$(exec_in_agent hiclaw get workers "${TEST_WORKER}" -o json 2>/dev/null)
+ROOM_ID=$(echo "${WORKER_JSON_AFTER_RECONCILE}" | jq -r '.roomID // empty')
 assert_not_empty "${ROOM_ID}" "Matrix Room created: ${ROOM_ID}"
+
+# Runtime carried through from the manifest. defaultRuntime("") returns
+# RuntimeOpenClaw on the controller side, so a regression here would silently
+# downgrade copaw shards back to openclaw without any other test catching it.
+WORKER_RUNTIME=$(echo "${WORKER_JSON_AFTER_RECONCILE}" | jq -r '.runtime // empty')
+assert_eq "${TEST_WORKER_RUNTIME}" "${WORKER_RUNTIME}" \
+    "Worker runtime matches manifest (got: '${WORKER_RUNTIME}', want: '${TEST_WORKER_RUNTIME}')"
 
 # openclaw.json in MinIO
 OPENCLAW_EXISTS=$(exec_in_manager bash -c "mc ls '${STORAGE_PREFIX}/agents/${TEST_WORKER}/openclaw.json' >/dev/null 2>&1 && echo yes || echo no")
@@ -238,8 +251,16 @@ else
     log_fail "openclaw.json not found in MinIO"
 fi
 
-# Worker container running
-CONTAINER_RUNNING=$(docker ps --format '{{.Names}}' 2>/dev/null | grep "hiclaw-worker-${TEST_WORKER}" || echo "")
+# Worker container running.
+# The "worker created" log fires as soon as initial reconcile finishes, but the
+# container may be (re)created in a follow-up reconcile if the CR status update
+# bumped ResourceVersion (generation 0 -> 1). Poll for up to 60s to absorb that race.
+CONTAINER_RUNNING=""
+for i in $(seq 1 60); do
+    CONTAINER_RUNNING=$(docker ps --format '{{.Names}}' 2>/dev/null | grep "hiclaw-worker-${TEST_WORKER}$" || echo "")
+    [ -n "${CONTAINER_RUNNING}" ] && break
+    sleep 1
+done
 if [ -n "${CONTAINER_RUNNING}" ]; then
     log_pass "Worker container is running: ${CONTAINER_RUNNING}"
 else
@@ -302,45 +323,29 @@ else
             log_fail "Admin is NOT joined in worker room (auto-join may have failed)"
         fi
 
-        # Send message with @mention (Worker requires m.mentions to wake up)
-        MESSAGE_BODY="${WORKER_MATRIX_ID} Hello! Please reply with a short greeting."
-        TXN_ID="$(date +%s%N)"
-        ROOM_ENC="$(_encode_room_id "${ROOM_ID}")"
+        # Send a mention and wait for the worker's reply with at-least-once
+        # semantics — the helper resends every 30s if no reply arrives, so it
+        # tolerates the worker's first-boot readiness gap (e.g. CoPaw's
+        # catch-up sync that drops messages before next_batch is persisted).
+        # We use a mention because openclaw's monitor requires both
+        # `m.mentions.user_ids` metadata AND a visible mention, otherwise the
+        # event is dropped with `reason: "no-mention"`.
+        log_info "Sending message and waiting for Worker reply (total timeout: 180s, resend every 30s)..."
+        REPLY=$(matrix_send_and_wait_for_reply \
+            "${ADMIN_TOKEN}" \
+            "${ROOM_ID}" \
+            "${WORKER_MATRIX_ID}" \
+            "Hello! Please reply with a short greeting." \
+            180 30)
 
-        SEND_RESULT=$(exec_in_manager curl -s -X PUT \
-            "${TEST_MATRIX_DIRECT_URL}/_matrix/client/v3/rooms/${ROOM_ENC}/send/m.room.message/${TXN_ID}" \
-            -H "Authorization: Bearer ${ADMIN_TOKEN}" \
-            -H 'Content-Type: application/json' \
-            -d '{
-                "msgtype": "m.text",
-                "body": "'"${MESSAGE_BODY}"'",
-                "m.mentions": {
-                    "user_ids": ["'"${WORKER_MATRIX_ID}"'"]
-                }
-            }' 2>&1)
-
-        SEND_EVENT=$(echo "${SEND_RESULT}" | jq -r '.event_id // empty' 2>/dev/null)
-        if [ -n "${SEND_EVENT}" ] && [ "${SEND_EVENT}" != "null" ]; then
-            log_pass "Admin sent message to Worker Room (event: ${SEND_EVENT})"
+        if [ -n "${REPLY}" ]; then
+            log_pass "Worker replied: $(echo "${REPLY}" | head -1 | cut -c1-80)..."
         else
-            log_fail "Failed to send message to Worker Room"
-            log_info "Send result: ${SEND_RESULT}"
-        fi
-
-        # Wait for Worker reply
-        if [ -n "${SEND_EVENT}" ]; then
-            log_info "Waiting for Worker reply (timeout: 120s)..."
-            REPLY=$(matrix_wait_for_reply "${ADMIN_TOKEN}" "${ROOM_ID}" "@${TEST_WORKER}" 120)
-
-            if [ -n "${REPLY}" ]; then
-                log_pass "Worker replied: $(echo "${REPLY}" | head -1 | cut -c1-80)..."
-            else
-                log_fail "Worker did not reply within 120s"
-                # Show recent messages for debugging
-                log_info "Recent messages in room:"
-                matrix_read_messages "${ADMIN_TOKEN}" "${ROOM_ID}" 5 2>/dev/null | \
-                    jq -r '.chunk[] | "\(.sender): \(.content.body // "(no body)")"' 2>/dev/null | head -5
-            fi
+            log_fail "Worker did not reply within 180s"
+            # Show recent messages for debugging
+            log_info "Recent messages in room:"
+            matrix_read_messages "${ADMIN_TOKEN}" "${ROOM_ID}" 5 2>/dev/null | \
+                jq -r '.chunk[] | "\(.sender): \(.content.body // "(no body)")"' 2>/dev/null | head -5
         fi
     else
         log_info "Skipping messaging (no admin token or room ID)"
@@ -352,19 +357,27 @@ fi
 # ============================================================
 log_section "Delete Worker"
 
-DELETE_OUTPUT=$(exec_in_manager hiclaw delete worker "${TEST_WORKER}" 2>&1)
+DELETE_OUTPUT=$(exec_in_agent hiclaw delete worker "${TEST_WORKER}" 2>&1)
 if echo "${DELETE_OUTPUT}" | grep -q "deleted"; then
     log_pass "hiclaw delete reported success"
 else
     log_fail "hiclaw delete did not report success"
 fi
 
-sleep 2
-YAML_AFTER=$(exec_in_manager mc cat "${STORAGE_PREFIX}/hiclaw-config/workers/${TEST_WORKER}.yaml" 2>/dev/null || echo "")
-if [ -z "${YAML_AFTER}" ]; then
-    log_pass "YAML removed from MinIO after delete"
+# Wait for CR to be fully removed (finalizer runs container teardown which can take ~10s)
+WORKER_GONE=false
+for i in $(seq 1 60); do
+    WORKER_AFTER=$(exec_in_agent hiclaw get workers "${TEST_WORKER}" -o json 2>&1 || echo "")
+    if echo "${WORKER_AFTER}" | grep -q "not found\|error\|Error" || [ -z "${WORKER_AFTER}" ]; then
+        WORKER_GONE=true
+        break
+    fi
+    sleep 1
+done
+if [ "${WORKER_GONE}" = true ]; then
+    log_pass "Worker CR removed after delete"
 else
-    log_fail "YAML still exists after delete"
+    log_fail "Worker CR still exists after delete"
 fi
 
 # ============================================================

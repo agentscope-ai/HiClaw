@@ -319,3 +319,15 @@ You have successfully completed all 10 verification steps for HiClaw. Your Agent
 - Centralized credential management
 - MCP-based external tool integration
 - Dynamic permission control
+
+--
+
+## Uninstall
+
+To completely remove HiClaw and all its data:
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/higress-group/hiclaw/main/install/hiclaw-install.sh) uninstall
+```
+
+This removes all containers (Manager, Workers, docker-proxy), Docker volume, network, env file, workspace directory, and install log.

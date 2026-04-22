@@ -34,14 +34,19 @@ _cleanup() {
         return
     fi
     log_info "All tests passed — cleaning up"
-    exec_in_manager hiclaw delete human "${TEST_HUMAN}" 2>/dev/null || true
+    exec_in_agent hiclaw delete team "${TEST_TEAM}" 2>/dev/null || true
+    exec_in_agent hiclaw delete human "${TEST_HUMAN}" 2>/dev/null || true
+    sleep 5
+    # Fallback: force-remove containers
     docker rm -f "hiclaw-worker-${TEST_LEADER}" 2>/dev/null || true
     docker rm -f "hiclaw-worker-${TEST_W1}" 2>/dev/null || true
     for w in "${TEST_LEADER}" "${TEST_W1}"; do
         exec_in_manager mc rm -r --force "${STORAGE_PREFIX}/agents/${w}/" 2>/dev/null || true
         exec_in_manager rm -rf "/root/hiclaw-fs/agents/${w}" 2>/dev/null || true
     done
-    exec_in_manager bash -c "
+    exec_in_agent rm -f "/tmp/hiclaw-test-${TEST_HUMAN}.yaml" "/tmp/hiclaw-test-${TEST_TEAM}.yaml" 2>/dev/null || true
+    # Fallback: clean registries
+    exec_in_agent bash -c "
         jq 'del(.workers[\"${TEST_LEADER}\"], .workers[\"${TEST_W1}\"])' \
             /root/manager-workspace/workers-registry.json > /tmp/wr-clean.json 2>/dev/null && \
             mv /tmp/wr-clean.json /root/manager-workspace/workers-registry.json
@@ -63,8 +68,7 @@ HUMAN_MATRIX_ID="@${TEST_HUMAN}:${TEST_MATRIX_DOMAIN}"
 # ============================================================
 log_section "Create Human via Declarative YAML (before Team)"
 
-APPLY_OUTPUT=$(exec_in_manager bash -c "
-    cat > /tmp/${TEST_HUMAN}.yaml <<YAML
+exec_in_agent bash -c "cat > /tmp/hiclaw-test-${TEST_HUMAN}.yaml << 'YAMLEOF'
 apiVersion: hiclaw.io/v1beta1
 kind: Human
 metadata:
@@ -75,9 +79,10 @@ spec:
   accessibleTeams:
     - ${TEST_TEAM}
   note: Integration test Team Admin
-YAML
-    hiclaw apply -f /tmp/${TEST_HUMAN}.yaml
-" 2>&1)
+YAMLEOF
+" 2>/dev/null
+
+APPLY_OUTPUT=$(exec_in_agent hiclaw apply -f "/tmp/hiclaw-test-${TEST_HUMAN}.yaml" 2>&1)
 
 if echo "${APPLY_OUTPUT}" | grep -q "created\|configured"; then
     log_pass "Human YAML applied via hiclaw CLI"
@@ -85,9 +90,10 @@ else
     log_fail "Human YAML apply failed: ${APPLY_OUTPUT}"
 fi
 
-HUMAN_YAML=$(exec_in_manager mc cat "${STORAGE_PREFIX}/hiclaw-config/humans/${TEST_HUMAN}.yaml" 2>/dev/null || echo "")
-assert_not_empty "${HUMAN_YAML}" "Human YAML exists in MinIO hiclaw-config/humans/"
-assert_contains "${HUMAN_YAML}" "kind: Human" "Human YAML has correct kind"
+HUMAN_CR=$(exec_in_agent hiclaw get humans "${TEST_HUMAN}" -o json 2>/dev/null || echo "")
+assert_not_empty "${HUMAN_CR}" "Human CR exists (hiclaw get humans)"
+HUMAN_NAME_CHK=$(echo "${HUMAN_CR}" | jq -r '.name // empty' 2>/dev/null)
+assert_eq "${TEST_HUMAN}" "${HUMAN_NAME_CHK}" "Human CR has correct name"
 
 # Wait for controller reconcile
 log_info "Waiting for controller to reconcile Human..."
@@ -113,7 +119,8 @@ fi
 # ============================================================
 log_section "Verify Human Registration"
 
-HUMAN_ENTRY=$(exec_in_manager jq -r --arg h "${TEST_HUMAN}" '.humans[$h] // empty' /root/manager-workspace/humans-registry.json 2>/dev/null)
+HUMANS_REGISTRY=$(exec_in_manager mc cat "${STORAGE_PREFIX}/agents/manager/humans-registry.json" 2>/dev/null || echo "{}")
+HUMAN_ENTRY=$(echo "${HUMANS_REGISTRY}" | jq -r --arg h "${TEST_HUMAN}" '.humans[$h] // empty' 2>/dev/null)
 assert_not_empty "${HUMAN_ENTRY}" "Human registered in humans-registry.json"
 
 HUMAN_LEVEL=$(echo "${HUMAN_ENTRY}" | jq -r '.permission_level // empty')
@@ -147,32 +154,57 @@ SOUL
     " 2>/dev/null
 done
 
-CREATE_OUTPUT=$(exec_in_manager bash -c "
-    bash /opt/hiclaw/agent/skills/team-management/scripts/create-team.sh \
-        --name '${TEST_TEAM}' --leader '${TEST_LEADER}' --workers '${TEST_W1}' \
-        --team-admin '${TEST_HUMAN}' --team-admin-matrix-id '${HUMAN_MATRIX_ID}'
-" 2>&1)
+exec_in_agent bash -c "cat > /tmp/hiclaw-test-${TEST_TEAM}.yaml << YAMLEOF
+apiVersion: hiclaw.io/v1beta1
+kind: Team
+metadata:
+  name: ${TEST_TEAM}
+spec:
+  admin:
+    name: ${TEST_HUMAN}
+    matrixUserId: \"${HUMAN_MATRIX_ID}\"
+  leader:
+    name: ${TEST_LEADER}
+    model: qwen3.5-plus
+  workers:
+    - name: ${TEST_W1}
+      model: qwen3.5-plus
+YAMLEOF
+" 2>/dev/null
 
-if echo "${CREATE_OUTPUT}" | grep -q "RESULT"; then
-    log_pass "Team created with Team Admin"
+APPLY_TEAM_OUTPUT=$(exec_in_agent hiclaw apply -f "/tmp/hiclaw-test-${TEST_TEAM}.yaml" 2>&1)
+if echo "${APPLY_TEAM_OUTPUT}" | grep -q "created\|configured"; then
+    log_pass "Team YAML applied via hiclaw CLI"
 else
-    log_fail "Team creation failed"
-    echo "${CREATE_OUTPUT}" | tail -10
+    log_fail "Team YAML apply failed: ${APPLY_TEAM_OUTPUT}"
 fi
 
-# Check backfill log
-if echo "${CREATE_OUTPUT}" | grep -qi "backfill\|Configuring permissions for human"; then
-    log_pass "Team creation backfilled Human permissions"
+# Wait for controller to reconcile team — see test-18 for the rationale
+# behind polling .status.phase + per-member roomID instead of log-grep.
+log_info "Waiting for controller to reconcile team..."
+if wait_team_active "${TEST_TEAM}" 180; then
+    log_pass "TeamReconciler reconciled team to Active"
 else
-    log_info "No backfill log found (Human may have been configured during team creation)"
+    log_fail "TeamReconciler did not reach Active within 180s"
+    exec_in_agent hiclaw get teams "${TEST_TEAM}" -o json 2>/dev/null | jq -r '.phase, .message' | head -5
 fi
+
+# Wait for each team member to be provisioned (roomID + matrixUserID).
+for w in "${TEST_LEADER}" "${TEST_W1}"; do
+    if wait_worker_provisioned "${w}" 120; then
+        log_pass "Member ${w} provisioned (roomID + matrixUserID present)"
+    else
+        log_fail "Member ${w} not provisioned within 120s"
+    fi
+done
 
 # ============================================================
 # Section 4: Verify Team Admin in teams-registry.json
 # ============================================================
 log_section "Verify Team Admin in Registry"
 
-TEAM_ENTRY=$(exec_in_manager jq -r --arg t "${TEST_TEAM}" '.teams[$t] // empty' /root/manager-workspace/teams-registry.json 2>/dev/null)
+TEAMS_REGISTRY=$(exec_in_manager mc cat "${STORAGE_PREFIX}/agents/manager/teams-registry.json" 2>/dev/null || echo "{}")
+TEAM_ENTRY=$(echo "${TEAMS_REGISTRY}" | jq -r --arg t "${TEST_TEAM}" '.teams[$t] // empty' 2>/dev/null)
 assert_not_empty "${TEAM_ENTRY}" "Team registered in teams-registry.json"
 
 TEAM_ADMIN_NAME=$(echo "${TEAM_ENTRY}" | jq -r '.admin.name // empty')
@@ -242,7 +274,7 @@ ADMIN_TOKEN=$(echo "${ADMIN_LOGIN}" | jq -r '.access_token // empty')
 if [ -n "${ADMIN_TOKEN}" ] && [ "${ADMIN_TOKEN}" != "null" ]; then
     ADMIN_MATRIX_ID="@${TEST_ADMIN_USER}:${TEST_MATRIX_DOMAIN}"
     for w in "${TEST_LEADER}" "${TEST_W1}"; do
-        W_ROOM=$(exec_in_manager jq -r --arg w "${w}" '.workers[$w].room_id // empty' /root/manager-workspace/workers-registry.json 2>/dev/null)
+        W_ROOM=$(exec_in_agent hiclaw get workers "${w}" -o json 2>/dev/null | jq -r '.roomID // empty')
         if [ -n "${W_ROOM}" ] && [ "${W_ROOM}" != "null" ]; then
             W_ROOM_ENC=$(echo "${W_ROOM}" | sed 's/!/%21/g')
             W_MEMBERS=$(exec_in_manager curl -sf \
@@ -267,12 +299,13 @@ fi
 # ============================================================
 log_section "Verify Containers"
 
+WORKERS_REGISTRY=$(exec_in_manager mc cat "${STORAGE_PREFIX}/agents/manager/workers-registry.json" 2>/dev/null || echo "{}")
 for w in "${TEST_LEADER}" "${TEST_W1}"; do
     RUNNING=$(docker ps --format '{{.Names}}' 2>/dev/null | grep "hiclaw-worker-${w}" || echo "")
     if [ -n "${RUNNING}" ]; then
         log_pass "Container running: hiclaw-worker-${w}"
     else
-        DEPLOY=$(exec_in_manager jq -r --arg w "${w}" '.workers[$w].deployment // empty' /root/manager-workspace/workers-registry.json 2>/dev/null)
+        DEPLOY=$(echo "${WORKERS_REGISTRY}" | jq -r --arg w "${w}" '.workers[$w].deployment // empty' 2>/dev/null)
         if [ "${DEPLOY}" = "remote" ]; then
             log_pass "Agent ${w} registered in remote mode"
         else

@@ -196,8 +196,12 @@ func (p *PackageResolver) DeployToMinIO(ctx context.Context, extractedDir, worke
 
 	// ── Phase 1: Push to MinIO FIRST from extracted dir (immune to background sync) ──
 
-	// Config files
+	// Config files — when excludeMemory is true (update path), skip SOUL.md and AGENTS.md
+	// because DeployWorkerConfig handles them with proper inline override priority.
 	for _, f := range configFiles {
+		if excludeMemory && (f.name == "SOUL.md" || f.name == "AGENTS.md") {
+			continue
+		}
 		if err := mcPut(ctx, minioBase+"/"+f.name, f.data); err != nil {
 			return fmt.Errorf("push %s to MinIO: %w", f.name, err)
 		}
@@ -221,6 +225,9 @@ func (p *PackageResolver) DeployToMinIO(ctx context.Context, extractedDir, worke
 	// ── Phase 2: Copy to local agent dir (safe — MinIO already has new content) ──
 
 	for _, f := range configFiles {
+		if excludeMemory && (f.name == "SOUL.md" || f.name == "AGENTS.md") {
+			continue
+		}
 		os.WriteFile(filepath.Join(agentDir, f.name), f.data, 0644)
 	}
 	for _, dirName := range configSubdirs {
@@ -321,17 +328,19 @@ func wrapWithBuiltinMarkers(data []byte) []byte {
 }
 
 // WriteInlineConfigs writes inline identity/soul/agents content to the agent directory.
-// For copaw runtime, identity is merged into SOUL.md since copaw doesn't support IDENTITY.md.
+// For copaw and hermes runtimes, identity is merged into SOUL.md since neither
+// supports a separate IDENTITY.md file.
 // This function is called AFTER DeployToMinIO so inline fields override package files.
 func WriteInlineConfigs(agentDir, runtime, identity, soul, agents string) error {
 	if err := os.MkdirAll(agentDir, 0755); err != nil {
 		return fmt.Errorf("create agent dir %s: %w", agentDir, err)
 	}
 
-	isCoPaw := strings.EqualFold(runtime, "copaw")
+	mergeIdentityIntoSoul := strings.EqualFold(runtime, "copaw") ||
+		strings.EqualFold(runtime, "hermes")
 
-	if isCoPaw {
-		// CoPaw: merge identity into soul (prepend)
+	if mergeIdentityIntoSoul {
+		// CoPaw / Hermes: merge identity into soul (prepend)
 		merged := ""
 		if identity != "" {
 			merged += strings.TrimSpace(identity) + "\n\n"

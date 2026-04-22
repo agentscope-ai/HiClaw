@@ -25,7 +25,9 @@ STORAGE_PREFIX="hiclaw/hiclaw-storage"
 
 _cleanup() {
     log_info "Cleaning up team: ${TEST_TEAM}"
-    # Stop worker containers
+    exec_in_agent hiclaw delete team "${TEST_TEAM}" 2>/dev/null || true
+    sleep 5
+    # Stop worker containers (fallback if reconciler didn't clean up)
     docker rm -f "hiclaw-worker-${TEST_LEADER}" 2>/dev/null || true
     docker rm -f "hiclaw-worker-${TEST_W1}" 2>/dev/null || true
     docker rm -f "hiclaw-worker-${TEST_W2}" 2>/dev/null || true
@@ -34,8 +36,9 @@ _cleanup() {
         exec_in_manager mc rm -r --force "${STORAGE_PREFIX}/agents/${w}/" 2>/dev/null || true
         exec_in_manager rm -rf "/root/hiclaw-fs/agents/${w}" 2>/dev/null || true
     done
-    # Clean registries
-    exec_in_manager bash -c "
+    exec_in_agent rm -f "/tmp/hiclaw-test-${TEST_TEAM}.yaml" 2>/dev/null || true
+    # Clean registries (in agent workspace, fallback)
+    exec_in_agent bash -c "
         jq 'del(.workers[\"${TEST_LEADER}\"], .workers[\"${TEST_W1}\"], .workers[\"${TEST_W2}\"])' \
             /root/manager-workspace/workers-registry.json > /tmp/wr-clean.json 2>/dev/null && \
             mv /tmp/wr-clean.json /root/manager-workspace/workers-registry.json
@@ -80,7 +83,7 @@ done
 log_pass "SOUL.md files prepared for all team members"
 
 # ============================================================
-# Section 2: Create Team
+# Section 2: Create Team via hiclaw apply -f
 # ============================================================
 log_section "Create Team"
 
@@ -88,31 +91,69 @@ log_section "Create Team"
 #   Team-level: add "test-external-bot" to all members' groupAllowFrom
 #   Worker 1 (dev): deny Worker 2 (qa) from groupAllowFrom (overrides peer mention)
 #   Worker 2 (qa): no per-worker policy (should still have W1 via peer mention)
-TEAM_CP='{"groupAllowExtra":["test-external-bot"]}'
-# Per-worker policies use ":" separator; W1 gets deny, W2 gets empty
-W1_CP='{"groupDenyExtra":["'"${TEST_W2}"'"]}'
-WORKER_CPS="${W1_CP}|"
 
-CREATE_OUTPUT=$(exec_in_manager bash -c "
-    bash /opt/hiclaw/agent/skills/team-management/scripts/create-team.sh \
-        --name '${TEST_TEAM}' --leader '${TEST_LEADER}' --workers '${TEST_W1},${TEST_W2}' \
-        --team-channel-policy '${TEAM_CP}' \
-        --worker-channel-policies '${WORKER_CPS}'
-" 2>&1)
+exec_in_agent bash -c "cat > /tmp/hiclaw-test-${TEST_TEAM}.yaml << 'YAMLEOF'
+apiVersion: hiclaw.io/v1beta1
+kind: Team
+metadata:
+  name: ${TEST_TEAM}
+spec:
+  channelPolicy:
+    groupAllowExtra:
+      - test-external-bot
+  leader:
+    name: ${TEST_LEADER}
+    model: qwen3.5-plus
+  workers:
+    - name: ${TEST_W1}
+      model: qwen3.5-plus
+      channelPolicy:
+        groupDenyExtra:
+          - ${TEST_W2}
+    - name: ${TEST_W2}
+      model: qwen3.5-plus
+YAMLEOF
+" 2>/dev/null
 
-if echo "${CREATE_OUTPUT}" | grep -q "RESULT"; then
-    log_pass "create-team.sh completed"
+APPLY_OUTPUT=$(exec_in_agent hiclaw apply -f "/tmp/hiclaw-test-${TEST_TEAM}.yaml" 2>&1)
+if echo "${APPLY_OUTPUT}" | grep -q "created\|configured"; then
+    log_pass "Team YAML applied via hiclaw CLI"
 else
-    log_fail "create-team.sh failed"
-    echo "${CREATE_OUTPUT}" | tail -10
+    log_fail "Team YAML apply failed: ${APPLY_OUTPUT}"
 fi
+
+# Wait for controller to reconcile team — poll the Team CR's .status.phase
+# instead of grepping logs. Post-PR #666 the TeamReconciler no longer emits
+# a one-shot "team created" line; the canonical readiness signal is
+# .status.phase == "Active" (emitted once all desired members are observed).
+log_info "Waiting for controller to reconcile team..."
+if wait_team_active "${TEST_TEAM}" 180; then
+    log_pass "TeamReconciler reconciled team to Active"
+else
+    log_fail "TeamReconciler did not reach Active within 180s"
+    exec_in_agent hiclaw get teams "${TEST_TEAM}" -o json 2>/dev/null | jq -r '.phase, .message' | head -5
+fi
+
+# Wait for each team member to have RoomID + MatrixUserID persisted. This
+# replaces the old "worker created" grep: team members no longer have
+# Worker CRs, so that log message is never emitted for them. The correct
+# signal is that Team.Status.Members[*].RoomID has been populated, which
+# the API surfaces as WorkerResponse.roomID through teamMemberToResponse.
+for w in "${TEST_LEADER}" "${TEST_W1}" "${TEST_W2}"; do
+    if wait_worker_provisioned "${w}" 120; then
+        log_pass "Member ${w} provisioned (roomID + matrixUserID present)"
+    else
+        log_fail "Member ${w} not provisioned within 120s"
+    fi
+done
 
 # ============================================================
 # Section 3: Verify teams-registry.json
 # ============================================================
 log_section "Verify teams-registry.json"
 
-TEAM_ENTRY=$(exec_in_manager jq -r --arg t "${TEST_TEAM}" '.teams[$t] // empty' /root/manager-workspace/teams-registry.json 2>/dev/null)
+TEAMS_REGISTRY=$(exec_in_manager mc cat "${STORAGE_PREFIX}/agents/manager/teams-registry.json" 2>/dev/null || echo "{}")
+TEAM_ENTRY=$(echo "${TEAMS_REGISTRY}" | jq -r --arg t "${TEST_TEAM}" '.teams[$t] // empty' 2>/dev/null)
 assert_not_empty "${TEAM_ENTRY}" "Team registered in teams-registry.json"
 
 TEAM_LEADER_REG=$(echo "${TEAM_ENTRY}" | jq -r '.leader // empty')
@@ -148,19 +189,21 @@ fi
 # ============================================================
 log_section "Verify Worker Roles in Registry"
 
-LEADER_ROLE=$(exec_in_manager jq -r --arg w "${TEST_LEADER}" '.workers[$w].role // empty' /root/manager-workspace/workers-registry.json 2>/dev/null)
+WORKERS_REGISTRY=$(exec_in_manager mc cat "${STORAGE_PREFIX}/agents/manager/workers-registry.json" 2>/dev/null || echo "{}")
+
+LEADER_ROLE=$(echo "${WORKERS_REGISTRY}" | jq -r --arg w "${TEST_LEADER}" '.workers[$w].role // empty' 2>/dev/null)
 assert_eq "team_leader" "${LEADER_ROLE}" "Leader has role=team_leader"
 
-LEADER_TEAM=$(exec_in_manager jq -r --arg w "${TEST_LEADER}" '.workers[$w].team_id // empty' /root/manager-workspace/workers-registry.json 2>/dev/null)
+LEADER_TEAM=$(echo "${WORKERS_REGISTRY}" | jq -r --arg w "${TEST_LEADER}" '.workers[$w].team_id // empty' 2>/dev/null)
 assert_eq "${TEST_TEAM}" "${LEADER_TEAM}" "Leader has correct team_id"
 
-W1_ROLE=$(exec_in_manager jq -r --arg w "${TEST_W1}" '.workers[$w].role // empty' /root/manager-workspace/workers-registry.json 2>/dev/null)
+W1_ROLE=$(echo "${WORKERS_REGISTRY}" | jq -r --arg w "${TEST_W1}" '.workers[$w].role // empty' 2>/dev/null)
 assert_eq "worker" "${W1_ROLE}" "Worker 1 has role=worker"
 
-W1_TEAM=$(exec_in_manager jq -r --arg w "${TEST_W1}" '.workers[$w].team_id // empty' /root/manager-workspace/workers-registry.json 2>/dev/null)
+W1_TEAM=$(echo "${WORKERS_REGISTRY}" | jq -r --arg w "${TEST_W1}" '.workers[$w].team_id // empty' 2>/dev/null)
 assert_eq "${TEST_TEAM}" "${W1_TEAM}" "Worker 1 has correct team_id"
 
-W2_ROLE=$(exec_in_manager jq -r --arg w "${TEST_W2}" '.workers[$w].role // empty' /root/manager-workspace/workers-registry.json 2>/dev/null)
+W2_ROLE=$(echo "${WORKERS_REGISTRY}" | jq -r --arg w "${TEST_W2}" '.workers[$w].role // empty' 2>/dev/null)
 assert_eq "worker" "${W2_ROLE}" "Worker 2 has role=worker"
 
 # ============================================================
@@ -290,7 +333,7 @@ else
 fi
 
 # Manager: should have Leader but NOT team workers
-MGR_GAF=$(exec_in_manager jq -r '.channels.matrix.groupAllowFrom[]' /root/manager-workspace/openclaw.json 2>/dev/null)
+MGR_GAF=$(exec_in_manager mc cat "${STORAGE_PREFIX}/agents/manager/openclaw.json" 2>/dev/null | jq -r '.channels.matrix.groupAllowFrom[]' 2>/dev/null)
 if echo "${MGR_GAF}" | grep -q "@${TEST_LEADER}:"; then
     log_pass "Manager groupAllowFrom includes Leader"
 else
@@ -331,7 +374,7 @@ done
 # ============================================================
 log_section "Verify Agent Count"
 
-TEAM_AGENT_COUNT=$(exec_in_manager jq -r --arg t "${TEST_TEAM}" '[.workers | to_entries[] | select(.value.team_id == $t)] | length' /root/manager-workspace/workers-registry.json 2>/dev/null)
+TEAM_AGENT_COUNT=$(echo "${WORKERS_REGISTRY}" | jq -r --arg t "${TEST_TEAM}" '[.workers | to_entries[] | select(.value.team_id == $t)] | length' 2>/dev/null)
 assert_eq "3" "${TEAM_AGENT_COUNT}" "Team has 3 agents total (1 leader + 2 workers)"
 
 # ============================================================
@@ -342,7 +385,7 @@ log_section "Verify Admin Auto-Joined Worker Rooms"
 if [ -n "${ADMIN_TOKEN}" ] && [ "${ADMIN_TOKEN}" != "null" ]; then
     ADMIN_MATRIX_ID="@${TEST_ADMIN_USER}:${TEST_MATRIX_DOMAIN}"
     for w in "${TEST_LEADER}" "${TEST_W1}" "${TEST_W2}"; do
-        W_ROOM=$(exec_in_manager jq -r --arg w "${w}" '.workers[$w].room_id // empty' /root/manager-workspace/workers-registry.json 2>/dev/null)
+        W_ROOM=$(exec_in_agent hiclaw get workers "${w}" -o json 2>/dev/null | jq -r '.roomID // empty')
         if [ -n "${W_ROOM}" ] && [ "${W_ROOM}" != "null" ]; then
             W_ROOM_ENC=$(echo "${W_ROOM}" | sed 's/!/%21/g')
             W_MEMBERS=$(exec_in_manager curl -sf \
@@ -372,7 +415,7 @@ for w in "${TEST_LEADER}" "${TEST_W1}" "${TEST_W2}"; do
     if [ -n "${RUNNING}" ]; then
         log_pass "Container running: hiclaw-worker-${w}"
     else
-        DEPLOY=$(exec_in_manager jq -r --arg w "${w}" '.workers[$w].deployment // empty' /root/manager-workspace/workers-registry.json 2>/dev/null)
+        DEPLOY=$(echo "${WORKERS_REGISTRY}" | jq -r --arg w "${w}" '.workers[$w].deployment // empty' 2>/dev/null)
         if [ "${DEPLOY}" = "remote" ]; then
             log_pass "Agent ${w} registered in remote mode"
         else

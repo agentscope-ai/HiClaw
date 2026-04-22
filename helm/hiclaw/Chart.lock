@@ -1,0 +1,6 @@
+dependencies:
+- name: higress
+  repository: https://higress.io/helm-charts
+  version: 2.2.0
+digest: sha256:d6ba3fd06735cb73e4211cceba1d0b214ecc6433ce5a6ce13f41faefc83b8d6d
+generated: "2026-04-14T15:21:56.393754+08:00"

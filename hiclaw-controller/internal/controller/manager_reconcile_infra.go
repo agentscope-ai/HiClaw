@@ -1,0 +1,55 @@
+package controller
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/hiclaw/hiclaw-controller/internal/service"
+	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+)
+
+// reconcileManagerInfrastructure ensures Matrix account, Gateway consumer, MinIO user,
+// Matrix room, and credentials are provisioned for the Manager. Idempotent: if already
+// provisioned (MatrixUserID set), it refreshes credentials and restores gateway auth.
+func (r *ManagerReconciler) reconcileManagerInfrastructure(ctx context.Context, s *managerScope) (reconcile.Result, error) {
+	m := s.manager
+
+	if m.Status.MatrixUserID != "" {
+		refreshResult, err := r.Provisioner.RefreshManagerCredentials(ctx, m.Name)
+		if err != nil {
+			return reconcile.Result{}, fmt.Errorf("refresh credentials: %w", err)
+		}
+
+		if err := r.Provisioner.EnsureManagerGatewayAuth(ctx, m.Name, refreshResult.GatewayKey); err != nil {
+			log.FromContext(ctx).Error(err, "gateway auth restore failed (non-fatal)")
+		}
+
+		s.provResult = &service.ManagerProvisionResult{
+			MatrixUserID:   m.Status.MatrixUserID,
+			MatrixToken:    refreshResult.MatrixToken,
+			RoomID:         m.Status.RoomID,
+			GatewayKey:     refreshResult.GatewayKey,
+			MinIOPassword:  refreshResult.MinIOPassword,
+			MatrixPassword: refreshResult.MatrixPassword,
+		}
+		return reconcile.Result{}, nil
+	}
+
+	logger := log.FromContext(ctx)
+	logger.Info("provisioning manager infrastructure", "name", m.Name)
+
+	provResult, err := r.Provisioner.ProvisionManager(ctx, service.ManagerProvisionRequest{
+		Name:       m.Name,
+		McpServers: m.Spec.McpServers,
+	})
+	if err != nil {
+		return reconcile.Result{}, fmt.Errorf("provision manager: %w", err)
+	}
+
+	m.Status.MatrixUserID = provResult.MatrixUserID
+	m.Status.RoomID = provResult.RoomID
+	s.provResult = provResult
+
+	return reconcile.Result{}, nil
+}

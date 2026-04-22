@@ -68,28 +68,49 @@ done
 log_pass "SOUL.md files prepared for all team members"
 
 # ============================================================
-# Section 2: Create Team
+# Section 2: Create Team (via hiclaw CLI → controller REST API)
 # ============================================================
 log_section "Create Team"
 
-CREATE_OUTPUT=$(exec_in_manager bash -c "
-    bash /opt/hiclaw/agent/skills/team-management/scripts/create-team.sh \
-        --name '${TEST_TEAM}' --leader '${TEST_LEADER}' --workers '${TEST_W1},${TEST_W2}'
-" 2>&1)
+CREATE_OUTPUT=$(exec_in_agent hiclaw create team \
+    --name "${TEST_TEAM}" \
+    --leader-name "${TEST_LEADER}" \
+    --workers "${TEST_W1},${TEST_W2}" 2>&1)
 
-if echo "${CREATE_OUTPUT}" | grep -q "RESULT"; then
-    log_pass "create-team.sh completed"
+if echo "${CREATE_OUTPUT}" | grep -q "team/${TEST_TEAM} created"; then
+    log_pass "hiclaw create team completed"
 else
-    log_fail "create-team.sh failed"
+    log_fail "hiclaw create team failed"
     echo "${CREATE_OUTPUT}" | tail -20
 fi
 
-# Extract room IDs from registry
-LEADER_ROOM=$(exec_in_manager jq -r --arg w "${TEST_LEADER}" '.workers[$w].room_id // empty' /root/manager-workspace/workers-registry.json 2>/dev/null)
-LEADER_DM=$(exec_in_manager jq -r --arg t "${TEST_TEAM}" '.teams[$t].leader_dm_room_id // empty' /root/manager-workspace/teams-registry.json 2>/dev/null)
-TEAM_ROOM=$(exec_in_manager jq -r --arg t "${TEST_TEAM}" '.teams[$t].team_room_id // empty' /root/manager-workspace/teams-registry.json 2>/dev/null)
-W1_ROOM=$(exec_in_manager jq -r --arg w "${TEST_W1}" '.workers[$w].room_id // empty' /root/manager-workspace/workers-registry.json 2>/dev/null)
-W2_ROOM=$(exec_in_manager jq -r --arg w "${TEST_W2}" '.workers[$w].room_id // empty' /root/manager-workspace/workers-registry.json 2>/dev/null)
+# Wait for TeamReconciler to finish (async reconcile)
+log_info "Waiting for team to become Active..."
+if wait_team_active "${TEST_TEAM}" 120; then
+    log_pass "Team is Active"
+    PHASE="Active"
+else
+    PHASE=$(exec_in_agent hiclaw get teams "${TEST_TEAM}" -o json 2>/dev/null | jq -r '.phase // empty')
+    log_fail "Team did not become Active within 120s (phase: ${PHASE})"
+fi
+
+# Extract room IDs from controller REST API. For team members, the RoomID is
+# served by teamMemberToResponse from Team.Status.Members[*].RoomID — which
+# is populated the moment ReconcileMemberInfra succeeds, so waiting for the
+# team to be Active plus wait_worker_provisioned per member is the stable
+# contract for this section (regression guard for PR #666 RoomID bug).
+TEAM_JSON=$(exec_in_agent hiclaw get teams "${TEST_TEAM}" -o json 2>/dev/null)
+TEAM_ROOM=$(echo "${TEAM_JSON}" | jq -r '.teamRoomID // empty')
+LEADER_DM=$(echo "${TEAM_JSON}" | jq -r '.leaderDMRoomID // empty')
+
+for w in "${TEST_LEADER}" "${TEST_W1}" "${TEST_W2}"; do
+    if ! wait_worker_provisioned "${w}" 120; then
+        log_fail "Team member ${w} has no roomID/matrixUserID after 120s"
+    fi
+done
+LEADER_ROOM=$(get_worker_room_id "${TEST_LEADER}")
+W1_ROOM=$(get_worker_room_id "${TEST_W1}")
+W2_ROOM=$(get_worker_room_id "${TEST_W2}")
 
 log_info "Leader Room: ${LEADER_ROOM}"
 log_info "Leader DM: ${LEADER_DM}"
@@ -363,6 +384,34 @@ done
 
 # Send task from Admin directly in Leader DM
 assert_not_empty "${LEADER_DM}" "Leader DM room exists"
+
+# Container running != Matrix client joined. Default history_visibility is "shared",
+# so if admin sends the task before Leader joins the DM, the Leader never sees it.
+# Wait for Leader to actually join LEADER_DM (and Team Room, so it can coordinate).
+ADMIN_LOGIN_TOKEN=$(matrix_login "${TEST_ADMIN_USER}" "${TEST_ADMIN_PASSWORD}" 2>/dev/null | jq -r '.access_token // empty')
+if [ -z "${ADMIN_LOGIN_TOKEN}" ] || [ "${ADMIN_LOGIN_TOKEN}" = "null" ]; then
+    log_fail "Admin Matrix login failed (cannot verify Leader join)"
+else
+    LEADER_MATRIX_ID="@${TEST_LEADER}:${TEST_MATRIX_DOMAIN}"
+    W1_MATRIX_ID="@${TEST_W1}:${TEST_MATRIX_DOMAIN}"
+    W2_MATRIX_ID="@${TEST_W2}:${TEST_MATRIX_DOMAIN}"
+
+    log_info "Waiting for Leader to join Leader DM..."
+    if matrix_wait_for_user_joined "${ADMIN_LOGIN_TOKEN}" "${LEADER_DM}" "${LEADER_MATRIX_ID}" 180; then
+        log_pass "Leader joined Leader DM"
+    else
+        log_fail "Leader did not join Leader DM within 180s"
+    fi
+
+    log_info "Waiting for Leader and workers to join Team Room..."
+    for uid in "${LEADER_MATRIX_ID}" "${W1_MATRIX_ID}" "${W2_MATRIX_ID}"; do
+        if matrix_wait_for_user_joined "${ADMIN_LOGIN_TOKEN}" "${TEAM_ROOM}" "${uid}" 180; then
+            log_pass "${uid} joined Team Room"
+        else
+            log_fail "${uid} did not join Team Room within 180s"
+        fi
+    done
+fi
 
 exec_in_manager bash -c '
 TOKEN=$(curl -sf -X POST "http://127.0.0.1:6167/_matrix/client/v3/login" \

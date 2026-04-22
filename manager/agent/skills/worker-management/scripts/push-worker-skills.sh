@@ -105,12 +105,15 @@ _push_skill_to_worker() {
     local skill="$2"
     local skill_dst="${HICLAW_STORAGE_PREFIX}/agents/${worker}/skills/${skill}/"
 
-    # Runtime-specific skills: check if skill exists in worker-agent or copaw-worker-agent
+    # Runtime-specific skills: check if skill exists in the runtime's agent dir
+    # (worker-agent / copaw-worker-agent / hermes-worker-agent)
     local worker_runtime
     worker_runtime=$(echo "${REGISTRY}" | jq -r --arg w "${worker}" '.workers[$w].runtime // "openclaw"')
     local _rt_src
     if [ "${worker_runtime}" = "copaw" ]; then
         _rt_src="/opt/hiclaw/agent/copaw-worker-agent/skills/${skill}"
+    elif [ "${worker_runtime}" = "hermes" ]; then
+        _rt_src="/opt/hiclaw/agent/hermes-worker-agent/skills/${skill}"
     else
         _rt_src="/opt/hiclaw/agent/worker-agent/skills/${skill}"
     fi
@@ -165,7 +168,7 @@ _notify_worker() {
         return 0
     fi
 
-    local matrix_url="${HICLAW_MATRIX_SERVER}"
+    local matrix_url="${HICLAW_MATRIX_URL}"
     local msg="@${worker}:${MATRIX_DOMAIN} 我已向你的工作区推送了以下 skills 更新：[${skills_list}]。请使用 file-sync 技能同步最新文件。"
     local worker_id="@${worker}:${MATRIX_DOMAIN}"
 

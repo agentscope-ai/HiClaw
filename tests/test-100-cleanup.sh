@@ -21,11 +21,13 @@ STORAGE_PREFIX="hiclaw/hiclaw-storage"
 # ============================================================
 log_section "Discover Test Resources"
 
-# Find all test-* workers in workers-registry.json
-TEST_WORKERS=$(exec_in_manager jq -r '.workers | keys[] | select(startswith("test-"))' /root/manager-workspace/workers-registry.json 2>/dev/null || echo "")
+# Find all test-* workers in workers-registry.json (from MinIO)
+WORKERS_REGISTRY=$(exec_in_manager mc cat "${STORAGE_PREFIX}/agents/manager/workers-registry.json" 2>/dev/null || echo "{}")
+TEST_WORKERS=$(echo "${WORKERS_REGISTRY}" | jq -r '.workers | keys[] | select(startswith("test-"))' 2>/dev/null || echo "")
 
-# Find all test-* teams in teams-registry.json
-TEST_TEAMS=$(exec_in_manager jq -r '.teams | keys[] | select(startswith("test-"))' /root/manager-workspace/teams-registry.json 2>/dev/null || echo "")
+# Find all test-* teams in teams-registry.json (from MinIO)
+TEAMS_REGISTRY=$(exec_in_manager mc cat "${STORAGE_PREFIX}/agents/manager/teams-registry.json" 2>/dev/null || echo "{}")
+TEST_TEAMS=$(echo "${TEAMS_REGISTRY}" | jq -r '.teams | keys[] | select(startswith("test-"))' 2>/dev/null || echo "")
 
 WORKER_COUNT=$(echo "${TEST_WORKERS}" | grep -c . 2>/dev/null || echo "0")
 TEAM_COUNT=$(echo "${TEST_TEAMS}" | grep -c . 2>/dev/null || echo "0")
@@ -58,7 +60,7 @@ PRE_CONTAINER_COUNT=$(echo "${PRE_CONTAINERS}" | grep -c . 2>/dev/null || echo "
 log_info "${PRE_CONTAINER_COUNT} test worker container(s) present before cleanup"
 
 # Snapshot lifecycle entries
-PRE_LIFECYCLE_WORKERS=$(exec_in_manager jq -r '.workers | keys[] | select(startswith("test-"))' ~/worker-lifecycle.json 2>/dev/null || echo "")
+PRE_LIFECYCLE_WORKERS=$(exec_in_agent jq -r '.workers | keys[] | select(startswith("test-"))' ~/worker-lifecycle.json 2>/dev/null || echo "")
 PRE_LIFECYCLE_COUNT=$(echo "${PRE_LIFECYCLE_WORKERS}" | grep -c . 2>/dev/null || echo "0")
 log_info "${PRE_LIFECYCLE_COUNT} test worker(s) in worker-lifecycle.json before cleanup"
 
@@ -70,11 +72,10 @@ if [ -n "${TEST_TEAMS}" ]; then
 
     for team in ${TEST_TEAMS}; do
         log_info "Deleting team: ${team}"
-        DELETE_OUTPUT=$(exec_in_manager hiclaw delete team "${team}" 2>&1)
+        DELETE_OUTPUT=$(exec_in_agent hiclaw delete team "${team}" 2>&1)
         if echo "${DELETE_OUTPUT}" | grep -q "deleted"; then
             log_pass "hiclaw delete team ${team} reported success"
         else
-            # YAML may already be gone (cleaned up by individual test's trap handler)
             log_info "hiclaw delete team ${team} failed (YAML likely already removed by prior test cleanup)"
         fi
     done
@@ -89,9 +90,8 @@ if [ -n "${TEST_WORKERS}" ]; then
     # Collect team member names to skip (already handled by team delete)
     TEAM_MEMBERS=""
     for team in ${TEST_TEAMS}; do
-        MEMBERS=$(exec_in_manager jq -r --arg t "${team}" \
-            '(.teams[$t].leader // empty), (.teams[$t].workers[]? // empty)' \
-            /root/manager-workspace/teams-registry.json 2>/dev/null || echo "")
+        MEMBERS=$(echo "${TEAMS_REGISTRY}" | jq -r --arg t "${team}" \
+            '(.teams[$t].leader // empty), (.teams[$t].workers[]? // empty)' 2>/dev/null || echo "")
         TEAM_MEMBERS="${TEAM_MEMBERS} ${MEMBERS}"
     done
 
@@ -103,15 +103,13 @@ if [ -n "${TEST_WORKERS}" ]; then
         fi
 
         log_info "Deleting worker: ${worker}"
-        DELETE_OUTPUT=$(exec_in_manager hiclaw delete worker "${worker}" 2>&1)
+        DELETE_OUTPUT=$(exec_in_agent hiclaw delete worker "${worker}" 2>&1)
         if echo "${DELETE_OUTPUT}" | grep -q "deleted"; then
             log_pass "hiclaw delete worker ${worker} reported success"
         else
-            # YAML may already be gone (cleaned up by individual test's trap handler).
-            # Fall back to direct container + lifecycle cleanup.
             log_info "hiclaw delete worker ${worker} skipped (YAML likely already removed by prior test)"
             docker rm -f "hiclaw-worker-${worker}" 2>/dev/null || true
-            exec_in_manager bash /opt/hiclaw/agent/skills/worker-management/scripts/lifecycle-worker.sh \
+            exec_in_agent bash /opt/hiclaw/agent/skills/worker-management/scripts/lifecycle-worker.sh \
                 --action delete --worker "${worker}" 2>/dev/null || true
         fi
     done
@@ -175,7 +173,7 @@ fi
 # ============================================================
 log_section "Verify Lifecycle State Cleanup"
 
-POST_LIFECYCLE_WORKERS=$(exec_in_manager jq -r '.workers | keys[] | select(startswith("test-"))' ~/worker-lifecycle.json 2>/dev/null || echo "")
+POST_LIFECYCLE_WORKERS=$(exec_in_agent jq -r '.workers | keys[] | select(startswith("test-"))' ~/worker-lifecycle.json 2>/dev/null || echo "")
 if [ -z "${POST_LIFECYCLE_WORKERS}" ]; then
     log_pass "No test workers remain in worker-lifecycle.json"
 else
@@ -212,20 +210,19 @@ done
 # ============================================================
 log_section "Verify Registry Cleanup"
 
+POST_WORKERS_REGISTRY=$(exec_in_manager mc cat "${STORAGE_PREFIX}/agents/manager/workers-registry.json" 2>/dev/null || echo "{}")
 for w in ${TEST_WORKERS}; do
-    REG_ENTRY=$(exec_in_manager jq -r --arg w "${w}" '.workers[$w] // empty' /root/manager-workspace/workers-registry.json 2>/dev/null)
+    REG_ENTRY=$(echo "${POST_WORKERS_REGISTRY}" | jq -r --arg w "${w}" '.workers[$w] // empty' 2>/dev/null)
     if [ -z "${REG_ENTRY}" ]; then
         log_pass "Worker removed from workers-registry.json: ${w}"
     else
-        # Worker registry entries are not removed by hiclaw delete (only YAML is removed).
-        # The controller reconcile handles container cleanup, but registry cleanup
-        # depends on the create-worker.sh flow. This is expected for now.
         log_info "Worker still in workers-registry.json: ${w} (expected — registry cleanup is separate)"
     fi
 done
 
+POST_TEAMS_REGISTRY=$(exec_in_manager mc cat "${STORAGE_PREFIX}/agents/manager/teams-registry.json" 2>/dev/null || echo "{}")
 for t in ${TEST_TEAMS}; do
-    REG_ENTRY=$(exec_in_manager jq -r --arg t "${t}" '.teams[$t] // empty' /root/manager-workspace/teams-registry.json 2>/dev/null)
+    REG_ENTRY=$(echo "${POST_TEAMS_REGISTRY}" | jq -r --arg t "${t}" '.teams[$t] // empty' 2>/dev/null)
     if [ -z "${REG_ENTRY}" ]; then
         log_pass "Team removed from teams-registry.json: ${t}"
     else

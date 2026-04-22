@@ -27,12 +27,14 @@ _cleanup() {
     fi
     log_info "All tests passed — cleaning up test workers"
     for w in "${TEST_WORKER}" "${TEST_WORKER_OVERRIDE}"; do
-        exec_in_manager hiclaw delete worker "${w}" 2>/dev/null || true
+        exec_in_agent hiclaw delete worker "${w}" 2>/dev/null || true
         sleep 2
         docker rm -f "hiclaw-worker-${w}" 2>/dev/null || true
+        exec_in_agent rm -rf "/tmp/hiclaw-test-${w}" 2>/dev/null || true
         exec_in_manager rm -rf "/root/hiclaw-fs/agents/${w}" 2>/dev/null || true
         exec_in_manager mc rm -r --force "${STORAGE_PREFIX}/agents/${w}/" 2>/dev/null || true
     done
+    exec_in_agent rm -f "/tmp/hiclaw-test-${TEST_WORKER}.yaml" 2>/dev/null || true
     exec_in_manager rm -rf "/tmp/hiclaw-test-${TEST_WORKER_OVERRIDE}" 2>/dev/null || true
     exec_in_manager mc rm "${STORAGE_PREFIX}/hiclaw-config/packages/${TEST_WORKER_OVERRIDE}*.zip" 2>/dev/null || true
 }
@@ -76,8 +78,8 @@ AGENTS_CONTENT="# Inline Test Workspace
 - This is a test worker created via inline YAML fields
 - Respond to all messages politely"
 
-# Write YAML with inline soul and agents
-exec_in_manager bash -c "cat > /tmp/hiclaw-test-${TEST_WORKER}.yaml << 'YAMLEOF'
+# Write YAML with inline soul and agents (in agent container where hiclaw CLI runs)
+exec_in_agent bash -c "cat > /tmp/hiclaw-test-${TEST_WORKER}.yaml << 'YAMLEOF'
 apiVersion: hiclaw.io/v1beta1
 kind: Worker
 metadata:
@@ -91,7 +93,7 @@ $(echo "${AGENTS_CONTENT}" | sed 's/^/    /')
 YAMLEOF
 " 2>/dev/null
 
-YAML_EXISTS=$(exec_in_manager test -f "/tmp/hiclaw-test-${TEST_WORKER}.yaml" && echo "yes" || echo "no")
+YAML_EXISTS=$(exec_in_agent test -f "/tmp/hiclaw-test-${TEST_WORKER}.yaml" && echo "yes" || echo "no")
 if [ "${YAML_EXISTS}" = "yes" ]; then
     log_pass "Worker YAML with inline fields created"
 else
@@ -103,7 +105,7 @@ fi
 # ============================================================
 log_section "Apply Worker YAML"
 
-APPLY_OUTPUT=$(exec_in_manager hiclaw apply -f "/tmp/hiclaw-test-${TEST_WORKER}.yaml" 2>&1)
+APPLY_OUTPUT=$(exec_in_agent hiclaw apply -f "/tmp/hiclaw-test-${TEST_WORKER}.yaml" 2>&1)
 APPLY_EXIT=$?
 
 if [ ${APPLY_EXIT} -eq 0 ]; then
@@ -119,23 +121,14 @@ else
 fi
 
 # ============================================================
-# Section 4: Verify YAML in MinIO
+# Section 4: Verify CRD created
 # ============================================================
-log_section "Verify MinIO State"
+log_section "Verify Resource State"
 
-YAML_CONTENT=$(exec_in_manager mc cat "${STORAGE_PREFIX}/hiclaw-config/workers/${TEST_WORKER}.yaml" 2>/dev/null || echo "")
-assert_not_empty "${YAML_CONTENT}" "YAML file exists in MinIO hiclaw-config/workers/"
-assert_contains "${YAML_CONTENT}" "kind: Worker" "YAML contains kind: Worker"
-assert_contains "${YAML_CONTENT}" "name: ${TEST_WORKER}" "YAML contains correct name"
-assert_contains "${YAML_CONTENT}" "soul:" "YAML contains soul field"
-assert_contains "${YAML_CONTENT}" "agents:" "YAML contains agents field"
-
-# No package field should be present
-if echo "${YAML_CONTENT}" | grep -q "package:"; then
-    log_fail "YAML should not contain package field"
-else
-    log_pass "YAML correctly has no package field (inline only)"
-fi
+WORKER_JSON=$(exec_in_agent hiclaw get workers "${TEST_WORKER}" -o json 2>/dev/null || echo "")
+assert_not_empty "${WORKER_JSON}" "Worker CR exists (hiclaw get workers)"
+WORKER_NAME_CHK=$(echo "${WORKER_JSON}" | jq -r '.name // empty' 2>/dev/null)
+assert_eq "${TEST_WORKER}" "${WORKER_NAME_CHK}" "Worker CR has correct name"
 
 # ============================================================
 # Section 5: Wait for controller reconcile + Worker creation
@@ -144,26 +137,11 @@ log_section "Controller Reconcile"
 
 log_info "Waiting for mc mirror (10s) + fsnotify + reconcile + create-worker.sh..."
 
-RECONCILE_TIMEOUT=120
-RECONCILE_ELAPSED=0
-WORKER_CREATED=false
-
-while [ "${RECONCILE_ELAPSED}" -lt "${RECONCILE_TIMEOUT}" ]; do
-    if exec_in_manager cat /var/log/hiclaw/hiclaw-controller-error.log 2>/dev/null | grep -q "worker created.*${TEST_WORKER}"; then
-        WORKER_CREATED=true
-        break
-    fi
-    sleep 5
-    RECONCILE_ELAPSED=$((RECONCILE_ELAPSED + 5))
-    printf "\r[TEST INFO] Waiting for reconcile... (%ds/%ds)" "${RECONCILE_ELAPSED}" "${RECONCILE_TIMEOUT}"
-done
-echo ""
-
-if [ "${WORKER_CREATED}" = true ]; then
-    log_pass "WorkerReconciler created worker (took ~${RECONCILE_ELAPSED}s)"
+if wait_worker_provisioned "${TEST_WORKER}" 120; then
+    log_pass "WorkerReconciler provisioned worker"
 else
-    log_fail "WorkerReconciler did not create worker within ${RECONCILE_TIMEOUT}s"
-    exec_in_manager cat /var/log/hiclaw/hiclaw-controller-error.log 2>/dev/null | grep "${TEST_WORKER}" | tail -5
+    log_fail "WorkerReconciler did not provision worker within 120s"
+    exec_in_agent hiclaw get workers "${TEST_WORKER}" -o json 2>/dev/null | jq -r '.phase, .message' | head -5
 fi
 
 # Verify inline configs were written
@@ -193,12 +171,13 @@ assert_contains "${AGENTS_IN_MINIO}" "hiclaw-builtin-end" "AGENTS.md has builtin
 # ============================================================
 log_section "Verify Worker Infrastructure"
 
-# workers-registry.json
-REGISTRY_ENTRY=$(exec_in_manager jq -r --arg w "${TEST_WORKER}" '.workers[$w] // empty' /root/manager-workspace/workers-registry.json 2>/dev/null)
+# workers-registry.json (in MinIO, written by controller)
+REGISTRY_JSON=$(exec_in_manager mc cat "${STORAGE_PREFIX}/agents/manager/workers-registry.json" 2>/dev/null || echo "{}")
+REGISTRY_ENTRY=$(echo "${REGISTRY_JSON}" | jq -r --arg w "${TEST_WORKER}" '.workers[$w] // empty' 2>/dev/null)
 assert_not_empty "${REGISTRY_ENTRY}" "Worker registered in workers-registry.json"
 
-# Matrix Room
-ROOM_ID=$(echo "${REGISTRY_ENTRY}" | jq -r '.room_id // empty' 2>/dev/null)
+# Matrix Room (from CRD status)
+ROOM_ID=$(exec_in_agent hiclaw get workers "${TEST_WORKER}" -o json 2>/dev/null | jq -r '.roomID // empty')
 assert_not_empty "${ROOM_ID}" "Matrix Room created: ${ROOM_ID}"
 
 # openclaw.json in MinIO
@@ -209,8 +188,16 @@ else
     log_fail "openclaw.json not found in MinIO"
 fi
 
-# Worker container running
-CONTAINER_RUNNING=$(docker ps --format '{{.Names}}' 2>/dev/null | grep "hiclaw-worker-${TEST_WORKER}" || echo "")
+# Worker container running.
+# The "worker created" log fires as soon as initial reconcile finishes, but the
+# container may be (re)created in a follow-up reconcile if the CR status update
+# bumped ResourceVersion. Poll for up to 60s to absorb that race.
+CONTAINER_RUNNING=""
+for i in $(seq 1 60); do
+    CONTAINER_RUNNING=$(docker ps --format '{{.Names}}' 2>/dev/null | grep "hiclaw-worker-${TEST_WORKER}$" || echo "")
+    [ -n "${CONTAINER_RUNNING}" ] && break
+    sleep 1
+done
 if [ -n "${CONTAINER_RUNNING}" ]; then
     log_pass "Worker container is running: ${CONTAINER_RUNNING}"
 else
@@ -227,19 +214,29 @@ fi
 # ============================================================
 log_section "Delete Worker"
 
-DELETE_OUTPUT=$(exec_in_manager hiclaw delete worker "${TEST_WORKER}" 2>&1)
+DELETE_OUTPUT=$(exec_in_agent hiclaw delete worker "${TEST_WORKER}" 2>&1)
 if echo "${DELETE_OUTPUT}" | grep -q "deleted"; then
     log_pass "hiclaw delete reported success"
 else
     log_fail "hiclaw delete did not report success"
 fi
 
-sleep 2
-YAML_AFTER=$(exec_in_manager mc cat "${STORAGE_PREFIX}/hiclaw-config/workers/${TEST_WORKER}.yaml" 2>/dev/null || echo "")
-if [ -z "${YAML_AFTER}" ]; then
-    log_pass "YAML removed from MinIO after delete"
+# Wait for CR to be fully removed (finalizer may take time; container teardown ~10s)
+WORKER_GONE=false
+for i in $(seq 1 60); do
+    WORKER_AFTER=$(exec_in_agent hiclaw get workers "${TEST_WORKER}" -o json 2>&1 || echo "")
+    if echo "${WORKER_AFTER}" | grep -q "not found\|error\|Error" || [ -z "${WORKER_AFTER}" ]; then
+        WORKER_GONE=true
+        break
+    fi
+    sleep 1
+done
+if [ "${WORKER_GONE}" = true ]; then
+    log_pass "Worker CR removed after delete"
+elif [ -z "${WORKER_AFTER}" ]; then
+    log_pass "Worker CR removed after delete"
 else
-    log_fail "YAML still exists after delete"
+    log_fail "Worker CR still exists after delete"
 fi
 
 # ============================================================
@@ -287,17 +284,30 @@ else
     log_fail "Failed to create override test ZIP package"
 fi
 
+# Copy ZIP from controller to agent container (tar pipe avoids macOS /tmp symlink issues)
+copy_to_agent "${OVERRIDE_WORK_DIR}/${TEST_WORKER_OVERRIDE}.zip" "${OVERRIDE_WORK_DIR}/${TEST_WORKER_OVERRIDE}.zip"
+
 # Import ZIP first to get it into MinIO
-APPLY_ZIP_OUTPUT=$(exec_in_manager hiclaw apply worker --zip "${OVERRIDE_WORK_DIR}/${TEST_WORKER_OVERRIDE}.zip" --name "${TEST_WORKER_OVERRIDE}" 2>&1)
+APPLY_ZIP_OUTPUT=$(exec_in_agent hiclaw apply worker --zip "${OVERRIDE_WORK_DIR}/${TEST_WORKER_OVERRIDE}.zip" --name "${TEST_WORKER_OVERRIDE}" 2>&1)
 if [ $? -eq 0 ]; then
     log_pass "ZIP imported for override test"
 else
     log_fail "ZIP import failed for override test"
 fi
 
-# Now get the generated YAML, read the package URI, and create a new YAML with inline overrides
-PKG_URI=$(exec_in_manager mc cat "${STORAGE_PREFIX}/hiclaw-config/workers/${TEST_WORKER_OVERRIDE}.yaml" 2>/dev/null | grep "package:" | sed 's/.*package: //')
-assert_not_empty "${PKG_URI}" "Package URI extracted from generated YAML"
+# Wait for initial worker creation to complete before applying override
+log_info "Waiting for initial worker creation from ZIP import..."
+if wait_worker_provisioned "${TEST_WORKER_OVERRIDE}" 120; then
+    log_pass "ZIP worker created"
+else
+    log_fail "ZIP worker not created within 120s"
+    exec_in_agent hiclaw get workers "${TEST_WORKER_OVERRIDE}" -o json 2>/dev/null | jq -r '.phase, .message' | head -5
+fi
+
+# Discover the package URI from MinIO packages directory
+PKG_FILE=$(exec_in_manager bash -c "mc ls '${STORAGE_PREFIX}/hiclaw-config/packages/' 2>/dev/null | grep '${TEST_WORKER_OVERRIDE}' | awk '{print \$NF}'" | head -1)
+PKG_URI="oss://hiclaw-config/packages/${PKG_FILE}"
+assert_not_empty "${PKG_FILE}" "Package file found in MinIO"
 
 # Overwrite the YAML with package + inline soul/agents
 OVERRIDE_SOUL="# OVERRIDDEN SOUL FROM INLINE
@@ -306,7 +316,7 @@ This soul was set via inline field and should replace the package version."
 OVERRIDE_AGENTS="# OVERRIDDEN AGENTS FROM INLINE
 This agents config was set via inline field."
 
-exec_in_manager bash -c "cat > /tmp/hiclaw-override-${TEST_WORKER_OVERRIDE}.yaml << 'YAMLEOF'
+exec_in_agent bash -c "cat > /tmp/hiclaw-override-${TEST_WORKER_OVERRIDE}.yaml << 'YAMLEOF'
 apiVersion: hiclaw.io/v1beta1
 kind: Worker
 metadata:
@@ -322,22 +332,22 @@ YAMLEOF
 " 2>/dev/null
 
 # Apply the YAML with both package and inline fields
-APPLY_OVERRIDE=$(exec_in_manager hiclaw apply -f "/tmp/hiclaw-override-${TEST_WORKER_OVERRIDE}.yaml" 2>&1)
+APPLY_OVERRIDE=$(exec_in_agent hiclaw apply -f "/tmp/hiclaw-override-${TEST_WORKER_OVERRIDE}.yaml" 2>&1)
 if echo "${APPLY_OVERRIDE}" | grep -q "created\|configured"; then
     log_pass "Applied YAML with package + inline override"
 else
     log_fail "Failed to apply YAML with package + inline override"
 fi
 
-# Wait for reconcile
-log_info "Waiting for controller to reconcile override worker..."
+# Wait for the update reconcile (ZIP import already created the worker; override apply triggers update)
+log_info "Waiting for controller to reconcile override worker update..."
 RECONCILE_TIMEOUT=120
 RECONCILE_ELAPSED=0
-WORKER_CREATED=false
+WORKER_UPDATED=false
 
 while [ "${RECONCILE_ELAPSED}" -lt "${RECONCILE_TIMEOUT}" ]; do
-    if exec_in_manager cat /var/log/hiclaw/hiclaw-controller-error.log 2>/dev/null | grep -q "worker created.*${TEST_WORKER_OVERRIDE}"; then
-        WORKER_CREATED=true
+    if exec_in_manager cat /var/log/hiclaw/hiclaw-controller-error.log 2>/dev/null | grep -q "worker updated.*${TEST_WORKER_OVERRIDE}"; then
+        WORKER_UPDATED=true
         break
     fi
     sleep 5
@@ -346,10 +356,10 @@ while [ "${RECONCILE_ELAPSED}" -lt "${RECONCILE_TIMEOUT}" ]; do
 done
 echo ""
 
-if [ "${WORKER_CREATED}" = true ]; then
-    log_pass "Override worker created (took ~${RECONCILE_ELAPSED}s)"
+if [ "${WORKER_UPDATED}" = true ]; then
+    log_pass "Override worker updated (took ~${RECONCILE_ELAPSED}s)"
 else
-    log_fail "Override worker not created within ${RECONCILE_TIMEOUT}s"
+    log_fail "Override worker not updated within ${RECONCILE_TIMEOUT}s"
     exec_in_manager cat /var/log/hiclaw/hiclaw-controller-error.log 2>/dev/null | grep "${TEST_WORKER_OVERRIDE}" | tail -5
 fi
 
@@ -377,7 +387,7 @@ else
 fi
 
 # Clean up override worker
-exec_in_manager hiclaw delete worker "${TEST_WORKER_OVERRIDE}" 2>/dev/null
+exec_in_agent hiclaw delete worker "${TEST_WORKER_OVERRIDE}" 2>/dev/null
 log_pass "Override worker deleted"
 
 # ============================================================

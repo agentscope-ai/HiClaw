@@ -6,9 +6,15 @@ on:
       - main
     paths:
       - 'manager/**'
-      - 'docker-proxy/**'
+      - 'worker/**'
+      - 'openclaw-base/**'
       - 'hiclaw-controller/**'
       - 'tests/**'
+      - 'install/**'
+      - 'shared/**'
+      - 'copaw/**'
+      - 'hermes/**'
+      - 'Makefile'
       - '.github/workflows/test-integration.yml'
   push:
     branches:
@@ -17,9 +23,15 @@ on:
       - 'v*'
     paths:
       - 'manager/**'
-      - 'docker-proxy/**'
+      - 'worker/**'
+      - 'openclaw-base/**'
       - 'hiclaw-controller/**'
       - 'tests/**'
+      - 'install/**'
+      - 'shared/**'
+      - 'copaw/**'
+      - 'hermes/**'
+      - 'Makefile'
   workflow_dispatch:
     inputs:
       test_filter:
@@ -31,36 +43,113 @@ on:
         required: false
         default: ''
       worker_runtime:
-        description: 'Worker runtime to use'
+        description: 'Worker runtime label (informational only; the matrix always runs every entry).'
         required: false
         type: choice
         options:
+          - both
           - openclaw
           - copaw
-        default: 'openclaw'
+          - hermes
+        default: 'both'
       model:
         description: 'LLM model to use'
         required: false
         default: 'qwen3.5-plus'
 
 env:
-  MANAGER_IMAGE: hiclaw/manager-agent:ci-test
-  MANAGER_COPAW_IMAGE: hiclaw/manager-copaw:ci-test
-  WORKER_IMAGE: hiclaw/worker-agent:ci-test
-  COPAW_WORKER_IMAGE: hiclaw/copaw-worker:ci-test
-  DOCKER_PROXY_IMAGE: hiclaw/docker-proxy:ci-test
-  # Tests that do not require a GitHub token
-  NON_GITHUB_TESTS: "01 02 03 04 05 06 14 15 17 18 19 20 100"
+  # Tests that do not require a GitHub token, split into four shards for parallel execution
+  # Shard A: LLM interaction tests (sequential dependency: 02 creates alice → 03-06 use alice)
+  # Shard B: LLM interaction tests 2 (task assignment with LLM)
+  # Shard C: Controller/CR tests (independent, no cross-test dependencies)
+  # Shard D: Controller/CR tests 2 (team project DAG)
+  SHARD_A_TESTS: "01 02 03 04 05 06"
+  SHARD_B_TESTS: "14"
+  SHARD_C_TESTS: "15 17 18 19 20 100"
+  SHARD_D_TESTS: "21"
+  NON_GITHUB_TESTS: "01 02 03 04 05 06 14 15 17 18 19 20 21 100"
 
 jobs:
-  integration-tests:
+  # Step 0: Detect which paths changed so we can decide whether to rebuild
+  # the openclaw-base image (slow, ~10min) or reuse the published `:latest`.
+  # On non-PR triggers (push to main, tag, workflow_dispatch) we conservatively
+  # always rebuild so release/baseline runs validate against the current source.
+  detect-changes:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
-    permissions:
-      contents: write
-      pull-requests: write
-      actions: read
+    timeout-minutes: 2
+    outputs:
+      openclaw_base: ${{ steps.decide.outputs.openclaw_base }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          fetch-depth: 0
 
+      - name: Detect openclaw-base changes (PR only)
+        id: filter
+        if: github.event_name == 'pull_request_target'
+        uses: dorny/paths-filter@v3
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          base: ${{ github.event.pull_request.base.sha }}
+          filters: |
+            openclaw_base:
+              - 'openclaw-base/**'
+
+      - name: Decide whether to rebuild openclaw-base
+        id: decide
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request_target" ]; then
+            echo "openclaw_base=${{ steps.filter.outputs.openclaw_base }}" >> $GITHUB_OUTPUT
+          else
+            # push to main / tag / workflow_dispatch: always rebuild
+            echo "openclaw_base=true" >> $GITHUB_OUTPUT
+          fi
+
+  # Step 1a: Build the shared base image (hiclaw-controller)
+  build-base:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build hiclaw-controller
+        run: |
+          # Override HIGRESS_REGISTRY to the us-west mirror — the default
+          # cn-hangzhou registry is unreachable from GitHub-hosted runners
+          # (frequently times out on `docker pull`).
+          make build-hiclaw-controller \
+            HIGRESS_REGISTRY=higress-registry.us-west-1.cr.aliyuncs.com \
+            DOCKER_BUILD_ARGS="--build-arg APT_MIRROR="
+
+      - name: Save image
+        run: |
+          docker save hiclaw/hiclaw-controller:latest | gzip > /tmp/hiclaw-controller.tar.gz
+
+      - name: Upload image
+        uses: actions/upload-artifact@v4
+        with:
+          name: image-controller
+          path: /tmp/hiclaw-controller.tar.gz
+          retention-days: 1
+
+  # Step 1b: Build openclaw-base from this PR's source, but only when
+  # openclaw-base/** actually changed. Otherwise downstream builds reuse the
+  # published `:latest` from the registry (default Makefile behaviour).
+  build-openclaw-base:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.openclaw_base == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: Free Up Disk Space
         uses: jlumbroso/free-disk-space@main
@@ -81,91 +170,245 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Pull base images
-        run: docker pull higress-registry.us-west-1.cr.aliyuncs.com/higress/openclaw-base:latest
-
-      - name: Build images
+      - name: Build openclaw-base (local tag)
         run: |
-          RUNTIME="${{ inputs.worker_runtime || 'openclaw' }}"
-          BUILD_TARGETS="build-manager build-docker-proxy"
-          if [ "$RUNTIME" = "copaw" ]; then
-            BUILD_TARGETS="build-manager-copaw build-copaw-worker build-docker-proxy"
-          else
-            # Build copaw-worker too — team workers always use copaw runtime
-            BUILD_TARGETS="build-manager build-worker build-copaw-worker build-docker-proxy"
+          # `make build-openclaw-base` always tags as hiclaw/openclaw-base:latest
+          # (LOCAL_OPENCLAW_BASE is hardcoded in the Makefile), which is exactly
+          # what downstream build-manager/build-worker jobs consume via the
+          # OPENCLAW_BASE_IMAGE / OPENCLAW_BASE_VERSION overrides.
+          # Override HIGRESS_REGISTRY to the us-west mirror — the default
+          # cn-hangzhou registry is unreachable from GitHub-hosted runners.
+          make build-openclaw-base \
+            HIGRESS_REGISTRY=higress-registry.us-west-1.cr.aliyuncs.com \
+            DOCKER_BUILD_ARGS="--build-arg APT_MIRROR="
+          docker images | grep openclaw-base || true
+
+      - name: Save image
+        run: |
+          docker save hiclaw/openclaw-base:latest | gzip > /tmp/hiclaw-openclaw-base.tar.gz
+
+      - name: Upload image
+        uses: actions/upload-artifact@v4
+        with:
+          name: image-openclaw-base
+          path: /tmp/hiclaw-openclaw-base.tar.gz
+          retention-days: 1
+
+  # Step 2: Build downstream images in parallel (all depend on hiclaw-controller;
+  # manager and worker additionally depend on openclaw-base when it was rebuilt).
+  build-images:
+    needs: [detect-changes, build-base, build-openclaw-base]
+    # Run even if build-openclaw-base was skipped (no openclaw-base changes).
+    if: |
+      always() &&
+      needs.build-base.result == 'success' &&
+      (needs.build-openclaw-base.result == 'success' || needs.build-openclaw-base.result == 'skipped')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [embedded, manager, manager-copaw, worker, copaw-worker, hermes-worker]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Download controller image
+        uses: actions/download-artifact@v4
+        with:
+          name: image-controller
+          path: /tmp
+
+      - name: Load controller image
+        run: gunzip -c /tmp/hiclaw-controller.tar.gz | docker load
+
+      - name: Download local openclaw-base image
+        if: |
+          needs.detect-changes.outputs.openclaw_base == 'true' &&
+          (matrix.target == 'manager' || matrix.target == 'worker')
+        uses: actions/download-artifact@v4
+        with:
+          name: image-openclaw-base
+          path: /tmp
+
+      - name: Load local openclaw-base image
+        if: |
+          needs.detect-changes.outputs.openclaw_base == 'true' &&
+          (matrix.target == 'manager' || matrix.target == 'worker')
+        run: gunzip -c /tmp/hiclaw-openclaw-base.tar.gz | docker load
+
+      - name: Build image
+        run: |
+          # When openclaw-base was rebuilt from this PR's source, point manager
+          # and worker builds at the local image instead of pulling :latest from
+          # the published registry. Other targets (embedded, manager-copaw,
+          # copaw-worker) do not depend on openclaw-base so the override is a
+          # no-op for them.
+          EXTRA=""
+          if [ "${{ needs.detect-changes.outputs.openclaw_base }}" = "true" ] && \
+             { [ "${{ matrix.target }}" = "manager" ] || [ "${{ matrix.target }}" = "worker" ]; }; then
+            EXTRA="OPENCLAW_BASE_IMAGE=hiclaw/openclaw-base OPENCLAW_BASE_VERSION=latest"
+            echo "Using locally-built openclaw-base for ${{ matrix.target }}"
           fi
-          make ${BUILD_TARGETS} VERSION=ci-test HIGRESS_REGISTRY=higress-registry.us-west-1.cr.aliyuncs.com \
-            DOCKER_BUILD_ARGS="--build-arg APT_MIRROR= --build-arg PIP_INDEX_URL=https://pypi.org/simple/"
+          # Override HIGRESS_REGISTRY to the us-west mirror — the default
+          # cn-hangzhou registry is unreachable from GitHub-hosted runners.
+          make build-${{ matrix.target }} \
+            HIGRESS_REGISTRY=higress-registry.us-west-1.cr.aliyuncs.com \
+            DOCKER_BUILD_ARGS="--build-arg APT_MIRROR= --build-arg PIP_INDEX_URL=https://pypi.org/simple/" \
+            $EXTRA
+
+      - name: Save image
+        run: |
+          # Exclude already-uploaded base images (controller, openclaw-base) so
+          # each per-target tar only contains its own deltas.
+          docker save \
+            $(docker images --format '{{.Repository}}:{{.Tag}}' \
+              | grep -E '^hiclaw/' \
+              | grep -v '<none>' \
+              | grep -v 'hiclaw-controller' \
+              | grep -v 'openclaw-base') \
+            | gzip > /tmp/hiclaw-${{ matrix.target }}.tar.gz
+
+      - name: Upload image
+        uses: actions/upload-artifact@v4
+        with:
+          name: image-${{ matrix.target }}
+          path: /tmp/hiclaw-${{ matrix.target }}.tar.gz
+          retention-days: 1
+
+  # Step 3: Run test shards in parallel, each on its own runner with isolated cluster
+  integration-tests:
+    needs: build-images
+    if: always() && needs.build-images.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # OpenClaw manager + OpenClaw worker (default pairing)
+          - shard: llm-interaction
+            filter_env: SHARD_A_TESTS
+            manager_runtime: openclaw
+            worker_runtime: openclaw
+          - shard: llm-interaction-2
+            filter_env: SHARD_B_TESTS
+            manager_runtime: openclaw
+            worker_runtime: openclaw
+          - shard: controller-cr
+            filter_env: SHARD_C_TESTS
+            manager_runtime: openclaw
+            worker_runtime: openclaw
+          # CoPaw manager + CoPaw worker (full copaw runtime coverage).
+          # controller-cr-2 (test-21 team project DAG) only runs under copaw:
+          # the team controller hardcodes Runtime: "copaw" for both leader and
+          # workers, so running it under the openclaw manager is redundant.
+          - shard: llm-interaction
+            filter_env: SHARD_A_TESTS
+            manager_runtime: copaw
+            worker_runtime: copaw
+          - shard: llm-interaction-2
+            filter_env: SHARD_B_TESTS
+            manager_runtime: copaw
+            worker_runtime: copaw
+          - shard: controller-cr
+            filter_env: SHARD_C_TESTS
+            manager_runtime: copaw
+            worker_runtime: copaw
+          - shard: controller-cr-2
+            filter_env: SHARD_D_TESTS
+            manager_runtime: copaw
+            worker_runtime: copaw
+          # Hermes worker coverage: exercise bridge.py + matrix-nio adapter end-to-end.
+          # Pairs with the copaw manager because both speak matrix-nio (same
+          # adapter family), keeping the surface area small while still
+          # validating worker-side container start, config bridging, Matrix
+          # join, and task assignment for the hermes runtime. controller-cr-2
+          # (test-21 team project DAG) is intentionally excluded — the team
+          # controller hardcodes Runtime: "copaw", so it cannot exercise hermes.
+          - shard: llm-interaction
+            filter_env: SHARD_A_TESTS
+            manager_runtime: copaw
+            worker_runtime: hermes
+          - shard: llm-interaction-2
+            filter_env: SHARD_B_TESTS
+            manager_runtime: copaw
+            worker_runtime: hermes
+          - shard: controller-cr
+            filter_env: SHARD_C_TESTS
+            manager_runtime: copaw
+            worker_runtime: hermes
+
+    steps:
+      - name: Free Up Disk Space
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: false
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          swap-storage: true
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+
+      - name: Download all images
+        uses: actions/download-artifact@v4
+        with:
+          pattern: image-*
+          path: /tmp/images
+
+      - name: Load images
+        run: |
+          for f in /tmp/images/image-*/*.tar.gz; do
+            gunzip -c "$f" | docker load
+          done
 
       - name: Install dependencies
         run: sudo apt-get update && sudo apt-get install -y jq curl unzip
 
-      - name: Install HiClaw
-        env:
-          HICLAW_LLM_API_KEY: ${{ secrets.HICLAW_LLM_API_KEY }}
-        run: |
-          RUNTIME="${{ inputs.worker_runtime || 'openclaw' }}"
-          MODEL="${{ inputs.model || 'qwen3.5-plus' }}"
-          if [ "$RUNTIME" = "copaw" ]; then
-            WORKER_IMG="${{ env.COPAW_WORKER_IMAGE }}"
-            MANAGER_IMG="${{ env.MANAGER_COPAW_IMAGE }}"
-            MANAGER_RUNTIME="copaw"
-          else
-            WORKER_IMG="${{ env.WORKER_IMAGE }}"
-            MANAGER_IMG="${{ env.MANAGER_IMAGE }}"
-            MANAGER_RUNTIME="openclaw"
-          fi
-          HICLAW_NON_INTERACTIVE=1 \
-          HICLAW_VERSION=ci-test \
-          HICLAW_MOUNT_SOCKET=1 \
-          HICLAW_MATRIX_E2EE=0 \
-          HICLAW_LLM_PROVIDER=qwen \
-          HICLAW_MANAGER_RUNTIME="$MANAGER_RUNTIME" \
-          HICLAW_DEFAULT_WORKER_RUNTIME="$RUNTIME" \
-          HICLAW_DEFAULT_MODEL="$MODEL" \
-          HICLAW_INSTALL_MANAGER_IMAGE="$MANAGER_IMG" \
-          HICLAW_INSTALL_MANAGER_COPAW_IMAGE="${{ env.MANAGER_COPAW_IMAGE }}" \
-          HICLAW_INSTALL_WORKER_IMAGE="$WORKER_IMG" \
-          HICLAW_INSTALL_COPAW_WORKER_IMAGE=${{ env.COPAW_WORKER_IMAGE }} \
-          HICLAW_INSTALL_DOCKER_PROXY_IMAGE=${{ env.DOCKER_PROXY_IMAGE }} \
-          bash ./install/hiclaw-install.sh manager
-
-      - name: Wait for Manager to be ready
-        run: |
-          for i in {1..60}; do
-            if docker exec hiclaw-manager curl -sf http://127.0.0.1:8001/ >/dev/null 2>&1; then
-              if docker exec hiclaw-manager curl -sf http://127.0.0.1:6167/_matrix/client/versions >/dev/null 2>&1; then
-                echo "Manager ready, waiting 60s for agent initialization..."
-                sleep 60
-                exit 0
-              fi
-            fi
-            echo "Waiting... ($i/60)"
-            sleep 5
-          done
-          echo "Manager did not become ready in time"
-          docker logs hiclaw-manager --tail 50
-          exit 1
-
-      - name: Enable YOLO mode
-        run: docker exec hiclaw-manager touch /root/manager-workspace/yolo-mode
-
-      - name: Run integration tests
+      - name: Run embedded integration tests
         id: tests
         env:
           HICLAW_LLM_API_KEY: ${{ secrets.HICLAW_LLM_API_KEY }}
+          HICLAW_LLM_PROVIDER: qwen
+          HICLAW_DEFAULT_MODEL: ${{ inputs.model || 'qwen3.5-plus' }}
+          HICLAW_MANAGER_RUNTIME: ${{ matrix.manager_runtime }}
+          # Propagate the worker runtime to worker-creating tests too. Without
+          # this the apply-zip path (test-15) silently falls back to openclaw
+          # on the copaw and hermes matrix entries because the controller's
+          # backend resolves an empty req.Runtime to RuntimeOpenClaw — which
+          # would make those dimensions run hidden openclaw workers and
+          # invalidate the parallel-runtime coverage we set up above.
+          HICLAW_DEFAULT_WORKER_RUNTIME: ${{ matrix.worker_runtime }}
         run: |
           FILTER="${{ github.event.inputs.test_filter }}"
-          [ -z "$FILTER" ] && FILTER="${NON_GITHUB_TESTS}"
-          TEST_GATEWAY_PORT=18080 TEST_CONSOLE_PORT=18001 TEST_MANAGER_CONTAINER=hiclaw-manager \
-            ./tests/run-all-tests.sh --skip-build --use-existing --test-filter "$FILTER"
+          if [ -z "$FILTER" ]; then
+            FILTER="${{ env[matrix.filter_env] }}"
+          fi
+          SKIP_BUILD=1 make test-embedded \
+            TEST_FILTER="$FILTER"
 
       # ============================================================
       # Metrics: download latest release baseline for comparison
       # ============================================================
 
       - name: Download latest release baseline
-        if: github.event_name == 'pull_request_target'
+        if: github.event_name == 'pull_request_target' && matrix.shard == 'llm-interaction' && matrix.manager_runtime == 'openclaw' && matrix.worker_runtime == 'openclaw'
         continue-on-error: true
         run: |
           mkdir -p baseline-metrics
@@ -185,7 +428,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Generate metrics comparison and post PR comment
-        if: github.event_name == 'pull_request_target'
+        if: github.event_name == 'pull_request_target' && matrix.shard == 'llm-interaction' && matrix.manager_runtime == 'openclaw' && matrix.worker_runtime == 'openclaw'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -193,7 +436,9 @@ jobs:
 
           # Collect current summary across all tests that ran
           FILTER="${{ github.event.inputs.test_filter }}"
-          [ -z "$FILTER" ] && FILTER="${NON_GITHUB_TESTS}"
+          if [ -z "$FILTER" ]; then
+            FILTER="${{ env[matrix.filter_env] }}"
+          fi
           TEST_NAMES=$(echo "$FILTER" | tr ' ' '\n' | while read n; do
             f=$(ls tests/output/metrics-*${n}*.json 2>/dev/null | head -1)
             [ -n "$f" ] && basename "$f" .json | sed 's/^metrics-//'
@@ -270,7 +515,7 @@ jobs:
             DEBUG_TAIL=$(find "$DEBUG_DIR" -name "*.log" -exec tail -20 {} + 2>/dev/null | tail -80)
           fi
 
-          BODY="## ❌ Integration Tests Failed
+          BODY="## ❌ Integration Tests Failed (${{ matrix.shard }} / mgr=${{ matrix.manager_runtime }} / wk=${{ matrix.worker_runtime }})
 
           **Commit:** ${{ github.event.pull_request.head.sha }}
           **Workflow run:** [#${{ github.run_number }}](${ARTIFACT_URL})
@@ -298,7 +543,7 @@ jobs:
 
           # Update or create comment
           EXISTING=$(gh api "repos/$REPO/issues/$PR_NUM/comments" \
-            --jq '.[] | select(.body | startswith("## ❌ Integration Tests Failed")) | .id' | head -1)
+            --jq '.[] | select(.body | startswith("## ❌ Integration Tests Failed (${{ matrix.shard }} / mgr=${{ matrix.manager_runtime }} / wk=${{ matrix.worker_runtime }})")) | .id' | head -1)
           if [ -n "$EXISTING" ]; then
             gh api --method PATCH "repos/$REPO/issues/comments/$EXISTING" -f body="$BODY"
           else
@@ -316,7 +561,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: test-artifacts-${{ github.sha }}
+          name: test-artifacts-${{ matrix.shard }}-mgr-${{ matrix.manager_runtime }}-wk-${{ matrix.worker_runtime }}-${{ github.sha }}
           path: test-artifacts/
           retention-days: 7
 
@@ -325,7 +570,7 @@ jobs:
       # ============================================================
 
       - name: Generate release baseline
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(github.ref, 'refs/tags/v') && matrix.shard == 'llm-interaction' && matrix.manager_runtime == 'openclaw' && matrix.worker_runtime == 'openclaw'
         run: |
           source tests/lib/agent-metrics.sh
           TEST_NAMES=$(echo "$NON_GITHUB_TESTS" | tr ' ' '\n' | while read n; do
@@ -337,7 +582,7 @@ jobs:
           cat metrics-baseline.json | jq '{totals: .totals, by_role: .by_role}'
 
       - name: Upload baseline to release
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(github.ref, 'refs/tags/v') && matrix.shard == 'llm-interaction' && matrix.manager_runtime == 'openclaw' && matrix.worker_runtime == 'openclaw'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -346,7 +591,7 @@ jobs:
           echo "✅ Baseline uploaded to release ${GITHUB_REF_NAME}"
 
       - name: Upload debug log to release
-        if: startsWith(github.ref, 'refs/tags/v') && always()
+        if: startsWith(github.ref, 'refs/tags/v') && matrix.shard == 'llm-interaction' && matrix.manager_runtime == 'openclaw' && matrix.worker_runtime == 'openclaw' && always()
         continue-on-error: true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -360,16 +605,18 @@ jobs:
 
       - name: Cleanup
         if: always()
-        run: make uninstall || true && docker system prune -af || true
+        run: make uninstall-embedded 2>/dev/null || true && docker system prune -af || true
 
       - name: Test Summary
         if: always()
         run: |
           echo "### Integration Test Summary" >> $GITHUB_STEP_SUMMARY
-          echo "- Tests: \`$NON_GITHUB_TESTS\`" >> $GITHUB_STEP_SUMMARY
-          echo "- Manager Image: \`${{ env.MANAGER_IMAGE }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- Worker Runtime: \`${{ inputs.worker_runtime || 'openclaw' }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Shard: \`${{ matrix.shard }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Tests: \`${{ env[matrix.filter_env] }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Manager Runtime: \`${{ matrix.manager_runtime }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Worker Runtime: \`${{ matrix.worker_runtime }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- Model: \`${{ inputs.model || 'qwen3.5-plus' }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Install Mode: embedded (make test-embedded)" >> $GITHUB_STEP_SUMMARY
 
 # ============================================================
 # Manual baseline re-generation for a specific release version
@@ -402,13 +649,16 @@ jobs:
       - name: Pull published images
         run: |
           VERSION=${{ steps.version.outputs.version }}
-          REGISTRY=higress-registry.cn-hangzhou.cr.aliyuncs.com/higress
+          # Use the us-west mirror — the cn-hangzhou registry is unreachable
+          # from GitHub-hosted runners (frequently times out on `docker pull`).
+          # Published images are auto-mirrored from cn-hangzhou to us-west-1.
+          REGISTRY=higress-registry.us-west-1.cr.aliyuncs.com/higress
           docker pull ${REGISTRY}/hiclaw-manager:${VERSION}
           docker pull ${REGISTRY}/hiclaw-worker:${VERSION}
-          docker pull ${REGISTRY}/hiclaw-docker-proxy:${VERSION}
+          docker pull ${REGISTRY}/hiclaw-controller:${VERSION}
           docker tag ${REGISTRY}/hiclaw-manager:${VERSION} hiclaw/manager-agent:${VERSION}
           docker tag ${REGISTRY}/hiclaw-worker:${VERSION} hiclaw/worker-agent:${VERSION}
-          docker tag ${REGISTRY}/hiclaw-docker-proxy:${VERSION} hiclaw/docker-proxy:${VERSION}
+          docker tag ${REGISTRY}/hiclaw-controller:${VERSION} hiclaw/hiclaw-controller:${VERSION}
 
       - name: Install HiClaw
         env:
@@ -422,7 +672,7 @@ jobs:
           HICLAW_LLM_PROVIDER=qwen \
           HICLAW_INSTALL_MANAGER_IMAGE=hiclaw/manager-agent:${VERSION} \
           HICLAW_INSTALL_WORKER_IMAGE=hiclaw/worker-agent:${VERSION} \
-          HICLAW_INSTALL_DOCKER_PROXY_IMAGE=hiclaw/docker-proxy:${VERSION} \
+          HICLAW_INSTALL_CONTROLLER_IMAGE=hiclaw/hiclaw-controller:${VERSION} \
           bash ./install/hiclaw-install.sh manager
 
       - name: Wait for Manager to be ready
@@ -501,4 +751,4 @@ jobs:
 
       - name: Cleanup
         if: always()
-        run: make uninstall || true && docker system prune -af || true
+        run: make uninstall-embedded 2>/dev/null || true && docker system prune -af || true

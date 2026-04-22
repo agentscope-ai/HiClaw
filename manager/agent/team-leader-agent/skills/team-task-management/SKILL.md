@@ -1,6 +1,6 @@
 ---
 name: team-task-management
-description: Use when you need to assign tasks to team workers, track team task progress, or manage team-state.json. Use send-team-message.sh to communicate with workers. Never do worker tasks yourself.
+description: Use when you need to assign tasks to team workers, track team task progress, or manage team-state.json. Use `copaw channels send` CLI via shell to communicate with workers. Never do worker tasks yourself.
 ---
 
 # Team Task Management
@@ -42,10 +42,12 @@ Your Coordination section (in AGENTS.md, already in your system prompt) has:
 - **Team Workers** — each worker's Matrix ID
 
 ```bash
-bash ./skills/team-task-management/scripts/send-team-message.sh \
-  --room-id '<Team Room from Coordination section>' \
-  --to '<worker Matrix ID from Coordination section>' \
-  --message '@worker-name:domain New task [st-01]: Design API endpoints. Please file-sync and read teams/<team>/tasks/st-01/spec.md. @mention me when complete.'
+copaw channels send \
+  --agent-id default \
+  --channel matrix \
+  --target-user '<worker Matrix ID from Coordination section>' \
+  --target-session '<Team Room from Coordination section>' \
+  --text '@worker-name:domain New task [st-01]: Design API endpoints. Please file-sync and read teams/<team>/tasks/st-01/spec.md. @mention me when complete.'
 ```
 
 The message MUST tell the worker to file-sync and give the `shared/tasks/<id>/spec.md` path (workers see it locally after sync).
@@ -70,8 +72,12 @@ bash ./skills/team-task-management/scripts/manage-team-state.sh \
 
 ```bash
 # Send @mention to a worker (REQUIRED for task assignment)
-bash ./skills/team-task-management/scripts/send-team-message.sh \
-  --room-id '!room' --to '@worker:domain' --message 'message'
+copaw channels send \
+  --agent-id default \
+  --channel matrix \
+  --target-user '@worker:domain' \
+  --target-session '!room' \
+  --text '@worker:domain message'
 
 # Track task state
 bash ./skills/team-task-management/scripts/manage-team-state.sh \

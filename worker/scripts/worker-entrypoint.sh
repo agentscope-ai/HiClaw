@@ -56,6 +56,11 @@ mc mirror "${HICLAW_STORAGE_PREFIX}/agents/${WORKER_NAME}/" "${WORKSPACE}/" --ov
     --exclude ".openclaw/matrix/**" --exclude ".openclaw/canvas/**" --exclude "credentials/**"
 mc mirror "${HICLAW_STORAGE_PREFIX}/shared/" "${HICLAW_ROOT}/shared/" --overwrite 2>/dev/null || true
 
+# Mark pull completion — the local→remote sync loop uses this marker to avoid
+# pushing back files that were just pulled (their mtime is fresh from the pull).
+PULL_MARKER="${WORKSPACE}/.last-pull"
+touch "${PULL_MARKER}"
+
 # Verify essential files exist, retry if sync is still in progress
 RETRY=0
 while [ ! -f "${WORKSPACE}/openclaw.json" ] || [ ! -f "${WORKSPACE}/SOUL.md" ] \
@@ -69,6 +74,7 @@ while [ ! -f "${WORKSPACE}/openclaw.json" ] || [ ! -f "${WORKSPACE}/SOUL.md" ] \
     sleep 5
     mc mirror "${HICLAW_STORAGE_PREFIX}/agents/${WORKER_NAME}/" "${WORKSPACE}/" --overwrite \
         --exclude ".openclaw/matrix/**" --exclude ".openclaw/canvas/**" --exclude "credentials/**" 2>/dev/null || true
+    touch "${PULL_MARKER}"
 done
 
 # HOME is already set to WORKSPACE via docker run -e HOME=...
@@ -144,27 +150,51 @@ log "HOME set to ${HOME} (workspace files will be synced to MinIO)"
 #     2. Notifying the other side via Matrix @mention so they can pull on demand
 #
 #   Local -> Remote: change-triggered push of Worker-managed content
-#     - Uses find to detect files modified in last 10s; only runs mc mirror when needed
+#     - Uses find to detect files modified after the last pull; only runs mc mirror when needed
 #     - Avoids mc mirror --watch TOCTOU bug (crashes on atomic ops like npm install)
-#     - Excludes Manager-managed files (openclaw.json, config/mcporter.json) and caches
+#     - The bulk mirror excludes openclaw.json (has its own merge protocol),
+#       SOUL.md/AGENTS.md/HEARTBEAT.md (handled by the per-file loop below
+#       with an mtime guard), and various caches.
+#     - The per-file `mc cp`-if-newer loop pushes SOUL.md/AGENTS.md/HEARTBEAT.md
+#       only when the local copy was modified after the last pull. This lets
+#       the agent persist its own self-edits (HEARTBEAT.md checklist tweaks,
+#       SOUL.md "personality evolution") without pushing back the unmodified
+#       package content that was just pulled. mc mirror is run before the
+#       touch ${PULL_MARKER} on every pull path, so package content always
+#       has mtime <= PULL_MARKER and the -nt check stays false until the
+#       agent itself writes.
 #
 #   Remote -> Local: on-demand pull via file-sync skill (triggered by Manager @mention)
 #     + 5-minute fallback pull of Manager-managed paths as safety net
+#       The fallback refreshes ${PULL_MARKER} so the change-triggered loop
+#       does not misinterpret freshly-pulled openclaw.json/skills mtimes as
+#       agent edits and spin forever on no-op pushes.
 #
 # ────────────────────────────────────────────────────────────────────────────
 (
     while true; do
-        CHANGED=$(find "${WORKSPACE}/" -type f -newermt "10 seconds ago" 2>/dev/null | head -1)
+        # Only push files modified AFTER the last pull (avoids pushing back freshly-pulled files)
+        CHANGED=$(find "${WORKSPACE}/" -type f -newer "${PULL_MARKER}" 2>/dev/null | head -1)
         if [ -n "${CHANGED}" ]; then
             ensure_mc_credentials 2>/dev/null || true
             if ! mc mirror "${WORKSPACE}/" "${HICLAW_STORAGE_PREFIX}/agents/${WORKER_NAME}/" --overwrite \
-                --exclude "openclaw.json" --exclude "config/mcporter.json" --exclude "mcporter-servers.json" --exclude ".agents/**" \
+                --exclude "openclaw.json" \
+                --exclude "config/mcporter.json" --exclude "mcporter-servers.json" --exclude ".agents/**" \
                 --exclude "credentials/**" \
                 --exclude ".cache/**" --exclude ".npm/**" \
                 --exclude ".local/**" --exclude ".mc/**" --exclude "*.lock" \
-                --exclude ".openclaw/matrix/**" --exclude ".openclaw/canvas/**" 2>&1; then
+                --exclude ".last-pull" \
+                --exclude ".openclaw/matrix/**" --exclude ".openclaw/canvas/**" \
+                --exclude "SOUL.md" --exclude "AGENTS.md" --exclude "HEARTBEAT.md" 2>&1; then
                 log "WARNING: Local->Remote sync failed"
             fi
+            # Per-file push for agent-self-modifiable files: only when locally
+            # modified after the last pull. See block comment above for design.
+            for _mf in SOUL.md AGENTS.md HEARTBEAT.md; do
+                if [ -f "${WORKSPACE}/${_mf}" ] && [ "${WORKSPACE}/${_mf}" -nt "${PULL_MARKER}" ]; then
+                    mc cp "${WORKSPACE}/${_mf}" "${HICLAW_STORAGE_PREFIX}/agents/${WORKER_NAME}/${_mf}" 2>/dev/null || true
+                fi
+            done
         fi
         sleep 5
     done
@@ -184,6 +214,10 @@ log "Local->Remote change-triggered sync started (PID: $!)"
         mc mirror "${HICLAW_STORAGE_PREFIX}/agents/${WORKER_NAME}/skills/" "${WORKSPACE}/skills/" --overwrite 2>/dev/null || true
         find "${WORKSPACE}/skills" -name '*.sh' -exec chmod +x {} + 2>/dev/null || true
         mc mirror "${HICLAW_STORAGE_PREFIX}/shared/" "${HICLAW_ROOT}/shared/" --overwrite --newer-than "5m" 2>/dev/null || true
+        # Refresh PULL_MARKER so the change-triggered push loop doesn't
+        # re-trigger forever on freshly-pulled openclaw.json/skills mtimes,
+        # and so the per-file -nt guard correctly classifies post-pull edits.
+        touch "${PULL_MARKER}"
     done
 ) &
 log "Remote->Local fallback sync started (Manager-managed files only, every 5m, PID: $!)"
@@ -277,5 +311,42 @@ fi
 # Disable full-process respawn so the CLI uses its internal restart loop.
 # Without this, config reload spawns a detached child and exits, killing the container.
 export OPENCLAW_NO_RESPAWN=1
+
+# Optional matrix-plugin trace logging — when HICLAW_MATRIX_DEBUG=1 is set in
+# the worker environment (propagated by the controller / install script), turn
+# on OPENCLAW_MATRIX_DEBUG so the matrix plugin emits structured INFO-level
+# lifecycle traces (sync.state transitions, room.invite/join, message handler
+# arrival + filter outcomes). Useful when diagnosing "worker never joined the
+# room" / "manager never replied" hangs without rebuilding the image.
+if [ "${HICLAW_MATRIX_DEBUG:-}" = "1" ] && [ -z "${OPENCLAW_MATRIX_DEBUG:-}" ]; then
+    export OPENCLAW_MATRIX_DEBUG=1
+    log "HICLAW_MATRIX_DEBUG=1 detected; OPENCLAW_MATRIX_DEBUG=1 exported for matrix plugin tracing"
+fi
+
+# ============================================================
+# Step 5c: Background readiness reporter
+# ============================================================
+# Wait for local gateway health, then report ready via hiclaw CLI.
+if [ -n "${HICLAW_CONTROLLER_URL:-}" ]; then
+(
+        # Phase 1: Wait for gateway to be healthy (with timeout)
+        TIMEOUT=120; ELAPSED=0
+        while [ "${ELAPSED}" -lt "${TIMEOUT}" ]; do
+            if openclaw gateway health --json 2>/dev/null | grep -q '"ok"' 2>/dev/null; then
+                break
+            fi
+            sleep 5; ELAPSED=$((ELAPSED + 5))
+        done
+
+        if [ "${ELAPSED}" -ge "${TIMEOUT}" ]; then
+            log "WARNING: readiness reporter timed out waiting for gateway after ${TIMEOUT}s"
+            exit 1
+        fi
+
+        # Report ready to controller via hiclaw CLI
+        hiclaw worker report-ready
+    ) &
+    log "Background readiness reporter started (PID: $!)"
+fi
 
 exec openclaw gateway run --verbose --force

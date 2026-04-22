@@ -5,7 +5,7 @@ description: Use for standalone Matrix admin requests (register users, create ro
 
 # Matrix Server Management
 
-Manage the Tuwunel Matrix Homeserver at `${HICLAW_MATRIX_SERVER}`. User ID format: `@<username>:${HICLAW_MATRIX_DOMAIN}`.
+Manage the Tuwunel Matrix Homeserver at `${HICLAW_MATRIX_URL}`. User ID format: `@<username>:${HICLAW_MATRIX_DOMAIN}`.
 
 ## Gotchas
 
