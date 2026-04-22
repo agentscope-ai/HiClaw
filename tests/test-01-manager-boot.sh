@@ -111,11 +111,11 @@ log_pass "Manager runtime: ${MANAGER_RUNTIME}"
 # Runtime-specific config verification (agent container)
 case "${MANAGER_RUNTIME}" in
     copaw)
-        COPAW_DIR="/root/manager-workspace/.copaw"
-        if docker exec "${_AGENT_CTR}" jq -e '.channels.matrix.enabled' "${COPAW_DIR}/config.json" >/dev/null 2>&1; then
-            log_pass "CoPaw config.json valid"
+        AGENT_JSON="/root/manager-workspace/.copaw/workspaces/default/agent.json"
+        if docker exec "${_AGENT_CTR}" jq -e '.channels.matrix.enabled == true' "${AGENT_JSON}" >/dev/null 2>&1; then
+            log_pass "CoPaw agent.json valid"
         else
-            log_fail "CoPaw config.json valid"
+            log_fail "CoPaw agent.json valid"
         fi
 
         if docker exec "${_AGENT_CTR}" pgrep -f "copaw app" >/dev/null 2>&1; then

@@ -328,17 +328,19 @@ func wrapWithBuiltinMarkers(data []byte) []byte {
 }
 
 // WriteInlineConfigs writes inline identity/soul/agents content to the agent directory.
-// For copaw runtime, identity is merged into SOUL.md since copaw doesn't support IDENTITY.md.
+// For copaw and hermes runtimes, identity is merged into SOUL.md since neither
+// supports a separate IDENTITY.md file.
 // This function is called AFTER DeployToMinIO so inline fields override package files.
 func WriteInlineConfigs(agentDir, runtime, identity, soul, agents string) error {
 	if err := os.MkdirAll(agentDir, 0755); err != nil {
 		return fmt.Errorf("create agent dir %s: %w", agentDir, err)
 	}
 
-	isCoPaw := strings.EqualFold(runtime, "copaw")
+	mergeIdentityIntoSoul := strings.EqualFold(runtime, "copaw") ||
+		strings.EqualFold(runtime, "hermes")
 
-	if isCoPaw {
-		// CoPaw: merge identity into soul (prepend)
+	if mergeIdentityIntoSoul {
+		// CoPaw / Hermes: merge identity into soul (prepend)
 		merged := ""
 		if identity != "" {
 			merged += strings.TrimSpace(identity) + "\n\n"

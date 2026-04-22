@@ -153,6 +153,57 @@ func TestWriteInlineConfigs_CoPawIdentityOnly(t *testing.T) {
 	assertFileContent(t, filepath.Join(dir, "SOUL.md"), "identity only")
 }
 
+func TestWriteInlineConfigs_AllFields_Hermes(t *testing.T) {
+	dir := t.TempDir()
+
+	err := WriteInlineConfigs(dir, "hermes", "identity content", "soul content", "agents content")
+	if err != nil {
+		t.Fatalf("WriteInlineConfigs failed: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(dir, "IDENTITY.md")); err == nil {
+		t.Error("IDENTITY.md should not exist for hermes runtime")
+	}
+
+	soulData, err := os.ReadFile(filepath.Join(dir, "SOUL.md"))
+	if err != nil {
+		t.Fatalf("failed to read SOUL.md: %v", err)
+	}
+	soul := string(soulData)
+	if !strings.HasPrefix(soul, "identity content") {
+		t.Errorf("SOUL.md should start with identity content, got: %s", soul[:min(len(soul), 50)])
+	}
+	if !strings.Contains(soul, "soul content") {
+		t.Error("SOUL.md should contain soul content")
+	}
+
+	assertFileContains(t, filepath.Join(dir, "AGENTS.md"), "agents content")
+}
+
+func TestWriteInlineConfigs_HermesMergesIdentityIntoSoul(t *testing.T) {
+	dir := t.TempDir()
+
+	err := WriteInlineConfigs(dir, "hermes", "# Identity\nName: Alice", "# Role\nDevOps engineer", "")
+	if err != nil {
+		t.Fatalf("WriteInlineConfigs failed: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(dir, "SOUL.md"))
+	if err != nil {
+		t.Fatalf("failed to read SOUL.md: %v", err)
+	}
+	content := string(data)
+
+	idxIdentity := strings.Index(content, "# Identity")
+	idxRole := strings.Index(content, "# Role")
+	if idxIdentity < 0 || idxRole < 0 {
+		t.Fatalf("expected both identity and role in SOUL.md, got: %s", content)
+	}
+	if idxIdentity >= idxRole {
+		t.Error("identity should be prepended before soul content")
+	}
+}
+
 func TestWriteInlineConfigs_CreatesDir(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "nested", "agent")
 

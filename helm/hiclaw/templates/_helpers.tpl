@@ -163,3 +163,8 @@ app.kubernetes.io/component: {{ .component }}
 {{- $tag := default .Values.global.imageTag .Values.worker.defaultImage.copaw.tag }}
 {{- printf "%s:%s" .Values.worker.defaultImage.copaw.repository $tag }}
 {{- end }}
+
+{{- define "hiclaw.worker.hermesImage" -}}
+{{- $tag := default .Values.global.imageTag .Values.worker.defaultImage.hermes.tag }}
+{{- printf "%s:%s" .Values.worker.defaultImage.hermes.repository $tag }}
+{{- end }}

@@ -131,9 +131,9 @@ func TestManagerDelete_CleansUpAll(t *testing.T) {
 		return client.IgnoreNotFound(err)
 	})
 
-	_, deprovCount, _, deactivateCount := mockMgrProv.CallCounts()
-	if deactivateCount == 0 {
-		t.Error("DeactivateMatrixUser should have been called")
+	_, deprovCount, _, leaveRoomsCount := mockMgrProv.CallCounts()
+	if leaveRoomsCount == 0 {
+		t.Error("LeaveAllManagerRooms should have been called")
 	}
 	if deprovCount == 0 {
 		t.Error("DeprovisionManager should have been called")

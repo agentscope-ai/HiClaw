@@ -26,6 +26,7 @@
 #   HICLAW_INSTALL_MANAGER_IMAGE       Override manager image (e.g., local build)
 #   HICLAW_INSTALL_WORKER_IMAGE        Override worker image  (e.g., local build)
 #   HICLAW_INSTALL_COPAW_WORKER_IMAGE  Override copaw worker image (e.g., local build)
+#   HICLAW_INSTALL_HERMES_WORKER_IMAGE Override hermes worker image (e.g., local build)
 #   HICLAW_NACOS_REGISTRY_URI          Default Nacos registry URI for Worker market search/import
 #                                      (default: nacos://market.hiclaw.io:80/public)
 #   HICLAW_NACOS_USERNAME              Default Nacos username for nacos:// package imports (optional)
@@ -888,6 +889,7 @@ MANAGER_IMAGE="${HICLAW_INSTALL_MANAGER_IMAGE:-}"
 MANAGER_COPAW_IMAGE="${HICLAW_INSTALL_MANAGER_COPAW_IMAGE:-}"
 WORKER_IMAGE="${HICLAW_INSTALL_WORKER_IMAGE:-}"
 COPAW_WORKER_IMAGE="${HICLAW_INSTALL_COPAW_WORKER_IMAGE:-}"
+HERMES_WORKER_IMAGE="${HICLAW_INSTALL_HERMES_WORKER_IMAGE:-}"
 CONTROLLER_IMAGE="${HICLAW_INSTALL_CONTROLLER_IMAGE:-}"
 
 resolve_image_tags() {
@@ -895,6 +897,7 @@ resolve_image_tags() {
     MANAGER_COPAW_IMAGE="${HICLAW_INSTALL_MANAGER_COPAW_IMAGE:-${HICLAW_REGISTRY}/higress/hiclaw-manager-copaw:${HICLAW_VERSION}}"
     WORKER_IMAGE="${HICLAW_INSTALL_WORKER_IMAGE:-${HICLAW_REGISTRY}/higress/hiclaw-worker:${HICLAW_VERSION}}"
     COPAW_WORKER_IMAGE="${HICLAW_INSTALL_COPAW_WORKER_IMAGE:-${HICLAW_REGISTRY}/higress/hiclaw-copaw-worker:${HICLAW_VERSION}}"
+    HERMES_WORKER_IMAGE="${HICLAW_INSTALL_HERMES_WORKER_IMAGE:-${HICLAW_REGISTRY}/higress/hiclaw-hermes-worker:${HICLAW_VERSION}}"
     EMBEDDED_IMAGE="${HICLAW_INSTALL_EMBEDDED_IMAGE:-${HICLAW_REGISTRY}/higress/hiclaw-embedded:${HICLAW_VERSION}}"
 }
 
@@ -2287,8 +2290,9 @@ HICLAW_CMS_METRICS_ENABLED=${HICLAW_CMS_METRICS_ENABLED:-false}
 # Worker images (for direct container creation)
 HICLAW_WORKER_IMAGE=${WORKER_IMAGE}
 HICLAW_COPAW_WORKER_IMAGE=${COPAW_WORKER_IMAGE}
+HICLAW_HERMES_WORKER_IMAGE=${HERMES_WORKER_IMAGE}
 
-# Default Worker runtime (openclaw | copaw)
+# Default Worker runtime (openclaw | copaw | hermes)
 HICLAW_DEFAULT_WORKER_RUNTIME=${HICLAW_DEFAULT_WORKER_RUNTIME:-openclaw}
 
 # Matrix E2EE (0=disabled, 1=enabled; default: 0)
@@ -2416,11 +2420,17 @@ EOF
     fi
 
     # Pull worker image for the selected runtime
-    if [ "${HICLAW_DEFAULT_WORKER_RUNTIME}" = "copaw" ]; then
-        _pull_image "${COPAW_WORKER_IMAGE}" "install.image.worker_exists" "install.image.pulling_worker"
-    else
-        _pull_image "${WORKER_IMAGE}" "install.image.worker_exists" "install.image.pulling_worker"
-    fi
+    case "${HICLAW_DEFAULT_WORKER_RUNTIME}" in
+        copaw)
+            _pull_image "${COPAW_WORKER_IMAGE}" "install.image.worker_exists" "install.image.pulling_worker"
+            ;;
+        hermes)
+            _pull_image "${HERMES_WORKER_IMAGE}" "install.image.worker_exists" "install.image.pulling_worker"
+            ;;
+        *)
+            _pull_image "${WORKER_IMAGE}" "install.image.worker_exists" "install.image.pulling_worker"
+            ;;
+    esac
 
     # Always pull copaw worker image — team workers require copaw runtime
     if [ "${HICLAW_DEFAULT_WORKER_RUNTIME}" != "copaw" ]; then
@@ -2432,11 +2442,16 @@ EOF
         fi
     fi
 
-    # During upgrade, also pull the other worker image if containers using it exist locally.
+    # During upgrade, also pull the other worker images if containers using them exist locally.
     if [ "${HICLAW_UPGRADE:-0}" = "1" ]; then
-        if [ "${HICLAW_DEFAULT_WORKER_RUNTIME}" = "copaw" ]; then
+        if [ "${HICLAW_DEFAULT_WORKER_RUNTIME}" != "openclaw" ]; then
             if ${DOCKER_CMD} image inspect "${WORKER_IMAGE}" >/dev/null 2>&1; then
                 _pull_image "${WORKER_IMAGE}" "install.image.worker_exists" "install.image.pulling_worker"
+            fi
+        fi
+        if [ "${HICLAW_DEFAULT_WORKER_RUNTIME}" != "hermes" ]; then
+            if ${DOCKER_CMD} image inspect "${HERMES_WORKER_IMAGE}" >/dev/null 2>&1; then
+                _pull_image "${HERMES_WORKER_IMAGE}" "install.image.worker_exists" "install.image.pulling_worker"
             fi
         fi
     fi
@@ -2619,9 +2634,10 @@ CREDEOF
             -e "HICLAW_MANAGER_GATEWAY_KEY=${HICLAW_MANAGER_GATEWAY_KEY}"
             -e "HICLAW_MANAGER_RUNTIME=${HICLAW_MANAGER_RUNTIME:-openclaw}"
             -e "HICLAW_MANAGER_IMAGE=$([ "${HICLAW_MANAGER_RUNTIME}" = "copaw" ] && echo "${MANAGER_COPAW_IMAGE}" || echo "${MANAGER_IMAGE}")"
+            -e "HICLAW_DEFAULT_WORKER_RUNTIME=${HICLAW_DEFAULT_WORKER_RUNTIME:-openclaw}"
             -e "HICLAW_WORKER_IMAGE=${WORKER_IMAGE}"
             -e "HICLAW_COPAW_WORKER_IMAGE=${COPAW_WORKER_IMAGE}"
-            -e "HICLAW_DEFAULT_WORKER_RUNTIME=${HICLAW_DEFAULT_WORKER_RUNTIME:-openclaw}"
+            -e "HICLAW_HERMES_WORKER_IMAGE=${HERMES_WORKER_IMAGE}"
             -e "HICLAW_MATRIX_DOMAIN=${_matrix_domain}"
             -e "HICLAW_ELEMENT_HOMESERVER_URL=http://127.0.0.1:${HICLAW_PORT_GATEWAY}"
             -e "HICLAW_MATRIX_URL=http://127.0.0.1:6167"
@@ -2789,6 +2805,7 @@ CREDEOF
                     --security-opt label=disable \
                     -e HICLAW_WORKER_IMAGE="${WORKER_IMAGE}" \
                     -e HICLAW_COPAW_WORKER_IMAGE="${COPAW_WORKER_IMAGE}" \
+                    -e HICLAW_HERMES_WORKER_IMAGE="${HERMES_WORKER_IMAGE}" \
                     ${HICLAW_PROXY_ALLOWED_REGISTRIES:+-e HICLAW_PROXY_ALLOWED_REGISTRIES="${HICLAW_PROXY_ALLOWED_REGISTRIES}"} \
                     --restart unless-stopped \
                     "${_proxy_image}"

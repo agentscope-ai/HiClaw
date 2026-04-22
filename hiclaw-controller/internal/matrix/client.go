@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync/atomic"
+	"time"
 )
 
 // Client abstracts Matrix homeserver operations.
@@ -50,10 +52,14 @@ type Client interface {
 	// Login obtains an access token for an existing user.
 	Login(ctx context.Context, username, password string) (string, error)
 
-	// DeactivateUser permanently deactivates a Matrix account via the
-	// Synapse Admin API. The user will no longer be able to log in.
-	// Message history is preserved (erase=false).
-	DeactivateUser(ctx context.Context, username string) error
+	// AdminCommand sends a `!admin ...` text message to the tuwunel admin
+	// bot room (#admins:<domain>). Fire-and-forget: delivery of the
+	// message is confirmed but execution of the admin action is not.
+	AdminCommand(ctx context.Context, command string) error
+
+	// ListJoinedRooms returns the list of room IDs the user identified
+	// by userToken is currently joined to.
+	ListJoinedRooms(ctx context.Context, userToken string) ([]string, error)
 
 	// ListRoomMembers returns users currently in the room whose membership
 	// is "join" or "invite". leave/ban/knock entries are filtered out.
@@ -74,9 +80,15 @@ type Client interface {
 
 // TuwunelClient implements Client for Tuwunel (conduwuit) homeservers.
 type TuwunelClient struct {
-	config     Config
-	http       *http.Client
-	adminToken atomic.Value // cached admin access token (string)
+	config      Config
+	http        *http.Client
+	adminToken  atomic.Value // cached admin access token (string)
+	adminRoomID atomic.Value // cached admin room ID (string), resolved from #admins:<domain>
+
+	// orphanRetryBaseDelay is the base backoff between Login retries
+	// after issuing an admin reset-password command. Exposed as a field
+	// (not a const) so tests can collapse the delay.
+	orphanRetryBaseDelay time.Duration
 }
 
 // NewTuwunelClient creates a Matrix client for a Tuwunel homeserver.
@@ -84,7 +96,11 @@ func NewTuwunelClient(cfg Config, httpClient *http.Client) *TuwunelClient {
 	if httpClient == nil {
 		httpClient = http.DefaultClient
 	}
-	return &TuwunelClient{config: cfg, http: httpClient}
+	return &TuwunelClient{
+		config:               cfg,
+		http:                 httpClient,
+		orphanRetryBaseDelay: 500 * time.Millisecond,
+	}
 }
 
 func (c *TuwunelClient) UserID(localpart string) string {
@@ -152,16 +168,52 @@ func (c *TuwunelClient) EnsureUser(ctx context.Context, req EnsureUserRequest) (
 
 	// Registration failed with M_USER_IN_USE — try login
 	token, err := c.Login(ctx, req.Username, password)
-	if err != nil {
-		return nil, fmt.Errorf("user %s exists but login failed: %w", req.Username, err)
+	if err == nil {
+		return &UserCredentials{
+			UserID:      c.UserID(req.Username),
+			AccessToken: token,
+			Password:    password,
+			Created:     false,
+		}, nil
 	}
 
-	return &UserCredentials{
-		UserID:      c.UserID(req.Username),
-		AccessToken: token,
-		Password:    password,
-		Created:     false,
-	}, nil
+	// Orphan recovery: Matrix still has a userid_password entry for
+	// this username (either deactivated by a prior delete flow, or the
+	// password was rotated out-of-band), so login with our current
+	// password fails. Since Tuwunel cannot hard-delete users, we
+	// reactivate via the admin bot's reset-password command and retry
+	// login.
+	userID := c.UserID(req.Username)
+	cmd := fmt.Sprintf("!admin users reset-password %s %s", userID, password)
+	if adminErr := c.AdminCommand(ctx, cmd); adminErr != nil {
+		return nil, fmt.Errorf("user %s exists but login failed (%v) and orphan recovery failed: %w",
+			req.Username, err, adminErr)
+	}
+
+	const maxAttempts = 5
+	baseDelay := c.orphanRetryBaseDelay
+	if baseDelay <= 0 {
+		baseDelay = 500 * time.Millisecond
+	}
+	var lastErr = err
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(baseDelay * time.Duration(attempt)):
+		}
+		token, lastErr = c.Login(ctx, req.Username, password)
+		if lastErr == nil {
+			return &UserCredentials{
+				UserID:      userID,
+				AccessToken: token,
+				Password:    password,
+				Created:     false,
+			}, nil
+		}
+	}
+	return nil, fmt.Errorf("user %s exists, orphan recovery issued but login still failing: %w",
+		req.Username, lastErr)
 }
 
 func (c *TuwunelClient) Login(ctx context.Context, username, password string) (string, error) {
@@ -387,25 +439,47 @@ func (c *TuwunelClient) SendMessage(ctx context.Context, roomID, token, body str
 	return nil
 }
 
-func (c *TuwunelClient) DeactivateUser(ctx context.Context, username string) error {
-	token, err := c.ensureAdminToken(ctx)
-	if err != nil {
-		return fmt.Errorf("deactivate user %s: %w", username, err)
+// ensureAdminRoomID resolves the Tuwunel admin room via the well-known
+// alias "#admins:<domain>" and caches the result for the lifetime of the
+// client. Controller restart re-resolves.
+func (c *TuwunelClient) ensureAdminRoomID(ctx context.Context) (string, error) {
+	if r, ok := c.adminRoomID.Load().(string); ok && r != "" {
+		return r, nil
 	}
-	userID := c.UserID(username)
-	body := map[string]interface{}{"erase": false}
+	alias := fmt.Sprintf("#admins:%s", c.config.Domain)
+	path := "/_matrix/client/v3/directory/room/" + url.PathEscape(alias)
 
-	statusCode, err := c.doJSON(ctx, http.MethodPost,
-		fmt.Sprintf("/_synapse/admin/v1/deactivate/%s", encodeRoomID(userID)),
-		token, body, nil)
-	if err != nil {
-		return fmt.Errorf("deactivate user %s: %w", username, err)
+	var resp struct {
+		RoomID string `json:"room_id"`
 	}
-	if statusCode == http.StatusNotFound {
-		return nil
+	statusCode, err := c.doJSON(ctx, http.MethodGet, path, "", nil, &resp)
+	if err != nil {
+		return "", fmt.Errorf("resolve admin room alias %s: %w", alias, err)
 	}
 	if statusCode != http.StatusOK {
-		return fmt.Errorf("deactivate user %s: HTTP %d", username, statusCode)
+		return "", fmt.Errorf("resolve admin room alias %s: HTTP %d", alias, statusCode)
+	}
+	if resp.RoomID == "" {
+		return "", fmt.Errorf("resolve admin room alias %s: empty room_id", alias)
+	}
+	c.adminRoomID.Store(resp.RoomID)
+	return resp.RoomID, nil
+}
+
+// AdminCommand sends a command message to the Tuwunel admin bot room as
+// the admin user. The bot parses messages starting with "!admin" in the
+// admin room. Processing is asynchronous; this call is fire-and-forget.
+func (c *TuwunelClient) AdminCommand(ctx context.Context, command string) error {
+	token, err := c.ensureAdminToken(ctx)
+	if err != nil {
+		return fmt.Errorf("admin command: %w", err)
+	}
+	roomID, err := c.ensureAdminRoomID(ctx)
+	if err != nil {
+		return fmt.Errorf("admin command: %w", err)
+	}
+	if err := c.SendMessage(ctx, roomID, token, command); err != nil {
+		return fmt.Errorf("admin command: %w", err)
 	}
 	return nil
 }
@@ -526,6 +600,23 @@ func (c *TuwunelClient) KickFromRoom(ctx context.Context, roomID, userID, reason
 	}
 	return fmt.Errorf("kick %s from %s: HTTP %d %s %s",
 		userID, roomID, statusCode, resp.ErrCode, resp.Error)
+}
+
+// ListJoinedRooms returns the room IDs joined by the user identified by
+// the given access token.
+func (c *TuwunelClient) ListJoinedRooms(ctx context.Context, userToken string) ([]string, error) {
+	var resp struct {
+		JoinedRooms []string `json:"joined_rooms"`
+	}
+	statusCode, err := c.doJSON(ctx, http.MethodGet,
+		"/_matrix/client/v3/joined_rooms", userToken, nil, &resp)
+	if err != nil {
+		return nil, fmt.Errorf("list joined rooms: %w", err)
+	}
+	if statusCode != http.StatusOK {
+		return nil, fmt.Errorf("list joined rooms: HTTP %d", statusCode)
+	}
+	return resp.JoinedRooms, nil
 }
 
 // doJSON performs an HTTP request with JSON body/response.

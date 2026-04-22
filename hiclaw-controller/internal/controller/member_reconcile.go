@@ -399,8 +399,14 @@ func ReconcileMemberDelete(ctx context.Context, d MemberDeps, m MemberContext) e
 	logger := log.FromContext(ctx)
 	logger.Info("deleting member", "name", m.Name, "role", m.Role)
 
-	if err := d.Provisioner.DeactivateMatrixUser(ctx, m.Name); err != nil {
-		logger.Error(err, "matrix user deactivation failed (non-fatal)", "name", m.Name)
+	if err := d.Provisioner.LeaveAllWorkerRooms(ctx, m.Name); err != nil {
+		logger.Error(err, "member leave-all-rooms failed (non-fatal)", "name", m.Name)
+	}
+	if m.ExistingRoomID != "" {
+		if err := d.Provisioner.DeleteWorkerRoom(ctx, m.ExistingRoomID); err != nil {
+			logger.Error(err, "member room delete command failed (non-fatal)",
+				"name", m.Name, "roomID", m.ExistingRoomID)
+		}
 	}
 
 	isTeamWorker := m.Role == RoleTeamWorker || m.Role == RoleTeamLeader

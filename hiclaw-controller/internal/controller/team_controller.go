@@ -163,6 +163,7 @@ func (r *TeamReconciler) reconcileTeamNormal(ctx context.Context, t *v1beta1.Tea
 			Role:                RoleTeamWorker,
 			TeamName:            t.Name,
 			TeamLeaderName:      t.Spec.Leader.Name,
+			ExistingRoomID:      ms.RoomID,
 			CurrentExposedPorts: ms.ExposedPorts,
 		}
 		if err := ReconcileMemberDelete(ctx, deps, staleCtx); err != nil {
@@ -424,8 +425,10 @@ func (r *TeamReconciler) handleDelete(ctx context.Context, t *v1beta1.Team) erro
 	errs := make([]error, 0)
 	for name, role := range names {
 		var exposed []v1beta1.ExposedPortStatus
+		var existingRoomID string
 		if ms := t.Status.MemberByName(name); ms != nil {
 			exposed = ms.ExposedPorts
+			existingRoomID = ms.RoomID
 		}
 		mctx := MemberContext{
 			Name:                name,
@@ -433,6 +436,7 @@ func (r *TeamReconciler) handleDelete(ctx context.Context, t *v1beta1.Team) erro
 			Role:                role,
 			TeamName:            t.Name,
 			TeamLeaderName:      t.Spec.Leader.Name,
+			ExistingRoomID:      existingRoomID,
 			CurrentExposedPorts: exposed,
 		}
 		if role == RoleTeamLeader {

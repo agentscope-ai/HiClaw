@@ -263,6 +263,23 @@ func (r *HumanReconciler) handleDelete(ctx context.Context, h *v1beta1.Human) er
 	logger := log.FromContext(ctx)
 	logger.Info("deleting human", "name", h.Name)
 
+	// Force the human out of every room the controller knows about. The
+	// human holds no credentials we can log in with, so we rely on the
+	// Tuwunel admin bot to kick them. Fire-and-forget: processing is
+	// asynchronous inside tuwunel, and the
+	// delete_rooms_after_leave/forget_forced_upon_leave homeserver flags
+	// provide a fallback if this never lands.
+	if r.Matrix != nil {
+		humanUserID := r.Matrix.UserID(h.Name)
+		for _, roomID := range h.Status.Rooms {
+			cmd := fmt.Sprintf("!admin users force-leave-room %s %s", humanUserID, roomID)
+			if err := r.Matrix.AdminCommand(ctx, cmd); err != nil {
+				logger.Error(err, "force-leave-room failed (non-fatal)",
+					"user", humanUserID, "roomID", roomID)
+			}
+		}
+	}
+
 	if r.Legacy != nil {
 		if err := r.Legacy.RemoveFromHumansRegistry(ctx, h.Name); err != nil {
 			logger.Error(err, "failed to remove human from registry (non-fatal)")
