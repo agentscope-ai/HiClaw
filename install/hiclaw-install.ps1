@@ -28,6 +28,7 @@
 #   HICLAW_INSTALL_MANAGER_IMAGE       Override manager image (e.g., local build)
 #   HICLAW_INSTALL_WORKER_IMAGE        Override worker image  (e.g., local build)
 #   HICLAW_INSTALL_COPAW_WORKER_IMAGE  Override copaw worker image (e.g., local build)
+#   HICLAW_INSTALL_HERMES_WORKER_IMAGE Override hermes worker image (e.g., local build)
 #   HICLAW_PORT_GATEWAY       Host port for Higress gateway (default: 18080)
 #   HICLAW_PORT_CONSOLE       Host port for Higress console (default: 18001)
 #   HICLAW_PORT_ELEMENT_WEB   Host port for Element Web direct access (default: 18088)
@@ -825,6 +826,7 @@ HICLAW_SKILLS_API_URL=$(if ($Config.SKILLS_API_URL) { $Config.SKILLS_API_URL } e
 # Worker images (for direct container creation)
 HICLAW_WORKER_IMAGE=$($Config.WORKER_IMAGE)
 HICLAW_COPAW_WORKER_IMAGE=$($Config.COPAW_WORKER_IMAGE)
+HICLAW_HERMES_WORKER_IMAGE=$($Config.HERMES_WORKER_IMAGE)
 
 # Manager runtime (openclaw | copaw)
 HICLAW_MANAGER_RUNTIME=$($Config.MANAGER_RUNTIME)
@@ -1945,6 +1947,12 @@ function Install-Manager {
         "$($script:HICLAW_REGISTRY)/higress/hiclaw-copaw-worker:$($script:HICLAW_VERSION)"
     }
 
+    $script:HERMES_WORKER_IMAGE = if ($env:HICLAW_INSTALL_HERMES_WORKER_IMAGE) {
+        $env:HICLAW_INSTALL_HERMES_WORKER_IMAGE
+    } else {
+        "$($script:HICLAW_REGISTRY)/higress/hiclaw-hermes-worker:$($script:HICLAW_VERSION)"
+    }
+
     $script:MANAGER_COPAW_IMAGE = if ($env:HICLAW_INSTALL_MANAGER_COPAW_IMAGE) {
         $env:HICLAW_INSTALL_MANAGER_COPAW_IMAGE
     } else {
@@ -2173,6 +2181,7 @@ function Install-Manager {
                     --security-opt label=disable `
                     -e "HICLAW_WORKER_IMAGE=$($script:WORKER_IMAGE)" `
                     -e "HICLAW_COPAW_WORKER_IMAGE=$($script:COPAW_WORKER_IMAGE)" `
+                    -e "HICLAW_HERMES_WORKER_IMAGE=$($script:HERMES_WORKER_IMAGE)" `
                     -e "HICLAW_DEFAULT_WORKER_RUNTIME=$($script:config.DEFAULT_WORKER_RUNTIME)" `
                     $(if ($config.PROXY_ALLOWED_REGISTRIES) { @("-e", "HICLAW_PROXY_ALLOWED_REGISTRIES=$($config.PROXY_ALLOWED_REGISTRIES)") }) `
                     --restart unless-stopped `
@@ -2257,7 +2266,11 @@ function Install-Manager {
     }
 
     # Pull the worker image matching the selected runtime
-    $selectedWorkerImage = if ($config.DEFAULT_WORKER_RUNTIME -eq "copaw") { $script:COPAW_WORKER_IMAGE } else { $script:WORKER_IMAGE }
+    $selectedWorkerImage = switch ($config.DEFAULT_WORKER_RUNTIME) {
+        "copaw"  { $script:COPAW_WORKER_IMAGE }
+        "hermes" { $script:HERMES_WORKER_IMAGE }
+        default  { $script:WORKER_IMAGE }
+    }
     if ($selectedWorkerImage.StartsWith($LocalImagePrefix)) {
         $workerImageExists = docker image inspect $selectedWorkerImage 2>$null
         if ($LASTEXITCODE -eq 0) {
@@ -2286,9 +2299,9 @@ function Install-Manager {
         }
     }
 
-    # During upgrade, also pull openclaw worker image if it exists locally
+    # During upgrade, also pull other worker images if they exist locally
     if ($script:HICLAW_UPGRADE) {
-        if ($config.DEFAULT_WORKER_RUNTIME -eq "copaw") {
+        if ($config.DEFAULT_WORKER_RUNTIME -ne "openclaw") {
             $otherExists = docker image inspect $script:WORKER_IMAGE 2>$null
             if ($LASTEXITCODE -eq 0) {
                 if ($script:WORKER_IMAGE.StartsWith($LocalImagePrefix)) {
@@ -2296,6 +2309,17 @@ function Install-Manager {
                 } else {
                     Write-Log (Get-Msg "install.image.pulling_worker" -f $script:WORKER_IMAGE)
                     & docker pull $script:WORKER_IMAGE
+                }
+            }
+        }
+        if ($config.DEFAULT_WORKER_RUNTIME -ne "hermes") {
+            $hermesExists = docker image inspect $script:HERMES_WORKER_IMAGE 2>$null
+            if ($LASTEXITCODE -eq 0) {
+                if ($script:HERMES_WORKER_IMAGE.StartsWith($LocalImagePrefix)) {
+                    Write-Log (Get-Msg "install.image.worker_exists" -f $script:HERMES_WORKER_IMAGE)
+                } else {
+                    Write-Log (Get-Msg "install.image.pulling_worker" -f $script:HERMES_WORKER_IMAGE)
+                    & docker pull $script:HERMES_WORKER_IMAGE
                 }
             }
         }

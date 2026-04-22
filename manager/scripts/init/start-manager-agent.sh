@@ -7,6 +7,7 @@
 # Runtime selection:
 #   HICLAW_MANAGER_RUNTIME=openclaw (default) - OpenClaw gateway mode
 #   HICLAW_MANAGER_RUNTIME=copaw              - CoPaw workspace mode
+# (hermes runtime is supported for Workers only; Managers run openclaw or copaw.)
 
 source /opt/hiclaw/scripts/lib/hiclaw-env.sh
 
@@ -1123,9 +1124,11 @@ bash "$RENDER" /root/manager-workspace AGENTS.md TOOLS.md HEARTBEAT.md SOUL.md
 bash "$RENDER" /root/manager-workspace/worker-skills
 bash "$RENDER" /root/manager-workspace/worker-agent
 bash "$RENDER" /root/manager-workspace/copaw-worker-agent
+bash "$RENDER" /root/manager-workspace/hermes-worker-agent
 bash "$RENDER" /opt/hiclaw/agent/worker-skills
 bash "$RENDER" /opt/hiclaw/agent/worker-agent
 bash "$RENDER" /opt/hiclaw/agent/copaw-worker-agent
+bash "$RENDER" /opt/hiclaw/agent/hermes-worker-agent
 log "Agent doc templates rendered"
 
 # Cloud mode: start background file sync (workspace ↔ OSS) and initial push

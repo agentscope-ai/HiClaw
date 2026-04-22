@@ -28,6 +28,7 @@ MANAGER_IMAGE        ?= $(REGISTRY)/$(REPO)/hiclaw-manager
 MANAGER_COPAW_IMAGE  ?= $(REGISTRY)/$(REPO)/hiclaw-manager-copaw
 WORKER_IMAGE         ?= $(REGISTRY)/$(REPO)/hiclaw-worker
 COPAW_WORKER_IMAGE   ?= $(REGISTRY)/$(REPO)/hiclaw-copaw-worker
+HERMES_WORKER_IMAGE  ?= $(REGISTRY)/$(REPO)/hiclaw-hermes-worker
 OPENCLAW_BASE_IMAGE  ?= $(REGISTRY)/$(REPO)/openclaw-base
 CONTROLLER_IMAGE     ?= $(REGISTRY)/$(REPO)/hiclaw-controller
 
@@ -35,6 +36,7 @@ MANAGER_TAG        ?= $(MANAGER_IMAGE):$(VERSION)
 MANAGER_COPAW_TAG  ?= $(MANAGER_COPAW_IMAGE):$(VERSION)
 WORKER_TAG         ?= $(WORKER_IMAGE):$(VERSION)
 COPAW_WORKER_TAG   ?= $(COPAW_WORKER_IMAGE):$(VERSION)
+HERMES_WORKER_TAG  ?= $(HERMES_WORKER_IMAGE):$(VERSION)
 OPENCLAW_BASE_TAG  ?= $(OPENCLAW_BASE_IMAGE):$(VERSION)
 CONTROLLER_TAG     ?= $(CONTROLLER_IMAGE):$(VERSION)
 
@@ -43,6 +45,7 @@ LOCAL_MANAGER        = hiclaw/hiclaw-manager:$(VERSION)
 LOCAL_MANAGER_COPAW  = hiclaw/hiclaw-manager-copaw:$(VERSION)
 LOCAL_WORKER         = hiclaw/worker-agent:$(VERSION)
 LOCAL_COPAW_WORKER   = hiclaw/copaw-worker:$(VERSION)
+LOCAL_HERMES_WORKER  = hiclaw/hermes-worker:$(VERSION)
 LOCAL_OPENCLAW_BASE  = hiclaw/openclaw-base:$(VERSION)
 LOCAL_CONTROLLER     = hiclaw/hiclaw-controller:$(VERSION)
 LOCAL_EMBEDDED       = hiclaw/hiclaw-embedded:$(VERSION)
@@ -96,9 +99,9 @@ LINES          ?= 50
 
 # ---------- Phony targets ----------
 
-.PHONY: all build build-openclaw-base build-hiclaw-controller build-embedded build-manager build-manager-copaw build-worker build-copaw-worker \
-        tag push push-openclaw-base push-hiclaw-controller push-manager push-manager-copaw push-worker push-copaw-worker \
-        push-native push-native-manager push-native-manager-copaw push-native-worker push-native-copaw-worker \
+.PHONY: all build build-openclaw-base build-hiclaw-controller build-embedded build-manager build-manager-copaw build-worker build-copaw-worker build-hermes-worker \
+        tag push push-openclaw-base push-hiclaw-controller push-manager push-manager-copaw push-worker push-copaw-worker push-hermes-worker \
+        push-native push-native-manager push-native-manager-copaw push-native-worker push-native-copaw-worker push-native-hermes-worker \
         buildx-setup \
         test test-quick test-installed test-embedded \
         install install-embedded uninstall uninstall-embedded replay replay-log \
@@ -112,7 +115,7 @@ all: build
 
 # ---------- Build ----------
 
-build: build-manager build-manager-copaw build-worker build-copaw-worker build-hiclaw-controller ## Build all images (base image pulled from registry, not rebuilt locally)
+build: build-manager build-manager-copaw build-worker build-copaw-worker build-hermes-worker build-hiclaw-controller ## Build all images (base image pulled from registry, not rebuilt locally)
 
 build-openclaw-base: ## Build OpenClaw base image
 	@echo "==> Building OpenClaw base image: $(LOCAL_OPENCLAW_BASE) (registry: $(HIGRESS_REGISTRY))"
@@ -171,16 +174,24 @@ build-copaw-worker: ## Build CoPaw Worker image
 		-t $(LOCAL_COPAW_WORKER) \
 		./copaw/
 
+build-hermes-worker: ## Build Hermes Worker image
+	@echo "==> Building Hermes Worker image: $(LOCAL_HERMES_WORKER) (registry: $(HIGRESS_REGISTRY))"
+	docker build $(PLATFORM_FLAG) $(REGISTRY_ARG) $(SHARED_LIB_CTX) $(DOCKER_BUILD_ARGS) \
+		-t $(LOCAL_HERMES_WORKER) \
+		./hermes/
+
 # ---------- Tag ----------
 
 tag: build ## Tag images for registry push
 	docker tag $(LOCAL_MANAGER) $(MANAGER_TAG)
 	docker tag $(LOCAL_WORKER) $(WORKER_TAG)
 	docker tag $(LOCAL_COPAW_WORKER) $(COPAW_WORKER_TAG)
+	docker tag $(LOCAL_HERMES_WORKER) $(HERMES_WORKER_TAG)
 ifeq ($(PUSH_LATEST),yes)
 	docker tag $(LOCAL_MANAGER) $(MANAGER_IMAGE):latest
 	docker tag $(LOCAL_WORKER) $(WORKER_IMAGE):latest
 	docker tag $(LOCAL_COPAW_WORKER) $(COPAW_WORKER_IMAGE):latest
+	docker tag $(LOCAL_HERMES_WORKER) $(HERMES_WORKER_IMAGE):latest
 	docker tag $(LOCAL_CONTROLLER) $(CONTROLLER_IMAGE):latest
 	@echo "==> Images tagged as $(VERSION) and latest"
 else
@@ -209,7 +220,7 @@ else
 	fi
 endif
 
-push: push-manager push-manager-copaw push-worker push-copaw-worker push-hiclaw-controller ## Build + push multi-arch images (amd64 + arm64); base image built separately via build-base.yml
+push: push-manager push-manager-copaw push-worker push-copaw-worker push-hermes-worker push-hiclaw-controller ## Build + push multi-arch images (amd64 + arm64); base image built separately via build-base.yml
 
 push-openclaw-base: buildx-setup ## Build + push multi-arch OpenClaw base image
 	@echo "==> Building + pushing multi-arch OpenClaw base: $(OPENCLAW_BASE_TAG) [$(MULTIARCH_PLATFORMS)]"
@@ -369,6 +380,31 @@ else
 		./copaw/
 endif
 
+push-hermes-worker: buildx-setup ## Build + push multi-arch Hermes Worker image
+	@echo "==> Building + pushing multi-arch Hermes Worker: $(HERMES_WORKER_TAG) [$(MULTIARCH_PLATFORMS)]"
+ifeq ($(IS_PODMAN),1)
+	-podman manifest rm $(HERMES_WORKER_TAG) 2>/dev/null
+	$(foreach plat,$(subst $(comma), ,$(MULTIARCH_PLATFORMS)), \
+		echo "  -> Building Hermes Worker for $(plat)..." && \
+		podman build --platform $(plat) \
+			$(REGISTRY_ARG) $(SHARED_LIB_CTX) $(DOCKER_BUILD_ARGS) \
+			--manifest $(HERMES_WORKER_TAG) \
+			./hermes/ && ) true
+	podman manifest push --all $(HERMES_WORKER_TAG) docker://$(HERMES_WORKER_TAG)
+	$(if $(PUSH_LATEST), \
+		podman manifest push --all $(HERMES_WORKER_TAG) docker://$(HERMES_WORKER_IMAGE):latest && \
+		echo "  -> Also pushed :latest tag")
+else
+	docker buildx build \
+		--builder $(BUILDX_BUILDER) \
+		--platform $(MULTIARCH_PLATFORMS) \
+		$(REGISTRY_ARG) $(SHARED_LIB_CTX) $(DOCKER_BUILD_ARGS) \
+		-t $(HERMES_WORKER_TAG) \
+		$(if $(PUSH_LATEST),-t $(HERMES_WORKER_IMAGE):latest) \
+		--push \
+		./hermes/
+endif
+
 # ---------- Push native-arch only (dev use) ----------
 # WARNING: Pushing single-arch images will overwrite multi-arch manifests.
 # Only use for local development / testing, never for release.
@@ -381,10 +417,13 @@ push-native: tag ## Push native-arch images (dev only, overwrites multi-arch!)
 	docker push $(WORKER_TAG)
 	@echo "==> Pushing CoPaw Worker: $(COPAW_WORKER_TAG)"
 	docker push $(COPAW_WORKER_TAG)
+	@echo "==> Pushing Hermes Worker: $(HERMES_WORKER_TAG)"
+	docker push $(HERMES_WORKER_TAG)
 ifeq ($(PUSH_LATEST),yes)
 	docker push $(MANAGER_IMAGE):latest
 	docker push $(WORKER_IMAGE):latest
 	docker push $(COPAW_WORKER_IMAGE):latest
+	docker push $(HERMES_WORKER_IMAGE):latest
 endif
 
 push-native-manager: build-manager ## Push native-arch Manager only (dev)
@@ -402,6 +441,10 @@ push-native-worker: build-worker ## Push native-arch Worker only (dev)
 push-native-copaw-worker: build-copaw-worker ## Push native-arch CoPaw Worker only (dev)
 	docker tag $(LOCAL_COPAW_WORKER) $(COPAW_WORKER_TAG)
 	docker push $(COPAW_WORKER_TAG)
+
+push-native-hermes-worker: build-hermes-worker ## Push native-arch Hermes Worker only (dev)
+	docker tag $(LOCAL_HERMES_WORKER) $(HERMES_WORKER_TAG)
+	docker push $(HERMES_WORKER_TAG)
 
 # ---------- Test ----------
 
@@ -462,6 +505,7 @@ endif
 		HICLAW_INSTALL_MANAGER_IMAGE=$(LOCAL_MANAGER) \
 		HICLAW_INSTALL_WORKER_IMAGE=$(LOCAL_WORKER) \
 		HICLAW_INSTALL_COPAW_WORKER_IMAGE=$(LOCAL_COPAW_WORKER) \
+		HICLAW_INSTALL_HERMES_WORKER_IMAGE=$(LOCAL_HERMES_WORKER) \
 		HICLAW_INSTALL_CONTROLLER_IMAGE=$(LOCAL_CONTROLLER) \
 		bash ./install/hiclaw-install.sh manager
 
@@ -474,6 +518,7 @@ endif
 		HICLAW_INSTALL_MANAGER_IMAGE=$(LOCAL_MANAGER) \
 		HICLAW_INSTALL_WORKER_IMAGE=$(LOCAL_WORKER) \
 		HICLAW_INSTALL_COPAW_WORKER_IMAGE=$(LOCAL_COPAW_WORKER) \
+		HICLAW_INSTALL_HERMES_WORKER_IMAGE=$(LOCAL_HERMES_WORKER) \
 		bash ./install/hiclaw-install.sh manager
 
 uninstall: ## Stop and remove Manager + all Worker containers
@@ -516,7 +561,7 @@ uninstall: ## Stop and remove Manager + all Worker containers
 
 install-embedded: ## Install in embedded mode (dual-container: controller + agent)
 ifndef SKIP_BUILD
-	$(MAKE) build-embedded build-manager build-manager-copaw build-worker build-copaw-worker
+	$(MAKE) build-embedded build-manager build-manager-copaw build-worker build-copaw-worker build-hermes-worker
 endif
 	@echo "==> Installing HiClaw (embedded mode)..."
 	HICLAW_NON_INTERACTIVE=1 \
@@ -525,6 +570,7 @@ endif
 		HICLAW_INSTALL_MANAGER_COPAW_IMAGE=$(LOCAL_MANAGER_COPAW) \
 		HICLAW_INSTALL_WORKER_IMAGE=$(LOCAL_WORKER) \
 		HICLAW_INSTALL_COPAW_WORKER_IMAGE=$(LOCAL_COPAW_WORKER) \
+		HICLAW_INSTALL_HERMES_WORKER_IMAGE=$(LOCAL_HERMES_WORKER) \
 		HICLAW_MATRIX_E2EE=0 \
 		bash ./install/hiclaw-install.sh
 

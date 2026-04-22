@@ -130,8 +130,82 @@ func (p *Provisioner) MatrixUserID(name string) string {
 	return p.matrix.UserID(name)
 }
 
-func (p *Provisioner) DeactivateMatrixUser(ctx context.Context, workerName string) error {
-	return p.matrix.DeactivateUser(ctx, workerName)
+// leaveAllRooms logs in (or refreshes credentials via orphan recovery) as
+// the given Matrix localpart and asks the homeserver to make the user
+// leave every room they are currently joined to. Errors leaving individual
+// rooms are logged but not returned, so the overall delete flow remains
+// best-effort.
+//
+// credsKey is the storage key passed to the credential loader, which may
+// differ from matrixUsername (e.g. manager credentials are stored under
+// the Manager CR name, but the Matrix localpart is always "manager").
+func (p *Provisioner) leaveAllRooms(ctx context.Context, credsKey, matrixUsername string) error {
+	logger := log.FromContext(ctx)
+
+	creds, err := p.creds.Load(ctx, credsKey)
+	if err != nil {
+		return fmt.Errorf("load credentials for %s: %w", credsKey, err)
+	}
+	if creds == nil {
+		logger.Info("no credentials found; skipping leave-all-rooms", "credsKey", credsKey)
+		return nil
+	}
+
+	token, err := p.ensureMatrixToken(ctx, matrixUsername, creds)
+	if err != nil {
+		return fmt.Errorf("login %s: %w", matrixUsername, err)
+	}
+
+	rooms, err := p.matrix.ListJoinedRooms(ctx, token)
+	if err != nil {
+		return fmt.Errorf("list joined rooms for %s: %w", matrixUsername, err)
+	}
+
+	for _, roomID := range rooms {
+		if err := p.matrix.LeaveRoom(ctx, roomID, token); err != nil {
+			logger.Error(err, "leave room (best-effort)",
+				"user", matrixUsername, "roomID", roomID)
+		}
+	}
+	return nil
+}
+
+// deleteRoom issues a fire-and-forget `!admin rooms delete-room` command
+// to the Tuwunel admin bot. Tuwunel processes it asynchronously, and the
+// `delete_rooms_after_leave`/`forget_forced_upon_leave` homeserver
+// settings act as a fallback if this never lands.
+func (p *Provisioner) deleteRoom(ctx context.Context, roomID string) error {
+	if roomID == "" {
+		return nil
+	}
+	cmd := fmt.Sprintf("!admin rooms delete-room %s", roomID)
+	return p.matrix.AdminCommand(ctx, cmd)
+}
+
+// LeaveAllWorkerRooms makes the worker leave every Matrix room it is
+// joined to. Used during worker deletion so that rooms where the worker
+// was the last local member get pruned via the tuwunel
+// delete_rooms_after_leave setting.
+func (p *Provisioner) LeaveAllWorkerRooms(ctx context.Context, workerName string) error {
+	return p.leaveAllRooms(ctx, workerName, workerName)
+}
+
+// DeleteWorkerRoom asks tuwunel to delete the worker's exclusive DM room.
+// Fire-and-forget; callers should treat errors as non-fatal.
+func (p *Provisioner) DeleteWorkerRoom(ctx context.Context, roomID string) error {
+	return p.deleteRoom(ctx, roomID)
+}
+
+// LeaveAllManagerRooms makes the manager leave every Matrix room it is
+// joined to. Used during manager deletion.
+func (p *Provisioner) LeaveAllManagerRooms(ctx context.Context, managerName string) error {
+	return p.leaveAllRooms(ctx, managerName, "manager")
+}
+
+// DeleteManagerRoom asks tuwunel to delete the manager's exclusive DM
+// room. Fire-and-forget.
+func (p *Provisioner) DeleteManagerRoom(ctx context.Context, roomID string) error {
+	return p.deleteRoom(ctx, roomID)
 }
 
 // ProvisionWorker executes the full infrastructure setup for a new worker:

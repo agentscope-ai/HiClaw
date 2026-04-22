@@ -127,9 +127,9 @@ func TestWorkerDelete_CleansUpAll(t *testing.T) {
 		return client.IgnoreNotFound(err)
 	})
 
-	_, deprovCount, _, deactivateCount := mockProv.CallCounts()
-	if deactivateCount == 0 {
-		t.Error("DeactivateMatrixUser should have been called")
+	_, deprovCount, _, leaveRoomsCount := mockProv.CallCounts()
+	if leaveRoomsCount == 0 {
+		t.Error("LeaveAllWorkerRooms should have been called")
 	}
 	if deprovCount == 0 {
 		t.Error("DeprovisionWorker should have been called")

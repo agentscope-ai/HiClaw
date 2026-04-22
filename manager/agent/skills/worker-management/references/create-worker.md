@@ -8,9 +8,10 @@ If the admin asks you to import an existing Worker template, search a registry f
 |------------|---------|-------|
 | "copaw", "Python worker", "pip worker", "host worker" | `copaw` | |
 | "local worker", "local mode", "access my local environment", "run on my machine" | `copaw` | `--remote` |
-| "openclaw", "container worker", "docker worker", or none of the above | `openclaw` (default, uses `${HICLAW_DEFAULT_WORKER_RUNTIME}`) | |
+| "hermes", "hermes worker", "hermes-agent" | `hermes` | |
+| "openclaw", "container worker", "docker worker", or none of the above | default (uses `${HICLAW_DEFAULT_WORKER_RUNTIME}`, normally `openclaw`) | |
 
-When in doubt, ask: "Should this be a copaw (Python, ~150MB RAM) worker or an openclaw (Node.js, ~500MB RAM) worker?"
+When in doubt, ask: "Should this be a copaw (Python, ~150MB RAM), openclaw (Node.js, ~500MB RAM), or hermes (Python, ~200MB RAM) worker?"
 
 ## Step 0.5: Receive configuration from AGENTS.md
 
@@ -99,7 +100,7 @@ hiclaw create worker \
   [--model <MODEL_ID>] \
   [--mcp-servers s1,s2] \
   [--skills s1,s2] \
-  [--runtime openclaw|copaw] \
+  [--runtime openclaw|copaw|hermes] \
   -o json
 ```
 
@@ -117,7 +118,7 @@ Escape rules inside the `--soul "..."` string:
 | `--model` | Model ID. If not specified, defaults to `qwen3.5-plus` |
 | `--skills` | Comma-separated built-in skills to assign |
 | `--mcp-servers` | Comma-separated MCP servers to authorize |
-| `--runtime` | Agent runtime: `openclaw` (default) or `copaw` |
+| `--runtime` | Agent runtime: `openclaw` (default), `copaw`, or `hermes` |
 | `--no-wait` | **Strongly recommended.** Return as soon as the controller accepts the create request (~1s) instead of blocking up to 3 minutes for `phase=Ready`. Always pair with the Step 2.5 poll. |
 | `-o json` | Output full JSON response from controller |
 
@@ -150,6 +151,7 @@ This command returns ALL workers with their current `phase`:
 **Typical time to `Running`**:
 - OpenClaw Worker: 10-30 seconds
 - CoPaw Worker: 15-45 seconds
+- Hermes Worker: 15-45 seconds
 
 Repeat the poll once every 5-10s while still `Pending`. If still `Pending` after ~90s, report the situation to admin — but do **NOT** abandon the CLI and try to create the Worker again via curl or any other path. The create request was already accepted; a duplicate POST will fail with 409 Conflict and confuse the picture.
 

@@ -242,6 +242,55 @@ func TestDockerCreatePullsImage(t *testing.T) {
 	}
 }
 
+// captureCreateImagesServer is a minimal Docker mock that records the Image
+// field of every POST /containers/create request. Other endpoints return the
+// minimum responses required to make DockerBackend.Create succeed.
+type capturedCreateBodies struct {
+	srv    *httptest.Server
+	images []string
+}
+
+func (c *capturedCreateBodies) lastImage() string {
+	if len(c.images) == 0 {
+		return ""
+	}
+	return c.images[len(c.images)-1]
+}
+
+func captureCreateImagesServer(t *testing.T) *capturedCreateBodies {
+	t.Helper()
+	captured := &capturedCreateBodies{}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /images/", func(w http.ResponseWriter, _ *http.Request) {
+		json.NewEncoder(w).Encode(map[string]string{"Id": "sha256-x"})
+	})
+	mux.HandleFunc("POST /containers/create", func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]interface{}
+		json.NewDecoder(r.Body).Decode(&body)
+		if img, ok := body["Image"].(string); ok {
+			captured.images = append(captured.images, img)
+		}
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(map[string]string{"Id": "sha256-test"})
+	})
+	mux.HandleFunc("POST /containers/{id}/start", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})
+	mux.HandleFunc("GET /containers/{id}/json", func(w http.ResponseWriter, _ *http.Request) {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"Id":    "sha256-test",
+			"State": map[string]interface{}{"Status": "running"},
+		})
+	})
+	mux.HandleFunc("DELETE /containers/{id}", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	captured.srv = httptest.NewServer(mux)
+	return captured
+}
+
 func TestDockerStatus(t *testing.T) {
 	srv := mockDockerAPI(t)
 	defer srv.Close()
@@ -430,24 +479,28 @@ func TestDockerCreateResolvesImageFromRuntime(t *testing.T) {
 		wantImage string
 	}{
 		{"explicit_copaw_uses_copaw_image", RuntimeCopaw, "", "hiclaw/copaw-worker:latest"},
+		{"explicit_hermes_uses_hermes_image", RuntimeHermes, "", "hiclaw/hermes-worker:latest"},
 		{"explicit_openclaw_uses_worker_image", RuntimeOpenClaw, "", "hiclaw/worker-agent:latest"},
 		{"empty_runtime_with_no_fallback_uses_worker_image", "", "", "hiclaw/worker-agent:latest"},
 		{"empty_runtime_with_copaw_fallback_uses_copaw_image", "", RuntimeCopaw, "hiclaw/copaw-worker:latest"},
-		{"explicit_runtime_overrides_fallback", RuntimeOpenClaw, RuntimeCopaw, "hiclaw/worker-agent:latest"},
+		{"empty_runtime_with_hermes_fallback_uses_hermes_image", "", RuntimeHermes, "hiclaw/hermes-worker:latest"},
+		{"explicit_runtime_overrides_fallback", RuntimeOpenClaw, RuntimeHermes, "hiclaw/worker-agent:latest"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			srv := mockDockerAPI(t)
-			defer srv.Close()
+			capturedImages := captureCreateImagesServer(t)
+			defer capturedImages.srv.Close()
+
 			b := &DockerBackend{
 				config: DockerConfig{
-					WorkerImage:      "hiclaw/worker-agent:latest",
-					CopawWorkerImage: "hiclaw/copaw-worker:latest",
-					DefaultNetwork:   "hiclaw-net",
+					WorkerImage:       "hiclaw/worker-agent:latest",
+					CopawWorkerImage:  "hiclaw/copaw-worker:latest",
+					HermesWorkerImage: "hiclaw/hermes-worker:latest",
+					DefaultNetwork:    "hiclaw-net",
 				},
 				containerPrefix: "hiclaw-worker-",
 				client: &http.Client{
-					Transport: &testTransport{serverURL: srv.URL},
+					Transport: &testTransport{serverURL: capturedImages.srv.URL},
 				},
 			}
 
@@ -459,25 +512,8 @@ func TestDockerCreateResolvesImageFromRuntime(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Create failed: %v", err)
 			}
-
-			// Mock stores the create body's Image on the container record;
-			// fetch it back through the same transport (raw inspect) so we
-			// don't need to expose Backend internals.
-			httpReq, _ := http.NewRequestWithContext(context.Background(),
-				http.MethodGet,
-				"http://localhost/containers/hiclaw-worker-x/json", nil)
-			resp, err := b.client.Do(httpReq)
-			if err != nil {
-				t.Fatalf("inspect roundtrip: %v", err)
-			}
-			defer resp.Body.Close()
-			var raw map[string]any
-			if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
-				t.Fatalf("decode inspect: %v", err)
-			}
-			image, _ := raw["Image"].(string)
-			if image != tc.wantImage {
-				t.Fatalf("image = %q, want %q", image, tc.wantImage)
+			if got := capturedImages.lastImage(); got != tc.wantImage {
+				t.Fatalf("create body Image = %q, want %q", got, tc.wantImage)
 			}
 		})
 	}

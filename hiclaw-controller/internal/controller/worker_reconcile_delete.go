@@ -17,8 +17,14 @@ func (r *WorkerReconciler) reconcileDelete(ctx context.Context, s *workerScope) 
 	workerName := w.Name
 	isTeamWorker := w.Annotations["hiclaw.io/team-leader"] != ""
 
-	if err := r.Provisioner.DeactivateMatrixUser(ctx, workerName); err != nil {
-		logger.Error(err, "matrix user deactivation failed (non-fatal)")
+	if err := r.Provisioner.LeaveAllWorkerRooms(ctx, workerName); err != nil {
+		logger.Error(err, "worker leave-all-rooms failed (non-fatal)")
+	}
+	if w.Status.RoomID != "" {
+		if err := r.Provisioner.DeleteWorkerRoom(ctx, w.Status.RoomID); err != nil {
+			logger.Error(err, "worker room delete command failed (non-fatal)",
+				"roomID", w.Status.RoomID)
+		}
 	}
 
 	if err := r.Provisioner.DeprovisionWorker(ctx, service.WorkerDeprovisionRequest{

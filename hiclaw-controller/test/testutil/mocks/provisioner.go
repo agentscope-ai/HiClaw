@@ -21,7 +21,8 @@ type MockProvisioner struct {
 	DeleteServiceAccountFn func(ctx context.Context, workerName string) error
 	DeleteCredentialsFn    func(ctx context.Context, workerName string) error
 	RequestSATokenFn       func(ctx context.Context, workerName string) (string, error)
-	DeactivateMatrixUserFn func(ctx context.Context, workerName string) error
+	LeaveAllWorkerRoomsFn  func(ctx context.Context, workerName string) error
+	DeleteWorkerRoomFn     func(ctx context.Context, roomID string) error
 	MatrixUserIDFn         func(name string) string
 
 	Calls struct {
@@ -34,7 +35,8 @@ type MockProvisioner struct {
 		DeleteServiceAccount []string
 		DeleteCredentials    []string
 		RequestSAToken       []string
-		DeactivateMatrixUser []string
+		LeaveAllWorkerRooms  []string
+		DeleteWorkerRoom     []string
 	}
 }
 
@@ -56,7 +58,8 @@ func (m *MockProvisioner) Reset() {
 	m.DeleteServiceAccountFn = nil
 	m.DeleteCredentialsFn = nil
 	m.RequestSATokenFn = nil
-	m.DeactivateMatrixUserFn = nil
+	m.LeaveAllWorkerRoomsFn = nil
+	m.DeleteWorkerRoomFn = nil
 	m.MatrixUserIDFn = nil
 }
 
@@ -78,7 +81,8 @@ func (m *MockProvisioner) clearCallsLocked() {
 		DeleteServiceAccount []string
 		DeleteCredentials    []string
 		RequestSAToken       []string
-		DeactivateMatrixUser []string
+		LeaveAllWorkerRooms  []string
+		DeleteWorkerRoom     []string
 	}{}
 }
 
@@ -193,13 +197,24 @@ func (m *MockProvisioner) RequestSAToken(ctx context.Context, workerName string)
 	return "mock-sa-token-" + workerName, nil
 }
 
-func (m *MockProvisioner) DeactivateMatrixUser(ctx context.Context, workerName string) error {
+func (m *MockProvisioner) LeaveAllWorkerRooms(ctx context.Context, workerName string) error {
 	m.mu.Lock()
-	m.Calls.DeactivateMatrixUser = append(m.Calls.DeactivateMatrixUser, workerName)
-	fn := m.DeactivateMatrixUserFn
+	m.Calls.LeaveAllWorkerRooms = append(m.Calls.LeaveAllWorkerRooms, workerName)
+	fn := m.LeaveAllWorkerRoomsFn
 	m.mu.Unlock()
 	if fn != nil {
 		return fn(ctx, workerName)
+	}
+	return nil
+}
+
+func (m *MockProvisioner) DeleteWorkerRoom(ctx context.Context, roomID string) error {
+	m.mu.Lock()
+	m.Calls.DeleteWorkerRoom = append(m.Calls.DeleteWorkerRoom, roomID)
+	fn := m.DeleteWorkerRoomFn
+	m.mu.Unlock()
+	if fn != nil {
+		return fn(ctx, roomID)
 	}
 	return nil
 }
@@ -212,13 +227,15 @@ func (m *MockProvisioner) MatrixUserID(name string) string {
 }
 
 // CallCounts returns a snapshot of call counts safe for concurrent use.
-func (m *MockProvisioner) CallCounts() (provision, deprovision, refresh, deactivate int) {
+// The last slot reports LeaveAllWorkerRooms calls (which replaced the
+// legacy DeactivateMatrixUser accounting).
+func (m *MockProvisioner) CallCounts() (provision, deprovision, refresh, leaveAllRooms int) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return len(m.Calls.ProvisionWorker),
 		len(m.Calls.DeprovisionWorker),
 		len(m.Calls.RefreshCredentials),
-		len(m.Calls.DeactivateMatrixUser)
+		len(m.Calls.LeaveAllWorkerRooms)
 }
 
 // ServiceAccountCallCounts returns EnsureServiceAccount and DeleteServiceAccount counts.

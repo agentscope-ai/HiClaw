@@ -182,6 +182,8 @@ if [ -d "${WORKER_AGENT_SRC}" ] && mc alias ls hiclaw > /dev/null 2>&1; then
                 _worker_agent_src="${AGENT_SRC}/team-leader-agent"
             elif [ "${_worker_runtime}" = "copaw" ]; then
                 _worker_agent_src="${AGENT_SRC}/copaw-worker-agent"
+            elif [ "${_worker_runtime}" = "hermes" ]; then
+                _worker_agent_src="${AGENT_SRC}/hermes-worker-agent"
             else
                 _worker_agent_src="${WORKER_AGENT_SRC}"
             fi
