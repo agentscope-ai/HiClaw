@@ -54,17 +54,15 @@ type AccessScope struct {
 
 // IssueResponse is the sidecar's reply to POST /issue.
 //
-// Endpoint carries the OSS endpoint returned by the provider so that
-// callers can build `mc` alias URLs directly. It is empty when the
-// entries list contains no object-storage entry (e.g. a gateway-only
-// token).
+// The sidecar returns only the STS triple; OSS endpoint is NOT part of
+// this contract. Endpoint is a deployment-time static configuration
+// (HICLAW_FS_ENDPOINT) and is sourced independently by each caller.
 type IssueResponse struct {
 	AccessKeyID     string `json:"access_key_id"`
 	AccessKeySecret string `json:"access_key_secret"`
 	SecurityToken   string `json:"security_token"`
 	Expiration      string `json:"expiration"`
 	ExpiresInSec    int    `json:"expires_in_sec"`
-	Endpoint        string `json:"endpoint"`
 }
 
 // Supported Service identifiers. Keep in sync with the CRD schema's

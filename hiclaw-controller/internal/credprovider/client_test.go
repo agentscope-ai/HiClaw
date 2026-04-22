@@ -24,8 +24,7 @@ func newMockServer(t *testing.T, status int, body string) *httptest.Server {
 func TestHTTPClient_Issue_FullSTS(t *testing.T) {
 	srv := newMockServer(t, 200, `{
 	  "access_key_id":"STS.AK","access_key_secret":"SK","security_token":"TOK",
-	  "expiration":"2099-01-01T00:00:00Z","expires_in_sec":3600,
-	  "endpoint":"oss-cn-hangzhou.aliyuncs.com"
+	  "expiration":"2099-01-01T00:00:00Z","expires_in_sec":3600
 	}`)
 	defer srv.Close()
 
@@ -59,8 +58,7 @@ func sampleReq() IssueRequest {
 func TestHTTPClient_Issue_EmptySecurityTokenAccepted(t *testing.T) {
 	srv := newMockServer(t, 200, `{
 	  "access_key_id":"LTAI.AK","access_key_secret":"SK","security_token":"",
-	  "expiration":"2099-01-01T00:00:00Z","expires_in_sec":3600,
-	  "endpoint":"oss-cn-hangzhou.aliyuncs.com"
+	  "expiration":"2099-01-01T00:00:00Z","expires_in_sec":3600
 	}`)
 	defer srv.Close()
 
@@ -77,7 +75,7 @@ func TestHTTPClient_Issue_EmptySecurityTokenAccepted(t *testing.T) {
 func TestHTTPClient_Issue_MissingAK(t *testing.T) {
 	srv := newMockServer(t, 200, `{
 	  "access_key_id":"","access_key_secret":"SK","security_token":"",
-	  "expires_in_sec":3600,"endpoint":"oss-cn-hangzhou.aliyuncs.com"
+	  "expires_in_sec":3600
 	}`)
 	defer srv.Close()
 

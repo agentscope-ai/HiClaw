@@ -219,6 +219,9 @@ func (a *App) initInfraClients(_ context.Context) error {
 		if a.credProvider == nil {
 			return fmt.Errorf("oss provider requires HICLAW_CREDENTIAL_PROVIDER_URL to be set")
 		}
+		if cfg.OSSConfig().Endpoint == "" {
+			return fmt.Errorf("oss provider requires HICLAW_FS_ENDPOINT to be set (endpoint is no longer returned by the credential-provider sidecar)")
+		}
 		gatewayID := ""
 		if cfg.UsesAIGateway() {
 			gatewayID = cfg.GWGatewayID
@@ -252,7 +255,6 @@ func (s *ossControllerCredSource) Resolve(ctx context.Context) (oss.Credentials,
 		return oss.Credentials{}, err
 	}
 	return oss.Credentials{
-		Endpoint:        t.Endpoint,
 		AccessKeyID:     t.AccessKeyID,
 		AccessKeySecret: t.AccessKeySecret,
 		SecurityToken:   t.SecurityToken,

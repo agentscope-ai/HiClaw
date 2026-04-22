@@ -63,9 +63,11 @@ func TestIssueForCaller_WorkerDefaultEntries(t *testing.T) {
 		AccessKeySecret: "test-sk",
 		SecurityToken:   "test-token",
 		ExpiresInSec:    3600,
-		Endpoint:        "oss-cn-hangzhou.aliyuncs.com",
 	}}
-	svc := NewSTSService(STSConfig{OSSBucket: "test-bucket"}, resolver, fake)
+	svc := NewSTSService(STSConfig{
+		OSSBucket:   "test-bucket",
+		OSSEndpoint: "oss-cn-hangzhou.aliyuncs.com",
+	}, resolver, fake)
 
 	tok, err := svc.IssueForCaller(context.Background(), &auth.CallerIdentity{
 		Role: auth.RoleWorker, Username: "alice", WorkerName: "alice",
@@ -75,6 +77,10 @@ func TestIssueForCaller_WorkerDefaultEntries(t *testing.T) {
 	}
 	if tok.AccessKeyID != "STS.test-ak" || tok.OSSBucket != "test-bucket" {
 		t.Fatalf("unexpected token: %+v", tok)
+	}
+	if tok.OSSEndpoint != "oss-cn-hangzhou.aliyuncs.com" {
+		t.Fatalf("OSSEndpoint = %q, want %q (must come from STSConfig, not provider response)",
+			tok.OSSEndpoint, "oss-cn-hangzhou.aliyuncs.com")
 	}
 
 	if fake.lastReq.SessionName != "hiclaw-worker-alice" {

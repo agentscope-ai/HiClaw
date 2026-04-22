@@ -17,6 +17,13 @@ type STSConfig struct {
 	// by the accessresolver to resolve `bucketRef: workspace` in
 	// AccessEntry scopes.
 	OSSBucket string
+
+	// OSSEndpoint is the public-facing OSS endpoint returned to worker
+	// callers in STSToken.OSSEndpoint. It is sourced from controller
+	// static config (HICLAW_FS_ENDPOINT / storage.oss.endpoint) and NOT
+	// from the credential-provider sidecar — endpoint is deployment-time
+	// configuration, orthogonal to the short-lived STS triple.
+	OSSEndpoint string
 }
 
 // STSService issues scoped STS tokens for Worker/Manager callers.
@@ -76,7 +83,7 @@ func (s *STSService) IssueForCaller(ctx context.Context, caller *auth.CallerIden
 		SecurityToken:   resp.SecurityToken,
 		Expiration:      resp.Expiration,
 		ExpiresInSec:    resp.ExpiresInSec,
-		OSSEndpoint:     resp.Endpoint,
+		OSSEndpoint:     s.config.OSSEndpoint,
 		OSSBucket:       s.config.OSSBucket,
 	}, nil
 }

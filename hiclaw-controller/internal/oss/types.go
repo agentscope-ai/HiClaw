@@ -18,6 +18,9 @@ type Config struct {
 // When a MinIOClient is constructed with a non-nil CredentialSource, every
 // mc invocation resolves the current credentials via Resolve and injects
 // them into the process environment as MC_HOST_<alias>=<scheme>://<ak>:<sk>[:<token>]@<host>.
+// The <host> component comes from MinIOClient.config.Endpoint, NOT from
+// the CredentialSource — endpoint is a deployment-time static value and
+// is kept orthogonal to the short-lived STS triple on purpose.
 // This is the canonical way to drive mc against Alibaba Cloud OSS with
 // refreshable STS tokens: the alias file on disk is never written and
 // tokens are never cached beyond the TokenManager's own expiry.
@@ -26,8 +29,9 @@ type CredentialSource interface {
 }
 
 // Credentials is the per-call credential bundle that CredentialSource returns.
+// Endpoint is intentionally NOT carried here: the OSS endpoint is a static
+// deployment config read from MinIOClient.config.Endpoint.
 type Credentials struct {
-	Endpoint        string
 	AccessKeyID     string
 	AccessKeySecret string
 	SecurityToken   string // optional

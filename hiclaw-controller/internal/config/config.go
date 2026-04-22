@@ -382,7 +382,8 @@ func (c *Config) DockerConfig() backend.DockerConfig {
 
 func (c *Config) STSConfig() credentials.STSConfig {
 	return credentials.STSConfig{
-		OSSBucket: c.OSSBucket,
+		OSSBucket:   c.OSSBucket,
+		OSSEndpoint: firstNonEmpty(os.Getenv("HICLAW_FS_ENDPOINT"), c.WorkerEnv.FSEndpoint),
 	}
 }
 

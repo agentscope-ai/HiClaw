@@ -211,7 +211,7 @@ func (c *MinIOClient) runMC(ctx context.Context, args ...string) (string, error)
 		if err != nil {
 			return "", fmt.Errorf("resolve oss credentials: %w", err)
 		}
-		hostEnv, herr := buildMCHostEnv(c.config.Alias, creds)
+		hostEnv, herr := buildMCHostEnv(c.config.Alias, c.config.Endpoint, creds)
 		if herr != nil {
 			return "", herr
 		}
@@ -230,10 +230,10 @@ func (c *MinIOClient) runMC(ctx context.Context, args ...string) (string, error)
 // alternative to persistent ~/.mc/config.json alias entries, and
 // honours the security-token component when present.
 //
-// The credential-provider sidecar is allowed to return a bare hostname
-// (e.g. "oss-cn-hangzhou.aliyuncs.com") without a URL scheme; in that
-// case we default to https so the caller does not have to normalise
-// every response shape.
+// The endpoint is supplied by the caller (normally MinIOClient.config.Endpoint,
+// sourced from HICLAW_FS_ENDPOINT). A bare hostname (e.g.
+// "oss-cn-hangzhou.aliyuncs.com") without a URL scheme is accepted; in
+// that case we default to https.
 //
 // IMPORTANT: mc (tested with RELEASE.2025-08-13) does NOT URL-decode the
 // userinfo segment of MC_HOST_* before using the values. Any percent-
@@ -242,20 +242,20 @@ func (c *MinIOClient) runMC(ctx context.Context, args ...string) (string, error)
 // with InvalidSecurityToken. We therefore pass the triple raw; STS
 // credentials issued by Alibaba Cloud contain only characters (base64
 // alphabet plus "+/=") that Go's url.Parse accepts inside userinfo.
-func buildMCHostEnv(alias string, c Credentials) (string, error) {
-	if c.Endpoint == "" {
-		return "", fmt.Errorf("credential source returned empty endpoint")
+func buildMCHostEnv(alias string, endpoint string, c Credentials) (string, error) {
+	if endpoint == "" {
+		return "", fmt.Errorf("storage endpoint is not configured (HICLAW_FS_ENDPOINT is empty)")
 	}
-	endpoint := c.Endpoint
-	if !strings.HasPrefix(endpoint, "http://") && !strings.HasPrefix(endpoint, "https://") {
-		endpoint = "https://" + endpoint
+	normalized := endpoint
+	if !strings.HasPrefix(normalized, "http://") && !strings.HasPrefix(normalized, "https://") {
+		normalized = "https://" + normalized
 	}
-	u, err := url.Parse(endpoint)
+	u, err := url.Parse(normalized)
 	if err != nil {
-		return "", fmt.Errorf("parse endpoint %q: %w", c.Endpoint, err)
+		return "", fmt.Errorf("parse endpoint %q: %w", endpoint, err)
 	}
 	if u.Scheme == "" || u.Host == "" {
-		return "", fmt.Errorf("endpoint %q must include scheme and host", c.Endpoint)
+		return "", fmt.Errorf("endpoint %q must include scheme and host", endpoint)
 	}
 
 	userinfo := c.AccessKeyID + ":" + c.AccessKeySecret

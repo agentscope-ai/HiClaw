@@ -6,8 +6,7 @@ import (
 )
 
 func TestBuildMCHostEnv_FullURL(t *testing.T) {
-	got, err := buildMCHostEnv("hiclaw", Credentials{
-		Endpoint:        "https://oss-cn-hangzhou.aliyuncs.com",
+	got, err := buildMCHostEnv("hiclaw", "https://oss-cn-hangzhou.aliyuncs.com", Credentials{
 		AccessKeyID:     "AK",
 		AccessKeySecret: "SK",
 		SecurityToken:   "TOKEN",
@@ -22,8 +21,7 @@ func TestBuildMCHostEnv_FullURL(t *testing.T) {
 }
 
 func TestBuildMCHostEnv_BareHostname(t *testing.T) {
-	got, err := buildMCHostEnv("hiclaw", Credentials{
-		Endpoint:        "oss-cn-hangzhou.aliyuncs.com",
+	got, err := buildMCHostEnv("hiclaw", "oss-cn-hangzhou.aliyuncs.com", Credentials{
 		AccessKeyID:     "AK",
 		AccessKeySecret: "SK",
 		SecurityToken:   "TOKEN",
@@ -38,8 +36,7 @@ func TestBuildMCHostEnv_BareHostname(t *testing.T) {
 }
 
 func TestBuildMCHostEnv_NoToken(t *testing.T) {
-	got, err := buildMCHostEnv("hiclaw", Credentials{
-		Endpoint:        "oss-cn-hangzhou.aliyuncs.com",
+	got, err := buildMCHostEnv("hiclaw", "oss-cn-hangzhou.aliyuncs.com", Credentials{
 		AccessKeyID:     "AK",
 		AccessKeySecret: "SK",
 	})
@@ -52,7 +49,7 @@ func TestBuildMCHostEnv_NoToken(t *testing.T) {
 }
 
 func TestBuildMCHostEnv_EmptyEndpoint(t *testing.T) {
-	if _, err := buildMCHostEnv("hiclaw", Credentials{AccessKeyID: "AK", AccessKeySecret: "SK"}); err == nil {
+	if _, err := buildMCHostEnv("hiclaw", "", Credentials{AccessKeyID: "AK", AccessKeySecret: "SK"}); err == nil {
 		t.Fatalf("expected error for empty endpoint")
 	}
 }
@@ -64,8 +61,7 @@ func TestBuildMCHostEnv_EmptyEndpoint(t *testing.T) {
 // header and breaks OSS auth. This test guards against accidentally
 // reintroducing encoding.
 func TestBuildMCHostEnv_NoPercentEncoding(t *testing.T) {
-	got, err := buildMCHostEnv("hiclaw", Credentials{
-		Endpoint:        "https://oss-cn-hangzhou.aliyuncs.com",
+	got, err := buildMCHostEnv("hiclaw", "https://oss-cn-hangzhou.aliyuncs.com", Credentials{
 		AccessKeyID:     "STS.NYabc123",
 		AccessKeySecret: "sk+with/slash=pad",
 		SecurityToken:   "CAIS+Base64/Token==",
