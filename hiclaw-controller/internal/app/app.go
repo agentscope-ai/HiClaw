@@ -373,6 +373,7 @@ func (a *App) initServiceLayer(_ context.Context) error {
 		AdminUser:         cfg.MatrixAdminUser,
 		ManagerPassword:   cfg.ManagerPassword,
 		ManagerGatewayKey: cfg.ManagerGatewayKey,
+		ManagerEnabled:    cfg.ManagerEnabled,
 	})
 
 	a.envBuilder = service.NewWorkerEnvBuilder(cfg.WorkerEnv)

@@ -85,6 +85,13 @@ type ProvisionerConfig struct {
 	// When set, used instead of generating random credentials.
 	ManagerPassword   string
 	ManagerGatewayKey string
+
+	// ManagerEnabled reflects HICLAW_MANAGER_ENABLED. When false, no Manager
+	// CR is ever created, so the Matrix user `@manager:<domain>` does not
+	// exist on Tuwunel. Worker room creation must therefore skip inviting
+	// the manager; otherwise Conduwuit/Tuwunel returns HTTP 403 (it rejects
+	// invites to non-existent local users).
+	ManagerEnabled bool
 }
 
 // Provisioner orchestrates infrastructure provisioning and deprovisioning
@@ -104,6 +111,7 @@ type Provisioner struct {
 
 	managerPassword   string
 	managerGatewayKey string
+	managerEnabled    bool
 }
 
 func NewProvisioner(cfg ProvisionerConfig) *Provisioner {
@@ -120,6 +128,7 @@ func NewProvisioner(cfg ProvisionerConfig) *Provisioner {
 		adminUser:         cfg.AdminUser,
 		managerPassword:   cfg.ManagerPassword,
 		managerGatewayKey: cfg.ManagerGatewayKey,
+		managerEnabled:    cfg.ManagerEnabled,
 	}
 }
 
@@ -284,11 +293,17 @@ func (p *Provisioner) ProvisionWorker(ctx context.Context, req WorkerProvisionRe
 	// Step 4: Create Matrix room
 	logger.Info("creating Matrix room", "name", workerName)
 
+	// Pick an authority for the room.
+	//   - Team worker  : the team leader (always provisioned before team workers).
+	//   - Standalone   : the Manager if enabled, else the admin user.
 	var authorityID string
-	if isTeamWorker {
+	switch {
+	case isTeamWorker:
 		authorityID = p.matrix.UserID(req.TeamLeaderName)
-	} else {
+	case p.managerEnabled:
 		authorityID = managerMatrixID
+	default:
+		authorityID = adminMatrixID
 	}
 
 	powerLevels := map[string]int{
@@ -298,10 +313,16 @@ func (p *Provisioner) ProvisionWorker(ctx context.Context, req WorkerProvisionRe
 		workerMatrixID:  0,
 	}
 
+	invite := []string{adminMatrixID}
+	if authorityID != adminMatrixID {
+		invite = append(invite, authorityID)
+	}
+	invite = append(invite, workerMatrixID)
+
 	roomInfo, err := p.matrix.CreateRoom(ctx, matrix.CreateRoomRequest{
 		Name:          fmt.Sprintf("Worker: %s", workerName),
 		Topic:         fmt.Sprintf("Communication channel for %s", workerName),
-		Invite:        []string{adminMatrixID, authorityID, workerMatrixID},
+		Invite:        invite,
 		PowerLevels:   powerLevels,
 		RoomAliasName: roomAliasLocalpart("worker", workerName),
 	})
