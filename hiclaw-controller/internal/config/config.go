@@ -67,13 +67,6 @@ type Config struct {
 	K8sWorkerCPU    string
 	K8sWorkerMemory string
 
-	// AgentPodTemplateFile is the path to a ConfigMap-mounted
-	// corev1.PodTemplateSpec YAML used as the base Pod shape for every
-	// Manager/Worker Pod the controller creates. Empty / non-existent /
-	// malformed file all collapse to "no overlay", preserving the zero-config
-	// local-helm experience. See backend.LoadAgentPodTemplate.
-	AgentPodTemplateFile string
-
 	// Manager deployment (Initializer creates the Manager CR if enabled)
 	ManagerEnabled          bool
 	ManagerModel            string
@@ -240,8 +233,6 @@ func LoadConfig() *Config {
 		K8sNamespace:    os.Getenv("HICLAW_K8S_NAMESPACE"),
 		K8sWorkerCPU:    envOrDefault("HICLAW_K8S_WORKER_CPU", "1000m"),
 		K8sWorkerMemory: envOrDefault("HICLAW_K8S_WORKER_MEMORY", "2Gi"),
-
-		AgentPodTemplateFile: envOrDefault("HICLAW_AGENT_POD_TEMPLATE_FILE", "/etc/hiclaw/agent-pod-template/pod-template.yaml"),
 
 		ManagerEnabled:          envOrDefault("HICLAW_MANAGER_ENABLED", "true") == "true",
 		ManagerModel:            firstNonEmpty(os.Getenv("HICLAW_MANAGER_MODEL"), envOrDefault("HICLAW_DEFAULT_MODEL", "qwen3.5-plus")),
@@ -421,13 +412,13 @@ func (c *Config) UsesExternalOSS() bool {
 
 func (c *Config) K8sConfig() backend.K8sConfig {
 	return backend.K8sConfig{
-		Namespace:            c.K8sNamespace,
-		WorkerImage:          envOrDefault("HICLAW_WORKER_IMAGE", "hiclaw/worker-agent:latest"),
-		CopawWorkerImage:     envOrDefault("HICLAW_COPAW_WORKER_IMAGE", "hiclaw/copaw-worker:latest"),
-		HermesWorkerImage:    envOrDefault("HICLAW_HERMES_WORKER_IMAGE", "hiclaw/hermes-worker:latest"),
-		WorkerCPU:            c.K8sWorkerCPU,
-		WorkerMemory:         c.K8sWorkerMemory,
-		AgentPodTemplateFile: c.AgentPodTemplateFile,
+		Namespace:         c.K8sNamespace,
+		WorkerImage:       envOrDefault("HICLAW_WORKER_IMAGE", "hiclaw/worker-agent:latest"),
+		CopawWorkerImage:  envOrDefault("HICLAW_COPAW_WORKER_IMAGE", "hiclaw/copaw-worker:latest"),
+		HermesWorkerImage: envOrDefault("HICLAW_HERMES_WORKER_IMAGE", "hiclaw/hermes-worker:latest"),
+		WorkerCPU:         c.K8sWorkerCPU,
+		WorkerMemory:      c.K8sWorkerMemory,
+		ControllerName:    c.ControllerName,
 	}
 }
 

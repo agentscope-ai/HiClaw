@@ -2,15 +2,18 @@ package backend
 
 import (
 	"context"
-	"errors"
-	"io/fs"
-	"os"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/yaml"
 )
+
+// AgentPodTemplateConfigMapKey is the data key inside the controller-scoped
+// ConfigMap that carries the PodTemplateSpec YAML. The controller reads this
+// and only this key; any other keys in the same ConfigMap are ignored.
+const AgentPodTemplateConfigMapKey = "pod-template.yaml"
 
 // PodOverlay carries every controller-computed field that ApplyPodTemplate
 // must force onto the final Pod. Anything NOT in this struct is either copied
@@ -47,36 +50,49 @@ type PodOverlay struct {
 	HostAliases []corev1.HostAlias
 }
 
-// LoadAgentPodTemplate reads and parses the PodTemplateSpec YAML at path.
-// Returns a zero-value PodTemplateSpec (and NEVER panics or returns an error)
-// when the file is absent, unreadable, or malformed — a broken template must
-// never block Pod creation. Parse failures are logged via
-// controller-runtime's logger so they surface in controller logs without
-// breaking the create path.
+// LoadAgentPodTemplate fetches the agent PodTemplateSpec overlay from the
+// ConfigMap named `name` (typically the controller's own name, i.e. the
+// HICLAW_CONTROLLER_NAME env var) in `namespace`. The key
+// AgentPodTemplateConfigMapKey ("pod-template.yaml") is expected to carry
+// a YAML document with the two top-level fields of corev1.PodTemplateSpec
+// directly (metadata:, spec:) — NOT a full apiVersion/kind-wrapped
+// PodTemplate object.
 //
-// The file is expected to contain the two top-level fields of
-// corev1.PodTemplateSpec directly (metadata:, spec:), NOT a full
-// apiVersion/kind-wrapped PodTemplate object.
-func LoadAgentPodTemplate(ctx context.Context, path string) corev1.PodTemplateSpec {
+// This function is called on every Create(), so it is a live lookup with
+// no caching — ConfigMap edits take effect on the very next Pod creation.
+//
+// Every failure mode (nil client, empty name, missing ConfigMap, API error,
+// RBAC denial, missing key, parse failure) collapses to a zero-value
+// PodTemplateSpec. A broken overlay must never block Pod creation. Failures
+// are surfaced via controller-runtime's logger at varying levels:
+//
+//   - NotFound: V(1) debug — a common "no overlay configured" state.
+//   - Parse failure: Error — the user's YAML is almost certainly wrong.
+//   - Other API errors: Info — likely transient; next Create retries.
+func LoadAgentPodTemplate(ctx context.Context, client K8sCoreClient, namespace, name string) corev1.PodTemplateSpec {
 	logger := log.FromContext(ctx).WithName("agent-pod-template")
-	if path == "" {
+	if client == nil || namespace == "" || name == "" {
 		return corev1.PodTemplateSpec{}
 	}
-	data, err := os.ReadFile(path)
+	cm, err := client.ConfigMaps(namespace).Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
-		if !errors.Is(err, fs.ErrNotExist) {
-			logger.Info("agent pod template file unreadable; falling back to empty template",
-				"path", path, "err", err.Error())
+		if apierrors.IsNotFound(err) {
+			logger.V(1).Info("agent pod template ConfigMap not found; using empty overlay",
+				"namespace", namespace, "name", name)
+			return corev1.PodTemplateSpec{}
 		}
+		logger.Info("agent pod template ConfigMap fetch failed; using empty overlay",
+			"namespace", namespace, "name", name, "err", err.Error())
 		return corev1.PodTemplateSpec{}
 	}
-	if len(data) == 0 {
+	raw, ok := cm.Data[AgentPodTemplateConfigMapKey]
+	if !ok || raw == "" {
 		return corev1.PodTemplateSpec{}
 	}
 	var tmpl corev1.PodTemplateSpec
-	if err := yaml.Unmarshal(data, &tmpl); err != nil {
-		logger.Error(err, "agent pod template parse failed; falling back to empty template",
-			"path", path)
+	if err := yaml.Unmarshal([]byte(raw), &tmpl); err != nil {
+		logger.Error(err, "agent pod template YAML parse failed; using empty overlay",
+			"namespace", namespace, "name", name, "key", AgentPodTemplateConfigMapKey)
 		return corev1.PodTemplateSpec{}
 	}
 	return tmpl

@@ -2,8 +2,6 @@ package backend
 
 import (
 	"context"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -14,14 +12,17 @@ import (
 )
 
 type fakeK8sCoreClient struct {
-	pods     map[string]map[string]*corev1.Pod
-	getCalls map[string]int // key: "namespace/name" -> count (for caching-behavior tests)
+	pods       map[string]map[string]*corev1.Pod
+	configMaps map[string]map[string]*corev1.ConfigMap
+	cmGetErr   error          // if non-nil, every ConfigMap Get returns this error
+	getCalls   map[string]int // key: "namespace/name" -> count (for caching-behavior tests)
 }
 
 func newFakeK8sCoreClient(objects ...*corev1.Pod) *fakeK8sCoreClient {
 	client := &fakeK8sCoreClient{
-		pods:     map[string]map[string]*corev1.Pod{},
-		getCalls: map[string]int{},
+		pods:       map[string]map[string]*corev1.Pod{},
+		configMaps: map[string]map[string]*corev1.ConfigMap{},
+		getCalls:   map[string]int{},
 	}
 	for _, obj := range objects {
 		client.injectPod(obj)
@@ -40,6 +41,19 @@ func (f *fakeK8sCoreClient) injectPod(pod *corev1.Pod) {
 	f.pods[ns][pod.Name] = pod.DeepCopy()
 }
 
+// injectConfigMap stores a ConfigMap under its namespace/name so that fake
+// ConfigMaps(ns).Get(name) returns it. Used by agent-pod-template tests.
+func (f *fakeK8sCoreClient) injectConfigMap(cm *corev1.ConfigMap) {
+	ns := cm.Namespace
+	if ns == "" {
+		ns = "default"
+	}
+	if f.configMaps[ns] == nil {
+		f.configMaps[ns] = map[string]*corev1.ConfigMap{}
+	}
+	f.configMaps[ns][cm.Name] = cm.DeepCopy()
+}
+
 func (f *fakeK8sCoreClient) getCount(namespace, name string) int {
 	return f.getCalls[namespace+"/"+name]
 }
@@ -53,6 +67,33 @@ func (f *fakeK8sCoreClient) Pods(namespace string) K8sPodClient {
 		store:     f.pods[namespace],
 		getCalls:  f.getCalls,
 	}
+}
+
+func (f *fakeK8sCoreClient) ConfigMaps(namespace string) K8sConfigMapClient {
+	if f.configMaps[namespace] == nil {
+		f.configMaps[namespace] = map[string]*corev1.ConfigMap{}
+	}
+	return &fakeK8sConfigMapClient{
+		namespace: namespace,
+		store:     f.configMaps[namespace],
+		forcedErr: f.cmGetErr,
+	}
+}
+
+type fakeK8sConfigMapClient struct {
+	namespace string
+	store     map[string]*corev1.ConfigMap
+	forcedErr error
+}
+
+func (f *fakeK8sConfigMapClient) Get(_ context.Context, name string, _ metav1.GetOptions) (*corev1.ConfigMap, error) {
+	if f.forcedErr != nil {
+		return nil, f.forcedErr
+	}
+	if cm, ok := f.store[name]; ok {
+		return cm.DeepCopy(), nil
+	}
+	return nil, apierrors.NewNotFound(schema.GroupResource{Resource: "configmaps"}, name)
 }
 
 type fakeK8sPodClient struct {
@@ -110,12 +151,12 @@ func newTestK8sBackend(objects ...*corev1.Pod) *K8sBackend {
 func newTestK8sBackendWithFake(extra K8sConfig, objects ...*corev1.Pod) (*K8sBackend, *fakeK8sCoreClient) {
 	client := newFakeK8sCoreClient(objects...)
 	cfg := K8sConfig{
-		Namespace:            "hiclaw",
-		WorkerImage:          "hiclaw/worker-agent:latest",
-		CopawWorkerImage:     "hiclaw/copaw-worker:latest",
-		WorkerCPU:            "1000m",
-		WorkerMemory:         "2Gi",
-		AgentPodTemplateFile: extra.AgentPodTemplateFile,
+		Namespace:        "hiclaw",
+		WorkerImage:      "hiclaw/worker-agent:latest",
+		CopawWorkerImage: "hiclaw/copaw-worker:latest",
+		WorkerCPU:        "1000m",
+		WorkerMemory:     "2Gi",
+		ControllerName:   extra.ControllerName,
 	}
 	return NewK8sBackendWithClient(client, cfg, "hiclaw-worker-"), client
 }
@@ -535,21 +576,30 @@ func TestK8sCreateResolvesImageFromRuntime(t *testing.T) {
 
 // ── Integration tests: K8sBackend.Create + PodTemplate + ownerRefs ───────
 
-func writeTemplateFile(t *testing.T, content string) string {
+// testControllerName is the canonical ControllerName used across integration
+// tests that exercise the agent PodTemplate ConfigMap lookup path.
+const testControllerName = "hiclaw-ctl"
+
+// injectTemplateConfigMap installs a ConfigMap named testControllerName in
+// the "hiclaw" namespace with the PodTemplateSpec YAML under the canonical
+// data key, mirroring what a real user's `kubectl apply -f cm.yaml` does.
+func injectTemplateConfigMap(t *testing.T, fake *fakeK8sCoreClient, content string) {
 	t.Helper()
-	dir := t.TempDir()
-	path := filepath.Join(dir, "pod-template.yaml")
-	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
-		t.Fatalf("write template: %v", err)
-	}
-	return path
+	fake.injectConfigMap(&corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      testControllerName,
+			Namespace: "hiclaw",
+		},
+		Data: map[string]string{AgentPodTemplateConfigMapKey: content},
+	})
 }
 
 // K1: End-to-end Aliyun-shaped template — SG annotation, ANSM label,
 // imagePullSecrets, nodeSelector, tolerations, sysctls, kubeone annotation
 // all flow through unchanged while overlay.labels/annotations still merge.
 func TestK8sCreate_TemplateEndToEndAliyunShape(t *testing.T) {
-	tmplPath := writeTemplateFile(t, `metadata:
+	b, fake := newTestK8sBackendWithFake(K8sConfig{ControllerName: testControllerName})
+	injectTemplateConfigMap(t, fake, `metadata:
   annotations:
     network.alibabacloud.com/security-group-ids: sg-bp1xxx
     kubeone.ali/appinstance-name: magic-ctl
@@ -572,7 +622,6 @@ spec:
       value: acs
       effect: NoSchedule
 `)
-	b, _ := newTestK8sBackendWithFake(K8sConfig{AgentPodTemplateFile: tmplPath})
 
 	if _, err := b.Create(context.Background(), CreateRequest{Name: "alice"}); err != nil {
 		t.Fatalf("Create: %v", err)
@@ -611,10 +660,11 @@ spec:
 	}
 }
 
-// K2: No template → backend produces the same Pod shape it always did
-// (hiclaw-token projected volume, SA override, automount=false, default resources).
+// K2: No ControllerName (nothing to look up) → backend produces the same Pod
+// shape it always did (hiclaw-token projected volume, SA override,
+// automount=false, default resources).
 func TestK8sCreate_NoTemplateBackwardCompat(t *testing.T) {
-	b, _ := newTestK8sBackendWithFake(K8sConfig{AgentPodTemplateFile: ""})
+	b, _ := newTestK8sBackendWithFake(K8sConfig{})
 	if _, err := b.Create(context.Background(), CreateRequest{Name: "bob"}); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -636,21 +686,19 @@ func TestK8sCreate_NoTemplateBackwardCompat(t *testing.T) {
 	}
 }
 
-// K3: Template file missing → degrades gracefully to empty-template behavior,
-// equivalent to K2.
-func TestK8sCreate_TemplateFileMissing(t *testing.T) {
-	b, _ := newTestK8sBackendWithFake(K8sConfig{
-		AgentPodTemplateFile: filepath.Join(t.TempDir(), "does-not-exist.yaml"),
-	})
+// K3: ControllerName is set but the ConfigMap does not exist → degrades
+// gracefully to empty-template behavior, equivalent to K2.
+func TestK8sCreate_TemplateConfigMapMissing(t *testing.T) {
+	b, _ := newTestK8sBackendWithFake(K8sConfig{ControllerName: testControllerName})
 	if _, err := b.Create(context.Background(), CreateRequest{Name: "carol"}); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 }
 
-// K4: Template malformed → logs but does NOT fail Create.
+// K4: Template YAML malformed → logs but does NOT fail Create.
 func TestK8sCreate_TemplateMalformed(t *testing.T) {
-	tmplPath := writeTemplateFile(t, "this: is: not: valid: yaml: : :")
-	b, _ := newTestK8sBackendWithFake(K8sConfig{AgentPodTemplateFile: tmplPath})
+	b, fake := newTestK8sBackendWithFake(K8sConfig{ControllerName: testControllerName})
+	injectTemplateConfigMap(t, fake, "this: is: not: valid: yaml: : :")
 	if _, err := b.Create(context.Background(), CreateRequest{Name: "dave"}); err != nil {
 		t.Fatalf("Create should tolerate malformed template: %v", err)
 	}
@@ -828,7 +876,8 @@ func TestK8sCreate_ResourcesOverridePartial(t *testing.T) {
 // K10: Resources override wins over a template that also specifies resources
 // (overlay.ResourcesOverride takes precedence over template container.Resources).
 func TestK8sCreate_ResourcesOverrideBeatsTemplate(t *testing.T) {
-	tmplPath := writeTemplateFile(t, `spec:
+	b, fake := newTestK8sBackendWithFake(K8sConfig{ControllerName: testControllerName})
+	injectTemplateConfigMap(t, fake, `spec:
   containers:
     - name: worker
       resources:
@@ -836,7 +885,6 @@ func TestK8sCreate_ResourcesOverrideBeatsTemplate(t *testing.T) {
           cpu: "4"
           memory: 8Gi
 `)
-	b, _ := newTestK8sBackendWithFake(K8sConfig{AgentPodTemplateFile: tmplPath})
 
 	if _, err := b.Create(context.Background(), CreateRequest{
 		Name:      "henry",

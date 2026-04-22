@@ -2,8 +2,7 @@ package backend
 
 import (
 	"context"
-	"os"
-	"path/filepath"
+	"errors"
 	"reflect"
 	"testing"
 
@@ -406,24 +405,51 @@ func TestApplyPodTemplate_AutomountDisabled(t *testing.T) {
 
 // ── LoadAgentPodTemplate tests ───────────────────────────────────────────
 
-func TestLoadAgentPodTemplate_FileMissing(t *testing.T) {
-	got := LoadAgentPodTemplate(context.Background(), filepath.Join(t.TempDir(), "does-not-exist.yaml"))
+const loaderTestNS = "hiclaw"
+const loaderTestName = "hiclaw-ctl"
+
+// injectLoaderCM is a test-local helper; the integration-style helper in
+// kubernetes_test.go uses fixed names that don't match the parameterized
+// namespace/name we want to exercise here.
+func injectLoaderCM(fake *fakeK8sCoreClient, namespace, name, yaml string) {
+	fake.injectConfigMap(&corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace},
+		Data:       map[string]string{AgentPodTemplateConfigMapKey: yaml},
+	})
+}
+
+func TestLoadAgentPodTemplate_NilClient(t *testing.T) {
+	got := LoadAgentPodTemplate(context.Background(), nil, loaderTestNS, loaderTestName)
 	if !reflect.DeepEqual(got, corev1.PodTemplateSpec{}) {
-		t.Fatalf("expected zero PodTemplateSpec, got %+v", got)
+		t.Fatalf("nil client: expected zero PodTemplateSpec, got %+v", got)
 	}
 }
 
-func TestLoadAgentPodTemplate_EmptyPath(t *testing.T) {
-	got := LoadAgentPodTemplate(context.Background(), "")
+func TestLoadAgentPodTemplate_EmptyNameOrNamespace(t *testing.T) {
+	fake := newFakeK8sCoreClient()
+	injectLoaderCM(fake, loaderTestNS, loaderTestName, `metadata: {labels: {x: "y"}}`)
+
+	// Empty name → no lookup, empty template.
+	if got := LoadAgentPodTemplate(context.Background(), fake, loaderTestNS, ""); !reflect.DeepEqual(got, corev1.PodTemplateSpec{}) {
+		t.Fatalf("empty name: expected zero, got %+v", got)
+	}
+	// Empty namespace → no lookup, empty template.
+	if got := LoadAgentPodTemplate(context.Background(), fake, "", loaderTestName); !reflect.DeepEqual(got, corev1.PodTemplateSpec{}) {
+		t.Fatalf("empty namespace: expected zero, got %+v", got)
+	}
+}
+
+func TestLoadAgentPodTemplate_ConfigMapNotFound(t *testing.T) {
+	fake := newFakeK8sCoreClient()
+	got := LoadAgentPodTemplate(context.Background(), fake, loaderTestNS, loaderTestName)
 	if !reflect.DeepEqual(got, corev1.PodTemplateSpec{}) {
-		t.Fatalf("expected zero PodTemplateSpec, got %+v", got)
+		t.Fatalf("NotFound: expected zero PodTemplateSpec, got %+v", got)
 	}
 }
 
 func TestLoadAgentPodTemplate_ParseOK(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "t.yaml")
-	content := `metadata:
+	fake := newFakeK8sCoreClient()
+	injectLoaderCM(fake, loaderTestNS, loaderTestName, `metadata:
   labels:
     a: x
 spec:
@@ -433,11 +459,8 @@ spec:
     - key: k
       operator: Exists
       effect: NoSchedule
-`
-	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
-		t.Fatalf("write: %v", err)
-	}
-	got := LoadAgentPodTemplate(context.Background(), path)
+`)
+	got := LoadAgentPodTemplate(context.Background(), fake, loaderTestNS, loaderTestName)
 	if got.Labels["a"] != "x" {
 		t.Fatalf("labels: %+v", got.Labels)
 	}
@@ -449,43 +472,61 @@ spec:
 	}
 }
 
-func TestLoadAgentPodTemplate_ParseFailure(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "bad.yaml")
-	// Invalid YAML that fails strict PodTemplateSpec unmarshal: a scalar where
-	// the parser expects a mapping.
-	if err := os.WriteFile(path, []byte("not-a-podtemplate-at-all: : : :"), 0o600); err != nil {
-		t.Fatalf("write: %v", err)
+func TestLoadAgentPodTemplate_MissingOrEmptyDataKey(t *testing.T) {
+	fake := newFakeK8sCoreClient()
+	// ConfigMap exists but lacks the canonical key.
+	fake.injectConfigMap(&corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Name: loaderTestName, Namespace: loaderTestNS},
+		Data:       map[string]string{"something-else": "hello"},
+	})
+	if got := LoadAgentPodTemplate(context.Background(), fake, loaderTestNS, loaderTestName); !reflect.DeepEqual(got, corev1.PodTemplateSpec{}) {
+		t.Fatalf("missing key: expected zero, got %+v", got)
 	}
-	got := LoadAgentPodTemplate(context.Background(), path)
+
+	// ConfigMap has the key but the value is empty string.
+	fake2 := newFakeK8sCoreClient()
+	injectLoaderCM(fake2, loaderTestNS, loaderTestName, "")
+	if got := LoadAgentPodTemplate(context.Background(), fake2, loaderTestNS, loaderTestName); !reflect.DeepEqual(got, corev1.PodTemplateSpec{}) {
+		t.Fatalf("empty value: expected zero, got %+v", got)
+	}
+}
+
+func TestLoadAgentPodTemplate_ParseFailure(t *testing.T) {
+	fake := newFakeK8sCoreClient()
+	// Invalid YAML that fails strict PodTemplateSpec unmarshal.
+	injectLoaderCM(fake, loaderTestNS, loaderTestName, "not-a-podtemplate-at-all: : : :")
+	got := LoadAgentPodTemplate(context.Background(), fake, loaderTestNS, loaderTestName)
 	if !reflect.DeepEqual(got, corev1.PodTemplateSpec{}) {
 		t.Fatalf("parse failure must produce zero PodTemplateSpec, got %+v", got)
 	}
 }
 
-func TestLoadAgentPodTemplate_HotReload(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "t.yaml")
-
-	if err := os.WriteFile(path, []byte(`metadata:
-  labels:
-    v: "1"
-`), 0o600); err != nil {
-		t.Fatalf("write v1: %v", err)
-	}
-	v1 := LoadAgentPodTemplate(context.Background(), path)
+// TestLoadAgentPodTemplate_LiveRead validates the "read on every Create"
+// contract: editing the ConfigMap between calls must immediately surface,
+// with no caching.
+func TestLoadAgentPodTemplate_LiveRead(t *testing.T) {
+	fake := newFakeK8sCoreClient()
+	injectLoaderCM(fake, loaderTestNS, loaderTestName, `metadata: {labels: {v: "1"}}`)
+	v1 := LoadAgentPodTemplate(context.Background(), fake, loaderTestNS, loaderTestName)
 	if v1.Labels["v"] != "1" {
 		t.Fatalf("v1 labels: %+v", v1.Labels)
 	}
 
-	if err := os.WriteFile(path, []byte(`metadata:
-  labels:
-    v: "2"
-`), 0o600); err != nil {
-		t.Fatalf("write v2: %v", err)
-	}
-	v2 := LoadAgentPodTemplate(context.Background(), path)
+	injectLoaderCM(fake, loaderTestNS, loaderTestName, `metadata: {labels: {v: "2"}}`)
+	v2 := LoadAgentPodTemplate(context.Background(), fake, loaderTestNS, loaderTestName)
 	if v2.Labels["v"] != "2" {
-		t.Fatalf("v2 labels (hot reload failed): %+v", v2.Labels)
+		t.Fatalf("v2 labels (live-read broken): %+v", v2.Labels)
+	}
+}
+
+// TestLoadAgentPodTemplate_GetError ensures non-NotFound API errors (e.g.
+// transient unavailability, RBAC denial) degrade to empty overlay without
+// blocking the caller.
+func TestLoadAgentPodTemplate_GetError(t *testing.T) {
+	fake := newFakeK8sCoreClient()
+	fake.cmGetErr = errors.New("boom: API server unavailable")
+	got := LoadAgentPodTemplate(context.Background(), fake, loaderTestNS, loaderTestName)
+	if !reflect.DeepEqual(got, corev1.PodTemplateSpec{}) {
+		t.Fatalf("API error must produce zero PodTemplateSpec, got %+v", got)
 	}
 }

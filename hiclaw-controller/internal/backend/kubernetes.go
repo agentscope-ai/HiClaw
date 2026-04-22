@@ -29,10 +29,13 @@ type K8sConfig struct {
 	WorkerCPU         string
 	WorkerMemory      string
 
-	// AgentPodTemplateFile points at a ConfigMap-mounted PodTemplateSpec YAML
-	// used as the base Pod shape for every Manager/Worker Pod. Empty value
-	// and missing/malformed file all collapse to "no template" behavior.
-	AgentPodTemplateFile string
+	// ControllerName identifies this controller instance. The agent
+	// PodTemplateSpec overlay (see LoadAgentPodTemplate) is looked up as the
+	// ConfigMap named exactly ControllerName in the controller's own
+	// Namespace, with key "pod-template.yaml". Empty ControllerName, a
+	// missing ConfigMap, or any API / parse error all collapse to "no
+	// overlay" (Pod creation proceeds unchanged).
+	ControllerName string
 }
 
 // ownerRefsCache memoizes the controller Pod's ownerReferences (filtered to
@@ -58,6 +61,7 @@ type K8sBackend struct {
 // K8sCoreClient is the minimal CoreV1 client surface needed by the backend.
 type K8sCoreClient interface {
 	Pods(namespace string) K8sPodClient
+	ConfigMaps(namespace string) K8sConfigMapClient
 }
 
 // K8sPodClient is the minimal Pod client surface needed by the backend.
@@ -68,6 +72,13 @@ type K8sPodClient interface {
 	List(ctx context.Context, opts metav1.ListOptions) (*corev1.PodList, error)
 }
 
+// K8sConfigMapClient is the minimal ConfigMap client surface needed by the
+// backend. Only Get is exposed — ConfigMaps are consumed read-only for the
+// agent pod template.
+type K8sConfigMapClient interface {
+	Get(ctx context.Context, name string, opts metav1.GetOptions) (*corev1.ConfigMap, error)
+}
+
 // k8sCoreClientWrapper adapts *corev1client.CoreV1Client to K8sCoreClient.
 type k8sCoreClientWrapper struct {
 	client *corev1client.CoreV1Client
@@ -75,6 +86,10 @@ type k8sCoreClientWrapper struct {
 
 func (w *k8sCoreClientWrapper) Pods(namespace string) K8sPodClient {
 	return w.client.Pods(namespace)
+}
+
+func (w *k8sCoreClientWrapper) ConfigMaps(namespace string) K8sConfigMapClient {
+	return w.client.ConfigMaps(namespace)
 }
 
 // NewK8sBackend creates a Kubernetes backend using in-cluster config or kubeconfig.
@@ -258,7 +273,7 @@ func (k *K8sBackend) Create(ctx context.Context, req CreateRequest) (*WorkerResu
 		}
 	}
 
-	tmpl := LoadAgentPodTemplate(ctx, k.config.AgentPodTemplateFile)
+	tmpl := LoadAgentPodTemplate(ctx, k.client, k.config.Namespace, k.config.ControllerName)
 	ownerRefs := k.controllerOwnerRefs(ctx)
 
 	pod := ApplyPodTemplate(tmpl, PodOverlay{
