@@ -40,6 +40,7 @@ hiclaw create worker --name <NAME> --no-wait \
 - **Always notify Workers to `file-sync` after writing files they need** — the 5-minute periodic sync is fallback only
 - **Workers are stateless** — all state is in centralized storage. Reset = recreate config files
 - **Matrix accounts persist in Tuwunel** (cannot be deleted via API) — reuse same username on reset
+- **Changing a Worker's `--runtime` is a destructive operation** — the controller deletes the old container and creates a new one from the target runtime's image (openclaw/copaw/hermes). Matrix account, room, gateway consumer, MinIO data and persisted credentials are preserved; container-local state (caches, in-memory session, current task progress) is lost. Always confirm with admin first, and avoid switching runtime while the Worker is mid-task.
 
 ## Operation Reference
 
@@ -50,8 +51,32 @@ Read the relevant doc **before** executing. Do not load all of them.
 | Create a new worker | `references/create-worker.md` | `hiclaw create worker` |
 | Start/stop/check idle workers | `references/lifecycle.md` | `scripts/lifecycle-worker.sh` |
 | Push/add/remove skills | `references/skills-management.md` | `scripts/push-worker-skills.sh` |
+| Switch a worker's runtime (openclaw ↔ copaw ↔ hermes) | (this file, "Switching Runtime" below) | `scripts/update-worker-config.sh --runtime ...` |
 | Open/close CoPaw console | `references/console.md` | `scripts/enable-worker-console.sh` |
 | Enable direct @mentions between workers | `references/peer-mentions.md` | `scripts/enable-peer-mentions.sh` |
 | Get remote worker install command | `references/lifecycle.md` | `scripts/get-worker-install-cmd.sh` |
 | Reset a worker | `references/create-worker.md` | `hiclaw delete worker` + `hiclaw create worker` |
 | Delete a worker (remove container) | `references/lifecycle.md` | `scripts/lifecycle-worker.sh` |
+
+## Switching Runtime
+
+To migrate a Worker between runtimes (e.g. openclaw → copaw, copaw → hermes), use the wrapper script — it delegates to `hiclaw update worker --runtime ...`, polls until the new container reaches `phase=Running`, and emits a result JSON:
+
+```bash
+bash /opt/hiclaw/agent/skills/worker-management/scripts/update-worker-config.sh \
+  --name <NAME> \
+  --runtime <openclaw|copaw|hermes> \
+  [--model <MODEL>] [--skills s1,s2] [--mcp-servers s1,s2]
+```
+
+What happens behind the scenes:
+
+1. Controller writes the new `runtime` into the Worker CR's spec
+2. Reconcile detects the spec change → deletes the old container → creates a new one from the target runtime's image
+3. Agent config files (`openclaw.json`, `AGENTS.md`, builtin skills) are regenerated from the new runtime's templates by the controller's deployer
+
+Constraints:
+
+- `--package-dir` and `--channel-policy` cannot be combined with `--runtime` — apply those separately after the runtime switch settles
+- For **remote-mode** workers (`--remote` at create time), the container lives on the admin's machine and the controller cannot recreate it. Tell the admin to run `lifecycle-worker.sh --action delete --worker <NAME>` followed by `hiclaw create worker --remote --runtime <NEW>` on their machine
+- The wrapper preserves Matrix account/room/credentials/MinIO data but loses container-local ephemeral state — see the runtime gotcha above

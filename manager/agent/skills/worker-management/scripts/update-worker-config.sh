@@ -1,15 +1,27 @@
 #!/bin/bash
 # update-worker-config.sh - Update an existing Worker's configuration
 #
-# Reads persisted credentials, regenerates openclaw.json, pushes skills,
-# and syncs config to MinIO. Memory is preserved.
+# Two modes:
+#
+# 1. In-place edit (default): regenerate openclaw.json, push skills, reauth
+#    MCP, mc mirror to MinIO. Container is NOT recreated; openclaw watches
+#    files and picks up live. Memory preserved.
+#
+# 2. Runtime switch (when --runtime is provided): delegates to
+#    `hiclaw update worker --runtime <RUNTIME> ...` and polls until
+#    phase=Running. Controller's reconcile destroys the old container and
+#    creates a new one with the new runtime image; agent config files are
+#    regenerated from the new runtime's templates. Matrix account, room,
+#    gateway consumer, MinIO data are preserved; container-local ephemeral
+#    state (caches) is lost.
 #
 # Usage:
 #   update-worker-config.sh --name <NAME> [--model <MODEL_ID>] [--skills s1,s2] [--mcp-servers s1,s2] [--package-dir <DIR>]
+#   update-worker-config.sh --name <NAME> --runtime <openclaw|copaw|hermes> [--model <MODEL_ID>] [--skills s1,s2] [--mcp-servers s1,s2]
 #
 # Prerequisites:
 #   - Worker must already exist (created via create-worker.sh)
-#   - Credentials at /data/worker-creds/<NAME>.env
+#   - Credentials at /data/worker-creds/<NAME>.env (in-place mode only)
 
 set -e
 source /opt/hiclaw/scripts/lib/hiclaw-env.sh
@@ -36,6 +48,7 @@ MCP_SERVERS=""
 WORKER_SKILLS=""
 PACKAGE_DIR=""
 CHANNEL_POLICY_JSON=""
+RUNTIME=""
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -45,13 +58,104 @@ while [ $# -gt 0 ]; do
         --mcp-servers) MCP_SERVERS="$2"; shift 2 ;;
         --package-dir) PACKAGE_DIR="$2"; shift 2 ;;
         --channel-policy) CHANNEL_POLICY_JSON="$2"; shift 2 ;;
+        --runtime)     RUNTIME="$2"; shift 2 ;;
         *) echo "Unknown option: $1"; exit 1 ;;
     esac
 done
 
 if [ -z "${WORKER_NAME}" ]; then
     echo "Usage: update-worker-config.sh --name <NAME> [--model <MODEL>] [--skills s1,s2] [--mcp-servers s1,s2] [--package-dir <DIR>]"
+    echo "       update-worker-config.sh --name <NAME> --runtime <openclaw|copaw|hermes> [--model <MODEL>] [--skills s1,s2] [--mcp-servers s1,s2]"
     exit 1
+fi
+
+# ============================================================
+# Runtime switch mode: delegate to `hiclaw update worker` and poll.
+#
+# Why: changing runtime requires destroying the old container and
+# starting a new one from a different image (openclaw vs copaw vs
+# hermes). The controller's reconcile loop is the only path that
+# does this correctly — see hiclaw-controller/internal/controller/
+# member_reconcile.go::ensureMemberContainerPresent. Trying to do
+# it in-place from the manager would double-write config files and
+# leave the running container on the old runtime.
+# ============================================================
+if [ -n "${RUNTIME}" ]; then
+    case "${RUNTIME}" in
+        openclaw|copaw|hermes) ;;
+        *) _fail "Invalid --runtime '${RUNTIME}'. Must be one of: openclaw, copaw, hermes." ;;
+    esac
+
+    if [ -n "${PACKAGE_DIR}" ]; then
+        _fail "--package-dir cannot be combined with --runtime. Run the package update separately (without --runtime) after the runtime switch settles."
+    fi
+    if [ -n "${CHANNEL_POLICY_JSON}" ]; then
+        _fail "--channel-policy cannot be combined with --runtime. Apply the channel-policy separately (without --runtime) after the runtime switch settles."
+    fi
+
+    log "=== Switching runtime for Worker: ${WORKER_NAME} -> ${RUNTIME} ==="
+    log "  WARNING: existing container will be destroyed and recreated."
+    log "  Preserved: Matrix account/room, gateway consumer, MinIO data, persisted credentials."
+    log "  Lost: container-local ephemeral state (caches, /tmp, in-memory session)."
+
+    CLI_ARGS=(update worker --name "${WORKER_NAME}" --runtime "${RUNTIME}")
+    [ -n "${MODEL_ID}" ]      && CLI_ARGS+=(--model "${MODEL_ID}")
+    [ -n "${WORKER_SKILLS}" ] && CLI_ARGS+=(--skills "${WORKER_SKILLS}")
+    [ -n "${MCP_SERVERS}" ]   && CLI_ARGS+=(--mcp-servers "${MCP_SERVERS}")
+
+    log "Step 1: Calling: hiclaw ${CLI_ARGS[*]}"
+    if ! CLI_OUT=$(hiclaw "${CLI_ARGS[@]}" 2>&1); then
+        _fail "hiclaw update worker failed: ${CLI_OUT}"
+    fi
+    log "  ${CLI_OUT}"
+
+    # Step 2: Poll for phase=Running. Container recreate typically takes
+    # 10-45s (openclaw 10-30, copaw 15-45, hermes 15-45 — see
+    # references/create-worker.md Step 2.5). Cap at 120s to absorb image
+    # pull on a cold node.
+    log "Step 2: Polling phase until Running (timeout 120s)..."
+    POLL_DEADLINE=$(( $(date +%s) + 120 ))
+    PHASE=""
+    MESSAGE=""
+    CURRENT_RUNTIME=""
+    while [ "$(date +%s)" -lt "${POLL_DEADLINE}" ]; do
+        WORKER_JSON=$(hiclaw get workers -o json 2>/dev/null \
+            | jq -c --arg n "${WORKER_NAME}" '.workers[]? | select(.name == $n)')
+        if [ -n "${WORKER_JSON}" ]; then
+            PHASE=$(echo "${WORKER_JSON}" | jq -r '.phase // ""')
+            MESSAGE=$(echo "${WORKER_JSON}" | jq -r '.message // ""')
+            CURRENT_RUNTIME=$(echo "${WORKER_JSON}" | jq -r '.runtime // ""')
+            log "  phase=${PHASE} runtime=${CURRENT_RUNTIME}"
+            if [ "${PHASE}" = "Running" ] && [ "${CURRENT_RUNTIME}" = "${RUNTIME}" ]; then
+                break
+            fi
+            if [ "${PHASE}" = "Failed" ]; then
+                _fail "Worker entered Failed phase during runtime switch: ${MESSAGE}"
+            fi
+        fi
+        sleep 5
+    done
+
+    if [ "${PHASE}" != "Running" ] || [ "${CURRENT_RUNTIME}" != "${RUNTIME}" ]; then
+        _fail "Timeout waiting for ${WORKER_NAME} to reach Running on runtime=${RUNTIME} (last phase=${PHASE}, runtime=${CURRENT_RUNTIME}, message=${MESSAGE})."
+    fi
+
+    log "  Worker ${WORKER_NAME} is now Running on runtime=${RUNTIME}"
+
+    echo "---RESULT---"
+    jq -n \
+        --arg name "${WORKER_NAME}" \
+        --arg runtime "${RUNTIME}" \
+        --arg model "${MODEL_ID:-unchanged}" \
+        --arg status "runtime_switched" \
+        '{
+            worker_name: $name,
+            runtime: $runtime,
+            model: $model,
+            status: $status,
+            note: "Container recreated. Matrix account, room, and persisted state preserved. Container-local ephemeral state lost."
+        }'
+    exit 0
 fi
 
 MATRIX_DOMAIN="${HICLAW_MATRIX_DOMAIN:-matrix-local.hiclaw.io:8080}"
