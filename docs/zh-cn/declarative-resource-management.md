@@ -1,6 +1,6 @@
 # 声明式资源管理
 
-HiClaw 采用 Kubernetes CRD 风格的声明式 YAML 配置来管理平台中的所有资源——Worker、Team 和 Human。你只需要描述期望状态，HiClaw Controller 会自动完成创建、更新和删除。
+HiClaw 采用 Kubernetes CRD 风格的声明式 YAML 配置来管理平台资源——**Worker**、**Team**、**Human** 与 **Manager**。你只需要描述期望状态，HiClaw Controller 会自动完成创建、更新和删除。
 
 ## 核心概念
 
@@ -25,15 +25,18 @@ Admin (人类管理员)
         └── Level 3: 只能与指定 Workers 对话
 ```
 
-### 三种资源类型
+### 四种资源类型
 
 | 资源 | 说明 | 对应实体 |
 |------|------|---------|
 | Worker | AI Agent 工作节点 | Docker 容器 + Matrix 账号 + MinIO 空间 |
 | Team | 由 Leader + N 个 Worker 组成的协作组 | 一组 Worker 容器 + Team Room |
 | Human | 真人用户 | Matrix 账号 + Room 权限 |
+| Manager | 协调 Agent（任务分发、Worker/Team 编排） | Manager Agent 运行时（与其它 CR 一样由 Controller 调和） |
 
 所有资源共享统一的 API 版本：`apiVersion: hiclaw.io/v1beta1`。
+
+**kubectl 短名**（安装 CRD 后）：`wk`（Worker）、`tm`（Team）、`hm`（Human）、`mgr`（Manager）。
 
 ## Worker
 
@@ -78,14 +81,16 @@ spec:
 | `metadata.name` | string | 是 | — | Worker 名称，全局唯一 |
 | `spec.model` | string | 是 | — | LLM 模型 ID，如 `claude-sonnet-4-6`、`qwen3.5-plus` |
 | `spec.runtime` | string | 否 | `openclaw` | Agent 运行时，`openclaw` 或 `copaw` |
-| `spec.image` | string | 否 | `hiclaw/worker-agent:latest` | 自定义 Docker 镜像 |
-| `spec.identity` | string | 否 | — | Worker 公开身份信息，用于生成 IDENTITY.md |
+| `spec.image` | string | 否 | — | 自定义镜像；留空则使用环境变量 `HICLAW_WORKER_IMAGE` / `HICLAW_COPAW_WORKER_IMAGE`（默认 `hiclaw/worker-agent:latest` / `hiclaw/copaw-worker:latest`） |
+| `spec.identity` | string | 否 | — | Worker 公开身份（OpenClaw：生成 IDENTITY.md；CoPaw：按实现合并入 SOUL.md） |
 | `spec.soul` | string | 否 | — | Worker 人格与价值观设定，用于生成 SOUL.md |
 | `spec.agents` | string | 否 | — | Agent 行为规则，用于生成 AGENTS.md |
 | `spec.skills` | []string | 否 | — | 内置 skills 列表，由 Manager 统一分发 |
 | `spec.mcpServers` | []string | 否 | — | 内置 MCP Servers 列表，通过 Higress 网关授权 |
-| `spec.package` | string | 否 | — | 自定义包 URI，支持 `file://`、`http(s)://`、`nacos://` |
+| `spec.package` | string | 否 | — | 自定义包 URI：`file://`、`http(s)://`、`nacos://`，或上传后由 Controller 解析的 `packages/{name}.zip` |
 | `spec.expose` | []object | 否 | — | 通过 Higress 网关暴露的端口列表（见 [服务发布](#服务发布)） |
+| `spec.channelPolicy` | object | 否 | — | 在默认策略之上增减群聊 @mention 与 DM 的允许/拒绝列表（详见下文「通信策略（Worker 与 Team）」） |
+| `spec.state` | string | 否 | `Running` | 期望生命周期：`Running`、`Sleeping`、`Stopped`，Controller 将实际容器状态调和到此目标 |
 
 ### identity / soul / agents 与 package 的关系
 
@@ -134,9 +139,13 @@ spec:
 | Phase | 含义 |
 |-------|------|
 | Pending | 资源已创建，等待 Controller 处理 |
-| Running | 容器运行中，Agent 在线 |
-| Sleeping | 容器被有意休眠，可由 Team Leader 或 Manager 再次唤醒 |
+| Running | 容器运行中，Agent 在线（健康时与期望 `spec.state` 一致） |
+| Sleeping | 休眠（期望或实际），可唤醒 |
+| Updating | 规格或底层变更处理中 |
+| Stopped | 已调和到停止期望 |
 | Failed | 创建或运行失败，查看 `status.message` |
+
+**状态字段（节选）：** `observedGeneration`、`matrixUserID`、`roomID`、`containerState`、`lastHeartbeat`、`message`、`exposedPorts`（暴露端口及域名）。
 
 ## Team
 
@@ -199,7 +208,9 @@ spec:
 |------|------|------|------|
 | `metadata.name` | string | 是 | Team 名称，全局唯一 |
 | `spec.description` | string | 否 | 团队描述 |
-| `spec.admin` | object | 否 | 团队管理员（默认为全局 Admin） |
+| `spec.peerMentions` | bool | 否 | 为 `true`（默认）时，团队 Worker 可在群房间中互相 @mention |
+| `spec.channelPolicy` | object | 否 | 团队级群聊/DM 允许与拒绝列表覆盖（字段形状与 Worker 的 `channelPolicy` 相同） |
+| `spec.admin` | object | 否 | 团队专属人类管理员（须含 `name`；可选 `matrixUserId`）。省略则使用全局 Admin |
 | `spec.leader` | object | 是 | Team Leader 配置 |
 | `spec.workers` | []object | 是 | Team Worker 列表 |
 
@@ -216,6 +227,8 @@ spec:
 | `leader.heartbeat.enabled` | bool | 否 | 是否让 Team Leader 利用 heartbeat 轮询做周期检查 |
 | `leader.heartbeat.every` | string | 否 | 注入到 Team Leader 工作空间中的 heartbeat 周期间隔提示 |
 | `leader.workerIdleTimeout` | string | 否 | Team Leader 判断 team 内 worker 是否可以休眠时使用的空闲超时 |
+| `leader.state` | string | 否 | `Running`（默认）、`Sleeping`、`Stopped` — Leader 容器的期望生命周期 |
+| `leader.channelPolicy` | object | 否 | Leader 专属的通信策略覆盖 |
 
 **Worker 字段（与独立 Worker 的 spec 一致）：**
 
@@ -223,7 +236,8 @@ spec:
 |------|------|------|------|
 | `workers[].name` | string | 是 | Worker 名称 |
 | `workers[].model` | string | 否 | LLM 模型 |
-| `workers[].runtime` | string | 否 | Agent 运行时 |
+| `workers[].runtime` | string | 否 | Agent 运行时（`openclaw` 或 `copaw`） |
+| `workers[].image` | string | 否 | 自定义 Docker 镜像 |
 | `workers[].identity` | string | 否 | Worker 公开身份信息（生成 IDENTITY.md） |
 | `workers[].soul` | string | 否 | Worker 人格与价值观设定（生成 SOUL.md） |
 | `workers[].agents` | string | 否 | 自定义行为规则（追加在内置 AGENTS.md 之后） |
@@ -231,6 +245,8 @@ spec:
 | `workers[].mcpServers` | []string | 否 | 内置 MCP Servers |
 | `workers[].package` | string | 否 | 自定义包 URI |
 | `workers[].expose` | []object | 否 | 通过 Higress 网关暴露的端口列表（见 [服务发布](#服务发布)） |
+| `workers[].channelPolicy` | object | 否 | 该团队 Worker 的通信策略覆盖 |
+| `workers[].state` | string | 否 | `Running`（默认）、`Sleeping`、`Stopped` — 该成员容器的期望生命周期 |
 
 ### Team Leader 的特殊性
 
@@ -303,8 +319,11 @@ Manager 通知 Admin
 | Phase | 含义 |
 |-------|------|
 | Pending | 资源已创建，等待 Controller 处理 |
-| Active | Leader 和所有 Worker 运行中 |
-| Degraded | 部分 Worker 不可用，Leader 仍在运行 |
+| Active | Leader 与 Worker 已成功调和 |
+| Degraded | 部分 Worker 未就绪或不可用；Leader 可能仍在运行 |
+| Failed | 调和失败，查看 `status.message` |
+
+**状态字段：** `teamRoomID`、`leaderDMRoomID`、`leaderReady`、`readyWorkers`、`totalWorkers`、`workerExposedPorts`（按 Worker 名索引的暴露端口信息）。
 
 ### Team Admin
 
@@ -318,6 +337,65 @@ spec:
 ```
 
 如果不指定，默认使用全局 Admin。Team Admin 会被邀请到 Team Room 和 Leader DM，可以直接与 Leader 沟通团队事务。
+
+## Manager
+
+**Manager** 资源描述 HiClaw 的 Manager Agent：接收 Admin 指令并编排 Worker 与 Team。与其它资源同属 `hiclaw.io/v1beta1`，由 `hiclaw-controller` 调和（镜像、SOUL/AGENTS、skills、MCP 授权、可选 package、期望 `state` 等）。
+
+### 基础配置
+
+```yaml
+apiVersion: hiclaw.io/v1beta1
+kind: Manager
+metadata:
+  name: default
+spec:
+  model: qwen3.5-plus
+  runtime: openclaw
+  soul: |
+    # Manager — 以协调为主
+  agents: |
+    # 可选 AGENTS.md 覆盖
+  skills:
+    - worker-management
+  mcpServers:
+    - github
+  config:
+    heartbeatInterval: 15m
+    workerIdleTimeout: 720m
+    notifyChannel: admin-dm
+  # state: Running   # 可选：Running | Sleeping | Stopped
+```
+
+### 字段说明
+
+| 字段 | 类型 | 必填 | 默认值 | 说明 |
+|------|------|------|--------|------|
+| `metadata.name` | string | 是 | — | Manager 资源名（主实例常为 `default`） |
+| `spec.model` | string | 是 | — | LLM 模型 ID |
+| `spec.runtime` | string | 否 | `openclaw` | `openclaw` 或 `copaw` |
+| `spec.image` | string | 否 | — | 自定义 Manager 镜像；留空则用部署默认值 |
+| `spec.soul` | string | 否 | — | 自定义 SOUL.md |
+| `spec.agents` | string | 否 | — | 自定义 AGENTS.md |
+| `spec.skills` | []string | 否 | — | 启用的按需 skills |
+| `spec.mcpServers` | []string | 否 | — | 经网关授权的 MCP |
+| `spec.package` | string | 否 | — | 包 URI（`file://`、`http(s)://`、`nacos://`） |
+| `spec.state` | string | 否 | `Running` | 期望生命周期：`Running`、`Sleeping`、`Stopped` |
+| `spec.config.heartbeatInterval` | string | 否 | — | 心跳检查间隔（如 `15m`） |
+| `spec.config.workerIdleTimeout` | string | 否 | — | 空闲自动休眠前等待时间（如 `720m`） |
+| `spec.config.notifyChannel` | string | 否 | — | 通知渠道（如 `admin-dm`） |
+
+### Manager 状态
+
+| Phase | 含义 |
+|-------|------|
+| Pending | 等待首次成功调和 |
+| Running | Manager Agent 正常 |
+| Sleeping / Stopped | 对应期望生命周期 |
+| Updating | 规格或发布中 |
+| Failed | 错误，见 `status.message` |
+
+**其它状态字段：** `observedGeneration`、`matrixUserID`、`roomID`、`containerState`、`version`。
 
 ## Human
 
@@ -455,13 +533,14 @@ SMTP 通过以下环境变量配置（在 Manager 容器中）：
 
 ## Package URI
 
-Worker 和 Team Worker 都支持通过 `spec.package` 引入自定义配置包。支持三种 URI 格式：
+Worker 和 Team Worker 都支持通过 `spec.package` 引入自定义配置包。支持的 URI 形式包括：
 
 | 格式 | 示例 | 说明 |
 |------|------|------|
 | `file://` | `file://./alice.zip` | 本地文件，通过 `docker cp` 传入容器 |
 | `http(s)://` | `https://example.com/worker.zip` | 远程下载 |
 | `nacos://` | `nacos://host:8848/ns/worker-xxx/v1` | 从 Nacos 拉取 |
+| （上传） | `packages/<name>.zip` | `POST /api/v1/packages` 上传 ZIP 后，Controller 返回可在 `spec.package` 中引用的 `packages/` 路径 |
 
 Nacos URI 格式：`nacos://[user:pass@]host:port/{namespace}/{agentspec-name}[/{version}|/label:{label}]`
 
@@ -515,28 +594,21 @@ Nacos URI 格式：`nacos://[user:pass@]host:port/{namespace}/{agentspec-name}[/
 
 ### hiclaw-apply.sh — 声明式 Apply（推荐）
 
-在宿主机上运行，将 YAML 转发到 Manager 容器内的 `hiclaw` CLI：
+在宿主机上将 YAML 复制进 Manager 容器并执行 `hiclaw apply -f …`：
 
 ```bash
-# 创建/更新单个资源
+# 按文档顺序逐个创建或更新资源
 bash install/hiclaw-apply.sh -f worker.yaml
 
-# 批量创建（YAML 中用 --- 分隔多个资源）
+# 多文档 YAML（--- 分隔）
 bash install/hiclaw-apply.sh -f company-setup.yaml
-
-# 全量同步（删除 YAML 中不存在的资源）
-bash install/hiclaw-apply.sh -f company-setup.yaml --prune
-
-# 预览变更
-bash install/hiclaw-apply.sh -f company-setup.yaml --dry-run
 ```
 
 | 选项 | 说明 |
 |------|------|
-| `-f <path>` | YAML 资源文件（必填） |
-| `--prune` | 删除 YAML 中不存在的资源 |
-| `--dry-run` | 只显示变更，不实际执行 |
-| `--yes` | 跳过删除确认 |
+| `-f <path>` | YAML 文件（必填）；可多次指定 `-f` |
+
+`hiclaw apply -f` **按文件中 YAML 文档顺序**依次调用 REST API（如 `Worker`→`/api/v1/workers`，`Team`→`/api/v1/teams`，`Human`→`/api/v1/humans`，`Manager`→`/api/v1/managers`）。依赖关系需自行排序（例如先定义 Team，再定义引用 `accessibleTeams` 的 Human）。**当前 CLI 未实现 `--prune` 与 `--dry-run`**；删除多余资源请使用 `hiclaw delete …` 或 REST API。
 
 ### hiclaw-import.sh — 命令式导入
 
@@ -567,6 +639,7 @@ bash install/hiclaw-import.sh worker --name bob --model claude-sonnet-4-6 \
 docker exec hiclaw-manager hiclaw get workers
 docker exec hiclaw-manager hiclaw get teams
 docker exec hiclaw-manager hiclaw get humans
+docker exec hiclaw-manager hiclaw get managers
 
 # 查看单个资源
 docker exec hiclaw-manager hiclaw get worker alice
@@ -575,28 +648,32 @@ docker exec hiclaw-manager hiclaw get worker alice
 docker exec hiclaw-manager hiclaw delete worker alice
 docker exec hiclaw-manager hiclaw delete team alpha-team
 docker exec hiclaw-manager hiclaw delete human john
+docker exec hiclaw-manager hiclaw delete manager default
 ```
 
 ### HTTP API — 云上管控
 
-`hiclaw-controller` 内置 HTTP API Server（`:8090`），供云上管控平台调用：
+`hiclaw-controller` 对外提供 REST API（默认 `:8090`），供 `hiclaw` CLI 与其它自动化使用。示例：
 
 ```
-POST   /api/v1/apply                    # 增量 apply（body 为 YAML）
-POST   /api/v1/apply?prune=true         # 全量同步
-GET    /api/v1/workers                   # 列出所有 Worker
-GET    /api/v1/teams                     # 列出所有 Team
-GET    /api/v1/humans                    # 列出所有 Human
-DELETE /api/v1/workers/alice             # 删除指定资源
+GET    /api/v1/workers
+POST   /api/v1/workers
+PUT    /api/v1/workers/{name}
+DELETE /api/v1/workers/{name}
+
+GET    /api/v1/managers
+POST   /api/v1/managers
+PUT    /api/v1/managers/{name}
+DELETE /api/v1/managers/{name}
 ```
 
-> **注意：** 当前单容器部署模式下，8090 端口未对宿主机暴露，仅在 Manager 容器内部可访问。后续支持 K8s 部署模式（`HICLAW_KUBE_MODE=incluster`）时，controller 将作为独立 Pod 部署，通过 Kubernetes Service 对外提供该 API 能力。
+> **注意：** 常见嵌入式部署中，8090 在 Manager 容器内可用（`localhost:8090`）。Kubernetes（`HICLAW_KUBE_MODE=incluster`）下可通过 Service 暴露 Controller。
 
 ## 批量部署
 
-用 `---` 分隔符在一个 YAML 文件中定义所有资源，一次 apply 完成整个组织的部署。
+用 `---` 分隔符在一个 YAML 文件中定义多个资源。**`hiclaw apply -f` 按文档出现顺序依次 apply**，不会按资源类型自动排序。例如应先写 Team，再写引用 `accessibleTeams` 的 Human；先创建独立 Worker，再写引用 `accessibleWorkers` 的 L3 Human。
 
-执行顺序由 Controller 自动处理：创建时 Team → Worker → Human，删除时 Human → Worker → Team。
+删除不会自动排序：按需执行 `hiclaw delete`（注意 Human 与 Team 等依赖关系）。
 
 ```yaml
 # company-setup.yaml
@@ -684,11 +761,7 @@ spec:
 bash install/hiclaw-apply.sh -f company-setup.yaml
 ```
 
-后续人员变动只需修改 YAML 并重新 apply。使用 `--prune` 可以自动清理已移除的资源：
-
-```bash
-bash install/hiclaw-apply.sh -f company-setup.yaml --prune
-```
+后续变更修改 YAML 后重新 apply。删除资源请使用 `hiclaw delete <kind> <name>`（或 REST API）。
 
 ## Controller 架构
 
@@ -715,6 +788,7 @@ Reconciler 执行对应脚本（create-worker.sh / create-team.sh / create-human
 | Worker | 创建容器 + Matrix 账号 + MinIO 空间 | model 变更→重新生成配置；skills 变更→重新推送 | 停止容器 + 清理资源 |
 | Team | 创建 Leader + Workers + Team Room | workers 列表变化→增删 Worker | 先删 Workers→删 Leader→删 Team Room |
 | Human | 注册 Matrix 账号 + 配置权限 + 发邮件 | permissionLevel 变化→重算 groupAllowFrom | 从所有 groupAllowFrom 移除→踢出 Room |
+| Manager | 部署/更新 Manager Agent | model/skills/package/state 等变更→调和 | 按后端实现回收 Manager 相关资源 |
 
 所有资源使用 Kubernetes finalizer 模式，确保删除前完成清理。
 
@@ -815,6 +889,19 @@ hiclaw apply worker --name alice --model qwen3.5-plus
 | Controller 感知 | fsnotify → kine → informer | controller-runtime 直接监听 K8s API |
 | 切换方式 | `HICLAW_KUBE_MODE=embedded` | `HICLAW_KUBE_MODE=incluster` |
 
+## 通信策略（Worker 与 Team）
+
+`channelPolicy` 在生成 Agent 配置时，在**默认允许策略之上**做增减（群聊 @mention 与 DM）。不是替换整套默认策略。
+
+| 字段 | 作用 |
+|------|------|
+| `groupAllowExtra` | 额外允许参与群聊 @mention 的 Matrix 用户 ID（或可由 Controller 解析的短用户名） |
+| `groupDenyExtra` | 群聊 @mention 拒绝列表（拒绝优先于允许） |
+| `dmAllowExtra` | 额外允许 DM 的 ID |
+| `dmDenyExtra` | DM 拒绝列表 |
+
+可在独立 Worker 上设置 `spec.channelPolicy`，或在 Team 上设置 `spec.channelPolicy` / `spec.leader.channelPolicy` / `workers[].channelPolicy` 做成员级覆盖。
+
 ## 通信权限矩阵
 
 HiClaw 通过 `openclaw.json` 中的 `groupAllowFrom` 字段控制每个 Agent 接受谁的 @mention，实现精细的通信权限控制。
@@ -850,6 +937,6 @@ Controller 会重新计算该 Human 在所有 Agent 上的 groupAllowFrom 配置
 
 Controller 会将 Human 标记为 Pending，等目标 Team 创建完成后自动补全权限配置（backfill）。
 
-**Q: `--prune` 会删除所有不在 YAML 中的资源吗？**
+**Q: 声明式 apply 支持 `--prune` 吗？**
 
-是的。`--prune` 会对比 YAML 中的资源列表与当前状态，删除多余的资源。执行顺序为 Human → Worker → Team，确保依赖关系正确。建议先用 `--dry-run` 预览变更。
+当前 `hiclaw apply` CLI **未实现** `--prune`。请用 `hiclaw get …` 查看后自行 `delete`，或通过 REST API 自动化。

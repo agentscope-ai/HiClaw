@@ -4,6 +4,8 @@ Record image-affecting changes to `manager/`, `worker/`, `openclaw-base/` here b
 
 ---
 
+- fix(copaw): `MatrixChannel._apply_mention` now emits Element-style visible mentions (`matrix.to` anchor in `formatted_body` + MXID in `body` + `m.mentions.user_ids`) so openclaw >= 2026.4.x workers actually wake up instead of dropping the event as `no-mention`; `send()` / `send_media()` also accept `meta["mention_user_ids"]` for explicit targets.
+
 - feat(manager): add Team Leader heartbeat and worker lifecycle builtins for team-scoped sleep/wake coordination (unreleased)
 
 - feat(hermes): switch the Hermes worker's Matrix integration from a full `matrix-nio` replacement to a native `mautrix` overlay. The image now keeps hermes-agent's stock `gateway.platforms.matrix` implementation for media upload/download, threaded replies, reactions, typing indicators, and long-message splitting, while HiClaw injects only its worker-specific policy layer via a shim + thin subclass: outbound `m.mentions` enrichment, DM/group split allowlists, copaw-style history buffering, and non-vision image downgrade. Also adds a pure `hermes_matrix.policies` module with unit coverage and installs `mautrix[encryption]` in the worker image so the native adapter can start successfully.

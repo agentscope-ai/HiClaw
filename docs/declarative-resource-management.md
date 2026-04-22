@@ -1,6 +1,6 @@
 # Declarative Resource Management
 
-HiClaw uses Kubernetes CRD-style declarative YAML to manage all platform resources — Workers, Teams, and Humans. You describe the desired state, and the HiClaw Controller handles creation, updates, and deletion automatically.
+HiClaw uses Kubernetes CRD-style declarative YAML to manage platform resources — **Worker**, **Team**, **Human**, and **Manager**. You describe the desired state, and the HiClaw Controller handles creation, updates, and deletion automatically.
 
 ## Core Concepts
 
@@ -25,15 +25,18 @@ Admin (Human administrator)
         └── Level 3: Can only talk to specified Workers
 ```
 
-### Three Resource Types
+### Four Resource Types
 
 | Resource | Description | Underlying Entity |
 |----------|-------------|-------------------|
 | Worker | AI Agent execution unit | Docker container + Matrix account + MinIO space |
 | Team | Collaboration group with Leader + N Workers | A set of Worker containers + Team Room |
 | Human | Real human user | Matrix account + Room permissions |
+| Manager | Coordinator Agent (task routing, Worker/Team orchestration) | Manager Agent runtime (same stack as Workers; reconciled like other CRs) |
 
 All resources share a unified API version: `apiVersion: hiclaw.io/v1beta1`.
+
+**kubectl short names** (when CRDs are installed): `wk` (Worker), `tm` (Team), `hm` (Human), `mgr` (Manager).
 
 ## Worker
 
@@ -78,14 +81,16 @@ spec:
 | `metadata.name` | string | Yes | — | Worker name, globally unique |
 | `spec.model` | string | Yes | — | LLM model ID, e.g. `claude-sonnet-4-6`, `qwen3.5-plus` |
 | `spec.runtime` | string | No | `openclaw` | Agent runtime: `openclaw` or `copaw` |
-| `spec.image` | string | No | `hiclaw/worker-agent:latest` | Custom Docker image |
-| `spec.identity` | string | No | — | Worker public identity, used to generate IDENTITY.md |
+| `spec.image` | string | No | — | Custom Docker image; if empty, the controller uses `HICLAW_WORKER_IMAGE` / `HICLAW_COPAW_WORKER_IMAGE` (defaults `hiclaw/worker-agent:latest` / `hiclaw/copaw-worker:latest`) |
+| `spec.identity` | string | No | — | Worker public identity (OpenClaw: generates IDENTITY.md; CoPaw: merged into SOUL.md per controller) |
 | `spec.soul` | string | No | — | Worker personality and values (generates SOUL.md) |
 | `spec.agents` | string | No | — | Agent behavior rules, used to generate AGENTS.md |
 | `spec.skills` | []string | No | — | Built-in skills, distributed by Manager |
 | `spec.mcpServers` | []string | No | — | Built-in MCP Servers, authorized via Higress gateway |
-| `spec.package` | string | No | — | Custom package URI: `file://`, `http(s)://`, or `nacos://` |
+| `spec.package` | string | No | — | Custom package URI: `file://`, `http(s)://`, `nacos://`, or controller-resolved `packages/{name}.zip` after upload |
 | `spec.expose` | []object | No | — | Ports to expose via Higress gateway (see [Service Publishing](#service-publishing)) |
+| `spec.channelPolicy` | object | No | — | Additive/deny-list overrides for group @mentions and DMs (see [Channel policy](#channel-policy-worker-and-team)) |
+| `spec.state` | string | No | `Running` | Desired lifecycle: `Running`, `Sleeping`, or `Stopped` — controller reconciles containers toward this |
 
 ### identity / soul / agents vs package
 
@@ -134,9 +139,13 @@ When the Controller receives a Worker resource, it executes:
 | Phase | Meaning |
 |-------|---------|
 | Pending | Resource created, waiting for Controller to process |
-| Running | Container running, Agent online |
-| Sleeping | Container intentionally stopped and can be resumed by a Team Leader or Manager |
+| Running | Container running, Agent online (matches desired `spec.state` when healthy) |
+| Sleeping | Desired or actual sleep state — container stopped, can be woken |
+| Updating | Spec or infra change in progress |
+| Stopped | Desired stopped state reconciled |
 | Failed | Creation or runtime failure — check `status.message` |
+
+**Status fields (subset):** `status.observedGeneration`, `status.matrixUserID`, `status.roomID`, `status.containerState`, `status.lastHeartbeat`, `status.message`, `status.exposedPorts` (per-port `domain` after expose).
 
 ## Team
 
@@ -199,7 +208,9 @@ spec:
 |-------|------|----------|-------------|
 | `metadata.name` | string | Yes | Team name, globally unique |
 | `spec.description` | string | No | Team description |
-| `spec.admin` | object | No | Team admin (defaults to global Admin) |
+| `spec.peerMentions` | bool | No | If `true` (default), team Workers may @mention each other in group rooms |
+| `spec.channelPolicy` | object | No | Team-wide overrides for group/DM allow-deny lists (same shape as Worker `channelPolicy`) |
+| `spec.admin` | object | No | Team-specific human admin (`name` required; `matrixUserId` optional). Defaults to global Admin when omitted |
 | `spec.leader` | object | Yes | Team Leader configuration |
 | `spec.workers` | []object | Yes | Team Worker list |
 
@@ -216,6 +227,8 @@ spec:
 | `leader.heartbeat.enabled` | bool | No | Whether the Team Leader should use heartbeat turns for periodic checks |
 | `leader.heartbeat.every` | string | No | Heartbeat interval hint injected into the Team Leader workspace |
 | `leader.workerIdleTimeout` | string | No | Idle timeout the Team Leader uses when deciding whether to sleep team workers |
+| `leader.state` | string | No | `Running` (default), `Sleeping`, or `Stopped` — desired lifecycle for the Leader container |
+| `leader.channelPolicy` | object | No | Per-leader overrides on top of team defaults |
 
 **Worker fields (same as standalone Worker spec):**
 
@@ -223,7 +236,8 @@ spec:
 |-------|------|----------|-------------|
 | `workers[].name` | string | Yes | Worker name |
 | `workers[].model` | string | No | LLM model |
-| `workers[].runtime` | string | No | Agent runtime |
+| `workers[].runtime` | string | No | Agent runtime (`openclaw` or `copaw`) |
+| `workers[].image` | string | No | Custom Docker image |
 | `workers[].identity` | string | No | Worker public identity (generates IDENTITY.md) |
 | `workers[].soul` | string | No | Worker personality and values (generates SOUL.md) |
 | `workers[].agents` | string | No | Custom behavior rules (appended after builtin AGENTS.md) |
@@ -231,6 +245,8 @@ spec:
 | `workers[].mcpServers` | []string | No | Built-in MCP Servers |
 | `workers[].package` | string | No | Custom package URI |
 | `workers[].expose` | []object | No | Ports to expose via Higress gateway (see [Service Publishing](#service-publishing)) |
+| `workers[].channelPolicy` | object | No | Per-worker communication policy overrides |
+| `workers[].state` | string | No | `Running` (default), `Sleeping`, or `Stopped` — desired lifecycle for this team Worker |
 
 ### What Makes Team Leader Special
 
@@ -303,8 +319,11 @@ Manager notifies Admin
 | Phase | Meaning |
 |-------|---------|
 | Pending | Resource created, waiting for Controller to process |
-| Active | Leader and all Workers running |
-| Degraded | Some Workers unavailable, Leader still running |
+| Active | Leader and Workers reconciled successfully |
+| Degraded | Some Workers unavailable or not ready; Leader may still run |
+| Failed | Reconciliation error — check `status.message` |
+
+**Status fields:** `teamRoomID`, `leaderDMRoomID`, `leaderReady`, `readyWorkers`, `totalWorkers`, `workerExposedPorts` (map of worker name → exposed port statuses).
 
 ### Team Admin
 
@@ -318,6 +337,65 @@ spec:
 ```
 
 If not specified, the global Admin is used by default. The Team Admin is invited to the Team Room and Leader DM, and can communicate directly with the Leader on team matters.
+
+## Manager
+
+The **Manager** resource describes the HiClaw Manager Agent — the coordinator that receives instructions from Admin and orchestrates Workers and Teams. It uses the same API group/version as other resources and is reconciled by `hiclaw-controller` (update image, SOUL/AGENTS, skills, MCP authorization, optional package, and desired `state`).
+
+### Basic configuration
+
+```yaml
+apiVersion: hiclaw.io/v1beta1
+kind: Manager
+metadata:
+  name: default
+spec:
+  model: qwen3.5-plus
+  runtime: openclaw
+  soul: |
+    # Manager — coordination focus
+  agents: |
+    # Optional AGENTS.md overrides
+  skills:
+    - worker-management
+  mcpServers:
+    - github
+  config:
+    heartbeatInterval: 15m
+    workerIdleTimeout: 720m
+    notifyChannel: admin-dm
+  # state: Running   # optional: Running | Sleeping | Stopped
+```
+
+### Field reference
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `metadata.name` | string | Yes | — | Manager resource name (often `default` for the primary instance) |
+| `spec.model` | string | Yes | — | LLM model ID |
+| `spec.runtime` | string | No | `openclaw` | `openclaw` or `copaw` |
+| `spec.image` | string | No | — | Custom Manager image; empty uses deployment default |
+| `spec.soul` | string | No | — | Custom SOUL.md content |
+| `spec.agents` | string | No | — | Custom AGENTS.md content |
+| `spec.skills` | []string | No | — | On-demand Manager skills to enable |
+| `spec.mcpServers` | []string | No | — | MCP servers to authorize via the gateway |
+| `spec.package` | string | No | — | Package URI (`file://`, `http(s)://`, `nacos://`) |
+| `spec.state` | string | No | `Running` | Desired lifecycle: `Running`, `Sleeping`, `Stopped` |
+| `spec.config.heartbeatInterval` | string | No | — | Heartbeat check interval (e.g. `15m`) |
+| `spec.config.workerIdleTimeout` | string | No | — | Idle timeout before auto-sleep (e.g. `720m`) |
+| `spec.config.notifyChannel` | string | No | — | Notification channel (e.g. `admin-dm`) |
+
+### Manager status
+
+| Phase | Meaning |
+|-------|---------|
+| Pending | Awaiting first successful reconcile |
+| Running | Manager Agent healthy |
+| Sleeping / Stopped | Desired lifecycle states |
+| Updating | Spec or rollout in progress |
+| Failed | Error — see `status.message` |
+
+**Other status fields:** `observedGeneration`, `matrixUserID`, `roomID`, `containerState`, `version`.
 
 ## Human
 
@@ -462,6 +540,7 @@ Both Workers and Team Workers support custom configuration packages via `spec.pa
 | `file://` | `file://./alice.zip` | Local file, transferred via `docker cp` |
 | `http(s)://` | `https://example.com/worker.zip` | Remote download |
 | `nacos://` | `nacos://host:8848/ns/worker-xxx/v1` | Pulled from Nacos |
+| (upload) | `packages/<name>.zip` | After `POST /api/v1/packages`, the controller returns a URI under `packages/` consumed by `spec.package` |
 
 Nacos URI format: `nacos://[user:pass@]host:port/{namespace}/{agentspec-name}[/{version}|/label:{label}]`
 
@@ -515,28 +594,21 @@ and overridden by an explicit `--runtime` flag.
 
 ### hiclaw-apply.sh — Declarative Apply (Recommended)
 
-Runs on the host, forwarding YAML to the `hiclaw` CLI inside the Manager container:
+Runs on the host, copying YAML into the Manager container and invoking `hiclaw apply -f …`:
 
 ```bash
-# Create/update a single resource
+# Create/update resources (each document is POST or PUT in order)
 bash install/hiclaw-apply.sh -f worker.yaml
 
-# Batch create (use --- separators in YAML)
+# Multi-document file (use --- separators)
 bash install/hiclaw-apply.sh -f company-setup.yaml
-
-# Full sync (delete resources not in YAML)
-bash install/hiclaw-apply.sh -f company-setup.yaml --prune
-
-# Preview changes
-bash install/hiclaw-apply.sh -f company-setup.yaml --dry-run
 ```
 
 | Option | Description |
 |--------|-------------|
-| `-f <path>` | YAML resource file (required) |
-| `--prune` | Delete resources not present in YAML |
-| `--dry-run` | Show changes without applying |
-| `--yes` | Skip delete confirmation |
+| `-f <path>` | YAML resource file (required); multiple `-f` flags allowed |
+
+`hiclaw apply -f` walks YAML documents **in file order** and calls the REST API per kind (`Worker` → `/api/v1/workers`, `Team` → `/api/v1/teams`, `Human` → `/api/v1/humans`, `Manager` → `/api/v1/managers`). Put dependencies first yourself (e.g. define Teams before Humans that reference `accessibleTeams`). **`--prune` and `--dry-run` are not implemented** in the current CLI — remove extras with `hiclaw delete …` or equivalent APIs.
 
 ### hiclaw-import.sh — Imperative Import
 
@@ -567,6 +639,7 @@ Operate directly inside the Manager container (or via `docker exec`):
 docker exec hiclaw-manager hiclaw get workers
 docker exec hiclaw-manager hiclaw get teams
 docker exec hiclaw-manager hiclaw get humans
+docker exec hiclaw-manager hiclaw get managers
 
 # View a single resource
 docker exec hiclaw-manager hiclaw get worker alice
@@ -575,28 +648,36 @@ docker exec hiclaw-manager hiclaw get worker alice
 docker exec hiclaw-manager hiclaw delete worker alice
 docker exec hiclaw-manager hiclaw delete team alpha-team
 docker exec hiclaw-manager hiclaw delete human john
+docker exec hiclaw-manager hiclaw delete manager default
 ```
 
 ### HTTP API — Cloud Management
 
-The `hiclaw-controller` includes a built-in HTTP API Server (`:8090`) for cloud management platforms:
+The `hiclaw-controller` exposes a REST API (default `:8090`) used by the `hiclaw` CLI. Typical resources:
 
 ```
-POST   /api/v1/apply                    # Incremental apply (body is YAML)
-POST   /api/v1/apply?prune=true         # Full sync
-GET    /api/v1/workers                   # List all Workers
-GET    /api/v1/teams                     # List all Teams
-GET    /api/v1/humans                    # List all Humans
-DELETE /api/v1/workers/alice             # Delete a specific resource
+GET    /api/v1/workers
+POST   /api/v1/workers
+PUT    /api/v1/workers/{name}
+DELETE /api/v1/workers/{name}
+
+GET    /api/v1/teams
+POST   /api/v1/teams
+...
+
+GET    /api/v1/managers
+POST   /api/v1/managers
+PUT    /api/v1/managers/{name}
+DELETE /api/v1/managers/{name}
 ```
 
-> **Note:** In the current single-container deployment mode, port 8090 is NOT exposed to the host — it is only accessible from within the Manager container. In the future K8s deployment mode (`HICLAW_KUBE_MODE=incluster`), the controller will be deployed as a standalone Pod, exposing this API via a Kubernetes Service.
+> **Note:** In typical embedded deployments, port 8090 is reachable from inside the Manager container (`localhost:8090`). In Kubernetes (`HICLAW_KUBE_MODE=incluster`), expose the controller via a Service as needed.
 
 ## Batch Deployment
 
-Use `---` separators to define all resources in a single YAML file and deploy an entire organization in one apply.
+Use `---` separators to define multiple resources in one file. **`hiclaw apply -f` applies documents sequentially in the order they appear** — it does not sort by kind. Put Teams before Humans that list `accessibleTeams`, and create standalone Workers before Humans that list `accessibleWorkers`.
 
-Execution order is handled automatically by the Controller: create order is Team → Worker → Human; delete order is Human → Worker → Team.
+Deletion order is not automatic: use `hiclaw delete` per resource (respect dependencies: e.g. delete Humans before Teams they reference, if your deployment requires it).
 
 ```yaml
 # company-setup.yaml
@@ -684,11 +765,7 @@ One-command deployment:
 bash install/hiclaw-apply.sh -f company-setup.yaml
 ```
 
-For subsequent changes, just edit the YAML and re-apply. Use `--prune` to automatically clean up removed resources:
-
-```bash
-bash install/hiclaw-apply.sh -f company-setup.yaml --prune
-```
+For subsequent changes, edit the YAML and re-apply. To remove a resource, use `hiclaw delete <kind> <name>` (or the REST API).
 
 ## Controller Architecture
 
@@ -715,6 +792,7 @@ Reconciler executes scripts (create-worker.sh / create-team.sh / create-human.sh
 | Worker | Create container + Matrix account + MinIO space | model change → regenerate config; skills change → re-push | Stop container + clean up resources |
 | Team | Create Leader + Workers + Team Room | workers list change → add/remove Workers | Delete Workers → Leader → Team Room |
 | Human | Register Matrix account + configure permissions + send email | permissionLevel change → recalculate groupAllowFrom | Remove from all groupAllowFrom → kick from Rooms |
+| Manager | Provision/update Manager Agent config + runtime | model/skills/package/state → reconcile | Tear down managed Manager resources per backend |
 
 All resources use the Kubernetes finalizer pattern to ensure cleanup before deletion.
 
@@ -815,6 +893,19 @@ hiclaw apply worker --name alice --model qwen3.5-plus
 | Controller detection | fsnotify → kine → informer | controller-runtime watches K8s API directly |
 | Switch via | `HICLAW_KUBE_MODE=embedded` | `HICLAW_KUBE_MODE=incluster` |
 
+## Channel policy (Worker and Team)
+
+`channelPolicy` augments the default allow lists used when generating Agent configs (group @mentions and DMs). It is **additive and subtractive on top of defaults**, not a full replacement.
+
+| Field | Purpose |
+|-------|---------|
+| `groupAllowExtra` | Extra Matrix user IDs (or short names resolved by the controller) allowed for group @mentions |
+| `groupDenyExtra` | Deny list for group @mentions (deny wins over allow) |
+| `dmAllowExtra` | Extra IDs allowed for direct messages |
+| `dmDenyExtra` | Deny list for DMs |
+
+Set `spec.channelPolicy` on a standalone Worker, or `spec.channelPolicy` / `spec.leader.channelPolicy` / `workers[].channelPolicy` on a Team for finer control per member.
+
 ## Communication Permission Matrix
 
 HiClaw uses the `groupAllowFrom` field in `openclaw.json` to control which @mentions each Agent accepts, enabling fine-grained communication permissions.
@@ -850,6 +941,6 @@ No. Each Worker can only belong to one Team (or be a standalone Worker).
 
 The Controller marks the Human as Pending and automatically backfills permissions once the target Team is created.
 
-**Q: Does `--prune` delete all resources not in the YAML?**
+**Q: Is there a `--prune` mode for declarative apply?**
 
-Yes. `--prune` compares the resources in the YAML against the current state and deletes extras. Deletion order is Human → Worker → Team to respect dependencies. Use `--dry-run` first to preview changes.
+Not in the current `hiclaw apply` CLI. List resources with `hiclaw get …` and delete explicitly, or automate against the REST API.

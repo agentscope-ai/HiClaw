@@ -46,7 +46,7 @@ _detect_runtime() {
     docker exec "$container" sh -c "
         if [ -d '${base_dir}/.hermes/sessions' ]; then
             echo hermes
-        elif [ -d '${base_dir}/.copaw/sessions' ]; then
+        elif [ -d '${base_dir}/.copaw/workspaces/default/sessions' ]; then
             echo copaw
         elif [ -d '${base_dir}/.openclaw/agents/main/sessions' ]; then
             echo openclaw
@@ -69,7 +69,9 @@ _detect_session_dir() {
             echo "${base_dir}/.hermes/sessions"
             ;;
         copaw)
-            echo "${base_dir}/.copaw/sessions"
+            # CoPaw stores one .json per session under workspaces/default/sessions.
+            # See copaw/AGENTS.md "Session files" table.
+            echo "${base_dir}/.copaw/workspaces/default/sessions"
             ;;
         *)
             echo "${base_dir}/.openclaw/agents/main/sessions"
@@ -82,6 +84,41 @@ _detect_session_dir() {
 _detect_hermes_state_db() {
     local base_dir="$1"
     echo "${base_dir}/.hermes/state.db"
+}
+
+# Returns 0 if the runtime persists LLM token usage somewhere we can parse
+# (jsonl session files for OpenClaw, state.db for Hermes), 1 otherwise.
+#
+# CoPaw session JSON files only contain message content + tool I/O; they do
+# NOT carry any token-usage block, so parsing them returns zeros across the
+# board. Treat copaw as "unsupported" so collect/print can surface the gap
+# explicitly instead of producing misleading "0 LLM calls" output.
+_is_metrics_supported() {
+    local container="$1"
+    local base_dir="$2"
+    local runtime
+    runtime=$(_detect_runtime "$container" "$base_dir")
+    case "$runtime" in
+        copaw) return 1 ;;
+        *) return 0 ;;
+    esac
+}
+
+# Emit a placeholder metrics JSON for runtimes whose session files do not
+# carry token usage. Includes a "metrics_supported": false marker so consumers
+# can distinguish "0 LLM calls" from "this runtime does not record usage".
+_emit_unsupported_metrics_blob() {
+    local runtime="$1"
+    cat <<EOF
+{
+  "llm_calls": 0,
+  "tokens": {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0, "total": 0},
+  "timing": {"start": "", "end": "", "duration_seconds": 0},
+  "metrics_supported": false,
+  "runtime": "${runtime}",
+  "note": "session files for this runtime do not record LLM token usage"
+}
+EOF
 }
 
 # ============================================================
@@ -418,6 +455,11 @@ wait_for_worker_session_stable() {
         return 0
     fi
 
+    if ! _is_metrics_supported "$container" "/root/hiclaw-fs/agents/${worker}"; then
+        log_info "Worker '${worker}' runtime does not record session metrics, skipping session wait" >&2
+        return 0
+    fi
+
     log_info "Waiting for Worker '${worker}' session to stabilize (up to ${max_wait}s)..." >&2
 
     local elapsed=0
@@ -464,6 +506,11 @@ wait_for_session_stable() {
 
     if [ "$manager_runtime" = "hermes" ]; then
         log_info "Manager uses Hermes; SessionDB metrics are transaction-based, skipping jsonl stabilization wait" >&2
+        return 0
+    fi
+
+    if ! _is_metrics_supported "$manager_container" "/root/manager-workspace"; then
+        log_info "Manager runtime does not record session metrics, skipping session wait" >&2
         return 0
     fi
 
@@ -519,14 +566,16 @@ snapshot_baseline() {
 
     local snapshot_result='{"offsets": {}}'
 
-    # Snapshot all Manager session artifacts
+    # Snapshot all Manager session artifacts (only for runtimes whose sessions
+    # are parseable; otherwise leave the offsets map empty so collect_*
+    # can short-circuit with an unsupported placeholder).
     if [ "$manager_runtime" = "hermes" ]; then
         local manager_db
         manager_db=$(_detect_hermes_state_db "/root/manager-workspace")
         local manager_snapshot
         manager_snapshot=$(_snapshot_hermes_sessions "$manager_container" "$manager_db")
         snapshot_result=$(echo "$snapshot_result" | jq --argjson o "$manager_snapshot" '.offsets.manager = $o')
-    else
+    elif _is_metrics_supported "$manager_container" "/root/manager-workspace"; then
         local manager_files
         manager_files=$(docker exec "$manager_container" \
             sh -c "ls '${manager_session_dir}'/*.jsonl 2>/dev/null" 2>/dev/null)
@@ -559,6 +608,8 @@ snapshot_baseline() {
             local worker_snapshot
             worker_snapshot=$(_snapshot_hermes_sessions "$worker_container" "$worker_db")
             snapshot_result=$(echo "$snapshot_result" | jq --arg w "$worker" --argjson o "$worker_snapshot" '.offsets[$w] = $o')
+        elif ! _is_metrics_supported "$worker_container" "/root/hiclaw-fs/agents/${worker}"; then
+            continue
         else
             local worker_files
             worker_files=$(docker exec "$worker_container" \
@@ -679,19 +730,33 @@ collect_delta_metrics() {
 
     # Collect Manager delta using runtime-specific source
     log_info "Collecting Manager delta metrics..." >&2
-    local manager_offsets
-    manager_offsets=$(echo "$baseline" | jq -r '.offsets.manager // empty')
-    local manager_delta
     if [ "$manager_runtime" = "hermes" ]; then
+        local manager_offsets
+        manager_offsets=$(echo "$baseline" | jq -r '.offsets.manager // empty')
         local manager_db
         manager_db=$(_detect_hermes_state_db "/root/manager-workspace")
+        local manager_delta
         manager_delta=$(_collect_hermes_delta "$manager_container" "$manager_db" "$manager_offsets")
-    else
+        if [ -n "$manager_delta" ]; then
+            delta_result=$(echo "$delta_result" | jq --argjson m "$manager_delta" '.agents.manager = $m')
+            log_info "Manager delta: $(echo "$manager_delta" | jq -r '.llm_calls') LLM calls, $(echo "$manager_delta" | jq -r '.tokens.total') tokens" >&2
+        fi
+    elif _is_metrics_supported "$manager_container" "/root/manager-workspace"; then
+        local manager_offsets
+        manager_offsets=$(echo "$baseline" | jq -r '.offsets.manager // empty')
+        local manager_delta
         manager_delta=$(_collect_agent_delta "$manager_container" "$manager_session_dir" "$manager_offsets")
-    fi
-    if [ -n "$manager_delta" ]; then
-        delta_result=$(echo "$delta_result" | jq --argjson m "$manager_delta" '.agents.manager = $m')
-        log_info "Manager delta: $(echo "$manager_delta" | jq -r '.llm_calls') LLM calls, $(echo "$manager_delta" | jq -r '.tokens.total') tokens" >&2
+        if [ -n "$manager_delta" ]; then
+            delta_result=$(echo "$delta_result" | jq --argjson m "$manager_delta" '.agents.manager = $m')
+            log_info "Manager delta: $(echo "$manager_delta" | jq -r '.llm_calls') LLM calls, $(echo "$manager_delta" | jq -r '.tokens.total') tokens" >&2
+        fi
+    else
+        local manager_runtime_id
+        manager_runtime_id=$(_detect_runtime "$manager_container" "/root/manager-workspace")
+        log_info "Manager runtime '${manager_runtime_id}' does not record session metrics; emitting unsupported placeholder" >&2
+        local manager_blob
+        manager_blob=$(_emit_unsupported_metrics_blob "$manager_runtime_id")
+        delta_result=$(echo "$delta_result" | jq --argjson m "$manager_blob" '.agents.manager = $m')
     fi
 
     # Collect Worker deltas
@@ -706,6 +771,15 @@ collect_delta_metrics() {
 
         if ! docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^${worker_container}$"; then
             log_info "Worker '${worker}' container not running, skipping" >&2
+            continue
+        fi
+
+        if [ "$worker_runtime" != "hermes" ] && \
+           ! _is_metrics_supported "$worker_container" "/root/hiclaw-fs/agents/${worker}"; then
+            log_info "Worker '${worker}' runtime '${worker_runtime}' does not record session metrics; emitting unsupported placeholder" >&2
+            local worker_blob
+            worker_blob=$(_emit_unsupported_metrics_blob "$worker_runtime")
+            delta_result=$(echo "$delta_result" | jq --arg w "$worker" --argjson m "$worker_blob" '.agents[$w] = $m')
             continue
         fi
 
@@ -769,14 +843,19 @@ collect_test_metrics() {
         local manager_db
         manager_db=$(_detect_hermes_state_db "/root/manager-workspace")
         manager_metrics=$(_collect_hermes_latest_metrics "$manager_container" "$manager_db")
-    else
+    elif _is_metrics_supported "$manager_container" "/root/manager-workspace"; then
         local manager_session
         manager_session=$(get_latest_session "$manager_container" "$manager_session_dir")
         if [ -n "$manager_session" ]; then
             manager_metrics=$(docker exec "$manager_container" cat "$manager_session" 2>/dev/null | parse_session_metrics_inline)
         fi
+    else
+        local manager_runtime_id
+        manager_runtime_id=$(_detect_runtime "$manager_container" "/root/manager-workspace")
+        log_info "Manager runtime '${manager_runtime_id}' does not record session metrics; emitting unsupported placeholder" >&2
+        manager_metrics=$(_emit_unsupported_metrics_blob "$manager_runtime_id")
     fi
-    
+
     if [ -n "$manager_metrics" ] && [ "$manager_metrics" != "null" ]; then
         cumulative_result=$(echo "$cumulative_result" | jq --argjson m "$manager_metrics" '.agents.manager = $m')
         log_info "Manager: $(echo "$manager_metrics" | jq -r '.llm_calls') LLM calls, $(echo "$manager_metrics" | jq -r '.tokens.total') tokens" >&2
@@ -799,7 +878,16 @@ collect_test_metrics() {
             log_info "Worker '${worker}' container not running, skipping" >&2
             continue
         fi
-        
+
+        if [ "$worker_runtime" != "hermes" ] && \
+           ! _is_metrics_supported "$worker_container" "/root/hiclaw-fs/agents/${worker}"; then
+            log_info "Worker '${worker}' runtime '${worker_runtime}' does not record session metrics; emitting unsupported placeholder" >&2
+            local worker_blob
+            worker_blob=$(_emit_unsupported_metrics_blob "$worker_runtime")
+            cumulative_result=$(echo "$cumulative_result" | jq --arg w "$worker" --argjson m "$worker_blob" '.agents[$w] = $m')
+            continue
+        fi
+
         local worker_metrics
         if [ "$worker_runtime" = "hermes" ]; then
             local worker_db
@@ -884,6 +972,20 @@ print_metrics_report() {
 
         echo ""
         echo "  [$agent]"
+
+        # Surface an explicit note when the runtime cannot produce metrics, so
+        # readers don't mistake the all-zero block below for "this agent did
+        # nothing" (e.g. CoPaw session files do not record token usage).
+        # NOTE: don't use `.metrics_supported // empty` because jq's `//`
+        # treats boolean false as falsy and short-circuits to the alternative.
+        local unsupported runtime note
+        unsupported=$(echo "$d" | jq -r 'if .metrics_supported == false then "yes" else "no" end')
+        if [ "$unsupported" = "yes" ]; then
+            runtime=$(echo "$d" | jq -r '.runtime // "unknown"')
+            note=$(echo "$d" | jq -r '.note // "metrics unsupported for this runtime"')
+            printf "    (NOTE: runtime=%s — %s)\n" "$runtime" "$note"
+        fi
+
         _print_metric "LLM Calls"     "$(echo "$d" | jq -r '.llm_calls')"          "$b_calls"  "$baseline"
         _print_metric "Input Tokens"  "$(echo "$d" | jq -r '.tokens.input')"        "$b_in"     "$baseline"
         _print_metric "Output Tokens" "$(echo "$d" | jq -r '.tokens.output')"       "$b_out"    "$baseline"

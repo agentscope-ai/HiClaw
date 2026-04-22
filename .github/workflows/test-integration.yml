@@ -272,6 +272,7 @@ jobs:
   # Step 3: Run test shards in parallel, each on its own runner with isolated cluster
   integration-tests:
     needs: build-images
+    if: always() && needs.build-images.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 90
     permissions:
