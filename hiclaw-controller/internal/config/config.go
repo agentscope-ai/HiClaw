@@ -25,9 +25,19 @@ type Config struct {
 	CRDDir    string
 	SkillsDir string
 
+	// ResourcePrefix is the tenant-level prefix used to derive Pod/SA/label/
+	// session names created by this controller. Default "hiclaw-". Set via
+	// HICLAW_RESOURCE_PREFIX to isolate multiple HiClaw instances that share
+	// a K8s namespace (different Helm releases). Downstream names are all
+	// derived from this value — see internal/auth.ResourcePrefix for the
+	// full list (worker/manager pods, ServiceAccounts, "app" labels, STS
+	// session names). Intentionally does NOT cover OPENCLAW_MDNS_HOSTNAME,
+	// CMS service name, or install-script hardcoded names.
+	ResourcePrefix string
+
 	// Docker proxy (embedded mode only)
 	SocketPath      string
-	ContainerPrefix string
+	ContainerPrefix string // worker container/pod name prefix; derived from ResourcePrefix when HICLAW_PROXY_CONTAINER_PREFIX is unset
 
 	// Auth
 	AuthAudience string // SA token audience for TokenReview
@@ -193,6 +203,12 @@ func LoadConfig() *Config {
 		}
 	}
 
+	resourcePrefix := envOrDefault("HICLAW_RESOURCE_PREFIX", "hiclaw-")
+	// ContainerPrefix defaults to "${resourcePrefix}worker-". HICLAW_PROXY_CONTAINER_PREFIX
+	// remains as an explicit override for callers that want to diverge the
+	// Docker-proxy container-name whitelist from the tenant prefix (rare).
+	containerPrefix := envOrDefault("HICLAW_PROXY_CONTAINER_PREFIX", resourcePrefix+"worker-")
+
 	cfg := &Config{
 		KubeMode:  envOrDefault("HICLAW_KUBE_MODE", "embedded"),
 		DataDir:   dataDir,
@@ -201,8 +217,10 @@ func LoadConfig() *Config {
 		CRDDir:    envOrDefault("HICLAW_CRD_DIR", "/opt/hiclaw/config/crd"),
 		SkillsDir: envOrDefault("HICLAW_SKILLS_DIR", "/opt/hiclaw/agent/skills"),
 
+		ResourcePrefix: resourcePrefix,
+
 		SocketPath:      envOrDefault("HICLAW_PROXY_SOCKET", "/var/run/docker.sock"),
-		ContainerPrefix: envOrDefault("HICLAW_PROXY_CONTAINER_PREFIX", "hiclaw-worker-"),
+		ContainerPrefix: containerPrefix,
 
 		AuthAudience: envOrDefault("HICLAW_AUTH_AUDIENCE", "hiclaw-controller"),
 
@@ -419,6 +437,7 @@ func (c *Config) K8sConfig() backend.K8sConfig {
 		WorkerCPU:         c.K8sWorkerCPU,
 		WorkerMemory:      c.K8sWorkerMemory,
 		ControllerName:    c.ControllerName,
+		ResourcePrefix:    c.ResourcePrefix,
 	}
 }
 

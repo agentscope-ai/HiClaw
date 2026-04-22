@@ -42,7 +42,7 @@ func TestResolveWorker_DefaultEntries(t *testing.T) {
 	worker.Namespace = testNS
 	c := newFakeClient(t, worker)
 
-	r := New(c, testNS, "hiclaw-test", "")
+	r := New(c, testNS, "hiclaw-test", "", auth.DefaultResourcePrefix)
 	session, entries, err := r.ResolveForCaller(context.Background(), &auth.CallerIdentity{
 		Role: auth.RoleWorker, Username: "alice", WorkerName: "alice",
 	})
@@ -81,7 +81,7 @@ func TestResolveWorker_CustomBucketRef(t *testing.T) {
 	}
 	c := newFakeClient(t, worker)
 
-	r := New(c, testNS, "hiclaw-test", "")
+	r := New(c, testNS, "hiclaw-test", "", auth.DefaultResourcePrefix)
 	_, entries, err := r.ResolveForCaller(context.Background(), &auth.CallerIdentity{
 		Role: auth.RoleWorker, Username: "bob", WorkerName: "bob",
 	})
@@ -109,7 +109,7 @@ func TestResolveWorker_UnknownService(t *testing.T) {
 	}
 	c := newFakeClient(t, worker)
 
-	r := New(c, testNS, "hiclaw-test", "")
+	r := New(c, testNS, "hiclaw-test", "", auth.DefaultResourcePrefix)
 	_, _, err := r.ResolveForCaller(context.Background(), &auth.CallerIdentity{
 		Role: auth.RoleWorker, Username: "eve", WorkerName: "eve",
 	})
@@ -130,7 +130,7 @@ func TestResolveWorker_ObjectStorageMissingPrefixes(t *testing.T) {
 	}
 	c := newFakeClient(t, worker)
 
-	r := New(c, testNS, "hiclaw-test", "")
+	r := New(c, testNS, "hiclaw-test", "", auth.DefaultResourcePrefix)
 	_, _, err := r.ResolveForCaller(context.Background(), &auth.CallerIdentity{
 		Role: auth.RoleWorker, Username: "dave", WorkerName: "dave",
 	})
@@ -145,7 +145,7 @@ func TestResolveManager_Defaults(t *testing.T) {
 	mgr.Namespace = testNS
 	c := newFakeClient(t, mgr)
 
-	r := New(c, testNS, "hiclaw-test", "gw-1")
+	r := New(c, testNS, "hiclaw-test", "gw-1", auth.DefaultResourcePrefix)
 	session, entries, err := r.ResolveForCaller(context.Background(), &auth.CallerIdentity{
 		Role: auth.RoleManager, Username: "manager",
 	})
@@ -186,7 +186,7 @@ func TestResolve_AIGatewayHappyPath(t *testing.T) {
 	}
 	c := newFakeClient(t, worker)
 
-	r := New(c, testNS, "hiclaw-test", "gw-abc123")
+	r := New(c, testNS, "hiclaw-test", "gw-abc123", auth.DefaultResourcePrefix)
 	_, entries, err := r.ResolveForCaller(context.Background(), &auth.CallerIdentity{
 		Role: auth.RoleWorker, Username: "gw-bot", WorkerName: "gw-bot",
 	})
@@ -220,7 +220,7 @@ func TestResolve_AIGatewayNoDefault(t *testing.T) {
 	}
 	c := newFakeClient(t, worker)
 
-	r := New(c, testNS, "hiclaw-test", "")
+	r := New(c, testNS, "hiclaw-test", "", auth.DefaultResourcePrefix)
 	_, _, err := r.ResolveForCaller(context.Background(), &auth.CallerIdentity{
 		Role: auth.RoleWorker, Username: "gw-bot2", WorkerName: "gw-bot2",
 	})
@@ -244,8 +244,44 @@ func TestControllerDefaults(t *testing.T) {
 	}
 }
 
+// TestResolve_CustomPrefix verifies the STS session name carries the tenant
+// prefix so cloud RAM auditing / policy matching can distinguish multiple
+// HiClaw controllers running in the same cluster.
+func TestResolve_CustomPrefix(t *testing.T) {
+	worker := &v1beta1.Worker{}
+	worker.Name = "alice"
+	worker.Namespace = testNS
+	c := newFakeClient(t, worker)
+
+	r := New(c, testNS, "bucket", "", auth.ResourcePrefix("teamB-"))
+	session, _, err := r.ResolveForCaller(context.Background(), &auth.CallerIdentity{
+		Role: auth.RoleWorker, Username: "alice", WorkerName: "alice",
+	})
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if session != "teamB-worker-alice" {
+		t.Fatalf("session = %q, want teamB-worker-alice", session)
+	}
+
+	mgr := &v1beta1.Manager{}
+	mgr.Name = "staging"
+	mgr.Namespace = testNS
+	c = newFakeClient(t, mgr)
+	r = New(c, testNS, "bucket", "gw-1", auth.ResourcePrefix("teamB-"))
+	session, _, err = r.ResolveForCaller(context.Background(), &auth.CallerIdentity{
+		Role: auth.RoleManager, Username: "staging",
+	})
+	if err != nil {
+		t.Fatalf("resolve manager: %v", err)
+	}
+	if session != "teamB-manager-staging" {
+		t.Fatalf("manager session = %q, want teamB-manager-staging", session)
+	}
+}
+
 func TestResolveForCaller_RejectedRoles(t *testing.T) {
-	r := New(newFakeClient(t), testNS, "b", "")
+	r := New(newFakeClient(t), testNS, "b", "", auth.DefaultResourcePrefix)
 	_, _, err := r.ResolveForCaller(context.Background(), &auth.CallerIdentity{Role: auth.RoleAdmin})
 	if err == nil {
 		t.Fatalf("expected error for admin role")

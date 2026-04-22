@@ -36,6 +36,12 @@ type K8sConfig struct {
 	// missing ConfigMap, or any API / parse error all collapse to "no
 	// overlay" (Pod creation proceeds unchanged).
 	ControllerName string
+
+	// ResourcePrefix is the tenant prefix used to derive worker "app" label
+	// values, default SA names, and List selectors. Empty falls back to
+	// "hiclaw-" for tests and out-of-cluster callers. See
+	// internal/auth.ResourcePrefix for semantics.
+	ResourcePrefix string
 }
 
 // ownerRefsCache memoizes the controller Pod's ownerReferences (filtered to
@@ -253,9 +259,11 @@ func (k *K8sBackend) Create(ctx context.Context, req CreateRequest) (*WorkerResu
 		ReadOnly:  true,
 	}
 
+	workerAppLabel := k.workerAppLabel()
+
 	saName := req.ServiceAccountName
 	if saName == "" {
-		saName = "hiclaw-worker-" + req.Name
+		saName = k.workerNamePrefix() + req.Name
 	}
 
 	podLabels := map[string]string{
@@ -265,7 +273,7 @@ func (k *K8sBackend) Create(ctx context.Context, req CreateRequest) (*WorkerResu
 		podLabels[k] = v
 	}
 	if podLabels["app"] == "" {
-		podLabels["app"] = "hiclaw-worker"
+		podLabels["app"] = workerAppLabel
 	}
 	if _, hasManager := podLabels["hiclaw.io/manager"]; !hasManager {
 		if podLabels["hiclaw.io/worker"] == "" {
@@ -359,7 +367,7 @@ func (k *K8sBackend) Status(ctx context.Context, name string) (*WorkerResult, er
 
 func (k *K8sBackend) List(ctx context.Context) ([]WorkerResult, error) {
 	pods, err := k.client.Pods(k.config.Namespace).List(ctx, metav1.ListOptions{
-		LabelSelector: "app=hiclaw-worker",
+		LabelSelector: "app=" + k.workerAppLabel(),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("kubernetes list worker pods: %w", err)
@@ -391,6 +399,26 @@ func (k *K8sBackend) podName(prefix, name string) string {
 
 func (k *K8sBackend) workerPodName(name string) string {
 	return k.containerPrefix + name
+}
+
+// workerAppLabel returns the "app" label value used for worker Pod labelling
+// and List selector filtering. Derived from K8sConfig.ResourcePrefix; empty
+// falls back to the baked-in default "hiclaw-worker".
+func (k *K8sBackend) workerAppLabel() string {
+	if k.config.ResourcePrefix == "" {
+		return "hiclaw-worker"
+	}
+	return k.config.ResourcePrefix + "worker"
+}
+
+// workerNamePrefix returns the default worker SA name prefix, e.g.
+// "hiclaw-worker-". Used only when a CreateRequest arrives without an
+// explicit ServiceAccountName (production callers always set one).
+func (k *K8sBackend) workerNamePrefix() string {
+	if k.config.ResourcePrefix == "" {
+		return "hiclaw-worker-"
+	}
+	return k.config.ResourcePrefix + "worker-"
 }
 
 // getCurrentPod fetches the controller's own Pod using HOSTNAME + Namespace.

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	v1beta1 "github.com/hiclaw/hiclaw-controller/api/v1beta1"
+	authpkg "github.com/hiclaw/hiclaw-controller/internal/auth"
 	"github.com/hiclaw/hiclaw-controller/internal/gateway"
 	"github.com/hiclaw/hiclaw-controller/internal/matrix"
 	"github.com/hiclaw/hiclaw-controller/internal/oss"
@@ -81,6 +82,10 @@ type ProvisionerConfig struct {
 	MatrixDomain string
 	AdminUser    string
 
+	// ResourcePrefix is the tenant prefix used when creating SAs and their
+	// labels. Empty falls back to auth.DefaultResourcePrefix ("hiclaw-").
+	ResourcePrefix authpkg.ResourcePrefix
+
 	// Pre-generated Manager secrets (from install script env).
 	// When set, used instead of generating random credentials.
 	ManagerPassword   string
@@ -98,16 +103,17 @@ type ProvisionerConfig struct {
 // for workers and teams: Matrix accounts/rooms, Gateway consumers, MinIO
 // users, K8s ServiceAccounts, and port exposure.
 type Provisioner struct {
-	matrix       matrix.Client
-	gateway      gateway.Client
-	ossAdmin     oss.StorageAdminClient
-	creds        CredentialStore
-	k8sClient    kubernetes.Interface
-	kubeMode     string
-	namespace    string
-	authAudience string
-	matrixDomain string
-	adminUser    string
+	matrix         matrix.Client
+	gateway        gateway.Client
+	ossAdmin       oss.StorageAdminClient
+	creds          CredentialStore
+	k8sClient      kubernetes.Interface
+	kubeMode       string
+	namespace      string
+	authAudience   string
+	matrixDomain   string
+	adminUser      string
+	resourcePrefix authpkg.ResourcePrefix
 
 	managerPassword   string
 	managerGatewayKey string
@@ -126,6 +132,7 @@ func NewProvisioner(cfg ProvisionerConfig) *Provisioner {
 		authAudience:      cfg.AuthAudience,
 		matrixDomain:      cfg.MatrixDomain,
 		adminUser:         cfg.AdminUser,
+		resourcePrefix:    cfg.ResourcePrefix.Or(authpkg.DefaultResourcePrefix),
 		managerPassword:   cfg.ManagerPassword,
 		managerGatewayKey: cfg.ManagerGatewayKey,
 		managerEnabled:    cfg.ManagerEnabled,

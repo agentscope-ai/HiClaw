@@ -328,7 +328,7 @@ func (a *App) initAuth(_ context.Context) error {
 		if err != nil {
 			return fmt.Errorf("create kubernetes client: %w", err)
 		}
-		authenticator := authpkg.NewTokenReviewAuthenticator(a.k8sClient, a.cfg.AuthAudience)
+		authenticator := authpkg.NewTokenReviewAuthenticator(a.k8sClient, a.cfg.AuthAudience, authpkg.ResourcePrefix(a.cfg.ResourcePrefix))
 		enricher := authpkg.NewCREnricher(a.mgr.GetClient(), a.namespace)
 		authorizer := authpkg.NewAuthorizer()
 		a.authMw = authpkg.NewMiddleware(authenticator, enricher, authorizer, a.mgr.GetClient(), a.namespace)
@@ -353,7 +353,7 @@ func (a *App) initServiceLayer(_ context.Context) error {
 		if cfg.UsesAIGateway() {
 			gatewayID = cfg.GWGatewayID
 		}
-		resolver := accessresolver.New(a.mgr.GetClient(), a.namespace, cfg.OSSBucket, gatewayID)
+		resolver := accessresolver.New(a.mgr.GetClient(), a.namespace, cfg.OSSBucket, gatewayID, authpkg.ResourcePrefix(cfg.ResourcePrefix))
 		a.stsService = credentials.NewSTSService(cfg.STSConfig(), resolver, a.credProvider)
 	}
 
@@ -375,6 +375,7 @@ func (a *App) initServiceLayer(_ context.Context) error {
 		AuthAudience:      cfg.AuthAudience,
 		MatrixDomain:      cfg.MatrixDomain,
 		AdminUser:         cfg.MatrixAdminUser,
+		ResourcePrefix:    authpkg.ResourcePrefix(cfg.ResourcePrefix),
 		ManagerPassword:   cfg.ManagerPassword,
 		ManagerGatewayKey: cfg.ManagerGatewayKey,
 		ManagerEnabled:    cfg.ManagerEnabled,
@@ -405,12 +406,14 @@ func (a *App) initServiceLayer(_ context.Context) error {
 }
 
 func (a *App) initReconcilers(_ context.Context) error {
+	resourcePrefix := authpkg.ResourcePrefix(a.cfg.ResourcePrefix)
 	if err := (&controller.WorkerReconciler{
 		Client:         a.mgr.GetClient(),
 		Provisioner:    a.provisioner,
 		Deployer:       a.deployer,
 		Backend:        a.registry,
 		EnvBuilder:     a.envBuilder,
+		ResourcePrefix: resourcePrefix,
 		Legacy:         a.legacy,
 		DefaultRuntime: a.cfg.DefaultWorkerRuntime,
 	}).SetupWithManager(a.mgr); err != nil {
@@ -427,6 +430,7 @@ func (a *App) initReconcilers(_ context.Context) error {
 		DefaultRuntime: a.cfg.DefaultWorkerRuntime,
 		AgentFSDir:     a.cfg.AgentFSDir(),
 		ControllerName: a.cfg.ControllerName,
+		ResourcePrefix: resourcePrefix,
 	}).SetupWithManager(a.mgr); err != nil {
 		return fmt.Errorf("setup TeamReconciler: %w", err)
 	}
@@ -445,6 +449,7 @@ func (a *App) initReconcilers(_ context.Context) error {
 		Deployer:         a.deployer,
 		Backend:          a.registry,
 		EnvBuilder:       a.envBuilder,
+		ResourcePrefix:   resourcePrefix,
 		ManagerResources: a.cfg.ManagerResources(),
 		DefaultRuntime:   a.cfg.ManagerRuntime,
 	}

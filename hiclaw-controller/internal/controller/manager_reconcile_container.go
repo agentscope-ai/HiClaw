@@ -46,7 +46,7 @@ func (r *ManagerReconciler) ensureManagerContainerPresent(ctx context.Context, s
 	}
 
 	logger := log.FromContext(ctx)
-	containerName := managerContainerName(m.Name)
+	containerName := r.managerContainerName(m.Name)
 	result, err := wb.Status(ctx, containerName)
 	if err != nil {
 		return reconcile.Result{}, fmt.Errorf("query container status: %w", err)
@@ -107,7 +107,7 @@ func (r *ManagerReconciler) ensureManagerContainerAbsent(ctx context.Context, s 
 		return reconcile.Result{}, nil
 	}
 
-	containerName := managerContainerName(s.manager.Name)
+	containerName := r.managerContainerName(s.manager.Name)
 	if remove {
 		_ = wb.Stop(ctx, containerName)
 		if err := wb.Delete(ctx, containerName); err != nil && !errors.Is(err, backend.ErrNotFound) {
@@ -145,8 +145,8 @@ func (r *ManagerReconciler) createManagerContainer(ctx context.Context, s *manag
 	}
 
 	managerEnv := r.EnvBuilder.BuildManager(m.Name, prov, m.Spec)
-	containerName := managerContainerName(m.Name)
-	saName := authpkg.SAName(authpkg.RoleManager, m.Name)
+	containerName := r.managerContainerName(m.Name)
+	saName := r.ResourcePrefix.SAName(authpkg.RoleManager, m.Name)
 	createReq := backend.CreateRequest{
 		Name:               m.Name,
 		ContainerName:      containerName,
@@ -157,7 +157,7 @@ func (r *ManagerReconciler) createManagerContainer(ctx context.Context, s *manag
 		ServiceAccountName: saName,
 		Resources:          r.ManagerResources,
 		Labels: map[string]string{
-			"app":               "hiclaw-manager",
+			"app":               r.ResourcePrefix.ManagerAppLabel(),
 			"hiclaw.io/manager": m.Name,
 		},
 	}

@@ -32,7 +32,7 @@ func (r *ManagerReconciler) reconcileManagerDelete(ctx context.Context, s *manag
 	}
 
 	if wb := r.managerBackend(ctx); wb != nil {
-		containerName := managerContainerName(managerName)
+		containerName := r.managerContainerName(managerName)
 		if err := wb.Delete(ctx, containerName); err != nil && !errors.Is(err, backend.ErrNotFound) {
 			logger.Error(err, "failed to delete manager container (may already be removed)")
 		}

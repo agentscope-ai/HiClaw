@@ -26,18 +26,22 @@ type Resolver struct {
 	namespace        string
 	defaultBucket    string
 	defaultGatewayID string // may be "" when the cluster has no AI Gateway
+	prefix           auth.ResourcePrefix
 }
 
 // New builds a Resolver. namespace is the controller-namespace where
 // Worker and Manager CRs live. defaultBucket is used to resolve
 // `bucketRef: workspace`. defaultGatewayID is used to resolve
 // `gatewayRef: default`; pass "" when the cluster has no AI Gateway.
-func New(c client.Client, namespace, defaultBucket, defaultGatewayID string) *Resolver {
+// prefix drives the STS session-name output; empty falls back to
+// auth.DefaultResourcePrefix ("hiclaw-").
+func New(c client.Client, namespace, defaultBucket, defaultGatewayID string, prefix auth.ResourcePrefix) *Resolver {
 	return &Resolver{
 		client:           c,
 		namespace:        namespace,
 		defaultBucket:    defaultBucket,
 		defaultGatewayID: defaultGatewayID,
+		prefix:           prefix.Or(auth.DefaultResourcePrefix),
 	}
 }
 
@@ -81,7 +85,7 @@ func (r *Resolver) resolveWorker(ctx context.Context, name string) (string, []cr
 	if err != nil {
 		return "", nil, fmt.Errorf("worker %q: %w", name, err)
 	}
-	return "hiclaw-worker-" + name, resolved, nil
+	return r.prefix.WorkerSessionName(name), resolved, nil
 }
 
 func (r *Resolver) resolveManager(ctx context.Context, name string) (string, []credprovider.AccessEntry, error) {
@@ -102,7 +106,7 @@ func (r *Resolver) resolveManager(ctx context.Context, name string) (string, []c
 	if err != nil {
 		return "", nil, fmt.Errorf("manager %q: %w", name, err)
 	}
-	return "hiclaw-manager-" + name, resolved, nil
+	return r.prefix.ManagerSessionName(name), resolved, nil
 }
 
 type templateCtx struct {

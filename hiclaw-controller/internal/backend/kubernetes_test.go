@@ -132,8 +132,17 @@ func (f *fakeK8sPodClient) Delete(_ context.Context, name string, _ metav1.Delet
 
 func (f *fakeK8sPodClient) List(_ context.Context, opts metav1.ListOptions) (*corev1.PodList, error) {
 	list := &corev1.PodList{}
+	var wantApp string
+	if idx := strings.Index(opts.LabelSelector, "app="); idx >= 0 {
+		rest := opts.LabelSelector[idx+len("app="):]
+		if comma := strings.IndexAny(rest, ",;"); comma >= 0 {
+			wantApp = rest[:comma]
+		} else {
+			wantApp = rest
+		}
+	}
 	for _, pod := range f.store {
-		if opts.LabelSelector != "" && strings.Contains(opts.LabelSelector, "app=hiclaw-worker") && pod.Labels["app"] != "hiclaw-worker" {
+		if wantApp != "" && pod.Labels["app"] != wantApp {
 			continue
 		}
 		list.Items = append(list.Items, *pod.DeepCopy())
@@ -929,5 +938,80 @@ func TestClassifyAPIError(t *testing.T) {
 		if got := classifyAPIError(tc.err); got != tc.want {
 			t.Fatalf("%s: got %q, want %q", tc.name, got, tc.want)
 		}
+	}
+}
+
+// TestK8sCreate_CustomResourcePrefix verifies that the worker pod's "app"
+// label and the default SA-name fallback derive from K8sConfig.ResourcePrefix
+// — critical for multi-tenant deployments sharing a namespace where the
+// hard-coded "hiclaw-worker" value would cause List selector collisions
+// across tenants.
+func TestK8sCreate_CustomResourcePrefix(t *testing.T) {
+	client := newFakeK8sCoreClient()
+	cfg := K8sConfig{
+		Namespace:      "hiclaw",
+		WorkerImage:    "hiclaw/worker-agent:latest",
+		WorkerCPU:      "1000m",
+		WorkerMemory:   "2Gi",
+		ResourcePrefix: "teamB-",
+	}
+	b := NewK8sBackendWithClient(client, cfg, "teamB-worker-")
+
+	if _, err := b.Create(context.Background(), CreateRequest{
+		Name:               "alice",
+		ServiceAccountName: "teamB-worker-alice",
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	pod, err := b.client.Pods("hiclaw").Get(context.Background(), "teamB-worker-alice", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("pod lookup: %v", err)
+	}
+	if pod.Labels["app"] != "teamB-worker" {
+		t.Fatalf("app label = %q, want teamB-worker", pod.Labels["app"])
+	}
+
+	// List must filter on the tenant-specific label and only return pods
+	// from this tenant, even if another tenant's pod sits in the same
+	// namespace with a different "app" label.
+	injected := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "hiclaw-worker-other",
+			Namespace: "hiclaw",
+			Labels:    map[string]string{"app": "hiclaw-worker"},
+		},
+	}
+	client.injectPod(injected)
+
+	results, err := b.List(context.Background())
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(results) != 1 || results[0].Name != "alice" {
+		t.Fatalf("List should have returned only teamB pod, got %+v", results)
+	}
+}
+
+// TestK8sCreate_DefaultSAFallback verifies that when ServiceAccountName is
+// omitted from a CreateRequest, the backend falls back to "${prefix}worker-<name>".
+func TestK8sCreate_DefaultSAFallback(t *testing.T) {
+	client := newFakeK8sCoreClient()
+	cfg := K8sConfig{
+		Namespace:      "hiclaw",
+		WorkerImage:    "hiclaw/worker-agent:latest",
+		ResourcePrefix: "acme-",
+	}
+	b := NewK8sBackendWithClient(client, cfg, "acme-worker-")
+
+	if _, err := b.Create(context.Background(), CreateRequest{Name: "bob"}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	pod, err := b.client.Pods("hiclaw").Get(context.Background(), "acme-worker-bob", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("pod lookup: %v", err)
+	}
+	if pod.Spec.ServiceAccountName != "acme-worker-bob" {
+		t.Fatalf("SA = %q, want acme-worker-bob", pod.Spec.ServiceAccountName)
 	}
 }

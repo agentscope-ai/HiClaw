@@ -106,6 +106,14 @@ type MemberDeps struct {
 	Backend     *backend.Registry
 	EnvBuilder  service.WorkerEnvBuilderI
 
+	// ResourcePrefix is the tenant-level prefix that scopes ServiceAccount
+	// (and Pod) names for every member this reconciler provisions. Empty
+	// prefix collapses to the pre-multi-tenant naming scheme
+	// (`hiclaw-worker-<name>`), preserving single-tenant deployments. It is
+	// populated by the owning reconciler (WorkerReconciler / TeamReconciler)
+	// from Config.ResourcePrefix.
+	ResourcePrefix authpkg.ResourcePrefix
+
 	// DefaultRuntime is forwarded into backend.CreateRequest.RuntimeFallback
 	// by createMemberContainer when a member leaves spec.runtime empty.
 	// Populated by the owning reconciler (WorkerReconciler / TeamReconciler)
@@ -340,7 +348,7 @@ func createMemberContainer(ctx context.Context, d MemberDeps, m MemberContext, s
 	}
 
 	workerEnv := d.EnvBuilder.Build(m.Name, prov)
-	saName := authpkg.SAName(authpkg.RoleWorker, m.Name)
+	saName := d.ResourcePrefix.SAName(authpkg.RoleWorker, m.Name)
 
 	labels := make(map[string]string, len(m.PodLabels))
 	for k, v := range m.PodLabels {

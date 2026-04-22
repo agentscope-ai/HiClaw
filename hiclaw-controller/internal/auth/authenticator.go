@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
-	"strings"
 	"sync"
 	"time"
 
@@ -21,13 +20,9 @@ const (
 	RoleWorker     = "worker"
 )
 
-// SA name prefixes used to derive entity identity.
-const (
-	SAWorkerPrefix  = "hiclaw-worker-"
-	SAManagerName   = "hiclaw-manager"
-	SAAdminName     = "hiclaw-admin"
-	DefaultAudience = "hiclaw-controller"
-)
+// DefaultAudience is the SA token audience used by TokenReview when a caller
+// does not specify one explicitly.
+const DefaultAudience = "hiclaw-controller"
 
 // CallerIdentity represents the authenticated caller.
 type CallerIdentity struct {
@@ -51,6 +46,7 @@ type Authenticator interface {
 type TokenReviewAuthenticator struct {
 	client   kubernetes.Interface
 	audience string
+	prefix   ResourcePrefix
 
 	cacheMu  sync.RWMutex
 	cache    map[[32]byte]cachedResult
@@ -62,15 +58,18 @@ type cachedResult struct {
 	expiry   time.Time
 }
 
-// NewTokenReviewAuthenticator creates an authenticator backed by the K8s TokenReview API.
-// audience is the expected token audience (typically "hiclaw-controller").
-func NewTokenReviewAuthenticator(client kubernetes.Interface, audience string) *TokenReviewAuthenticator {
+// NewTokenReviewAuthenticator creates an authenticator backed by the K8s
+// TokenReview API. audience is the expected token audience (typically
+// "hiclaw-controller"); prefix is the tenant resource prefix used to parse
+// SA usernames back into CallerIdentity.
+func NewTokenReviewAuthenticator(client kubernetes.Interface, audience string, prefix ResourcePrefix) *TokenReviewAuthenticator {
 	if audience == "" {
 		audience = DefaultAudience
 	}
 	return &TokenReviewAuthenticator{
 		client:   client,
 		audience: audience,
+		prefix:   prefix.Or(DefaultResourcePrefix),
 		cache:    make(map[[32]byte]cachedResult),
 		cacheTTL: 5 * time.Minute,
 	}
@@ -103,52 +102,13 @@ func (a *TokenReviewAuthenticator) Authenticate(ctx context.Context, token strin
 		return nil, fmt.Errorf("token not authenticated: %s", result.Status.Error)
 	}
 
-	identity, err := ParseSAUsername(result.Status.User.Username)
+	identity, err := a.prefix.ParseSAUsername(result.Status.User.Username)
 	if err != nil {
 		return nil, err
 	}
 
 	a.putInCache(key, identity)
 	return identity, nil
-}
-
-// ParseSAUsername extracts identity from a K8s SA username.
-// Format: "system:serviceaccount:{namespace}:{sa-name}"
-func ParseSAUsername(username string) (*CallerIdentity, error) {
-	const saPrefix = "system:serviceaccount:"
-	if !strings.HasPrefix(username, saPrefix) {
-		return nil, fmt.Errorf("unexpected username format: %q", username)
-	}
-
-	parts := strings.SplitN(username[len(saPrefix):], ":", 2)
-	if len(parts) != 2 {
-		return nil, fmt.Errorf("cannot parse SA from username: %q", username)
-	}
-	saName := parts[1]
-
-	switch {
-	case saName == SAAdminName:
-		return &CallerIdentity{Role: RoleAdmin, Username: "admin"}, nil
-	case saName == SAManagerName:
-		return &CallerIdentity{Role: RoleManager, Username: "manager"}, nil
-	case strings.HasPrefix(saName, SAWorkerPrefix):
-		name := saName[len(SAWorkerPrefix):]
-		return &CallerIdentity{Role: RoleWorker, Username: name, WorkerName: name}, nil
-	default:
-		return nil, fmt.Errorf("unrecognized SA name pattern: %q", saName)
-	}
-}
-
-// SAName returns the K8s ServiceAccount name for an entity.
-func SAName(role, name string) string {
-	switch role {
-	case RoleAdmin:
-		return SAAdminName
-	case RoleManager:
-		return SAManagerName
-	default:
-		return SAWorkerPrefix + name
-	}
 }
 
 func (a *TokenReviewAuthenticator) getFromCache(key [32]byte) *CallerIdentity {

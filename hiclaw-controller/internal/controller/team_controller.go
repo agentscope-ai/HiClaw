@@ -10,6 +10,7 @@ import (
 	"time"
 
 	v1beta1 "github.com/hiclaw/hiclaw-controller/api/v1beta1"
+	"github.com/hiclaw/hiclaw-controller/internal/auth"
 	"github.com/hiclaw/hiclaw-controller/internal/backend"
 	"github.com/hiclaw/hiclaw-controller/internal/executor"
 	"github.com/hiclaw/hiclaw-controller/internal/service"
@@ -63,6 +64,12 @@ type TeamReconciler struct {
 	// MemberContext.PodLabels → backend.CreateRequest.Labels. Empty in
 	// embedded mode.
 	ControllerName string
+
+	// ResourcePrefix scopes team-member ServiceAccount and Pod names per
+	// HiClaw tenant instance. Forwarded into MemberDeps.ResourcePrefix so
+	// createMemberContainer uses it when computing saName. Empty collapses
+	// to DefaultResourcePrefix ("hiclaw-").
+	ResourcePrefix auth.ResourcePrefix
 }
 
 func (r *TeamReconciler) Reconcile(ctx context.Context, req reconcile.Request) (reconcile.Result, error) {
@@ -153,6 +160,7 @@ func (r *TeamReconciler) reconcileTeamNormal(ctx context.Context, t *v1beta1.Tea
 		Deployer:       r.Deployer,
 		Backend:        r.Backend,
 		EnvBuilder:     r.EnvBuilder,
+		ResourcePrefix: r.ResourcePrefix,
 		DefaultRuntime: r.DefaultRuntime,
 	}
 	// staleCtx.Spec is intentionally left zero. The original TeamWorkerSpec
@@ -411,6 +419,7 @@ func (r *TeamReconciler) handleDelete(ctx context.Context, t *v1beta1.Team) erro
 		Deployer:       r.Deployer,
 		Backend:        r.Backend,
 		EnvBuilder:     r.EnvBuilder,
+		ResourcePrefix: r.ResourcePrefix,
 		DefaultRuntime: r.DefaultRuntime,
 	}
 

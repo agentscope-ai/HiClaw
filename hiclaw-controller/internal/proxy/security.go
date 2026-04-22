@@ -77,9 +77,17 @@ func NewSecurityValidator() *SecurityValidator {
 		}
 	}
 
+	// Container name prefix: HICLAW_PROXY_CONTAINER_PREFIX takes precedence
+	// (explicit override), else derived from HICLAW_RESOURCE_PREFIX, else
+	// falls back to the baked-in "hiclaw-worker-". The Helm chart normally
+	// passes a derived HICLAW_PROXY_CONTAINER_PREFIX to Manager Pods; the
+	// HICLAW_RESOURCE_PREFIX fallback here matters for embedded/host
+	// deployments that only set the tenant prefix.
 	prefix := "hiclaw-worker-"
 	if env := os.Getenv("HICLAW_PROXY_CONTAINER_PREFIX"); env != "" {
 		prefix = env
+	} else if rp := os.Getenv("HICLAW_RESOURCE_PREFIX"); rp != "" {
+		prefix = rp + "worker-"
 	}
 
 	return &SecurityValidator{
@@ -88,7 +96,7 @@ func NewSecurityValidator() *SecurityValidator {
 		DangerousCaps: map[string]bool{
 			"SYS_ADMIN":    true,
 			"SYS_PTRACE":   true,
-			"DAC_OVERRIDE":  true,
+			"DAC_OVERRIDE": true,
 			"NET_ADMIN":    true,
 			"SYS_RAWIO":    true,
 			"SYS_MODULE":   true,

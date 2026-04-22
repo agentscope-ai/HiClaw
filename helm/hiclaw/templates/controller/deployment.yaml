@@ -51,6 +51,16 @@ spec:
             */}}
             - name: HICLAW_CONTROLLER_NAME
               value: {{ include "hiclaw.controller.fullname" . | quote }}
+            {{- /*
+              Tenant-level resource-name prefix. Drives Pod / ServiceAccount
+              / "app" label / STS session-name derivation for all resources
+              this controller creates. Set controller.resourcePrefix (e.g.
+              "teamA-") to isolate multiple HiClaw instances sharing one
+              namespace. See internal/auth.ResourcePrefix for the full
+              derivation table.
+            */}}
+            - name: HICLAW_RESOURCE_PREFIX
+              value: {{ .Values.controller.resourcePrefix | default "hiclaw-" | quote }}
             - name: HICLAW_WORKER_BACKEND
               value: {{ .Values.controller.workerBackend | quote }}
             - name: HICLAW_K8S_NAMESPACE

@@ -5,7 +5,10 @@ import (
 	"fmt"
 )
 
-// DefaultContainerPrefix is the default prefix for worker container/app names.
+// DefaultContainerPrefix is the baked-in default for worker container/pod
+// names when no prefix is supplied — used as a last-resort fallback in
+// NewDockerBackend / NewK8sBackend. Production callers always pass
+// cfg.ContainerPrefix (which itself is derived from HICLAW_RESOURCE_PREFIX).
 const DefaultContainerPrefix = "hiclaw-worker-"
 
 // Registry holds all available worker backends and provides auto-detection.

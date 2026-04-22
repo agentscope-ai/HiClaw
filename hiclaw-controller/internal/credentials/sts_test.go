@@ -56,7 +56,7 @@ func TestIssueForCaller_WorkerDefaultEntries(t *testing.T) {
 	worker.Name = "alice"
 	worker.Namespace = ns
 	c := newFakeK8sClient(t, worker)
-	resolver := accessresolver.New(c, ns, "test-bucket", "")
+	resolver := accessresolver.New(c, ns, "test-bucket", "", auth.DefaultResourcePrefix)
 
 	fake := &fakeProvider{resp: &credprovider.IssueResponse{
 		AccessKeyID:     "STS.test-ak",
@@ -114,7 +114,7 @@ func TestIssueForCaller_WorkerCustomEntries(t *testing.T) {
 		},
 	}
 	c := newFakeK8sClient(t, worker)
-	resolver := accessresolver.New(c, ns, "test-bucket", "")
+	resolver := accessresolver.New(c, ns, "test-bucket", "", auth.DefaultResourcePrefix)
 
 	fake := &fakeProvider{resp: &credprovider.IssueResponse{
 		AccessKeyID: "ak", AccessKeySecret: "sk", ExpiresInSec: 900,
@@ -139,7 +139,7 @@ func TestIssueForCaller_ProviderError(t *testing.T) {
 	worker.Name = "alice"
 	worker.Namespace = ns
 	c := newFakeK8sClient(t, worker)
-	resolver := accessresolver.New(c, ns, "b", "")
+	resolver := accessresolver.New(c, ns, "b", "", auth.DefaultResourcePrefix)
 	svc := NewSTSService(STSConfig{OSSBucket: "b"}, resolver, &fakeProvider{err: errors.New("boom")})
 
 	if _, err := svc.IssueForCaller(context.Background(), &auth.CallerIdentity{
@@ -153,7 +153,7 @@ func TestConfigured(t *testing.T) {
 	if NewSTSService(STSConfig{}, nil, nil).Configured() {
 		t.Fatal("empty service should not be configured")
 	}
-	if NewSTSService(STSConfig{}, accessresolver.New(newFakeK8sClient(t), ns, "b", ""), nil).Configured() {
+	if NewSTSService(STSConfig{}, accessresolver.New(newFakeK8sClient(t), ns, "b", "", auth.DefaultResourcePrefix), nil).Configured() {
 		t.Fatal("service without provider should not be configured")
 	}
 	if NewSTSService(STSConfig{}, nil, &fakeProvider{}).Configured() {
