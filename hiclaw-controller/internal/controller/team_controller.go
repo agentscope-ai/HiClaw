@@ -90,7 +90,7 @@ func (r *TeamReconciler) Reconcile(ctx context.Context, req reconcile.Request) (
 
 // reconcileTeamNormal drives one convergence pass over a Team CR:
 //  1. Provision team-level infra (rooms, shared storage)
-//  2. Clean up stale members (in Status.ObservedMembers but no longer desired)
+//  2. Clean up stale members (in Status.Members but no longer desired)
 //  3. Reconcile each desired member (leader + workers) via the shared phases
 //  4. Inject leader coordination context + register with Manager + Legacy
 //  5. Summarise backend readiness and patch Team.Status
@@ -139,12 +139,6 @@ func (r *TeamReconciler) reconcileTeamNormal(ctx context.Context, t *v1beta1.Tea
 	for _, m := range desiredMembers {
 		desiredNames[m.Name] = struct{}{}
 	}
-	staleNames := make([]string, 0)
-	for _, observed := range t.Status.ObservedMembers {
-		if _, keep := desiredNames[observed]; !keep {
-			staleNames = append(staleNames, observed)
-		}
-	}
 	deps := MemberDeps{
 		Provisioner:    r.Provisioner,
 		Deployer:       r.Deployer,
@@ -158,73 +152,58 @@ func (r *TeamReconciler) reconcileTeamNormal(ctx context.Context, t *v1beta1.Tea
 	// DeleteConsumer relies on the consumer key (derived from Name) to cascade
 	// removal of all authorizations attached to this worker (including MCP
 	// server grants), so not forwarding Spec.McpServers is acceptable.
-	for _, name := range staleNames {
+	for i := range t.Status.Members {
+		ms := &t.Status.Members[i]
+		if _, keep := desiredNames[ms.Name]; keep {
+			continue
+		}
 		staleCtx := MemberContext{
-			Name:                name,
+			Name:                ms.Name,
 			Namespace:           t.Namespace,
 			Role:                RoleTeamWorker,
 			TeamName:            t.Name,
 			TeamLeaderName:      t.Spec.Leader.Name,
-			CurrentExposedPorts: t.Status.WorkerExposedPorts[name],
+			CurrentExposedPorts: ms.ExposedPorts,
 		}
 		if err := ReconcileMemberDelete(ctx, deps, staleCtx); err != nil {
-			logger.Error(err, "failed to remove stale team member (non-fatal)", "name", name)
+			logger.Error(err, "failed to remove stale team member (non-fatal)", "name", ms.Name)
 		}
-		delete(t.Status.WorkerExposedPorts, name)
 	}
+	pruneMembers(&t.Status, desiredNames)
 
 	// --- Step 4: Reconcile each desired member (leader first) ---
 	//
-	// observedSet tracks members whose infra provisioning has succeeded at
-	// least once. Membership flips to "observed" the moment
-	// ReconcileMemberInfra returns nil — a failure in a later phase
-	// (Config/Container/Expose) does NOT revoke observed status, because
-	// infra success means the Matrix user already exists and its access
-	// token has been persisted. Dropping such a member from the set would
-	// force the next reconcile down the Provision path (IsUpdate=false),
-	// which re-invokes matrix.EnsureUser's Login fallback and mints a new
-	// access token — a rotation that triggers an openclaw gateway restart.
-	// Only a member whose very first ReconcileMemberInfra fails stays out
-	// of the set, mirroring WorkerReconciler's Status.MatrixUserID check.
+	// ms.Observed flips to true the moment ReconcileMemberInfra returns nil —
+	// a failure in a later phase (Config/Container/Expose) does NOT revoke
+	// observed status, because infra success means the Matrix user already
+	// exists and its access token has been persisted. Dropping observed back
+	// to false would force the next reconcile down the Provision path
+	// (IsUpdate=false), which re-invokes matrix.EnsureUser's Login fallback
+	// and mints a new access token — a rotation that triggers an openclaw
+	// gateway restart. Only a member whose very first ReconcileMemberInfra
+	// fails stays Observed=false, mirroring WorkerReconciler's
+	// Status.MatrixUserID check.
 	//
-	// specHashes, in contrast, is updated only when ALL phases succeed, so
+	// ms.SpecHash, in contrast, is updated only when ALL phases succeed, so
 	// a partial failure keeps memberSpecChanged=true and retries container
 	// recreation on the next pass.
-	observedSet := make(map[string]struct{}, len(t.Status.ObservedMembers))
-	for _, n := range t.Status.ObservedMembers {
-		if _, keep := desiredNames[n]; keep {
-			observedSet[n] = struct{}{}
-		}
-	}
 	perMemberErrors := make([]string, 0)
-	workerExposed := t.Status.WorkerExposedPorts
-	if workerExposed == nil {
-		workerExposed = make(map[string][]v1beta1.ExposedPortStatus)
-	}
-	// specHashes carries forward the previous reconcile's hashes and gets
-	// updated per member on success. Stale members (removed from the spec)
-	// are dropped below after the loop.
-	specHashes := make(map[string]string, len(desiredMembers))
-	for k, v := range t.Status.MemberSpecHashes {
-		if _, keep := desiredNames[k]; keep {
-			specHashes[k] = v
-		}
-	}
 	for i := range desiredMembers {
 		m := desiredMembers[i]
-		if existing, ok := workerExposed[m.Name]; ok {
-			m.CurrentExposedPorts = existing
+		ms := memberStatus(&t.Status, m.Name, m.Role)
+		if len(ms.ExposedPorts) > 0 {
+			m.CurrentExposedPorts = ms.ExposedPorts
 		}
-		if err := r.reconcileMember(ctx, deps, m, workerExposed, observedSet); err != nil {
+		if err := r.reconcileMember(ctx, deps, m, ms); err != nil {
 			logger.Error(err, "team member reconcile failed", "name", m.Name)
 			perMemberErrors = append(perMemberErrors, fmt.Sprintf("%s: %v", m.Name, err))
 			continue
 		}
 		// Record the hash only after a full reconcile success so a failed
 		// mid-phase attempt on the next pass still sees SpecChanged=true
-		// and retries the container recreation. observedSet was already
+		// and retries the container recreation. ms.Observed was already
 		// updated inside reconcileMember as soon as infra succeeded.
-		specHashes[m.Name] = hashMemberSourceSpec(t, m.Role, m.Name)
+		ms.SpecHash = hashMemberSourceSpec(t, m.Role, m.Name)
 	}
 
 	// --- Step 5: Leader-specific hooks (coordination, groupAllowFrom, registry) ---
@@ -264,27 +243,11 @@ func (r *TeamReconciler) reconcileTeamNormal(ctx context.Context, t *v1beta1.Tea
 	}
 
 	// --- Step 6: Summarise backend readiness and patch status ---
-	leaderReady, readyWorkers := r.summarizeBackendReadiness(ctx, desiredMembers)
-	observed := make([]string, 0, len(observedSet))
-	for n := range observedSet {
-		observed = append(observed, n)
-	}
-	sort.Strings(observed)
-
-	t.Status.ObservedMembers = observed
-	if len(specHashes) > 0 {
-		t.Status.MemberSpecHashes = specHashes
-	} else {
-		t.Status.MemberSpecHashes = nil
-	}
+	leaderReady, readyWorkers := r.summarizeBackendReadiness(ctx, t, desiredMembers)
+	sortMembers(&t.Status)
 	t.Status.TotalWorkers = len(t.Spec.Workers)
 	t.Status.LeaderReady = leaderReady
 	t.Status.ReadyWorkers = readyWorkers
-	if len(workerExposed) > 0 {
-		t.Status.WorkerExposedPorts = workerExposed
-	} else {
-		t.Status.WorkerExposedPorts = nil
-	}
 
 	switch {
 	case len(perMemberErrors) > 0:
@@ -311,18 +274,19 @@ func (r *TeamReconciler) reconcileTeamNormal(ctx context.Context, t *v1beta1.Tea
 		"phase", t.Status.Phase,
 		"leaderReady", leaderReady,
 		"readyWorkers", readyWorkers,
-		"observedMembers", observed)
+		"members", observedMemberNames(&t.Status))
 	return reconcile.Result{RequeueAfter: requeue}, nil
 }
 
 // reconcileMember runs the shared member phases for one team member and
-// accumulates exposed-port state into workerExposed. Leader membership in
-// workerExposed is skipped because the leader never exposes gateway ports.
+// writes the resulting runtime state into ms. The leader never has
+// ExposedPorts (the Leader phase always produces zero ports), so that field
+// stays nil for RoleTeamLeader entries.
 //
-// observedSet is updated the instant ReconcileMemberInfra succeeds — see the
-// Step 4 comment in reconcileTeamNormal for why post-infra failures must not
-// revoke observed status (token-rotation hazard).
-func (r *TeamReconciler) reconcileMember(ctx context.Context, deps MemberDeps, m MemberContext, workerExposed map[string][]v1beta1.ExposedPortStatus, observedSet map[string]struct{}) error {
+// ms.Observed is flipped to true the instant ReconcileMemberInfra succeeds —
+// see the Step 4 comment in reconcileTeamNormal for why post-infra failures
+// must not revoke observed status (token-rotation hazard).
+func (r *TeamReconciler) reconcileMember(ctx context.Context, deps MemberDeps, m MemberContext, ms *v1beta1.TeamMemberStatus) error {
 	state := &MemberState{}
 
 	// Pre-populate ExistingMatrixUserID when we've already provisioned the
@@ -334,7 +298,13 @@ func (r *TeamReconciler) reconcileMember(ctx context.Context, deps MemberDeps, m
 	if _, err := ReconcileMemberInfra(ctx, deps, m, state); err != nil {
 		return err
 	}
-	observedSet[m.Name] = struct{}{}
+	ms.Observed = true
+	if state.RoomID != "" {
+		ms.RoomID = state.RoomID
+	}
+	if state.MatrixUserID != "" {
+		ms.MatrixUserID = state.MatrixUserID
+	}
 	if err := EnsureMemberServiceAccount(ctx, deps, m); err != nil {
 		return err
 	}
@@ -347,19 +317,22 @@ func (r *TeamReconciler) reconcileMember(ctx context.Context, deps MemberDeps, m
 	_ = ReconcileMemberExpose(ctx, deps, m, state)
 
 	if m.Role == RoleTeamWorker {
-		if len(state.ExposedPorts) > 0 {
-			workerExposed[m.Name] = state.ExposedPorts
-		} else {
-			delete(workerExposed, m.Name)
-		}
+		ms.ExposedPorts = state.ExposedPorts
+	} else {
+		ms.ExposedPorts = nil
 	}
 	return nil
 }
 
 // summarizeBackendReadiness queries each member's pod/container status from
-// the backend. Used instead of reading Worker CR status because team members
-// no longer have Worker CRs.
-func (r *TeamReconciler) summarizeBackendReadiness(ctx context.Context, members []MemberContext) (leaderReady bool, readyWorkers int) {
+// the backend and writes ms.Ready per member. Used instead of reading Worker
+// CR status because team members no longer have Worker CRs.
+//
+// On a backend-unreachable path (Backend == nil or DetectWorkerBackend nil)
+// this preserves any previously-recorded ms.Ready value — callers should NOT
+// treat a false/true gap across reconciles as a transition, since a transient
+// backend outage would otherwise flap Phase=Active back to Pending.
+func (r *TeamReconciler) summarizeBackendReadiness(ctx context.Context, t *v1beta1.Team, members []MemberContext) (leaderReady bool, readyWorkers int) {
 	if r.Backend == nil {
 		return false, 0
 	}
@@ -373,6 +346,9 @@ func (r *TeamReconciler) summarizeBackendReadiness(ctx context.Context, members 
 			continue
 		}
 		ready := result.Status == backend.StatusRunning || result.Status == backend.StatusReady
+		if ms := t.Status.MemberByName(m.Name); ms != nil {
+			ms.Ready = ready
+		}
 		if m.Role == RoleTeamLeader {
 			leaderReady = ready
 			continue
@@ -421,14 +397,14 @@ func (r *TeamReconciler) handleDelete(ctx context.Context, t *v1beta1.Team) erro
 		DefaultRuntime: r.DefaultRuntime,
 	}
 
-	// Union of ObservedMembers and desired members to guarantee cleanup even
-	// when reconcile failed before writing observedMembers.
+	// Union of Status.Members and desired members to guarantee cleanup even
+	// when reconcile failed before writing Status.Members.
 	names := make(map[string]MemberRole)
-	for _, name := range t.Status.ObservedMembers {
-		if name == t.Spec.Leader.Name {
-			names[name] = RoleTeamLeader
+	for _, ms := range t.Status.Members {
+		if ms.Role == RoleTeamLeader.String() || ms.Name == t.Spec.Leader.Name {
+			names[ms.Name] = RoleTeamLeader
 		} else {
-			names[name] = RoleTeamWorker
+			names[ms.Name] = RoleTeamWorker
 		}
 	}
 	if t.Spec.Leader.Name != "" {
@@ -440,13 +416,17 @@ func (r *TeamReconciler) handleDelete(ctx context.Context, t *v1beta1.Team) erro
 
 	errs := make([]error, 0)
 	for name, role := range names {
+		var exposed []v1beta1.ExposedPortStatus
+		if ms := t.Status.MemberByName(name); ms != nil {
+			exposed = ms.ExposedPorts
+		}
 		mctx := MemberContext{
 			Name:                name,
 			Namespace:           t.Namespace,
 			Role:                role,
 			TeamName:            t.Name,
 			TeamLeaderName:      t.Spec.Leader.Name,
-			CurrentExposedPorts: t.Status.WorkerExposedPorts[name],
+			CurrentExposedPorts: exposed,
 		}
 		if role == RoleTeamLeader {
 			mctx.Spec = leaderWorkerSpec(t)
@@ -510,6 +490,70 @@ func (r *TeamReconciler) failTeam(ctx context.Context, t *v1beta1.Team, patchBas
 
 // --- helpers ---
 
+// memberStatus returns a pointer to the entry for name in s.Members,
+// creating a zero-value entry (tagged with the given role) when absent. The
+// returned pointer remains valid for in-place mutation across the reconcile
+// pass because the caller treats Members as append-only for the duration of
+// reconcileTeamNormal (pruneMembers runs once up front, before the per-
+// member loop); no subsequent call re-slices the underlying array, so a
+// pointer obtained here will not be invalidated by later memberStatus
+// appends.
+func memberStatus(s *v1beta1.TeamStatus, name string, role MemberRole) *v1beta1.TeamMemberStatus {
+	if existing := s.MemberByName(name); existing != nil {
+		if existing.Role == "" {
+			existing.Role = role.String()
+		}
+		return existing
+	}
+	s.Members = append(s.Members, v1beta1.TeamMemberStatus{Name: name, Role: role.String()})
+	return &s.Members[len(s.Members)-1]
+}
+
+// pruneMembers removes entries from s.Members whose names are not present in
+// keep. Called exactly once per reconcile (Step 3) so the memberStatus
+// pointer-stability invariant above holds.
+func pruneMembers(s *v1beta1.TeamStatus, keep map[string]struct{}) {
+	if len(s.Members) == 0 {
+		return
+	}
+	filtered := s.Members[:0]
+	for _, ms := range s.Members {
+		if _, ok := keep[ms.Name]; ok {
+			filtered = append(filtered, ms)
+		}
+	}
+	// Zero out the trailing tail to release references to dropped entries
+	// (important when ExposedPorts holds domain strings).
+	for i := len(filtered); i < len(s.Members); i++ {
+		s.Members[i] = v1beta1.TeamMemberStatus{}
+	}
+	s.Members = filtered
+}
+
+// sortMembers orders Members by Name for stable status patches and
+// deterministic test assertions. Kubernetes merge-patch compares the full
+// array by index, so an unstable order would cause spurious patch churn and
+// unnecessary informer events.
+func sortMembers(s *v1beta1.TeamStatus) {
+	sort.Slice(s.Members, func(i, j int) bool {
+		return s.Members[i].Name < s.Members[j].Name
+	})
+}
+
+// observedMemberNames returns the sorted names of members with Observed=true.
+// Used only for logging ("team reconciled … members=[…]"). Unexported so the
+// log key stays controller-internal and tests do not lock it in.
+func observedMemberNames(s *v1beta1.TeamStatus) []string {
+	names := make([]string, 0, len(s.Members))
+	for _, ms := range s.Members {
+		if ms.Observed {
+			names = append(names, ms.Name)
+		}
+	}
+	sort.Strings(names)
+	return names
+}
+
 // buildDesiredMembers translates a Team spec into MemberContexts for leader
 // and each worker. Every member is tagged with PodLabel hiclaw.io/team=<name>
 // so the Team controller can watch their pod lifecycle via a shared predicate.
@@ -520,14 +564,16 @@ func (r *TeamReconciler) failTeam(ctx context.Context, t *v1beta1.Team, patchBas
 // is intentionally excluded so adding/removing a peer does NOT recreate the
 // other members — only the newly added member gets a fresh container.
 func buildDesiredMembers(t *v1beta1.Team) []MemberContext {
-	observed := make(map[string]struct{}, len(t.Status.ObservedMembers))
-	for _, n := range t.Status.ObservedMembers {
-		observed[n] = struct{}{}
+	isObserved := func(name string) bool {
+		if ms := t.Status.MemberByName(name); ms != nil {
+			return ms.Observed
+		}
+		return false
 	}
 	members := make([]MemberContext, 0, 1+len(t.Spec.Workers))
 
 	leaderSpec := leaderWorkerSpec(t)
-	_, leaderObserved := observed[t.Spec.Leader.Name]
+	leaderObserved := isObserved(t.Spec.Leader.Name)
 	members = append(members, MemberContext{
 		Name:              t.Spec.Leader.Name,
 		Namespace:         t.Namespace,
@@ -546,7 +592,7 @@ func buildDesiredMembers(t *v1beta1.Team) []MemberContext {
 	})
 
 	for _, w := range t.Spec.Workers {
-		_, workerObserved := observed[w.Name]
+		workerObserved := isObserved(w.Name)
 		spec := teamWorkerSpecToWorkerSpec(t, w)
 		members = append(members, MemberContext{
 			Name:              w.Name,
@@ -581,11 +627,11 @@ func buildDesiredMembers(t *v1beta1.Team) []MemberContext {
 // informer cache — a stored-hash-empty-means-changed policy would Delete
 // the just-created container on that intervening pass.
 func memberSpecChanged(t *v1beta1.Team, role MemberRole, name string) bool {
-	stored := t.Status.MemberSpecHashes[name]
-	if stored == "" {
+	ms := t.Status.MemberByName(name)
+	if ms == nil || ms.SpecHash == "" {
 		return false
 	}
-	return stored != hashMemberSourceSpec(t, role, name)
+	return ms.SpecHash != hashMemberSourceSpec(t, role, name)
 }
 
 // hashMemberSourceSpec digests the user-authored fields that govern a

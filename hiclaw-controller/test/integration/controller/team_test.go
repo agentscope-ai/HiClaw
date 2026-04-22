@@ -58,14 +58,33 @@ func TestTeamCreate_ProvisionsLeaderAndWorkers(t *testing.T) {
 		name + "-dev":  true,
 		name + "-qa":   true,
 	}
-	for _, n := range got.Status.ObservedMembers {
-		if !wantObserved[n] {
-			t.Errorf("unexpected observed member %q", n)
+	for _, ms := range got.Status.Members {
+		if !ms.Observed {
+			continue
 		}
-		delete(wantObserved, n)
+		if !wantObserved[ms.Name] {
+			t.Errorf("unexpected observed member %q", ms.Name)
+		}
+		delete(wantObserved, ms.Name)
 	}
 	if len(wantObserved) > 0 {
 		t.Errorf("missing observed members: %v", wantObserved)
+	}
+
+	// RoomID + MatrixUserID must be propagated into Status.Members so the
+	// /api/v1/workers/<member> endpoint can synthesize a WorkerResponse.
+	// This is the regression guard for test-21-team-project-dag's
+	// `hiclaw get workers <member> -o json | jq .roomID` returning empty.
+	for _, ms := range got.Status.Members {
+		if !ms.Observed {
+			continue
+		}
+		if ms.RoomID == "" {
+			t.Errorf("Status.Members[%s].RoomID is empty after provisioning", ms.Name)
+		}
+		if ms.MatrixUserID == "" {
+			t.Errorf("Status.Members[%s].MatrixUserID is empty after provisioning", ms.Name)
+		}
 	}
 
 	if len(mockProv.Calls.ProvisionTeamRooms) == 0 {
@@ -119,9 +138,9 @@ func TestTeamUpdate_RemovesStaleWorker(t *testing.T) {
 		if got.Status.TotalWorkers != 1 {
 			return fmt.Errorf("TotalWorkers=%d, want 1", got.Status.TotalWorkers)
 		}
-		for _, n := range got.Status.ObservedMembers {
-			if n == name+"-w2" {
-				return fmt.Errorf("observed still contains %s", n)
+		for _, ms := range got.Status.Members {
+			if ms.Name == name+"-w2" {
+				return fmt.Errorf("Status.Members still contains stale %s", ms.Name)
 			}
 		}
 		return nil
@@ -396,11 +415,13 @@ func TestTeamUpdate_AddWorker_DoesNotRecreateExisting(t *testing.T) {
 			return fmt.Errorf("TotalWorkers=%d, want 2", got.Status.TotalWorkers)
 		}
 		observed := make(map[string]bool)
-		for _, n := range got.Status.ObservedMembers {
-			observed[n] = true
+		for _, ms := range got.Status.Members {
+			if ms.Observed {
+				observed[ms.Name] = true
+			}
 		}
 		if !observed[added] {
-			return fmt.Errorf("observed missing %q: %v", added, got.Status.ObservedMembers)
+			return fmt.Errorf("observed missing %q", added)
 		}
 		if got.Status.Phase != "Active" {
 			return fmt.Errorf("phase=%q, want Active", got.Status.Phase)
@@ -408,16 +429,21 @@ func TestTeamUpdate_AddWorker_DoesNotRecreateExisting(t *testing.T) {
 		return nil
 	})
 
-	// MemberSpecHashes must be populated for every member — proves the
-	// per-member hash path was taken rather than the fallback "always
+	// Status.Members[*].SpecHash must be populated for every member — proves
+	// the per-member hash path was taken rather than the fallback "always
 	// changed" path.
 	var got v1beta1.Team
 	if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(team), &got); err != nil {
 		t.Fatalf("get team: %v", err)
 	}
 	for _, n := range []string{leader, existing, added} {
-		if got.Status.MemberSpecHashes[n] == "" {
-			t.Errorf("MemberSpecHashes[%q] is empty, want non-empty", n)
+		ms := got.Status.MemberByName(n)
+		if ms == nil {
+			t.Errorf("Status.Members is missing entry for %q", n)
+			continue
+		}
+		if ms.SpecHash == "" {
+			t.Errorf("Status.Members[%q].SpecHash is empty, want non-empty", n)
 		}
 	}
 

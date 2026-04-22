@@ -780,12 +780,15 @@ func teamToResponse(t *v1beta1.Team) TeamResponse {
 	for _, w := range t.Spec.Workers {
 		resp.WorkerNames = append(resp.WorkerNames, w.Name)
 	}
-	if t.Status.WorkerExposedPorts != nil {
-		resp.WorkerExposedPorts = make(map[string][]ExposedPortInfo)
-		for wn, ports := range t.Status.WorkerExposedPorts {
-			for _, p := range ports {
-				resp.WorkerExposedPorts[wn] = append(resp.WorkerExposedPorts[wn], ExposedPortInfo{Port: p.Port, Domain: p.Domain})
-			}
+	for _, ms := range t.Status.Members {
+		if len(ms.ExposedPorts) == 0 {
+			continue
+		}
+		if resp.WorkerExposedPorts == nil {
+			resp.WorkerExposedPorts = make(map[string][]ExposedPortInfo)
+		}
+		for _, p := range ms.ExposedPorts {
+			resp.WorkerExposedPorts[ms.Name] = append(resp.WorkerExposedPorts[ms.Name], ExposedPortInfo{Port: p.Port, Domain: p.Domain})
 		}
 	}
 	return resp
@@ -880,6 +883,7 @@ func (h *ResourceHandler) findTeamMember(ctx context.Context, name string) (*v1b
 // /api/v1/workers see consistent data.
 func (h *ResourceHandler) teamMemberToResponse(ctx context.Context, t *v1beta1.Team, memberName string) WorkerResponse {
 	isLeader := t.Spec.Leader.Name == memberName
+	ms := t.Status.MemberByName(memberName)
 
 	resp := WorkerResponse{
 		Name:    memberName,
@@ -887,6 +891,10 @@ func (h *ResourceHandler) teamMemberToResponse(ctx context.Context, t *v1beta1.T
 		Phase:   "Pending",
 		State:   "Running",
 		Runtime: "copaw",
+	}
+	if ms != nil {
+		resp.RoomID = ms.RoomID
+		resp.MatrixUserID = ms.MatrixUserID
 	}
 	if isLeader {
 		resp.Role = "team_leader"
@@ -908,8 +916,8 @@ func (h *ResourceHandler) teamMemberToResponse(ctx context.Context, t *v1beta1.T
 			if wk.State != nil {
 				resp.State = *wk.State
 			}
-			if ports, ok := t.Status.WorkerExposedPorts[memberName]; ok {
-				for _, p := range ports {
+			if ms != nil {
+				for _, p := range ms.ExposedPorts {
 					resp.ExposedPorts = append(resp.ExposedPorts, ExposedPortInfo{Port: p.Port, Domain: p.Domain})
 				}
 			}

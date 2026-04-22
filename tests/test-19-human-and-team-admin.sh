@@ -179,40 +179,22 @@ else
     log_fail "Team YAML apply failed: ${APPLY_TEAM_OUTPUT}"
 fi
 
-# Wait for controller to reconcile team
+# Wait for controller to reconcile team — see test-18 for the rationale
+# behind polling .status.phase + per-member roomID instead of log-grep.
 log_info "Waiting for controller to reconcile team..."
-TEAM_TIMEOUT=180; TEAM_ELAPSED=0
-TEAM_CREATED=false
-while [ "${TEAM_ELAPSED}" -lt "${TEAM_TIMEOUT}" ]; do
-    if exec_in_manager cat /var/log/hiclaw/hiclaw-controller-error.log 2>/dev/null | grep -q "team created.*${TEST_TEAM}"; then
-        TEAM_CREATED=true
-        break
-    fi
-    sleep 5; TEAM_ELAPSED=$((TEAM_ELAPSED + 5))
-    printf "\r[TEST INFO] Waiting for team reconcile... (%ds/%ds)" "${TEAM_ELAPSED}" "${TEAM_TIMEOUT}"
-done
-echo ""
-
-if [ "${TEAM_CREATED}" = true ]; then
-    log_pass "TeamReconciler created team (took ~${TEAM_ELAPSED}s)"
+if wait_team_active "${TEST_TEAM}" 180; then
+    log_pass "TeamReconciler reconciled team to Active"
 else
-    log_fail "TeamReconciler did not create team within ${TEAM_TIMEOUT}s"
-    exec_in_manager cat /var/log/hiclaw/hiclaw-controller-error.log 2>/dev/null | grep "${TEST_TEAM}" | tail -10
+    log_fail "TeamReconciler did not reach Active within 180s"
+    exec_in_agent hiclaw get teams "${TEST_TEAM}" -o json 2>/dev/null | jq -r '.phase, .message' | head -5
 fi
 
-# Wait for all workers to be reconciled
+# Wait for each team member to be provisioned (roomID + matrixUserID).
 for w in "${TEST_LEADER}" "${TEST_W1}"; do
-    W_TIMEOUT=120; W_ELAPSED=0
-    while [ "${W_ELAPSED}" -lt "${W_TIMEOUT}" ]; do
-        if exec_in_manager cat /var/log/hiclaw/hiclaw-controller-error.log 2>/dev/null | grep -q "worker created.*${w}"; then
-            break
-        fi
-        sleep 5; W_ELAPSED=$((W_ELAPSED + 5))
-    done
-    if [ "${W_ELAPSED}" -lt "${W_TIMEOUT}" ]; then
-        log_pass "Worker ${w} reconciled (took ~${W_ELAPSED}s)"
+    if wait_worker_provisioned "${w}" 120; then
+        log_pass "Member ${w} provisioned (roomID + matrixUserID present)"
     else
-        log_fail "Worker ${w} not reconciled within ${W_TIMEOUT}s"
+        log_fail "Member ${w} not provisioned within 120s"
     fi
 done
 

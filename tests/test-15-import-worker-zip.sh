@@ -206,31 +206,20 @@ log_section "Controller Reconcile"
 
 log_info "Waiting for mc mirror (10s) + fsnotify + reconcile + create-worker.sh..."
 
-RECONCILE_TIMEOUT=120
-RECONCILE_ELAPSED=0
-WORKER_CREATED=false
-
-while [ "${RECONCILE_ELAPSED}" -lt "${RECONCILE_TIMEOUT}" ]; do
-    if exec_in_manager cat /var/log/hiclaw/hiclaw-controller-error.log 2>/dev/null | grep -q "worker created.*${TEST_WORKER}"; then
-        WORKER_CREATED=true
-        break
-    fi
-    sleep 5
-    RECONCILE_ELAPSED=$((RECONCILE_ELAPSED + 5))
-    printf "\r[TEST INFO] Waiting for reconcile... (%ds/%ds)" "${RECONCILE_ELAPSED}" "${RECONCILE_TIMEOUT}"
-done
-echo ""
-
-if [ "${WORKER_CREATED}" = true ]; then
-    log_pass "WorkerReconciler created worker (took ~${RECONCILE_ELAPSED}s)"
+if wait_worker_provisioned "${TEST_WORKER}" 120; then
+    log_pass "WorkerReconciler provisioned worker"
 else
-    log_fail "WorkerReconciler did not create worker within ${RECONCILE_TIMEOUT}s"
-    exec_in_manager cat /var/log/hiclaw/hiclaw-controller-error.log 2>/dev/null | grep "${TEST_WORKER}" | tail -5
+    log_fail "WorkerReconciler did not provision worker within 120s"
+    exec_in_agent hiclaw get workers "${TEST_WORKER}" -o json 2>/dev/null | jq -r '.phase, .message' | head -5
 fi
 
-# Verify controller log confirms reconciliation completed
-RECONCILE_LOG=$(exec_in_manager cat /var/log/hiclaw/hiclaw-controller-error.log 2>/dev/null | grep "worker created.*${TEST_WORKER}" || echo "")
-assert_not_empty "${RECONCILE_LOG}" "Controller logged worker creation"
+# Verify the API surface confirms the worker is present with credentials
+# (roomID + matrixUserID). Older iteration of this test grepped a
+# "worker created" log line; polling the CR status is both more stable
+# and independent of log-rotation.
+WORKER_API_JSON=$(exec_in_agent hiclaw get workers "${TEST_WORKER}" -o json 2>/dev/null)
+WORKER_API_ROOM=$(echo "${WORKER_API_JSON}" | jq -r '.roomID // empty')
+assert_not_empty "${WORKER_API_ROOM}" "Worker API response contains roomID"
 
 # ============================================================
 # Section 8: Verify Worker infrastructure

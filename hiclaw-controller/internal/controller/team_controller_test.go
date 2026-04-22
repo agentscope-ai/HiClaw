@@ -29,7 +29,10 @@ func TestBuildDesiredMembers_LeaderAndWorkers(t *testing.T) {
 		{Name: "alpha-dev", Model: "gpt-4o"},
 		{Name: "alpha-qa", Model: "gpt-4o"},
 	}
-	team.Status.ObservedMembers = []string{"alpha-lead", "alpha-dev"}
+	team.Status.Members = []v1beta1.TeamMemberStatus{
+		{Name: "alpha-lead", Role: RoleTeamLeader.String(), Observed: true},
+		{Name: "alpha-dev", Role: RoleTeamWorker.String(), Observed: true},
+	}
 
 	members := buildDesiredMembers(team)
 	if len(members) != 3 {
@@ -39,13 +42,13 @@ func TestBuildDesiredMembers_LeaderAndWorkers(t *testing.T) {
 		t.Fatalf("members[0]=%+v, want leader alpha-lead", members[0])
 	}
 	if !members[0].IsUpdate {
-		t.Errorf("leader should be IsUpdate=true (in ObservedMembers)")
+		t.Errorf("leader should be IsUpdate=true (observed in Status.Members)")
 	}
 	if !members[1].IsUpdate {
-		t.Errorf("alpha-dev should be IsUpdate=true (in ObservedMembers)")
+		t.Errorf("alpha-dev should be IsUpdate=true (observed in Status.Members)")
 	}
 	if members[2].IsUpdate {
-		t.Errorf("alpha-qa should be IsUpdate=false (not in ObservedMembers)")
+		t.Errorf("alpha-qa should be IsUpdate=false (not observed in Status.Members)")
 	}
 	for _, m := range members {
 		if m.PodLabels["hiclaw.io/team"] != "alpha" {
@@ -87,9 +90,9 @@ func TestBuildDesiredMembers_SpecChangedDetection(t *testing.T) {
 	priorTeam.Spec.Workers[0].Model = "gpt-3.5"
 	devHashOld := hashMemberSourceSpec(priorTeam, RoleTeamWorker, "alpha-dev")
 
-	team.Status.MemberSpecHashes = map[string]string{
-		"alpha-lead": leaderHash,
-		"alpha-dev":  devHashOld,
+	team.Status.Members = []v1beta1.TeamMemberStatus{
+		{Name: "alpha-lead", Role: RoleTeamLeader.String(), SpecHash: leaderHash},
+		{Name: "alpha-dev", Role: RoleTeamWorker.String(), SpecHash: devHashOld},
 	}
 
 	members := buildDesiredMembers(team)

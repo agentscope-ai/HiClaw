@@ -137,26 +137,11 @@ log_section "Controller Reconcile"
 
 log_info "Waiting for mc mirror (10s) + fsnotify + reconcile + create-worker.sh..."
 
-RECONCILE_TIMEOUT=120
-RECONCILE_ELAPSED=0
-WORKER_CREATED=false
-
-while [ "${RECONCILE_ELAPSED}" -lt "${RECONCILE_TIMEOUT}" ]; do
-    if exec_in_manager cat /var/log/hiclaw/hiclaw-controller-error.log 2>/dev/null | grep -q "worker created.*${TEST_WORKER}"; then
-        WORKER_CREATED=true
-        break
-    fi
-    sleep 5
-    RECONCILE_ELAPSED=$((RECONCILE_ELAPSED + 5))
-    printf "\r[TEST INFO] Waiting for reconcile... (%ds/%ds)" "${RECONCILE_ELAPSED}" "${RECONCILE_TIMEOUT}"
-done
-echo ""
-
-if [ "${WORKER_CREATED}" = true ]; then
-    log_pass "WorkerReconciler created worker (took ~${RECONCILE_ELAPSED}s)"
+if wait_worker_provisioned "${TEST_WORKER}" 120; then
+    log_pass "WorkerReconciler provisioned worker"
 else
-    log_fail "WorkerReconciler did not create worker within ${RECONCILE_TIMEOUT}s"
-    exec_in_manager cat /var/log/hiclaw/hiclaw-controller-error.log 2>/dev/null | grep "${TEST_WORKER}" | tail -5
+    log_fail "WorkerReconciler did not provision worker within 120s"
+    exec_in_agent hiclaw get workers "${TEST_WORKER}" -o json 2>/dev/null | jq -r '.phase, .message' | head -5
 fi
 
 # Verify inline configs were written
@@ -312,26 +297,11 @@ fi
 
 # Wait for initial worker creation to complete before applying override
 log_info "Waiting for initial worker creation from ZIP import..."
-RECONCILE_TIMEOUT=120
-RECONCILE_ELAPSED=0
-ZIP_WORKER_CREATED=false
-
-while [ "${RECONCILE_ELAPSED}" -lt "${RECONCILE_TIMEOUT}" ]; do
-    if exec_in_manager cat /var/log/hiclaw/hiclaw-controller-error.log 2>/dev/null | grep -q "worker created.*${TEST_WORKER_OVERRIDE}"; then
-        ZIP_WORKER_CREATED=true
-        break
-    fi
-    sleep 5
-    RECONCILE_ELAPSED=$((RECONCILE_ELAPSED + 5))
-    printf "\r[TEST INFO] Waiting for ZIP worker creation... (%ds/%ds)" "${RECONCILE_ELAPSED}" "${RECONCILE_TIMEOUT}"
-done
-echo ""
-
-if [ "${ZIP_WORKER_CREATED}" = true ]; then
-    log_pass "ZIP worker created (took ~${RECONCILE_ELAPSED}s)"
+if wait_worker_provisioned "${TEST_WORKER_OVERRIDE}" 120; then
+    log_pass "ZIP worker created"
 else
-    log_fail "ZIP worker not created within ${RECONCILE_TIMEOUT}s"
-    exec_in_manager cat /var/log/hiclaw/hiclaw-controller-error.log 2>/dev/null | grep "${TEST_WORKER_OVERRIDE}" | tail -5
+    log_fail "ZIP worker not created within 120s"
+    exec_in_agent hiclaw get workers "${TEST_WORKER_OVERRIDE}" -o json 2>/dev/null | jq -r '.phase, .message' | head -5
 fi
 
 # Discover the package URI from MinIO packages directory

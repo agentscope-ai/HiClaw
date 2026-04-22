@@ -61,7 +61,14 @@ func TestCreateWorkerRejectsExistingTeamMemberName(t *testing.T) {
 }
 
 // /api/v1/workers/{name} must synthesize a response for a team member even
-// though no Worker CR exists.
+// though no Worker CR exists. The synthesized response MUST carry the
+// RoomID + MatrixUserID recorded in Team.Status.Members so that clients like
+// the Manager Agent and `hiclaw get workers <name> -o json | jq .roomID`
+// (exercised by test-21-team-project-dag) can resolve a member's room.
+//
+// This is the regression guard for the PR #666 bug where teamMemberToResponse
+// synthesized an empty RoomID because Team.Status had no per-member RoomID
+// field.
 func TestGetWorkerSynthesizesTeamMember(t *testing.T) {
 	scheme := newServerTestScheme(t)
 	team := &v1beta1.Team{}
@@ -69,6 +76,22 @@ func TestGetWorkerSynthesizesTeamMember(t *testing.T) {
 	team.Namespace = "default"
 	team.Spec.Leader = v1beta1.LeaderSpec{Name: "alpha-lead", Model: "qwen3.5-plus"}
 	team.Spec.Workers = []v1beta1.TeamWorkerSpec{{Name: "alpha-dev", Model: "qwen3.5-plus"}}
+	team.Status.Members = []v1beta1.TeamMemberStatus{
+		{
+			Name:         "alpha-dev",
+			Role:         "worker",
+			RoomID:       "!dev-room:example.com",
+			MatrixUserID: "@alpha-dev:example.com",
+			Observed:     true,
+		},
+		{
+			Name:         "alpha-lead",
+			Role:         "team_leader",
+			RoomID:       "!lead-room:example.com",
+			MatrixUserID: "@alpha-lead:example.com",
+			Observed:     true,
+		},
+	}
 	k8sClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(team).Build()
 	handler := NewResourceHandler(k8sClient, "default", nil)
 
@@ -86,6 +109,12 @@ func TestGetWorkerSynthesizesTeamMember(t *testing.T) {
 	}
 	if resp.Team != "alpha-team" || resp.Name != "alpha-dev" || resp.Role != "worker" {
 		t.Fatalf("unexpected synthesized response: %+v", resp)
+	}
+	if resp.RoomID != "!dev-room:example.com" {
+		t.Errorf("RoomID=%q, want %q (not propagated from Team.Status.Members)", resp.RoomID, "!dev-room:example.com")
+	}
+	if resp.MatrixUserID != "@alpha-dev:example.com" {
+		t.Errorf("MatrixUserID=%q, want %q", resp.MatrixUserID, "@alpha-dev:example.com")
 	}
 }
 
