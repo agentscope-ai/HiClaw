@@ -252,6 +252,8 @@ $script:Messages = @{
     "install.reinstall.warn_env" = @{ zh = "   - Env 文件: {0}"; en = "   - Env file: {0}" }
     "install.reinstall.warn_workspace" = @{ zh = "   - Manager 工作空间: {0}"; en = "   - Manager workspace: {0}" }
     "install.reinstall.warn_workers" = @{ zh = "   - 所有 worker 容器"; en = "   - All worker containers" }
+    "install.reinstall.warn_proxy" = @{ zh = "   - Docker API 代理容器: hiclaw-controller"; en = "   - Docker API proxy container: hiclaw-controller" }
+    "install.reinstall.removing_proxy" = @{ zh = "正在移除 Docker API 代理容器: hiclaw-controller"; en = "Removing Docker API proxy container: hiclaw-controller" }
     "install.reinstall.confirm_type" = @{ zh = "请输入工作空间路径以确认删除（或按 Ctrl+C 取消）:"; en = "To confirm deletion, please type the workspace path:" }
     "install.reinstall.confirm_path" = @{ zh = "输入路径以确认（或按 Ctrl+C 取消）"; en = "Type the path to confirm (or press Ctrl+C to cancel)" }
     "install.reinstall.path_mismatch" = @{ zh = "路径不匹配。中止重装。输入: '{0}'，期望: '{1}'"; en = "Path mismatch. Aborting reinstall. Input: '{0}', Expected: '{1}'" }
@@ -831,7 +833,7 @@ HICLAW_HERMES_WORKER_IMAGE=$($Config.HERMES_WORKER_IMAGE)
 # Manager runtime (openclaw | copaw)
 HICLAW_MANAGER_RUNTIME=$($Config.MANAGER_RUNTIME)
 
-# Default Worker runtime (openclaw | copaw)
+# Default Worker runtime (openclaw | copaw | hermes)
 HICLAW_DEFAULT_WORKER_RUNTIME=$($Config.DEFAULT_WORKER_RUNTIME)
 
 # Matrix E2EE (0=disabled, 1=enabled; default: 0)
@@ -1347,6 +1349,7 @@ function Step-Existing {
             Write-Host "$($script:ESC)[31m$(Get-Msg 'install.reinstall.warn_env' -f $script:HICLAW_ENV_FILE)$($script:ESC)[0m"
             Write-Host "$($script:ESC)[31m$(Get-Msg 'install.reinstall.warn_workspace' -f $existingWorkspace)$($script:ESC)[0m"
             Write-Host "$($script:ESC)[31m$(Get-Msg 'install.reinstall.warn_workers')$($script:ESC)[0m"
+            Write-Host "$($script:ESC)[31m$(Get-Msg 'install.reinstall.warn_proxy')$($script:ESC)[0m"
             Write-Host ""
             Write-Host "$($script:ESC)[31m$(Get-Msg 'install.reinstall.confirm_type')$($script:ESC)[0m"
             Write-Host "$($script:ESC)[31m  $existingWorkspace$($script:ESC)[0m"
@@ -1362,6 +1365,12 @@ function Step-Existing {
                 docker stop $_ *>$null
                 docker rm $_ *>$null
                 Write-Log (Get-Msg "install.reinstall.removed_worker" -f $_)
+            }
+            $existingController = docker ps -a --format "{{.Names}}" 2>$null | Select-String "^hiclaw-controller$"
+            if ($existingController) {
+                Write-Log (Get-Msg "install.reinstall.removing_proxy")
+                docker stop hiclaw-controller *>$null
+                docker rm hiclaw-controller *>$null
             }
             if (docker volume ls -q 2>$null | Select-String "^hiclaw-data$") {
                 Write-Log (Get-Msg "install.reinstall.removing_volume")
@@ -1959,8 +1968,10 @@ function Install-Manager {
         "$($script:HICLAW_REGISTRY)/higress/hiclaw-manager-copaw:$($script:HICLAW_VERSION)"
     }
 
-    $script:CONTROLLER_IMAGE = if ($env:HICLAW_INSTALL_CONTROLLER_IMAGE) {
-        $env:HICLAW_INSTALL_CONTROLLER_IMAGE
+    # Backward compatibility: accept old env var name from previous versions
+    $controllerImageOverride = if ($env:HICLAW_INSTALL_CONTROLLER_IMAGE) { $env:HICLAW_INSTALL_CONTROLLER_IMAGE } elseif ($env:HICLAW_INSTALL_DOCKER_PROXY_IMAGE) { $env:HICLAW_INSTALL_DOCKER_PROXY_IMAGE } else { $null }
+    $script:CONTROLLER_IMAGE = if ($controllerImageOverride) {
+        $controllerImageOverride
     } else {
         "$($script:HICLAW_REGISTRY)/higress/hiclaw-controller:$($script:HICLAW_VERSION)"
     }
@@ -2128,6 +2139,7 @@ function Install-Manager {
     $config.REGISTRY = $script:HICLAW_REGISTRY
     $config.WORKER_IMAGE = $script:WORKER_IMAGE
     $config.COPAW_WORKER_IMAGE = $script:COPAW_WORKER_IMAGE
+    $config.HERMES_WORKER_IMAGE = $script:HERMES_WORKER_IMAGE
     $config.MANAGER_COPAW_IMAGE = $script:MANAGER_COPAW_IMAGE
 
     # Write env file
@@ -2235,6 +2247,11 @@ function Install-Manager {
         Write-Log (Get-Msg "install.yolo")
     }
 
+    # Matrix-plugin debug tracing
+    if ($env:HICLAW_MATRIX_DEBUG -eq "1") {
+        $dockerArgs += @("-e", "HICLAW_MATRIX_DEBUG=1")
+    }
+
     # Restart policy
     $dockerArgs += @("--restart", "unless-stopped")
 
@@ -2265,63 +2282,19 @@ function Install-Manager {
         & docker pull $managerImage
     }
 
-    # Pull the worker image matching the selected runtime
-    $selectedWorkerImage = switch ($config.DEFAULT_WORKER_RUNTIME) {
-        "copaw"  { $script:COPAW_WORKER_IMAGE }
-        "hermes" { $script:HERMES_WORKER_IMAGE }
-        default  { $script:WORKER_IMAGE }
-    }
-    if ($selectedWorkerImage.StartsWith($LocalImagePrefix)) {
-        $workerImageExists = docker image inspect $selectedWorkerImage 2>$null
-        if ($LASTEXITCODE -eq 0) {
-            Write-Log (Get-Msg "install.image.worker_exists" -f $selectedWorkerImage)
-        } else {
-            Write-Log (Get-Msg "install.image.pulling_worker" -f $selectedWorkerImage)
-            & docker pull $selectedWorkerImage
-        }
-    } else {
-        Write-Log (Get-Msg "install.image.pulling_worker" -f $selectedWorkerImage)
-        & docker pull $selectedWorkerImage
-    }
-
-    # Always pull copaw worker image — team workers require copaw runtime
-    if ($config.DEFAULT_WORKER_RUNTIME -ne "copaw") {
-        $copawExists = docker image inspect $script:COPAW_WORKER_IMAGE 2>$null
-        if ($LASTEXITCODE -eq 0) {
-            Write-Log (Get-Msg "install.image.worker_exists" -f $script:COPAW_WORKER_IMAGE)
-        } else {
-            try {
-                Write-Log (Get-Msg "install.image.pulling_worker" -f $script:COPAW_WORKER_IMAGE)
-                & docker pull $script:COPAW_WORKER_IMAGE
-            } catch {
-                Write-Log "Warning: copaw worker image not available, team features may not work"
-            }
-        }
-    }
-
-    # During upgrade, also pull other worker images if they exist locally
-    if ($script:HICLAW_UPGRADE) {
-        if ($config.DEFAULT_WORKER_RUNTIME -ne "openclaw") {
-            $otherExists = docker image inspect $script:WORKER_IMAGE 2>$null
+    # Pull all worker runtime images (workers may use any runtime regardless of the default)
+    foreach ($workerImg in @($script:WORKER_IMAGE, $script:COPAW_WORKER_IMAGE, $script:HERMES_WORKER_IMAGE)) {
+        if ($workerImg.StartsWith($LocalImagePrefix)) {
+            $imgExists = docker image inspect $workerImg 2>$null
             if ($LASTEXITCODE -eq 0) {
-                if ($script:WORKER_IMAGE.StartsWith($LocalImagePrefix)) {
-                    Write-Log (Get-Msg "install.image.worker_exists" -f $script:WORKER_IMAGE)
-                } else {
-                    Write-Log (Get-Msg "install.image.pulling_worker" -f $script:WORKER_IMAGE)
-                    & docker pull $script:WORKER_IMAGE
-                }
+                Write-Log (Get-Msg "install.image.worker_exists" -f $workerImg)
+            } else {
+                Write-Log (Get-Msg "install.image.pulling_worker" -f $workerImg)
+                & docker pull $workerImg
             }
-        }
-        if ($config.DEFAULT_WORKER_RUNTIME -ne "hermes") {
-            $hermesExists = docker image inspect $script:HERMES_WORKER_IMAGE 2>$null
-            if ($LASTEXITCODE -eq 0) {
-                if ($script:HERMES_WORKER_IMAGE.StartsWith($LocalImagePrefix)) {
-                    Write-Log (Get-Msg "install.image.worker_exists" -f $script:HERMES_WORKER_IMAGE)
-                } else {
-                    Write-Log (Get-Msg "install.image.pulling_worker" -f $script:HERMES_WORKER_IMAGE)
-                    & docker pull $script:HERMES_WORKER_IMAGE
-                }
-            }
+        } else {
+            Write-Log (Get-Msg "install.image.pulling_worker" -f $workerImg)
+            & docker pull $workerImg
         }
     }
 
@@ -2339,8 +2312,7 @@ function Install-Manager {
         docker rm hiclaw-manager *>$null
     }
 
-    # Stop and remove worker containers saved during upgrade detection
-    # (Manager IP changes on restart, so workers must be recreated)
+    # Stop and remove worker containers (controller will recreate via CR reconciliation)
     if ($script:UPGRADE_EXISTING_WORKERS) {
         Write-Log (Get-Msg "install.existing.stopping_workers")
         $script:UPGRADE_EXISTING_WORKERS | ForEach-Object {
@@ -2348,6 +2320,16 @@ function Install-Manager {
             docker rm $_ *>$null
             Write-Log (Get-Msg "install.existing.removed" -f $_)
         }
+    }
+
+    # Clean up legacy containers (e.g. hiclaw-docker-proxy from v1.0.x)
+    $legacyContainers = docker ps -a --format "{{.Names}}" 2>$null |
+        Select-String "^hiclaw-" |
+        Where-Object { $_.Line -notmatch "^(hiclaw-controller|hiclaw-manager|hiclaw-worker-)" }
+    foreach ($legacy in $legacyContainers) {
+        Write-Log "Removing legacy container: $($legacy.Line)"
+        docker stop $legacy.Line *>$null
+        docker rm -f $legacy.Line *>$null
     }
 
     # Run container
