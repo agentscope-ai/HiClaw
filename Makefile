@@ -338,6 +338,7 @@ ifeq ($(IS_PODMAN),1)
 		echo "  -> Building Worker for $(plat)..." && \
 		podman build --platform $(plat) \
 			$(REGISTRY_ARG) $(OPENCLAW_BASE_PUSH_ARG) $(SHARED_LIB_CTX) $(DOCKER_BUILD_ARGS) \
+			--build-arg HICLAW_CONTROLLER_IMAGE=$(CONTROLLER_TAG) \
 			--manifest $(WORKER_TAG) \
 			./worker/ && ) true
 	podman manifest push --all $(WORKER_TAG) docker://$(WORKER_TAG)
@@ -349,6 +350,7 @@ else
 		--builder $(BUILDX_BUILDER) \
 		--platform $(MULTIARCH_PLATFORMS) \
 		$(REGISTRY_ARG) $(OPENCLAW_BASE_PUSH_ARG) $(SHARED_LIB_CTX) $(DOCKER_BUILD_ARGS) \
+		--build-arg HICLAW_CONTROLLER_IMAGE=$(CONTROLLER_TAG) \
 		-t $(WORKER_TAG) \
 		$(if $(PUSH_LATEST),-t $(WORKER_IMAGE):latest) \
 		--push \
@@ -363,6 +365,7 @@ ifeq ($(IS_PODMAN),1)
 		echo "  -> Building CoPaw Worker for $(plat)..." && \
 		podman build --platform $(plat) \
 			$(REGISTRY_ARG) $(SHARED_LIB_CTX) $(DOCKER_BUILD_ARGS) \
+			--build-arg HICLAW_CONTROLLER_IMAGE=$(CONTROLLER_TAG) \
 			--manifest $(COPAW_WORKER_TAG) \
 			./copaw/ && ) true
 	podman manifest push --all $(COPAW_WORKER_TAG) docker://$(COPAW_WORKER_TAG)
@@ -374,6 +377,7 @@ else
 		--builder $(BUILDX_BUILDER) \
 		--platform $(MULTIARCH_PLATFORMS) \
 		$(REGISTRY_ARG) $(SHARED_LIB_CTX) $(DOCKER_BUILD_ARGS) \
+		--build-arg HICLAW_CONTROLLER_IMAGE=$(CONTROLLER_TAG) \
 		-t $(COPAW_WORKER_TAG) \
 		$(if $(PUSH_LATEST),-t $(COPAW_WORKER_IMAGE):latest) \
 		--push \
@@ -388,6 +392,7 @@ ifeq ($(IS_PODMAN),1)
 		echo "  -> Building Hermes Worker for $(plat)..." && \
 		podman build --platform $(plat) \
 			$(REGISTRY_ARG) $(SHARED_LIB_CTX) $(DOCKER_BUILD_ARGS) \
+			--build-arg HICLAW_CONTROLLER_IMAGE=$(CONTROLLER_TAG) \
 			--manifest $(HERMES_WORKER_TAG) \
 			./hermes/ && ) true
 	podman manifest push --all $(HERMES_WORKER_TAG) docker://$(HERMES_WORKER_TAG)
@@ -399,6 +404,7 @@ else
 		--builder $(BUILDX_BUILDER) \
 		--platform $(MULTIARCH_PLATFORMS) \
 		$(REGISTRY_ARG) $(SHARED_LIB_CTX) $(DOCKER_BUILD_ARGS) \
+		--build-arg HICLAW_CONTROLLER_IMAGE=$(CONTROLLER_TAG) \
 		-t $(HERMES_WORKER_TAG) \
 		$(if $(PUSH_LATEST),-t $(HERMES_WORKER_IMAGE):latest) \
 		--push \
