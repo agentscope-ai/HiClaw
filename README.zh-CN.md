@@ -304,11 +304,11 @@ make help  # 查看所有可用目标
 ## 社区
 
 - [Discord](https://discord.gg/NVjNA4BAVw)
-- [钉钉群](https://qr.dingtalk.com/action/joingroup?code=v1,k1,5K+D/m2s71QW2aBsoyJE0t2oQOMCk2yngAgkih4LyQM=&_dt_no_comment=1&origin=11)
+- [钉钉群](https://qr.dingtalk.com/action/joingroup?code=v1,k1,OPhRSPWeie5/IMWQkyrCI34IqMdl/h/6ObYHKKzZJCI=&_dt_no_comment=1&origin=11)
 - 微信群--扫码加入：
 
 <p align="center">
-  <img src="https://img.alicdn.com/imgextra/i3/O1CN01TJJcxW1sgcjKLvkhM_!!6000000005796-2-tps-790-792.png" width="200" alt="微信群" />
+  <img src="https://img.alicdn.com/imgextra/i1/O1CN01pibEyi1Ne6SrV6ZF8_!!6000000001594-0-tps-739-720.jpg" width="200" alt="微信群" />
 </p>
 
 ## 许可证
