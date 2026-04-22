@@ -18,6 +18,15 @@ If the ConfigMap is present and has a key `pod-template.yaml`, its value is
 parsed as a `PodTemplateSpec` and merged with the controller-owned fields
 to produce the final Pod.
 
+> `HICLAW_CONTROLLER_NAME` is also the leader-election lease name and the
+> value the controller stamps on every Worker/Manager/Team/Human CR it
+> creates as the `hiclaw.io/controller` label. The controller's informer
+> cache filters CRs by this label, so multiple hiclaw releases in the same
+> namespace never reconcile each other's resources. The Helm chart sets
+> this automatically from the release name; if you deploy by hand, set it
+> explicitly — starting the controller without it in incluster mode fails
+> fast.
+
 No caching. Edit the ConfigMap → the next Pod created by the controller
 uses the new template. Existing Pods are untouched (delete them to pick up
 the change).

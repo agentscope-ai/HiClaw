@@ -12,6 +12,13 @@ const (
 	Version   = "v1beta1"
 )
 
+// LabelController marks the hiclaw-controller instance that owns a CR.
+// The value must equal the owning controller's HICLAW_CONTROLLER_NAME
+// environment variable. When set, the controller's informer cache
+// filters CR events by this label so multiple controller instances in
+// the same namespace do not reconcile each other's resources.
+const LabelController = "hiclaw.io/controller"
+
 // AccessEntry declares one cloud-permission grant under a logical
 // service. v1 supported services: "object-storage", "ai-gateway".
 //

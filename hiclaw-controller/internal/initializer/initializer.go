@@ -32,6 +32,7 @@ type Config struct {
 	Namespace      string
 	IsEmbedded     bool   // embedded mode: use static service sources for local services
 	AgentFSDir     string // local filesystem root for agent workspaces (embedded mode)
+	ControllerName string // HICLAW_CONTROLLER_NAME; stamped as hiclaw.io/controller label on created CRs in incluster mode
 
 	// Provider selection — drives which initialization steps run.
 	GatewayProvider string // "higress" | "ai-gateway"
@@ -403,15 +404,21 @@ func (i *Initializer) ensureManagerCR(ctx context.Context) error {
 		spec["image"] = i.Config.ManagerImage
 	}
 
+	metadata := map[string]interface{}{
+		"name":      name,
+		"namespace": ns,
+	}
+	if i.Config.ControllerName != "" {
+		metadata["labels"] = map[string]interface{}{
+			v1beta1.LabelController: i.Config.ControllerName,
+		}
+	}
 	obj := &unstructured.Unstructured{
 		Object: map[string]interface{}{
 			"apiVersion": v1beta1.GroupName + "/" + v1beta1.Version,
 			"kind":       "Manager",
-			"metadata": map[string]interface{}{
-				"name":      name,
-				"namespace": ns,
-			},
-			"spec": spec,
+			"metadata":   metadata,
+			"spec":       spec,
 		},
 	}
 

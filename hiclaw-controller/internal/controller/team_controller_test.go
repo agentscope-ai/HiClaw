@@ -38,7 +38,7 @@ func TestBuildDesiredMembers_LeaderAndWorkers(t *testing.T) {
 		{Name: "alpha-dev", Role: RoleTeamWorker.String(), Observed: true},
 	}
 
-	members := buildDesiredMembers(team)
+	members := buildDesiredMembers(team, "")
 	if len(members) != 3 {
 		t.Fatalf("expected 3 members, got %d", len(members))
 	}
@@ -99,7 +99,7 @@ func TestBuildDesiredMembers_SpecChangedDetection(t *testing.T) {
 		{Name: "alpha-dev", Role: RoleTeamWorker.String(), SpecHash: devHashOld},
 	}
 
-	members := buildDesiredMembers(team)
+	members := buildDesiredMembers(team, "")
 	byName := map[string]MemberContext{}
 	for _, m := range members {
 		byName[m.Name] = m
@@ -313,5 +313,43 @@ func TestRemoveLegacyMember_DeletesEntry(t *testing.T) {
 
 	if _, ok := readRegistry(t, fake, "manager").Workers["lead"]; ok {
 		t.Fatalf("lead still present after removeLegacyMember")
+	}
+}
+
+// TestBuildDesiredMembers_StampsControllerLabelOnPodLabels verifies that when
+// the TeamReconciler propagates a non-empty ControllerName into
+// buildDesiredMembers, every derived MemberContext carries the
+// hiclaw.io/controller PodLabel so the resulting Pod lands inside the
+// owning controller instance's label-scoped informer cache.
+//
+// Post-refactor (PR #666) the label is stamped via MemberContext.PodLabels →
+// backend.CreateRequest.Labels rather than on child Worker CRs, because
+// TeamReconciler no longer materializes child Worker CRs.
+func TestBuildDesiredMembers_StampsControllerLabelOnPodLabels(t *testing.T) {
+	team := &v1beta1.Team{
+		Spec: v1beta1.TeamSpec{
+			Leader: v1beta1.LeaderSpec{Name: "lead", Model: "qwen"},
+			Workers: []v1beta1.TeamWorkerSpec{
+				{Name: "w1", Model: "qwen"},
+			},
+		},
+	}
+
+	members := buildDesiredMembers(team, "ctrl-a")
+	if len(members) != 2 {
+		t.Fatalf("expected 2 members, got %d", len(members))
+	}
+	for _, m := range members {
+		if got := m.PodLabels[v1beta1.LabelController]; got != "ctrl-a" {
+			t.Fatalf("member %s: expected controller label ctrl-a in PodLabels, got %q (labels=%v)", m.Name, got, m.PodLabels)
+		}
+	}
+
+	// Empty ControllerName must not stamp any label (embedded mode).
+	membersNoCtrl := buildDesiredMembers(team, "")
+	for _, m := range membersNoCtrl {
+		if _, present := m.PodLabels[v1beta1.LabelController]; present {
+			t.Fatalf("member %s: expected no controller label when ControllerName empty, got %q", m.Name, m.PodLabels[v1beta1.LabelController])
+		}
 	}
 }

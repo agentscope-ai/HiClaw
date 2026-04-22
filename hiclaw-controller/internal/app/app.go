@@ -24,6 +24,7 @@ import (
 	"github.com/hiclaw/hiclaw-controller/internal/service"
 	"github.com/hiclaw/hiclaw-controller/internal/store"
 	"github.com/hiclaw/hiclaw-controller/internal/watcher"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -141,6 +142,7 @@ func (a *App) Start(ctx context.Context) error {
 				OpenAIBaseURL:   a.cfg.OpenAIBaseURL,
 				TuwunelURL:      a.cfg.MatrixServerURL,
 				ElementWebURL:   a.cfg.ElementWebURL,
+				ControllerName:  a.cfg.ControllerName,
 			},
 		}
 		if err := init.Run(ctx); err != nil {
@@ -424,6 +426,7 @@ func (a *App) initReconcilers(_ context.Context) error {
 		Legacy:         a.legacy,
 		DefaultRuntime: a.cfg.DefaultWorkerRuntime,
 		AgentFSDir:     a.cfg.AgentFSDir(),
+		ControllerName: a.cfg.ControllerName,
 	}).SetupWithManager(a.mgr); err != nil {
 		return fmt.Errorf("setup TeamReconciler: %w", err)
 	}
@@ -462,15 +465,16 @@ func (a *App) initReconcilers(_ context.Context) error {
 
 func (a *App) initHTTPServer(_ context.Context) error {
 	a.httpServer = server.NewHTTPServer(a.cfg.HTTPAddr, server.ServerDeps{
-		Client:     a.mgr.GetClient(),
-		Backend:    a.registry,
-		Gateway:    a.gateway,
-		OSS:        a.oss,
-		STS:        a.stsService,
-		AuthMw:     a.authMw,
-		KubeMode:   a.cfg.KubeMode,
-		Namespace:  a.namespace,
-		SocketPath: a.cfg.SocketPath,
+		Client:         a.mgr.GetClient(),
+		Backend:        a.registry,
+		Gateway:        a.gateway,
+		OSS:            a.oss,
+		STS:            a.stsService,
+		AuthMw:         a.authMw,
+		KubeMode:       a.cfg.KubeMode,
+		Namespace:      a.namespace,
+		ControllerName: a.cfg.ControllerName,
+		SocketPath:     a.cfg.SocketPath,
 	})
 	return nil
 }
@@ -533,11 +537,19 @@ func (a *App) startInCluster() (*rest.Config, error) {
 	logger := ctrl.Log.WithName("app")
 	logger.Info("starting in-cluster mode")
 
-	restCfg := ctrl.GetConfigOrDie()
-	leaseID := "hiclaw-controller-leader"
-	if a.cfg.ControllerName != "" {
-		leaseID = a.cfg.ControllerName + "-leader"
+	// HICLAW_CONTROLLER_NAME is mandatory in incluster mode: it drives the
+	// leader election lease name, the hiclaw.io/controller CR label
+	// selector, and the agent pod template ConfigMap name. Running with
+	// an empty value would silently collapse these three scopes onto
+	// global defaults, causing cross-instance interference in the same
+	// namespace. The Helm chart always sets this; fail fast when a
+	// hand-rolled Deployment forgets it.
+	if a.cfg.ControllerName == "" {
+		return nil, fmt.Errorf("HICLAW_CONTROLLER_NAME is required in incluster mode")
 	}
+
+	restCfg := ctrl.GetConfigOrDie()
+	leaseID := a.cfg.ControllerName + "-leader"
 	opts := ctrl.Options{
 		Scheme:                        a.scheme,
 		LeaderElection:                true,
@@ -550,10 +562,25 @@ func (a *App) startInCluster() (*rest.Config, error) {
 		}
 		opts.LeaderElectionNamespace = a.cfg.K8sNamespace
 	}
+
+	// Scope the informer cache to CRs owned by this controller instance.
+	// Cross-instance Worker/Manager/Team/Human CRs become invisible to the
+	// reconcilers, preventing double-reconcile when two hiclaw releases
+	// share a namespace. Writers (initializer, HTTP API, team reconciler,
+	// file watcher) stamp the same label on create, so this is closed loop.
+	sel := labels.SelectorFromSet(labels.Set{v1beta1.LabelController: a.cfg.ControllerName})
+	opts.Cache.ByObject = map[crclient.Object]cache.ByObject{
+		&v1beta1.Worker{}:  {Label: sel},
+		&v1beta1.Manager{}: {Label: sel},
+		&v1beta1.Team{}:    {Label: sel},
+		&v1beta1.Human{}:   {Label: sel},
+	}
+
 	logger.Info("leader election configured",
 		"leaseID", leaseID,
 		"namespace", opts.LeaderElectionNamespace,
-		"controllerName", a.cfg.ControllerName)
+		"controllerName", a.cfg.ControllerName,
+		"crLabelSelector", sel.String())
 	var err error
 	a.mgr, err = ctrl.NewManager(restCfg, opts)
 	if err != nil {

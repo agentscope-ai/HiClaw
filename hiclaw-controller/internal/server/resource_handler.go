@@ -28,12 +28,40 @@ type ResourceHandler struct {
 	client    client.Client
 	namespace string
 	backend   *backend.Registry
+
+	// controllerName is stamped as hiclaw.io/controller on every CR this
+	// handler creates, overwriting any value supplied by the client. This
+	// enforces that HTTP-created resources always belong to the serving
+	// controller instance, regardless of what the caller attempts to set.
+	// Empty string means no enforcement (embedded mode).
+	controllerName string
 }
 
 // NewResourceHandler creates a handler. backend may be nil, in which case
 // runtime status is omitted from synthetic team member responses.
-func NewResourceHandler(c client.Client, namespace string, b *backend.Registry) *ResourceHandler {
-	return &ResourceHandler{client: c, namespace: namespace, backend: b}
+// controllerName, when non-empty, is force-stamped as hiclaw.io/controller
+// on every CR this handler creates so HTTP-created resources cannot escape
+// the serving controller instance's cache scope.
+func NewResourceHandler(c client.Client, namespace string, b *backend.Registry, controllerName string) *ResourceHandler {
+	return &ResourceHandler{
+		client:         c,
+		namespace:      namespace,
+		backend:        b,
+		controllerName: controllerName,
+	}
+}
+
+// stampControllerLabel force-writes the controller ownership label on meta.
+// Callers invoke this on every Create path so the HTTP API cannot be used
+// to produce CRs that escape the owning controller's cache scope.
+func (h *ResourceHandler) stampControllerLabel(meta *metav1.ObjectMeta) {
+	if h.controllerName == "" {
+		return
+	}
+	if meta.Labels == nil {
+		meta.Labels = map[string]string{}
+	}
+	meta.Labels[v1beta1.LabelController] = h.controllerName
 }
 
 // --- Workers ---
@@ -93,6 +121,8 @@ func (h *ResourceHandler) CreateWorker(w http.ResponseWriter, r *http.Request) {
 			"worker.team / worker.role / worker.teamLeader are reserved for team members; use /api/v1/teams")
 		return
 	}
+
+	h.stampControllerLabel(&worker.ObjectMeta)
 
 	if err := h.client.Create(r.Context(), worker); err != nil {
 		writeK8sError(w, "create worker", err)
@@ -348,6 +378,8 @@ func (h *ResourceHandler) CreateTeam(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
+	h.stampControllerLabel(&team.ObjectMeta)
+
 	if err := h.client.Create(r.Context(), team); err != nil {
 		writeK8sError(w, "create team", err)
 		return
@@ -521,6 +553,8 @@ func (h *ResourceHandler) CreateHuman(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 
+	h.stampControllerLabel(&human.ObjectMeta)
+
 	if err := h.client.Create(r.Context(), human); err != nil {
 		writeK8sError(w, "create human", err)
 		return
@@ -615,6 +649,8 @@ func (h *ResourceHandler) CreateManager(w http.ResponseWriter, r *http.Request) 
 	if req.Config != nil {
 		mgr.Spec.Config = *req.Config
 	}
+
+	h.stampControllerLabel(&mgr.ObjectMeta)
 
 	if err := h.client.Create(r.Context(), mgr); err != nil {
 		writeK8sError(w, "create manager", err)
