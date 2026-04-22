@@ -168,11 +168,14 @@ matrix_wait_for_reply() {
     local nudge_interval="${8:-600}"
     local elapsed=0
 
-    # Snapshot the latest event_id from the target user before we start waiting
+    # Snapshot the latest m.room.message event_id from the target user before we
+    # start waiting. We filter on type=m.room.message with a non-null body so
+    # that reactions, redactions, typing indicators, and similar zero-content
+    # events from runtimes like hermes-agent don't get treated as "the reply".
     local baseline_event
-    baseline_event=$(matrix_read_messages "${token}" "${room_id}" 5 2>/dev/null | \
+    baseline_event=$(matrix_read_messages "${token}" "${room_id}" 20 2>/dev/null | \
         jq -r --arg user "${from_user}" \
-        '[.chunk[] | select(.sender | startswith($user)) | .event_id] | first // ""' 2>/dev/null)
+        '[.chunk[] | select(.sender | startswith($user)) | select(.type == "m.room.message") | select(.content.body != null) | .event_id] | first // ""' 2>/dev/null)
 
     while [ "${elapsed}" -lt "${timeout}" ]; do
         sleep 10
@@ -186,14 +189,16 @@ matrix_wait_for_reply() {
         fi
 
         local messages
-        messages=$(matrix_read_messages "${token}" "${room_id}" 10 2>/dev/null) || continue
+        messages=$(matrix_read_messages "${token}" "${room_id}" 20 2>/dev/null) || continue
 
-        # Get the latest message from the target user
+        # Find the newest m.room.message from the target user that has a body.
+        # Some runtimes (hermes-agent) emit reactions/redactions around their
+        # actual reply, so we must look past those to find the real message.
         local latest_event latest_body
         latest_event=$(echo "${messages}" | jq -r --arg user "${from_user}" \
-            '[.chunk[] | select(.sender | startswith($user)) | .event_id] | first // ""' 2>/dev/null)
+            '[.chunk[] | select(.sender | startswith($user)) | select(.type == "m.room.message") | select(.content.body != null) | .event_id] | first // ""' 2>/dev/null)
         latest_body=$(echo "${messages}" | jq -r --arg user "${from_user}" \
-            '[.chunk[] | select(.sender | startswith($user)) | .content.body] | first // empty' 2>/dev/null)
+            '[.chunk[] | select(.sender | startswith($user)) | select(.type == "m.room.message") | select(.content.body != null) | .content.body] | first // empty' 2>/dev/null)
 
         # Only return if the event_id differs from baseline (i.e., it's a NEW message)
         if [ -n "${latest_body}" ] && [ "${latest_event}" != "${baseline_event}" ]; then
