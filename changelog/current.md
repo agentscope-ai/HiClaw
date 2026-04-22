@@ -4,6 +4,8 @@ Record image-affecting changes to `manager/`, `worker/`, `openclaw-base/` here b
 
 ---
 
+- fix(controller): propagate `runtime` from `workers-registry.json` to per-team-worker entries during the v1.0.9 → CR migration. `Migrator.createTeamCR` previously only copied `name/model/skills/mcpServers/image` into each `TeamWorkerSpec`, so teams that contained `copaw` or `hermes` workers were silently restarted as `openclaw` after upgrade. Standalone Worker CR migration was already correct; this aligns team workers with the same behavior.
+
 - fix(controller,tests): make hermes workers actually join their own Matrix room, and decouple "send a test message" from worker readiness. Three coupled changes:
   - `service.Provisioner.ProvisionWorker` now follows the same pattern as the human controller: right after creating the room, it calls `matrix.JoinRoom` with the worker's freshly issued access token, so room membership no longer depends on whether the runtime's Matrix client auto-accepts invites. CoPaw's `MatrixChannel` does, `hermes-agent`'s native adapter does not, and previously hermes workers (e.g. `test-15-import-worker-zip` on the hermes shard) sat in `invite` forever and timed out with `Worker did not join room within 120s`. `JoinRoom` is idempotent on the homeserver side, so this is a no-op for runtimes that already self-join.
   - `tests/lib/matrix-client.sh::matrix_wait_for_reply` now filters for the newest `m.room.message` from the target user that has a non-null body, instead of just the newest event of any type — hermes-agent emits typing-indicator reactions and redaction events around its real reply, which previously masked the response and caused `Worker did not reply within 120s`.
