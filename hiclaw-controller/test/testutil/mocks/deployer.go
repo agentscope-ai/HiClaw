@@ -12,18 +12,22 @@ import (
 type MockDeployer struct {
 	mu sync.Mutex
 
-	DeployPackageFn      func(ctx context.Context, workerName string, pkg string, isUpdate bool) error
-	WriteInlineConfigsFn func(workerName string, spec v1beta1.WorkerSpec) error
-	DeployWorkerConfigFn func(ctx context.Context, req service.WorkerDeployRequest) error
-	PushOnDemandSkillsFn func(ctx context.Context, workerName string, skills []string) error
-	CleanupOSSDataFn     func(ctx context.Context, workerName string) error
+	DeployPackageFn              func(ctx context.Context, workerName string, pkg string, isUpdate bool) error
+	WriteInlineConfigsFn         func(workerName string, spec v1beta1.WorkerSpec) error
+	DeployWorkerConfigFn         func(ctx context.Context, req service.WorkerDeployRequest) error
+	PushOnDemandSkillsFn         func(ctx context.Context, workerName string, skills []string) error
+	CleanupOSSDataFn             func(ctx context.Context, workerName string) error
+	InjectCoordinationContextFn  func(ctx context.Context, req service.CoordinationDeployRequest) error
+	EnsureTeamStorageFn          func(ctx context.Context, teamName string) error
 
 	Calls struct {
-		DeployPackage      []string
-		WriteInlineConfigs []string
-		DeployWorkerConfig []service.WorkerDeployRequest
-		PushOnDemandSkills []string
-		CleanupOSSData     []string
+		DeployPackage             []string
+		WriteInlineConfigs        []string
+		DeployWorkerConfig        []service.WorkerDeployRequest
+		PushOnDemandSkills        []string
+		CleanupOSSData            []string
+		InjectCoordinationContext []service.CoordinationDeployRequest
+		EnsureTeamStorage         []string
 	}
 }
 
@@ -41,6 +45,8 @@ func (m *MockDeployer) Reset() {
 	m.DeployWorkerConfigFn = nil
 	m.PushOnDemandSkillsFn = nil
 	m.CleanupOSSDataFn = nil
+	m.InjectCoordinationContextFn = nil
+	m.EnsureTeamStorageFn = nil
 }
 
 // ClearCalls resets call records only, preserving Fn overrides.
@@ -52,11 +58,13 @@ func (m *MockDeployer) ClearCalls() {
 
 func (m *MockDeployer) clearCallsLocked() {
 	m.Calls = struct {
-		DeployPackage      []string
-		WriteInlineConfigs []string
-		DeployWorkerConfig []service.WorkerDeployRequest
-		PushOnDemandSkills []string
-		CleanupOSSData     []string
+		DeployPackage             []string
+		WriteInlineConfigs        []string
+		DeployWorkerConfig        []service.WorkerDeployRequest
+		PushOnDemandSkills        []string
+		CleanupOSSData            []string
+		InjectCoordinationContext []service.CoordinationDeployRequest
+		EnsureTeamStorage         []string
 	}{}
 }
 
@@ -111,6 +119,28 @@ func (m *MockDeployer) CleanupOSSData(ctx context.Context, workerName string) er
 	m.mu.Unlock()
 	if fn != nil {
 		return fn(ctx, workerName)
+	}
+	return nil
+}
+
+func (m *MockDeployer) InjectCoordinationContext(ctx context.Context, req service.CoordinationDeployRequest) error {
+	m.mu.Lock()
+	m.Calls.InjectCoordinationContext = append(m.Calls.InjectCoordinationContext, req)
+	fn := m.InjectCoordinationContextFn
+	m.mu.Unlock()
+	if fn != nil {
+		return fn(ctx, req)
+	}
+	return nil
+}
+
+func (m *MockDeployer) EnsureTeamStorage(ctx context.Context, teamName string) error {
+	m.mu.Lock()
+	m.Calls.EnsureTeamStorage = append(m.Calls.EnsureTeamStorage, teamName)
+	fn := m.EnsureTeamStorageFn
+	m.mu.Unlock()
+	if fn != nil {
+		return fn(ctx, teamName)
 	}
 	return nil
 }

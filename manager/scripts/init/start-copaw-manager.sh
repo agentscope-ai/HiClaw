@@ -30,10 +30,27 @@ if [ ! -f "${OPENCLAW_JSON}" ]; then
     exit 1
 fi
 
+# One-shot migration: older bridges wrote config.json with
+# security.tool_guard.enabled=true, which overrides agent.json and causes
+# noisy approval prompts on every tool call. Archive that legacy file so
+# the bridge re-seeds a fresh one from the template (security off).
+if [ -f "${COPAW_WORKING_DIR}/config.json" ]; then
+    if command -v jq >/dev/null 2>&1 && \
+       [ "$(jq -r '.security.tool_guard.enabled // false' "${COPAW_WORKING_DIR}/config.json")" = "true" ] && \
+       [ ! -f "${COPAW_WORKING_DIR}/.config-migrated-v2" ]; then
+        archive="${COPAW_WORKING_DIR}/config.json.legacy-$(date +%Y%m%d-%H%M%S)"
+        log "Archiving legacy config.json (tool_guard enabled) -> $(basename "${archive}")"
+        mv "${COPAW_WORKING_DIR}/config.json" "${archive}"
+        touch "${COPAW_WORKING_DIR}/.config-migrated-v2"
+    fi
+fi
+
 log "Bridging openclaw.json -> CoPaw config (manager)..."
-python3 /opt/hiclaw/scripts/init/bridge-manager-config.py \
-    --openclaw-json "${OPENCLAW_JSON}" \
-    --working-dir "${COPAW_WORKING_DIR}"
+PYTHONPATH="/opt/hiclaw/copaw/src:${PYTHONPATH:-}" \
+    python3 -m copaw_worker.bridge \
+        --profile manager \
+        --openclaw-json "${OPENCLAW_JSON}" \
+        --working-dir "${COPAW_WORKING_DIR}"
 log "Config bridged from openclaw.json"
 
 # ============================================================
@@ -78,14 +95,21 @@ if [ -d "${OPENCLAW_WORKSPACE}/skills" ]; then
 fi
 
 # ============================================================
-# 5. DM room detection and auto-reply config
+# 5. DM room detection and auto-reply config (patches agent.json directly)
 # ============================================================
 # nio room.users is always 0 after token restore, so all rooms are treated as
 # "group" (requireMention=true by default). We detect actual DM rooms via
 # Matrix API and mark them as autoReply so they behave like OpenClaw DMs.
+#
+# Both the access_token we need and the groups map we patch now live in
+# agent.json (config.json has been removed from the bridge contract).
 log "Detecting DM rooms for auto-reply config..."
-CONFIG_FILE="${COPAW_WORKING_DIR}/config.json"
-MANAGER_MATRIX_TOKEN_VAL=$(jq -r '.channels.matrix.access_token' "${CONFIG_FILE}")
+AGENT_JSON="${WORKSPACE_DIR}/agent.json"
+if [ ! -f "${AGENT_JSON}" ]; then
+    log "ERROR: agent.json not found at ${AGENT_JSON} (bridge step must have failed)"
+    exit 1
+fi
+MANAGER_MATRIX_TOKEN_VAL=$(jq -r '.channels.matrix.access_token // ""' "${AGENT_JSON}")
 DM_ROOMS_FILE=$(mktemp)
 echo '{}' > "${DM_ROOMS_FILE}"
 MATRIX_API="http://127.0.0.1:6167"
@@ -123,40 +147,12 @@ if [ -n "${MANAGER_MATRIX_TOKEN_VAL}" ] && [ "${MANAGER_MATRIX_TOKEN_VAL}" != "n
     fi
 fi
 
-# Merge DM room config into groups (config.json only, headless mode)
+# Merge detected DM rooms into agent.json's channels.matrix.groups.
+# Existing entries are preserved; newly detected rooms are added.
 jq --slurpfile dm_rooms "${DM_ROOMS_FILE}" \
    '.channels.matrix.groups = ((.channels.matrix.groups // {}) + $dm_rooms[0])' \
-   "${CONFIG_FILE}" > "${CONFIG_FILE}.tmp" && mv "${CONFIG_FILE}.tmp" "${CONFIG_FILE}"
+   "${AGENT_JSON}" > "${AGENT_JSON}.tmp" && mv "${AGENT_JSON}.tmp" "${AGENT_JSON}"
 rm -f "${DM_ROOMS_FILE}" "${DM_ROOMS_FILE}.tmp"
-
-# ============================================================
-# 7. Generate agent.json for default agent
-# ============================================================
-# agent.json uses config.json's channels config
-# Note: We need to preserve group_allow_from which BaseChannelConfig lacks
-log "Generating agent.json..."
-AGENT_JSON="${WORKSPACE_DIR}/agent.json"
-# Save runtime-only fields from existing agent.json before regenerating
-_RUNTIME_ENV=""
-if [ -f "${AGENT_JSON}" ]; then
-    _RUNTIME_ENV=$(jq -c 'select(.env != null) | .env' "${AGENT_JSON}" 2>/dev/null)
-fi
-# Generate fresh agent.json from config.json (channels, running, security always update)
-jq --arg ws "${WORKSPACE_DIR}" '{
-  "id": "default",
-  "name": "Manager",
-  "workspace_dir": $ws,
-  "channels": .channels,
-  "heartbeat": (.heartbeat // {"enabled": false}),
-  "running": (.agents.running // {}),
-  "system_prompt_files": (.agents.system_prompt_files // ["AGENTS.md", "SOUL.md", "PROFILE.md", "TOOLS.md"]),
-  "security": (.security // {"tool_guard": {"enabled": false}, "file_guard": {"enabled": false}, "skill_scanner": {"mode": "off"}})
-}' "${CONFIG_FILE}" > "${AGENT_JSON}"
-# Restore runtime-only fields preserved from previous agent.json
-if [ -n "${_RUNTIME_ENV}" ] && [ "${_RUNTIME_ENV}" != "null" ]; then
-    jq --argjson e "${_RUNTIME_ENV}" '. + {env: $e}' "${AGENT_JSON}" > "${AGENT_JSON}.tmp" && mv "${AGENT_JSON}.tmp" "${AGENT_JSON}"
-fi
-log "Generated agent.json"
 
 # ============================================================
 # 8. Configure CoPaw CMS plugin (LoongSuite observability)

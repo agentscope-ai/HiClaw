@@ -1,20 +1,52 @@
-"""Tests for bridge.py embedding config bridging."""
+"""Tests for bridge.py — template-create + controller-field overlay model.
+
+On every bridge invocation two things happen:
+
+1. **create phase** — any of {config.json, workspaces/<agent>/agent.json,
+   providers.json} that is missing is installed verbatim from an in-tree
+   template. Templates carry all defaults (identity, security off,
+   channels.console enabled, etc.).
+
+2. **restart-overlay phase** — ``_CONTROLLER_FIELDS`` refreshes only the
+   fields Controller genuinely owns (Matrix scalars, running.max_input_length,
+   running.embedding_config, heartbeat). Everything else — user edits,
+   CoPaw migration writes — is left alone.
+
+Three merge policies cover the controller fields: ``remote-wins`` (scalar
+overwrite), ``union`` (list dedup), ``deep-merge`` (local-wins-at-leaves for
+``channels.matrix.groups``). ``env`` is never bridged.
+"""
 
 import json
-import logging
 import tempfile
 from pathlib import Path
 
-from copaw_worker.bridge import bridge_openclaw_to_copaw
+import pytest
 
+from copaw_worker.bridge import bridge_controller_to_copaw
+
+
+# ---------------------------------------------------------------------------
+# Fixtures / helpers
+# ---------------------------------------------------------------------------
 
 def _make_openclaw_cfg(**memory_search_overrides):
-    """Helper to build openclaw config with optional memorySearch overrides."""
+    """Helper to build an openclaw config with optional memorySearch overrides."""
     base = {
-        "channels": {"matrix": {"enabled": True, "homeserver": "http://localhost:6167", "accessToken": "tok"}},
+        "channels": {
+            "matrix": {
+                "enabled": True,
+                "homeserver": "http://localhost:6167",
+                "accessToken": "tok",
+            }
+        },
         "models": {
             "providers": {
-                "gw": {"baseUrl": "http://aigw:8080/v1", "apiKey": "key123", "models": [{"id": "qwen3.5-plus", "name": "qwen3.5-plus"}]}
+                "gw": {
+                    "baseUrl": "http://aigw:8080/v1",
+                    "apiKey": "key123",
+                    "models": [{"id": "qwen3.5-plus", "name": "qwen3.5-plus"}],
+                }
             }
         },
         "agents": {"defaults": {"model": {"primary": "gw/qwen3.5-plus"}}},
@@ -32,63 +64,341 @@ def _make_openclaw_cfg(**memory_search_overrides):
     return base
 
 
-def _bridge_and_read(openclaw_cfg):
-    """Bridge config and return parsed config.json."""
+def _agent_json_path(working_dir: Path, agent: str = "default") -> Path:
+    return working_dir / "workspaces" / agent / "agent.json"
+
+
+def _run_bridge(cfg, working_dir: Path, **kwargs):
+    bridge_controller_to_copaw(cfg, working_dir, **kwargs)
+
+
+def _read_agent(working_dir: Path, agent: str = "default"):
+    with open(_agent_json_path(working_dir, agent)) as f:
+        return json.load(f)
+
+
+def _bridge_and_read_agent(cfg, **kwargs):
     with tempfile.TemporaryDirectory() as tmpdir:
         working_dir = Path(tmpdir) / "agent"
-        bridge_openclaw_to_copaw(openclaw_cfg, working_dir)
-        with open(working_dir / "config.json") as f:
-            return json.load(f)
+        _run_bridge(cfg, working_dir, **kwargs)
+        return _read_agent(working_dir)
 
 
-def test_bridge_embedding_config():
-    """memorySearch in openclaw.json should produce embedding_config in config.json."""
-    config = _bridge_and_read(_make_openclaw_cfg())
+# ---------------------------------------------------------------------------
+# Template create phase
+# ---------------------------------------------------------------------------
 
-    emb = config["agents"]["running"]["embedding_config"]
+def test_create_installs_config_json_from_template():
+    """On first boot bridge writes config.json from the template."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        working_dir = Path(tmpdir) / "agent"
+        _run_bridge(_make_openclaw_cfg(), working_dir)
+
+        cfg_path = working_dir / "config.json"
+        assert cfg_path.exists()
+        cfg = json.loads(cfg_path.read_text())
+        # Security defaults: all three guards disabled.
+        assert cfg["security"]["tool_guard"]["enabled"] is False
+        assert cfg["security"]["file_guard"]["enabled"] is False
+        assert cfg["security"]["skill_scanner"]["mode"] == "off"
+
+
+def test_create_installs_worker_agent_json_from_template():
+    """Worker profile seeds agent.json from agent.worker.json."""
+    agent = _bridge_and_read_agent(_make_openclaw_cfg())
+
+    assert agent["id"] == "default"
+    assert agent["name"] == "Default Agent"
+    assert agent["language"] == "zh"
+    assert agent["system_prompt_files"] == ["AGENTS.md", "SOUL.md", "PROFILE.md"]
+    # Console on by default, from template.
+    assert agent["channels"]["console"]["enabled"] is True
+    # Manager-only fields absent.
+    assert "require_mention" not in agent["channels"]["matrix"]
+    assert "require_approval" not in agent.get("running", {})
+
+
+def test_create_installs_manager_agent_json_from_template(monkeypatch):
+    """Manager profile seeds agent.json from agent.manager.json."""
+    monkeypatch.setenv("HICLAW_MATRIX_DOMAIN", "matrix.example.org")
+    monkeypatch.setenv("HICLAW_WORKER_NAME", "manager")
+
+    agent = _bridge_and_read_agent(_make_openclaw_cfg(), profile="manager")
+
+    assert agent["name"] == "Manager"
+    assert agent["system_prompt_files"] == [
+        "AGENTS.md", "SOUL.md", "PROFILE.md", "TOOLS.md",
+    ]
+    assert agent["channels"]["matrix"]["require_mention"] is True
+    assert "require_approval" not in agent.get("running", {})
+    assert agent["channels"]["matrix"]["user_id"] == "@manager:matrix.example.org"
+
+
+def test_create_respects_custom_agent_key():
+    """Non-default ``agent`` parameter writes to workspaces/<agent>/agent.json."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        working_dir = Path(tmpdir) / "agent"
+        _run_bridge(_make_openclaw_cfg(), working_dir, agent="alice")
+        assert (working_dir / "workspaces" / "alice" / "agent.json").exists()
+        assert not (working_dir / "workspaces" / "default" / "agent.json").exists()
+
+
+# ---------------------------------------------------------------------------
+# User-edit preservation
+# ---------------------------------------------------------------------------
+
+def test_user_edits_to_config_json_preserved():
+    """Once config.json exists, bridge never touches it — user owns it."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        working_dir = Path(tmpdir) / "agent"
+        _run_bridge(_make_openclaw_cfg(), working_dir)
+
+        cfg_path = working_dir / "config.json"
+        cfg = json.loads(cfg_path.read_text())
+        cfg["security"]["tool_guard"]["enabled"] = True
+        cfg["user_custom"] = {"hello": "world"}
+        cfg_path.write_text(json.dumps(cfg))
+
+        _run_bridge(_make_openclaw_cfg(), working_dir)
+
+        cfg2 = json.loads(cfg_path.read_text())
+        assert cfg2["security"]["tool_guard"]["enabled"] is True
+        assert cfg2["user_custom"] == {"hello": "world"}
+
+
+def test_user_edits_to_agent_non_controller_fields_preserved():
+    """Fields not in _CONTROLLER_FIELDS (identity, console, security, env)
+    must survive re-bridge."""
+    cfg = _make_openclaw_cfg()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        working_dir = Path(tmpdir) / "agent"
+        _run_bridge(cfg, working_dir)
+
+        agent_path = _agent_json_path(working_dir)
+        agent = json.loads(agent_path.read_text())
+        agent["name"] = "My Renamed Agent"
+        agent["language"] = "en"
+        agent["channels"]["console"]["enabled"] = False
+        agent["env"] = {"TEST_VAR": "test_value"}
+        agent["custom_user_field"] = {"keep_me": True}
+        agent_path.write_text(json.dumps(agent))
+
+        _run_bridge(cfg, working_dir)
+
+        agent2 = json.loads(agent_path.read_text())
+
+    assert agent2["name"] == "My Renamed Agent"
+    assert agent2["language"] == "en"
+    assert agent2["channels"]["console"]["enabled"] is False
+    assert agent2["env"] == {"TEST_VAR": "test_value"}
+    assert agent2["custom_user_field"] == {"keep_me": True}
+
+
+def test_agent_json_never_seeds_env_from_openclaw():
+    """openclaw.env is ignored — env is agent-owned."""
+    cfg = _make_openclaw_cfg()
+    cfg["env"] = {"vars": {"FOO": "bar"}}
+
+    agent = _bridge_and_read_agent(cfg)
+    assert "env" not in agent
+
+
+# ---------------------------------------------------------------------------
+# Controller-field overlay: remote-wins
+# ---------------------------------------------------------------------------
+
+def test_remote_wins_access_token_refreshes():
+    """channels.matrix.access_token rotation from controller takes effect."""
+    cfg = _make_openclaw_cfg()
+    cfg["channels"]["matrix"]["accessToken"] = "tok_v1"
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        working_dir = Path(tmpdir) / "agent"
+        _run_bridge(cfg, working_dir)
+        assert _read_agent(working_dir)["channels"]["matrix"]["access_token"] == "tok_v1"
+
+        cfg["channels"]["matrix"]["accessToken"] = "tok_v2"
+        _run_bridge(cfg, working_dir)
+        assert _read_agent(working_dir)["channels"]["matrix"]["access_token"] == "tok_v2"
+
+
+def test_remote_wins_max_input_length_refreshes():
+    """Controller bumping contextWindow propagates to running.max_input_length."""
+    cfg = _make_openclaw_cfg()
+    cfg["models"]["providers"]["gw"]["models"][0]["contextWindow"] = 4096
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        working_dir = Path(tmpdir) / "agent"
+        _run_bridge(cfg, working_dir)
+        assert _read_agent(working_dir)["running"]["max_input_length"] == 4096
+
+        cfg["models"]["providers"]["gw"]["models"][0]["contextWindow"] = 8192
+        _run_bridge(cfg, working_dir)
+        assert _read_agent(working_dir)["running"]["max_input_length"] == 8192
+
+
+def test_embedding_config_from_memory_search():
+    """memorySearch in openclaw → agent.json running.embedding_config."""
+    agent = _bridge_and_read_agent(_make_openclaw_cfg())
+
+    emb = agent["running"]["embedding_config"]
     assert emb["backend"] == "openai"
     assert emb["model_name"] == "text-embedding-v4"
-    # _port_remap converts :8080 → :18080 when not in container
-    assert emb["base_url"] == "http://aigw:18080/v1"
+    assert emb["base_url"] == "http://aigw:18080/v1"  # :8080 → :18080 off-container
     assert emb["api_key"] == "key123"
     assert emb["dimensions"] == 1024
-    assert emb["enable_cache"] is True
 
 
-def test_bridge_no_embedding_config():
-    """Without memorySearch, embedding_config should not be written."""
-    openclaw_cfg = {
-        "channels": {"matrix": {"enabled": True, "homeserver": "http://localhost:6167", "accessToken": "tok"}},
-        "models": {
-            "providers": {
-                "gw": {"baseUrl": "http://aigw:8080/v1", "apiKey": "key123", "models": [{"id": "qwen3.5-plus", "name": "qwen3.5-plus"}]}
-            }
-        },
-        "agents": {"defaults": {"model": {"primary": "gw/qwen3.5-plus"}}},
-    }
-    config = _bridge_and_read(openclaw_cfg)
-
-    running = config.get("agents", {}).get("running", {})
-    assert "embedding_config" not in running
+def test_embedding_config_absent_when_memory_search_missing():
+    cfg = _make_openclaw_cfg()
+    del cfg["agents"]["defaults"]["memorySearch"]
+    agent = _bridge_and_read_agent(cfg)
+    assert "embedding_config" not in agent.get("running", {})
 
 
-def test_bridge_embedding_config_empty_api_key(caplog):
-    """Empty api_key should still produce config (for no-auth envs) but log a warning."""
-    cfg = _make_openclaw_cfg(remote={"baseUrl": "http://aigw:8080/v1", "apiKey": ""})
-
-    with caplog.at_level(logging.WARNING, logger="copaw_worker.bridge"):
-        config = _bridge_and_read(cfg)
-
-    emb = config["agents"]["running"]["embedding_config"]
-    assert emb["api_key"] == ""
-    assert emb["model_name"] == "text-embedding-v4"
-    assert "apiKey is empty" in caplog.text
-
-
-def test_bridge_embedding_config_custom_dimensions():
-    """outputDimensionality from openclaw should override default 1024."""
+def test_embedding_config_custom_dimensions():
     cfg = _make_openclaw_cfg(outputDimensionality=768)
-    config = _bridge_and_read(cfg)
+    agent = _bridge_and_read_agent(cfg)
+    assert agent["running"]["embedding_config"]["dimensions"] == 768
 
-    emb = config["agents"]["running"]["embedding_config"]
-    assert emb["dimensions"] == 768
+
+# ---------------------------------------------------------------------------
+# Controller-field overlay: union
+# ---------------------------------------------------------------------------
+
+def test_union_allow_from_merges_cr_and_user():
+    """channels.matrix.allow_from: CR entries + user additions co-exist."""
+    cfg = _make_openclaw_cfg()
+    cfg["channels"]["matrix"]["dm"] = {
+        "policy": "allowlist",
+        "allowFrom": ["@alice:example.org"],
+    }
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        working_dir = Path(tmpdir) / "agent"
+        _run_bridge(cfg, working_dir)
+
+        agent_path = _agent_json_path(working_dir)
+        agent = json.loads(agent_path.read_text())
+        agent["channels"]["matrix"]["allow_from"].append("@bob:example.org")
+        agent_path.write_text(json.dumps(agent))
+
+        cfg["channels"]["matrix"]["dm"]["allowFrom"] = [
+            "@alice:example.org", "@carol:example.org",
+        ]
+        _run_bridge(cfg, working_dir)
+        agent = _read_agent(working_dir)
+
+    allow_from = agent["channels"]["matrix"]["allow_from"]
+    assert set(allow_from) == {"@alice:example.org", "@bob:example.org", "@carol:example.org"}
+    assert allow_from.count("@alice:example.org") == 1  # dedup
+
+
+# ---------------------------------------------------------------------------
+# Controller-field overlay: deep-merge (channels.matrix.groups)
+# ---------------------------------------------------------------------------
+
+def test_deep_merge_groups_preserves_user_override():
+    """channels.matrix.groups: user leaf edits survive; controller may only
+    add new leaves the agent doesn't have yet."""
+    cfg = _make_openclaw_cfg()
+    cfg["channels"]["matrix"]["groups"] = {
+        "*": {"requireMention": True, "historyLimit": 50},
+    }
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        working_dir = Path(tmpdir) / "agent"
+        _run_bridge(cfg, working_dir)
+
+        agent_path = _agent_json_path(working_dir)
+        agent = json.loads(agent_path.read_text())
+        assert agent["channels"]["matrix"]["groups"]["*"]["historyLimit"] == 50
+
+        agent["channels"]["matrix"]["groups"]["*"]["requireMention"] = False
+        agent["channels"]["matrix"]["groups"]["!room:example.org"] = {
+            "requireMention": False,
+        }
+        agent_path.write_text(json.dumps(agent))
+
+        cfg["channels"]["matrix"]["groups"]["*"]["historyLimit"] = 200
+        cfg["channels"]["matrix"]["groups"]["*"]["newFlag"] = True
+        _run_bridge(cfg, working_dir)
+        agent = _read_agent(working_dir)
+
+    groups = agent["channels"]["matrix"]["groups"]
+    assert groups["*"]["requireMention"] is False  # user override kept
+    assert groups["*"]["historyLimit"] == 50  # existing leaf NOT overwritten
+    assert groups["*"]["newFlag"] is True  # new leaf added
+    assert groups["!room:example.org"] == {"requireMention": False}
+
+
+# ---------------------------------------------------------------------------
+# Identity / user_id derivation
+# ---------------------------------------------------------------------------
+
+def test_worker_user_id_from_openclaw():
+    """Worker carries userId in openclaw.json — bridge writes it verbatim."""
+    cfg = _make_openclaw_cfg()
+    cfg["channels"]["matrix"]["userId"] = "@dmd:matrix-local.hiclaw.io:18080"
+
+    agent = _bridge_and_read_agent(cfg)
+    assert agent["channels"]["matrix"]["user_id"] == "@dmd:matrix-local.hiclaw.io:18080"
+
+
+def test_manager_user_id_from_openclaw_wins_over_env(monkeypatch):
+    monkeypatch.setenv("HICLAW_MATRIX_DOMAIN", "other.example.org")
+    cfg = _make_openclaw_cfg()
+    cfg["channels"]["matrix"]["userId"] = "@explicit:explicit.example.org"
+
+    agent = _bridge_and_read_agent(cfg, profile="manager")
+    assert agent["channels"]["matrix"]["user_id"] == "@explicit:explicit.example.org"
+
+
+# ---------------------------------------------------------------------------
+# Heartbeat (controller field; remote-wins)
+# ---------------------------------------------------------------------------
+
+def test_manager_heartbeat_seeded_from_openclaw(monkeypatch):
+    monkeypatch.setenv("HICLAW_MATRIX_DOMAIN", "matrix.example.org")
+
+    cfg = _make_openclaw_cfg()
+    cfg["agents"]["defaults"]["heartbeat"] = {
+        "every": "5m",
+        "target": "self",
+        "activeHours": "09:00-18:00",
+    }
+
+    agent = _bridge_and_read_agent(cfg, profile="manager")
+    assert agent["heartbeat"] == {
+        "enabled": True, "every": "5m", "target": "self",
+        "active_hours": "09:00-18:00",
+    }
+
+
+def test_heartbeat_absent_when_openclaw_silent():
+    """Worker openclaw.json never declares heartbeat; agent.json gets none."""
+    agent = _bridge_and_read_agent(_make_openclaw_cfg())
+    assert "heartbeat" not in agent
+
+
+# ---------------------------------------------------------------------------
+# Validation
+# ---------------------------------------------------------------------------
+
+def test_bridge_rejects_unknown_profile():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        working_dir = Path(tmpdir) / "agent"
+        with pytest.raises(ValueError, match="unknown bridge profile"):
+            bridge_controller_to_copaw(_make_openclaw_cfg(), working_dir, profile="leader")
+
+
+def test_bridge_openclaw_to_copaw_alias_still_works():
+    """Deprecated alias must still dispatch to the new entry point."""
+    from copaw_worker.bridge import bridge_openclaw_to_copaw
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        working_dir = Path(tmpdir) / "agent"
+        bridge_openclaw_to_copaw(_make_openclaw_cfg(), working_dir)
+        assert _agent_json_path(working_dir).exists()
+        assert (working_dir / "config.json").exists()

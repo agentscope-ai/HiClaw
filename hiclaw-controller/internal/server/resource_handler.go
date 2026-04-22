@@ -1,11 +1,13 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 
 	v1beta1 "github.com/hiclaw/hiclaw-controller/api/v1beta1"
 	authpkg "github.com/hiclaw/hiclaw-controller/internal/auth"
+	"github.com/hiclaw/hiclaw-controller/internal/backend"
 	"github.com/hiclaw/hiclaw-controller/internal/httputil"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -13,13 +15,25 @@ import (
 )
 
 // ResourceHandler handles declarative CRUD operations on CRs.
+//
+// Post-refactor contract:
+//   - /workers (POST/PUT/DELETE) operate on standalone Worker CRs only.
+//     Write attempts that target a name belonging to a Team return 409 and
+//     direct the caller to /teams/<name>.
+//   - /workers (GET/LIST) return an aggregated view: standalone Worker CRs
+//     plus synthetic WorkerResponse entries for every member of every Team,
+//     enriched with live backend status so existing consumers (CLI, Manager,
+//     Element UI) keep functioning without creating child Worker CRs.
 type ResourceHandler struct {
 	client    client.Client
 	namespace string
+	backend   *backend.Registry
 }
 
-func NewResourceHandler(c client.Client, namespace string) *ResourceHandler {
-	return &ResourceHandler{client: c, namespace: namespace}
+// NewResourceHandler creates a handler. backend may be nil, in which case
+// runtime status is omitted from synthetic team member responses.
+func NewResourceHandler(c client.Client, namespace string, b *backend.Registry) *ResourceHandler {
+	return &ResourceHandler{client: c, namespace: namespace, backend: b}
 }
 
 // --- Workers ---
@@ -32,6 +46,15 @@ func (h *ResourceHandler) CreateWorker(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Name == "" {
 		httputil.WriteError(w, http.StatusBadRequest, "name is required")
+		return
+	}
+
+	if team, ok, err := h.findTeamForMember(r.Context(), req.Name); err != nil {
+		writeK8sError(w, "create worker", err)
+		return
+	} else if ok {
+		httputil.WriteError(w, http.StatusConflict,
+			"worker name is a member of team "+team+"; manage via PUT /api/v1/teams/"+team)
 		return
 	}
 
@@ -56,31 +79,19 @@ func (h *ResourceHandler) CreateWorker(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 
+	// Team leaders managing team members must use /api/v1/teams — they can no
+	// longer back-door-create team workers through the standalone /workers
+	// API. (Historical annotation-forcing path removed in the team-refactor.)
 	caller := authpkg.CallerFromContext(r.Context())
 	if caller != nil && caller.Role == authpkg.RoleTeamLeader {
-		req.Team = caller.Team
-		req.Role = "worker"
-		req.TeamLeader = caller.Username
+		httputil.WriteError(w, http.StatusConflict,
+			"team leaders must manage members via PUT /api/v1/teams/"+caller.Team)
+		return
 	}
-
 	if req.Team != "" || req.Role != "" || req.TeamLeader != "" {
-		worker.Annotations = make(map[string]string)
-		if req.Team != "" {
-			worker.Annotations["hiclaw.io/team"] = req.Team
-		}
-		if req.Role != "" {
-			worker.Annotations["hiclaw.io/role"] = req.Role
-		}
-		if req.TeamLeader != "" {
-			worker.Annotations["hiclaw.io/team-leader"] = req.TeamLeader
-		}
-		worker.Labels = map[string]string{}
-		if req.Team != "" {
-			worker.Labels["hiclaw.io/team"] = req.Team
-		}
-		if req.Role != "" {
-			worker.Labels["hiclaw.io/role"] = req.Role
-		}
+		httputil.WriteError(w, http.StatusBadRequest,
+			"worker.team / worker.role / worker.teamLeader are reserved for team members; use /api/v1/teams")
+		return
 	}
 
 	if err := h.client.Create(r.Context(), worker); err != nil {
@@ -99,34 +110,82 @@ func (h *ResourceHandler) GetWorker(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var worker v1beta1.Worker
-	if err := h.client.Get(r.Context(), client.ObjectKey{Name: name, Namespace: h.namespace}, &worker); err != nil {
+	err := h.client.Get(r.Context(), client.ObjectKey{Name: name, Namespace: h.namespace}, &worker)
+	switch {
+	case err == nil:
+		httputil.WriteJSON(w, http.StatusOK, workerToResponse(&worker))
+		return
+	case !apierrors.IsNotFound(err):
 		writeK8sError(w, "get worker", err)
 		return
 	}
 
-	httputil.WriteJSON(w, http.StatusOK, workerToResponse(&worker))
+	// Fall back to synthesizing a response from the Team CR.
+	team, member, ok, terr := h.findTeamMember(r.Context(), name)
+	if terr != nil {
+		writeK8sError(w, "get worker", terr)
+		return
+	}
+	if !ok {
+		httputil.WriteError(w, http.StatusNotFound, "get worker: not found")
+		return
+	}
+	httputil.WriteJSON(w, http.StatusOK, h.teamMemberToResponse(r.Context(), team, member))
 }
 
 func (h *ResourceHandler) ListWorkers(w http.ResponseWriter, r *http.Request) {
-	var list v1beta1.WorkerList
-	opts := []client.ListOption{client.InNamespace(h.namespace)}
+	teamFilter := r.URL.Query().Get("team")
 
-	team := r.URL.Query().Get("team")
-	if team != "" {
-		opts = append(opts, client.MatchingLabels{"hiclaw.io/team": team})
+	workers := make([]WorkerResponse, 0)
+
+	// Standalone workers only when not filtering by team (team members don't
+	// have Worker CRs).
+	if teamFilter == "" {
+		var list v1beta1.WorkerList
+		if err := h.client.List(r.Context(), &list, client.InNamespace(h.namespace)); err != nil {
+			writeK8sError(w, "list workers", err)
+			return
+		}
+		for i := range list.Items {
+			if isTeamMemberWorker(&list.Items[i]) {
+				// Defensive: legacy resource created before the refactor. Skip
+				// to avoid duplicating the synthesized team view.
+				continue
+			}
+			workers = append(workers, workerToResponse(&list.Items[i]))
+		}
 	}
 
-	if err := h.client.List(r.Context(), &list, opts...); err != nil {
-		writeK8sError(w, "list workers", err)
+	var teams v1beta1.TeamList
+	teamOpts := []client.ListOption{client.InNamespace(h.namespace)}
+	if err := h.client.List(r.Context(), &teams, teamOpts...); err != nil {
+		writeK8sError(w, "list workers: list teams", err)
 		return
 	}
-
-	workers := make([]WorkerResponse, 0, len(list.Items))
-	for i := range list.Items {
-		workers = append(workers, workerToResponse(&list.Items[i]))
+	for i := range teams.Items {
+		team := &teams.Items[i]
+		if teamFilter != "" && team.Name != teamFilter {
+			continue
+		}
+		workers = append(workers, h.teamMemberToResponse(r.Context(), team, team.Spec.Leader.Name))
+		for _, worker := range team.Spec.Workers {
+			workers = append(workers, h.teamMemberToResponse(r.Context(), team, worker.Name))
+		}
 	}
 
 	httputil.WriteJSON(w, http.StatusOK, WorkerListResponse{Workers: workers, Total: len(workers)})
+}
+
+// isTeamMemberWorker reports whether a Worker CR was created by the old
+// (pre-refactor) TeamReconciler and should be hidden from the aggregated
+// /workers view.
+func isTeamMemberWorker(w *v1beta1.Worker) bool {
+	if w.Annotations == nil {
+		return false
+	}
+	return w.Annotations["hiclaw.io/team"] != "" ||
+		w.Annotations["hiclaw.io/team-leader"] != "" ||
+		w.Annotations["hiclaw.io/role"] == "team_leader"
 }
 
 func (h *ResourceHandler) UpdateWorker(w http.ResponseWriter, r *http.Request) {
@@ -139,6 +198,15 @@ func (h *ResourceHandler) UpdateWorker(w http.ResponseWriter, r *http.Request) {
 	var req UpdateWorkerRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		httputil.WriteError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+		return
+	}
+
+	if team, ok, err := h.findTeamForMember(r.Context(), name); err != nil {
+		writeK8sError(w, "update worker", err)
+		return
+	} else if ok {
+		httputil.WriteError(w, http.StatusConflict,
+			"worker is a member of team "+team+"; update via PUT /api/v1/teams/"+team)
 		return
 	}
 
@@ -197,6 +265,15 @@ func (h *ResourceHandler) DeleteWorker(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if name == "" {
 		httputil.WriteError(w, http.StatusBadRequest, "worker name is required")
+		return
+	}
+
+	if team, ok, err := h.findTeamForMember(r.Context(), name); err != nil {
+		writeK8sError(w, "delete worker", err)
+		return
+	} else if ok {
+		httputil.WriteError(w, http.StatusConflict,
+			"worker is a member of team "+team+"; remove via PUT/DELETE /api/v1/teams/"+team)
 		return
 	}
 
@@ -703,12 +780,15 @@ func teamToResponse(t *v1beta1.Team) TeamResponse {
 	for _, w := range t.Spec.Workers {
 		resp.WorkerNames = append(resp.WorkerNames, w.Name)
 	}
-	if t.Status.WorkerExposedPorts != nil {
-		resp.WorkerExposedPorts = make(map[string][]ExposedPortInfo)
-		for wn, ports := range t.Status.WorkerExposedPorts {
-			for _, p := range ports {
-				resp.WorkerExposedPorts[wn] = append(resp.WorkerExposedPorts[wn], ExposedPortInfo{Port: p.Port, Domain: p.Domain})
-			}
+	for _, ms := range t.Status.Members {
+		if len(ms.ExposedPorts) == 0 {
+			continue
+		}
+		if resp.WorkerExposedPorts == nil {
+			resp.WorkerExposedPorts = make(map[string][]ExposedPortInfo)
+		}
+		for _, p := range ms.ExposedPorts {
+			resp.WorkerExposedPorts[ms.Name] = append(resp.WorkerExposedPorts[ms.Name], ExposedPortInfo{Port: p.Port, Domain: p.Domain})
 		}
 	}
 	return resp
@@ -762,6 +842,106 @@ func humanToResponse(h *v1beta1.Human) HumanResponse {
 	}
 	if resp.Phase == "" {
 		resp.Phase = "Pending"
+	}
+	return resp
+}
+
+// findTeamForMember reports whether the given worker name is a member
+// (leader or worker) of any Team in the current namespace.
+func (h *ResourceHandler) findTeamForMember(ctx context.Context, name string) (string, bool, error) {
+	team, _, ok, err := h.findTeamMember(ctx, name)
+	if err != nil || !ok {
+		return "", false, err
+	}
+	return team.Name, true, nil
+}
+
+// findTeamMember does the same as findTeamForMember but also returns the
+// resolved Team CR and the member's name (for response synthesis).
+func (h *ResourceHandler) findTeamMember(ctx context.Context, name string) (*v1beta1.Team, string, bool, error) {
+	var list v1beta1.TeamList
+	if err := h.client.List(ctx, &list, client.InNamespace(h.namespace)); err != nil {
+		return nil, "", false, err
+	}
+	for i := range list.Items {
+		t := &list.Items[i]
+		if t.Spec.Leader.Name == name {
+			return t, name, true, nil
+		}
+		for _, w := range t.Spec.Workers {
+			if w.Name == name {
+				return t, name, true, nil
+			}
+		}
+	}
+	return nil, "", false, nil
+}
+
+// teamMemberToResponse synthesizes a WorkerResponse for a Team member without
+// creating a Worker CR. Runtime fields (Phase, ContainerState, ExposedPorts)
+// are populated from Team.Status and the backend so existing consumers of
+// /api/v1/workers see consistent data.
+func (h *ResourceHandler) teamMemberToResponse(ctx context.Context, t *v1beta1.Team, memberName string) WorkerResponse {
+	isLeader := t.Spec.Leader.Name == memberName
+	ms := t.Status.MemberByName(memberName)
+
+	resp := WorkerResponse{
+		Name:    memberName,
+		Team:    t.Name,
+		Phase:   "Pending",
+		State:   "Running",
+		Runtime: "copaw",
+	}
+	if ms != nil {
+		resp.RoomID = ms.RoomID
+		resp.MatrixUserID = ms.MatrixUserID
+	}
+	if isLeader {
+		resp.Role = "team_leader"
+		resp.Model = t.Spec.Leader.Model
+		if t.Spec.Leader.State != nil {
+			resp.State = *t.Spec.Leader.State
+		}
+	} else {
+		resp.Role = "worker"
+		for _, wk := range t.Spec.Workers {
+			if wk.Name != memberName {
+				continue
+			}
+			resp.Model = wk.Model
+			resp.Image = wk.Image
+			if wk.Runtime != "" {
+				resp.Runtime = wk.Runtime
+			}
+			if wk.State != nil {
+				resp.State = *wk.State
+			}
+			if ms != nil {
+				for _, p := range ms.ExposedPorts {
+					resp.ExposedPorts = append(resp.ExposedPorts, ExposedPortInfo{Port: p.Port, Domain: p.Domain})
+				}
+			}
+			break
+		}
+	}
+
+	if h.backend != nil {
+		if wb := h.backend.DetectWorkerBackend(ctx); wb != nil {
+			if result, err := wb.Status(ctx, memberName); err == nil && result != nil {
+				resp.ContainerState = string(result.Status)
+				switch result.Status {
+				case backend.StatusRunning, backend.StatusReady:
+					resp.Phase = "Running"
+				case backend.StatusStarting:
+					resp.Phase = "Pending"
+				case backend.StatusStopped:
+					resp.Phase = "Stopped"
+				}
+			}
+		}
+	}
+	if isLeader && t.Status.LeaderReady {
+		resp.Phase = "Running"
 	}
 	return resp
 }

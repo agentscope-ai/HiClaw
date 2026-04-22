@@ -95,20 +95,16 @@ else
     log_fail "Worker import failed: ${APPLY_OUTPUT}"
 fi
 
-# Wait for controller reconcile
+# Wait for controller reconcile — poll the API instead of grepping logs.
+# The `worker created` log is still emitted for standalone workers, but
+# using the API means the test survives any future logging refactor and
+# aligns with the team-member tests (test-18/19/21) which cannot use the
+# log-grep pattern at all.
 log_info "Waiting for controller reconcile..."
-TIMEOUT=120; ELAPSED=0
-while [ "${ELAPSED}" -lt "${TIMEOUT}" ]; do
-    if exec_in_manager cat /var/log/hiclaw/hiclaw-controller-error.log 2>/dev/null | grep -q "worker created.*${TEST_WORKER}"; then
-        break
-    fi
-    sleep 5; ELAPSED=$((ELAPSED + 5))
-done
-
-if [ "${ELAPSED}" -lt "${TIMEOUT}" ]; then
-    log_pass "Controller reconciled worker (took ~${ELAPSED}s)"
+if wait_worker_provisioned "${TEST_WORKER}" 120; then
+    log_pass "Controller reconciled worker"
 else
-    log_fail "Controller did not reconcile within ${TIMEOUT}s"
+    log_fail "Controller did not reconcile within 120s"
 fi
 
 # ============================================================

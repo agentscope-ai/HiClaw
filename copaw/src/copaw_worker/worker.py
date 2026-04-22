@@ -3,7 +3,7 @@ Worker main entry point.
 
 Bootstrap flow:
 1. Pull openclaw.json + SOUL.md + AGENTS.md from MinIO
-2. Bridge openclaw.json -> CoPaw config.json + providers.json
+2. Bridge openclaw.json -> CoPaw workspaces/default/agent.json + providers.json
 3. Install MatrixChannel into CoPaw's custom_channels dir
 4. Start CoPaw AgentRunner + ChannelManager (Matrix channel)
 """
@@ -122,7 +122,7 @@ class Worker:
             if src.exists():
                 (workspace_dir / name).write_text(src.read_text())
 
-        # 5. Bridge openclaw.json -> CoPaw config.json + providers.json
+        # 5. Bridge openclaw.json -> CoPaw workspaces/default/agent.json + providers.json
         #    Infer gateway port from FS endpoint so bridge's _port_remap uses
         #    the correct host port instead of the hardcoded default.
         if not os.environ.get("HICLAW_PORT_GATEWAY"):

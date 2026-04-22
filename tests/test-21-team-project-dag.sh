@@ -86,30 +86,31 @@ fi
 
 # Wait for TeamReconciler to finish (async reconcile)
 log_info "Waiting for team to become Active..."
-for i in $(seq 1 24); do
-    PHASE=$(exec_in_agent hiclaw get teams "${TEST_TEAM}" -o json 2>/dev/null | jq -r '.phase // empty')
-    [ "${PHASE}" = "Active" ] && break
-    sleep 5
-done
-if [ "${PHASE}" = "Active" ]; then
+if wait_team_active "${TEST_TEAM}" 120; then
     log_pass "Team is Active"
+    PHASE="Active"
 else
+    PHASE=$(exec_in_agent hiclaw get teams "${TEST_TEAM}" -o json 2>/dev/null | jq -r '.phase // empty')
     log_fail "Team did not become Active within 120s (phase: ${PHASE})"
 fi
 
-# Extract room IDs from controller REST API
+# Extract room IDs from controller REST API. For team members, the RoomID is
+# served by teamMemberToResponse from Team.Status.Members[*].RoomID — which
+# is populated the moment ReconcileMemberInfra succeeds, so waiting for the
+# team to be Active plus wait_worker_provisioned per member is the stable
+# contract for this section (regression guard for PR #666 RoomID bug).
 TEAM_JSON=$(exec_in_agent hiclaw get teams "${TEST_TEAM}" -o json 2>/dev/null)
 TEAM_ROOM=$(echo "${TEAM_JSON}" | jq -r '.teamRoomID // empty')
 LEADER_DM=$(echo "${TEAM_JSON}" | jq -r '.leaderDMRoomID // empty')
 
-LEADER_ROOM=""
-for i in $(seq 1 24); do
-    LEADER_ROOM=$(exec_in_agent hiclaw get workers "${TEST_LEADER}" -o json 2>/dev/null | jq -r '.roomID // empty')
-    [ -n "${LEADER_ROOM}" ] && break
-    sleep 5
+for w in "${TEST_LEADER}" "${TEST_W1}" "${TEST_W2}"; do
+    if ! wait_worker_provisioned "${w}" 120; then
+        log_fail "Team member ${w} has no roomID/matrixUserID after 120s"
+    fi
 done
-W1_ROOM=$(exec_in_agent hiclaw get workers "${TEST_W1}" -o json 2>/dev/null | jq -r '.roomID // empty')
-W2_ROOM=$(exec_in_agent hiclaw get workers "${TEST_W2}" -o json 2>/dev/null | jq -r '.roomID // empty')
+LEADER_ROOM=$(get_worker_room_id "${TEST_LEADER}")
+W1_ROOM=$(get_worker_room_id "${TEST_W1}")
+W2_ROOM=$(get_worker_room_id "${TEST_W2}")
 
 log_info "Leader Room: ${LEADER_ROOM}"
 log_info "Leader DM: ${LEADER_DM}"

@@ -47,7 +47,7 @@ func NewHTTPServer(addr string, deps ServerDeps) *HTTPServer {
 	mux.Handle("GET /api/v1/version", mw.Authenticate(http.HandlerFunc(sh.Version)))
 
 	// --- Declarative resource CRUD ---
-	rh := NewResourceHandler(deps.Client, deps.Namespace)
+	rh := NewResourceHandler(deps.Client, deps.Namespace, deps.Backend)
 	nameFn := authpkg.NameFromPath
 
 	// Workers

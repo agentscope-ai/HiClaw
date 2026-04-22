@@ -22,7 +22,6 @@ type WorkerCredentials struct {
 	MatrixPassword string
 	MinIOPassword  string
 	GatewayKey     string
-	RoomID         string // persisted for idempotent room reuse
 	// MatrixToken is the access token returned by the most recent matrix.Login.
 	// Persisted so that subsequent RefreshManagerCredentials calls can reuse
 	// the cached token instead of issuing a fresh login on every controller
@@ -73,8 +72,6 @@ func (s *FileCredentialStore) Load(_ context.Context, workerName string) (*Worke
 			creds.MinIOPassword = v
 		case "WORKER_GATEWAY_KEY":
 			creds.GatewayKey = v
-		case "WORKER_ROOM_ID":
-			creds.RoomID = v
 		case "WORKER_MATRIX_TOKEN":
 			creds.MatrixToken = v
 		}
@@ -88,8 +85,8 @@ func (s *FileCredentialStore) Save(_ context.Context, workerName string, creds *
 	}
 	path := filepath.Join(s.Dir, workerName+".env")
 	content := fmt.Sprintf(
-		"WORKER_PASSWORD=%q\nWORKER_MINIO_PASSWORD=%q\nWORKER_GATEWAY_KEY=%q\nWORKER_ROOM_ID=%q\nWORKER_MATRIX_TOKEN=%q\n",
-		creds.MatrixPassword, creds.MinIOPassword, creds.GatewayKey, creds.RoomID, creds.MatrixToken,
+		"WORKER_PASSWORD=%q\nWORKER_MINIO_PASSWORD=%q\nWORKER_GATEWAY_KEY=%q\nWORKER_MATRIX_TOKEN=%q\n",
+		creds.MatrixPassword, creds.MinIOPassword, creds.GatewayKey, creds.MatrixToken,
 	)
 	return os.WriteFile(path, []byte(content), 0600)
 }
@@ -165,7 +162,6 @@ func (s *SecretCredentialStore) Load(ctx context.Context, workerName string) (*W
 		MatrixPassword: string(secret.Data["WORKER_PASSWORD"]),
 		MinIOPassword:  string(secret.Data["WORKER_MINIO_PASSWORD"]),
 		GatewayKey:     string(secret.Data["WORKER_GATEWAY_KEY"]),
-		RoomID:         string(secret.Data["WORKER_ROOM_ID"]),
 		MatrixToken:    string(secret.Data["WORKER_MATRIX_TOKEN"]),
 	}, nil
 }
@@ -185,7 +181,6 @@ func (s *SecretCredentialStore) Save(ctx context.Context, workerName string, cre
 			"WORKER_PASSWORD":       []byte(creds.MatrixPassword),
 			"WORKER_MINIO_PASSWORD": []byte(creds.MinIOPassword),
 			"WORKER_GATEWAY_KEY":    []byte(creds.GatewayKey),
-			"WORKER_ROOM_ID":        []byte(creds.RoomID),
 			"WORKER_MATRIX_TOKEN":   []byte(creds.MatrixToken),
 		},
 	}

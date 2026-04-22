@@ -38,15 +38,28 @@ type CreateRoomRequest struct {
 	// IsDirect marks the room as a direct message (1:1) room.
 	IsDirect bool
 
-	// ExistingRoomID skips creation and returns this room ID directly.
-	// Used for idempotent retries when a room was already created.
-	ExistingRoomID string
+	// RoomAliasName is the alias localpart (without leading '#' or ':server')
+	// that uniquely identifies this room on the homeserver. When non-empty,
+	// the request is sent with room_alias_name so Matrix itself guarantees
+	// idempotency: repeated CreateRoom calls with the same alias return the
+	// existing room (Created=false) instead of creating a duplicate. The
+	// alias is the sole source of truth for room identity — callers should
+	// not depend on any external K8s/MinIO state to avoid duplicates.
+	RoomAliasName string
 }
 
 // RoomInfo holds the result of a CreateRoom call.
 type RoomInfo struct {
 	RoomID  string
-	Created bool // true if newly created, false if ExistingRoomID was used
+	Created bool // true if newly created; false if the alias already existed
+}
+
+// RoomMember describes a user's presence in a Matrix room.
+// Only members whose Membership is "join" or "invite" are surfaced via
+// ListRoomMembers; leave/ban/knock entries are filtered out by the client.
+type RoomMember struct {
+	UserID     string
+	Membership string // "join" | "invite"
 }
 
 // GeneratePassword produces a cryptographically secure random password

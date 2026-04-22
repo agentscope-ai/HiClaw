@@ -25,3 +25,6 @@ copaw-worker = "copaw_worker.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+copaw_worker = ["templates/*.json"]

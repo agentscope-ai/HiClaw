@@ -28,6 +28,7 @@ import (
 	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
+	crclient "sigs.k8s.io/controller-runtime/pkg/client"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 )
 
@@ -81,6 +82,7 @@ func New(ctx context.Context, cfg *config.Config) (*App, error) {
 		{"infra-clients", a.initInfraClients},
 		{"backends", a.initBackends},
 		{"controller-manager", a.initControllerManager},
+		{"field-indexers", a.initFieldIndexers},
 		{"auth", a.initAuth},
 		{"service-layer", a.initServiceLayer},
 		{"reconcilers", a.initReconcilers},
@@ -196,6 +198,46 @@ func (a *App) initControllerManager(ctx context.Context) error {
 	return err
 }
 
+// initFieldIndexers registers cache field indexers used for efficient reverse
+// lookups by auth enrichment and, in the future, admission/validation.
+//
+//   - teams.spec.leader.name  -> list Team by leader name
+//   - teams.spec.workerNames  -> list Team by any worker name (custom virtual field)
+func (a *App) initFieldIndexers(ctx context.Context) error {
+	if a.mgr == nil {
+		return nil
+	}
+	idx := a.mgr.GetFieldIndexer()
+	if err := idx.IndexField(ctx, &v1beta1.Team{}, controller.TeamLeaderNameField, func(obj crclient.Object) []string {
+		team, ok := obj.(*v1beta1.Team)
+		if !ok {
+			return nil
+		}
+		if team.Spec.Leader.Name == "" {
+			return nil
+		}
+		return []string{team.Spec.Leader.Name}
+	}); err != nil {
+		return fmt.Errorf("index team leader name: %w", err)
+	}
+	if err := idx.IndexField(ctx, &v1beta1.Team{}, controller.TeamWorkerNameField, func(obj crclient.Object) []string {
+		team, ok := obj.(*v1beta1.Team)
+		if !ok {
+			return nil
+		}
+		names := make([]string, 0, len(team.Spec.Workers))
+		for _, w := range team.Spec.Workers {
+			if w.Name != "" {
+				names = append(names, w.Name)
+			}
+		}
+		return names
+	}); err != nil {
+		return fmt.Errorf("index team worker names: %w", err)
+	}
+	return nil
+}
+
 func (a *App) initAuth(_ context.Context) error {
 	logger := ctrl.Log.WithName("app")
 
@@ -280,11 +322,14 @@ func (a *App) initReconcilers(_ context.Context) error {
 	}
 
 	if err := (&controller.TeamReconciler{
-		Client:      a.mgr.GetClient(),
-		Provisioner: a.provisioner,
-		Deployer:    a.deployer,
-		Legacy:      a.legacy,
-		AgentFSDir:  a.cfg.AgentFSDir(),
+		Client:         a.mgr.GetClient(),
+		Provisioner:    a.provisioner,
+		Deployer:       a.deployer,
+		Backend:        a.registry,
+		EnvBuilder:     a.envBuilder,
+		Legacy:         a.legacy,
+		DefaultRuntime: a.cfg.DefaultWorkerRuntime,
+		AgentFSDir:     a.cfg.AgentFSDir(),
 	}).SetupWithManager(a.mgr); err != nil {
 		return fmt.Errorf("setup TeamReconciler: %w", err)
 	}

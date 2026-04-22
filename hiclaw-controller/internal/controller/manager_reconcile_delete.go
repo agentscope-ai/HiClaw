@@ -17,8 +17,14 @@ func (r *ManagerReconciler) reconcileManagerDelete(ctx context.Context, s *manag
 
 	managerName := m.Name
 
-	if err := r.Provisioner.DeactivateMatrixUser(ctx, "manager"); err != nil {
-		logger.Error(err, "matrix user deactivation failed (non-fatal)")
+	if err := r.Provisioner.LeaveAllManagerRooms(ctx, managerName); err != nil {
+		logger.Error(err, "manager leave-all-rooms failed (non-fatal)")
+	}
+	if m.Status.RoomID != "" {
+		if err := r.Provisioner.DeleteManagerRoom(ctx, m.Status.RoomID); err != nil {
+			logger.Error(err, "manager room delete command failed (non-fatal)",
+				"roomID", m.Status.RoomID)
+		}
 	}
 
 	if err := r.Provisioner.DeprovisionManager(ctx, managerName, m.Spec.McpServers); err != nil {
@@ -40,6 +46,13 @@ func (r *ManagerReconciler) reconcileManagerDelete(ctx context.Context, s *manag
 	}
 	if err := r.Provisioner.DeleteManagerServiceAccount(ctx, managerName); err != nil {
 		logger.Error(err, "failed to delete ServiceAccount (non-fatal)")
+	}
+
+	// Release the Matrix alias that tied this Manager to its Admin DM room.
+	// The room is preserved; only the controller's stable identifier is
+	// released so a future Manager CR with the same name can reclaim it.
+	if err := r.Provisioner.DeleteManagerRoomAlias(ctx, managerName); err != nil {
+		logger.Error(err, "failed to delete manager room alias (non-fatal)")
 	}
 
 	controllerutil.RemoveFinalizer(m, finalizerName)

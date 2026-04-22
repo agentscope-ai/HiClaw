@@ -6,8 +6,8 @@ import (
 	v1beta1 "github.com/hiclaw/hiclaw-controller/api/v1beta1"
 )
 
-// WorkerProvisioner defines the provisioning operations used by WorkerReconciler.
-// Implemented by *Provisioner; extracted for testability.
+// WorkerProvisioner defines the provisioning operations used by WorkerReconciler
+// and TeamReconciler. Implemented by *Provisioner; extracted for testability.
 type WorkerProvisioner interface {
 	ProvisionWorker(ctx context.Context, req WorkerProvisionRequest) (*WorkerProvisionResult, error)
 	DeprovisionWorker(ctx context.Context, req WorkerDeprovisionRequest) error
@@ -18,18 +18,30 @@ type WorkerProvisioner interface {
 	DeleteServiceAccount(ctx context.Context, workerName string) error
 	DeleteCredentials(ctx context.Context, workerName string) error
 	RequestSAToken(ctx context.Context, workerName string) (string, error)
-	DeactivateMatrixUser(ctx context.Context, workerName string) error
+	// LeaveAllWorkerRooms logs in as the worker (using stored credentials,
+	// or resetting the password via admin if they are stale) and makes
+	// the worker leave every room it is currently joined to.
+	LeaveAllWorkerRooms(ctx context.Context, workerName string) error
+	// DeleteWorkerRoom fires an admin "!admin rooms delete-room" command
+	// for the given room. Best-effort; the actual deletion runs
+	// asynchronously inside tuwunel.
+	DeleteWorkerRoom(ctx context.Context, roomID string) error
 	MatrixUserID(name string) string
+	ProvisionTeamRooms(ctx context.Context, req TeamRoomRequest) (*TeamRoomResult, error)
+	DeleteTeamRoomAliases(ctx context.Context, teamName, leaderName string) error
+	DeleteWorkerRoomAlias(ctx context.Context, workerName string) error
 }
 
-// WorkerDeployer defines the deployment operations used by WorkerReconciler.
-// Implemented by *Deployer; extracted for testability.
+// WorkerDeployer defines the deployment operations used by WorkerReconciler
+// and TeamReconciler. Implemented by *Deployer; extracted for testability.
 type WorkerDeployer interface {
 	DeployPackage(ctx context.Context, name, uri string, isUpdate bool) error
 	WriteInlineConfigs(name string, spec v1beta1.WorkerSpec) error
 	DeployWorkerConfig(ctx context.Context, req WorkerDeployRequest) error
 	PushOnDemandSkills(ctx context.Context, workerName string, skills []string) error
 	CleanupOSSData(ctx context.Context, workerName string) error
+	InjectCoordinationContext(ctx context.Context, req CoordinationDeployRequest) error
+	EnsureTeamStorage(ctx context.Context, teamName string) error
 }
 
 // WorkerEnvBuilderI defines env map construction for worker containers.
@@ -55,7 +67,13 @@ type ManagerProvisioner interface {
 	DeleteManagerServiceAccount(ctx context.Context, managerName string) error
 	DeleteCredentials(ctx context.Context, name string) error
 	RequestManagerSAToken(ctx context.Context, managerName string) (string, error)
-	DeactivateMatrixUser(ctx context.Context, name string) error
+	// LeaveAllManagerRooms logs in as the manager and makes it leave every
+	// room it is currently joined to. See LeaveAllWorkerRooms.
+	LeaveAllManagerRooms(ctx context.Context, managerName string) error
+	// DeleteManagerRoom fires an admin "!admin rooms delete-room" command
+	// for the given room. See DeleteWorkerRoom.
+	DeleteManagerRoom(ctx context.Context, roomID string) error
+	DeleteManagerRoomAlias(ctx context.Context, managerName string) error
 }
 
 // ManagerDeployer defines the deployment operations used by ManagerReconciler.

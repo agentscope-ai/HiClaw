@@ -263,6 +263,103 @@ wait_for_manager_agent_ready() {
     return 0
 }
 
+# ------------------------------------------------------------
+# CR-status-based waiters (replace fragile log-grep assertions).
+#
+# These replace the earlier `grep "team created"` / `grep "worker created"`
+# patterns that broke after PR #666 — team members no longer emit a
+# per-creation `worker created` log line, and the team reconciler now logs
+# `team reconciled` (repeated) instead of a one-shot `team created`. The
+# canonical readiness signal is the CR's `.status` subresource, which the
+# CLI surfaces via `hiclaw get`. Using the status means tests stay correct
+# across logging refactors and work regardless of log rotation.
+# ------------------------------------------------------------
+
+# wait_team_active <team_name> [timeout_seconds] [expected_phase]
+# Polls `hiclaw get teams <name> -o json` until .phase matches expected_phase
+# (default "Active"). Emits no log_pass/log_fail so the caller chooses how
+# to assert (typically followed by `assert_eq` on the resulting phase).
+# Returns 0 on match, 1 on timeout (and prints last-seen phase to stderr).
+wait_team_active() {
+    local team_name="$1"
+    local timeout="${2:-180}"
+    local want="${3:-Active}"
+    local elapsed=0
+    local last=""
+    while [ "${elapsed}" -lt "${timeout}" ]; do
+        last=$(exec_in_agent hiclaw get teams "${team_name}" -o json 2>/dev/null | jq -r '.phase // empty')
+        if [ "${last}" = "${want}" ]; then
+            return 0
+        fi
+        sleep 5
+        elapsed=$((elapsed + 5))
+    done
+    echo "wait_team_active: team=${team_name} timed out after ${timeout}s, last_phase='${last}'" >&2
+    return 1
+}
+
+# wait_worker_phase <worker_name> [timeout_seconds] [expected_phase]
+# Polls `hiclaw get workers <name>` (works for standalone Workers AND
+# synthesized team members, since ResourceHandler.teamMemberToResponse
+# serves both under one endpoint) until .phase matches expected_phase
+# (default "Running").
+wait_worker_phase() {
+    local worker_name="$1"
+    local timeout="${2:-180}"
+    local want="${3:-Running}"
+    local elapsed=0
+    local last=""
+    while [ "${elapsed}" -lt "${timeout}" ]; do
+        last=$(exec_in_agent hiclaw get workers "${worker_name}" -o json 2>/dev/null | jq -r '.phase // empty')
+        if [ "${last}" = "${want}" ]; then
+            return 0
+        fi
+        sleep 5
+        elapsed=$((elapsed + 5))
+    done
+    echo "wait_worker_phase: worker=${worker_name} timed out after ${timeout}s, last_phase='${last}'" >&2
+    return 1
+}
+
+# wait_worker_provisioned <worker_name> [timeout_seconds]
+# Stronger than wait_worker_phase: waits until the worker has both a non-
+# empty .roomID AND a non-empty .matrixUserID. This is the correct post-
+# PR #666 replacement for "grep 'worker created'", because a team member
+# is "provisioned" precisely when its room + Matrix user have been
+# persisted into Team.Status.Members (or Worker.Status for standalone).
+# Does not require phase=Running, so tests that only need credentials
+# (e.g. API-key lookup) don't block on container startup.
+wait_worker_provisioned() {
+    local worker_name="$1"
+    local timeout="${2:-180}"
+    local elapsed=0
+    local room_id=""
+    local mxid=""
+    while [ "${elapsed}" -lt "${timeout}" ]; do
+        local json
+        json=$(exec_in_agent hiclaw get workers "${worker_name}" -o json 2>/dev/null)
+        room_id=$(echo "${json}" | jq -r '.roomID // empty')
+        mxid=$(echo "${json}" | jq -r '.matrixUserID // empty')
+        if [ -n "${room_id}" ] && [ -n "${mxid}" ]; then
+            return 0
+        fi
+        sleep 5
+        elapsed=$((elapsed + 5))
+    done
+    echo "wait_worker_provisioned: worker=${worker_name} timed out after ${timeout}s, roomID='${room_id}' matrixUserID='${mxid}'" >&2
+    return 1
+}
+
+# get_worker_room_id <worker_name>
+# Echoes the worker's .roomID from the API, or empty on failure.
+# Works for both standalone workers and team members, since
+# ResourceHandler.teamMemberToResponse now populates RoomID from
+# Team.Status.Members.
+get_worker_room_id() {
+    local worker_name="$1"
+    exec_in_agent hiclaw get workers "${worker_name}" -o json 2>/dev/null | jq -r '.roomID // empty'
+}
+
 # Wait for a Worker container to be running (started by Manager on demand)
 # Usage: wait_for_worker_container <worker_name> [timeout_seconds]
 # Returns 0 when container is running, 1 on timeout

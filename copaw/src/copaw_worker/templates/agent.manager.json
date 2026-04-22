@@ -1,0 +1,25 @@
+{
+  "id": "default",
+  "name": "Manager",
+  "language": "zh",
+  "system_prompt_files": [
+    "AGENTS.md",
+    "SOUL.md",
+    "PROFILE.md",
+    "TOOLS.md"
+  ],
+  "channels": {
+    "console": {
+      "enabled": true
+    },
+    "matrix": {
+      "enabled": true,
+      "require_mention": true,
+      "filter_tool_messages": true,
+      "filter_thinking": true,
+      "allow_from": [],
+      "group_allow_from": [],
+      "groups": {}
+    }
+  }
+}

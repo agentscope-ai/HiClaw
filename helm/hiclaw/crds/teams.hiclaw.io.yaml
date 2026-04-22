@@ -14,7 +14,7 @@ spec:
           properties:
             spec:
               type: object
-              required: [leader, workers]
+              required: [leader]
               properties:
                 description:
                   type: string
@@ -67,6 +67,19 @@ spec:
                       type: string
                     package:
                       type: string
+                    heartbeat:
+                      type: object
+                      properties:
+                        enabled:
+                          type: boolean
+                        every:
+                          type: string
+                    workerIdleTimeout:
+                      type: string
+                    state:
+                      type: string
+                      enum: [Running, Sleeping, Stopped]
+                      description: "Desired lifecycle state for the team leader (default: Running)"
                     channelPolicy:
                       type: object
                       properties:
@@ -149,6 +162,10 @@ spec:
                             type: array
                             items:
                               type: string
+                      state:
+                        type: string
+                        enum: [Running, Sleeping, Stopped]
+                        description: "Desired lifecycle state for this team worker (default: Running)"
             status:
               type: object
               properties:
@@ -167,10 +184,46 @@ spec:
                   type: integer
                 message:
                   type: string
-                workerExposedPorts:
-                  type: object
-                  description: Exposed ports per worker name
-                  x-kubernetes-preserve-unknown-fields: true
+                members:
+                  type: array
+                  description: "Per-member state (leader + workers). Consolidates all per-member fields (observed, spec hash, roomID, matrixUserID, exposedPorts) into a single sorted-by-name slice."
+                  items:
+                    type: object
+                    required: [name]
+                    properties:
+                      name:
+                        type: string
+                        description: "Member's canonical name (matches spec.leader.name or spec.workers[i].name)."
+                      role:
+                        type: string
+                        enum: [team_leader, worker]
+                        description: "Role of this member."
+                      roomID:
+                        type: string
+                        description: "Member's personal communication room with the Manager."
+                      matrixUserID:
+                        type: string
+                        description: "Member's Matrix MXID."
+                      specHash:
+                        type: string
+                        description: "fnv64a hash of the last fully-reconciled WorkerSpec for this member. Empty means never fully reconciled."
+                      observed:
+                        type: boolean
+                        description: "True once ReconcileMemberInfra has succeeded at least once; stays true across post-infra failures to avoid Matrix access token rotation."
+                      ready:
+                        type: boolean
+                        description: "Mirrors backend.Status Running/Ready. Aggregates into leaderReady and readyWorkers."
+                      exposedPorts:
+                        type: array
+                        description: "Ports currently exposed via Higress for this member (workers only)."
+                        items:
+                          type: object
+                          required: [port, domain]
+                          properties:
+                            port:
+                              type: integer
+                            domain:
+                              type: string
       subresources:
         status: {}
       additionalPrinterColumns:

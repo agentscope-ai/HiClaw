@@ -103,7 +103,7 @@ type TeamSpec struct {
 	Description   string             `json:"description,omitempty"`
 	Admin         *TeamAdminSpec     `json:"admin,omitempty"`
 	Leader        LeaderSpec         `json:"leader"`
-	Workers       []TeamWorkerSpec   `json:"workers"`
+	Workers       []TeamWorkerSpec   `json:"workers,omitempty"`
 	PeerMentions  *bool              `json:"peerMentions,omitempty"`  // default true
 	ChannelPolicy *ChannelPolicySpec `json:"channelPolicy,omitempty"` // team-wide overrides
 }
@@ -148,14 +148,82 @@ type TeamWorkerSpec struct {
 }
 
 type TeamStatus struct {
-	Phase              string                         `json:"phase,omitempty"` // Pending/Active/Degraded
-	TeamRoomID         string                         `json:"teamRoomID,omitempty"`
-	LeaderDMRoomID     string                         `json:"leaderDMRoomID,omitempty"`
-	LeaderReady        bool                           `json:"leaderReady,omitempty"`
-	ReadyWorkers       int                            `json:"readyWorkers,omitempty"`
-	TotalWorkers       int                            `json:"totalWorkers,omitempty"`
-	Message            string                         `json:"message,omitempty"`
-	WorkerExposedPorts map[string][]ExposedPortStatus `json:"workerExposedPorts,omitempty"`
+	Phase          string `json:"phase,omitempty"` // Pending/Active/Degraded/Failed
+	TeamRoomID     string `json:"teamRoomID,omitempty"`
+	LeaderDMRoomID string `json:"leaderDMRoomID,omitempty"`
+	LeaderReady    bool   `json:"leaderReady,omitempty"`
+	ReadyWorkers   int    `json:"readyWorkers,omitempty"`
+	TotalWorkers   int    `json:"totalWorkers,omitempty"`
+	Message        string `json:"message,omitempty"`
+	// Members carries per-member state (one entry per leader + worker).
+	// TeamReconciler sorts the slice by Name for stable status patches and
+	// deterministic test assertions.
+	//
+	// This slice replaces the previous ObservedMembers / MemberSpecHashes /
+	// WorkerExposedPorts trio — each of which maintained its own stale-
+	// cleanup loop and contributed independent patch churn. Consolidating
+	// them here means adding a new per-member field costs one struct field
+	// (vs one status field + one map + one cleanup loop + one consumer).
+	Members []TeamMemberStatus `json:"members,omitempty"`
+}
+
+// MemberByName returns a pointer to the TeamMemberStatus entry for name,
+// or nil when no such member has been recorded. Callers that need to
+// create-on-absent must use the controller-package memberStatus helper
+// instead — we keep creation out of the API types to avoid accidental
+// mutation from API response codepaths.
+func (s *TeamStatus) MemberByName(name string) *TeamMemberStatus {
+	for i := range s.Members {
+		if s.Members[i].Name == name {
+			return &s.Members[i]
+		}
+	}
+	return nil
+}
+
+// TeamMemberStatus captures all per-member state for one team member
+// (leader or worker). Collects the fields that previously lived in the
+// scattered ObservedMembers / MemberSpecHashes / WorkerExposedPorts maps.
+type TeamMemberStatus struct {
+	// Name is the member's canonical name (matches Team.Spec.Leader.Name or
+	// Team.Spec.Workers[i].Name). Uniquely identifies the entry within
+	// Team.Status.Members.
+	Name string `json:"name"`
+	// Role is "team_leader" or "worker". Mirrors MemberContext.Role and the
+	// synthesized WorkerResponse.Role exposed via /api/v1/workers/<name>.
+	Role string `json:"role,omitempty"`
+	// RoomID is the member's personal communication room with the Manager —
+	// same semantic as Worker.Status.RoomID for standalone workers. Distinct
+	// from Team.Status.TeamRoomID (shared team room) and
+	// Team.Status.LeaderDMRoomID (Leader↔Admin DM). Consumers reading this
+	// include hiclaw CLI (`hiclaw get workers <name> -o json | jq .roomID`)
+	// and the Manager Agent when it needs to target a specific member.
+	RoomID string `json:"roomID,omitempty"`
+	// MatrixUserID is the member's Matrix MXID. Populated by
+	// ReconcileMemberInfra alongside RoomID.
+	MatrixUserID string `json:"matrixUserID,omitempty"`
+	// SpecHash is the fnv64a hash of hashMemberSourceSpec output at the last
+	// successful full-phase reconcile. Empty means "never fully reconciled";
+	// memberSpecChanged treats that as "not changed" so initial create is
+	// not preempted by a transient Delete (see memberSpecChanged doc in
+	// team_controller.go).
+	SpecHash string `json:"specHash,omitempty"`
+	// Observed flips to true the instant ReconcileMemberInfra succeeds and
+	// stays true even if later phases fail. It drives:
+	//   - IsUpdate selection in buildDesiredMembers (Refresh vs Provision)
+	//   - stale detection (members in Status.Members but no longer in Spec)
+	//
+	// Dropping back to false on post-infra failure would force a Provision
+	// retry that rotates the Matrix access token — triggering an openclaw
+	// gateway restart on every partial failure (see commit 7babeb8).
+	Observed bool `json:"observed,omitempty"`
+	// Ready mirrors backend.Status ∈ {Running, Ready}, re-evaluated by
+	// summarizeBackendReadiness on each reconcile pass. Aggregates into
+	// Team.Status.LeaderReady and Team.Status.ReadyWorkers.
+	Ready bool `json:"ready,omitempty"`
+	// ExposedPorts records the ports currently exposed via Higress for this
+	// member. Leader members never expose ports (this field stays nil).
+	ExposedPorts []ExposedPortStatus `json:"exposedPorts,omitempty"`
 }
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object

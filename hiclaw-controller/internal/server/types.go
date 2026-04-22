@@ -73,7 +73,7 @@ type CreateTeamRequest struct {
 	Description   string                     `json:"description,omitempty"`
 	Admin         *v1beta1.TeamAdminSpec     `json:"admin,omitempty"`
 	Leader        TeamLeaderRequest          `json:"leader"`
-	Workers       []TeamWorkerRequest        `json:"workers"`
+	Workers       []TeamWorkerRequest        `json:"workers,omitempty"`
 	PeerMentions  *bool                      `json:"peerMentions,omitempty"`
 	ChannelPolicy *v1beta1.ChannelPolicySpec `json:"channelPolicy,omitempty"`
 }

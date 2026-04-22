@@ -598,8 +598,13 @@ async def push_loop(sync: FileSync, check_interval: int = 5) -> None:
 
     Tracks last push timestamp and only triggers push_local when files with
     newer mtime are detected, similar to openclaw's find-newermt approach.
+
+    The first iteration is a full scan (``since=0``) so that files written
+    by bridge/bootstrap BEFORE push_loop was started (e.g. agent.json,
+    AGENTS.md, SOUL.md) still get uploaded. Otherwise their mtime is always
+    ≤ ``last_push_time`` and they'd never be pushed.
     """
-    last_push_time: float = time.time()
+    last_push_time: float = 0.0
 
     while True:
         await asyncio.sleep(check_interval)

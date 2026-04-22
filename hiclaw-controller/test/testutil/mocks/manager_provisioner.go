@@ -11,30 +11,34 @@ import (
 type MockManagerProvisioner struct {
 	mu sync.Mutex
 
-	ProvisionManagerFn           func(ctx context.Context, req service.ManagerProvisionRequest) (*service.ManagerProvisionResult, error)
-	DeprovisionManagerFn         func(ctx context.Context, name string, mcpServers []string) error
-	RefreshCredentialsFn         func(ctx context.Context, name string) (*service.RefreshResult, error)
-	RefreshManagerCredentialsFn  func(ctx context.Context, managerName string) (*service.RefreshResult, error)
-	EnsureManagerGatewayAuthFn   func(ctx context.Context, managerName, gatewayKey string) error
-	ReconcileMCPAuthFn           func(ctx context.Context, consumerName string, mcpServers []string) ([]string, error)
+	ProvisionManagerFn            func(ctx context.Context, req service.ManagerProvisionRequest) (*service.ManagerProvisionResult, error)
+	DeprovisionManagerFn          func(ctx context.Context, name string, mcpServers []string) error
+	RefreshCredentialsFn          func(ctx context.Context, name string) (*service.RefreshResult, error)
+	RefreshManagerCredentialsFn   func(ctx context.Context, managerName string) (*service.RefreshResult, error)
+	EnsureManagerGatewayAuthFn    func(ctx context.Context, managerName, gatewayKey string) error
+	ReconcileMCPAuthFn            func(ctx context.Context, consumerName string, mcpServers []string) ([]string, error)
 	EnsureManagerServiceAccountFn func(ctx context.Context, managerName string) error
 	DeleteManagerServiceAccountFn func(ctx context.Context, managerName string) error
-	DeleteCredentialsFn          func(ctx context.Context, name string) error
-	RequestManagerSATokenFn      func(ctx context.Context, managerName string) (string, error)
-	DeactivateMatrixUserFn       func(ctx context.Context, name string) error
+	DeleteCredentialsFn           func(ctx context.Context, name string) error
+	RequestManagerSATokenFn       func(ctx context.Context, managerName string) (string, error)
+	LeaveAllManagerRoomsFn        func(ctx context.Context, managerName string) error
+	DeleteManagerRoomFn           func(ctx context.Context, roomID string) error
+	DeleteManagerRoomAliasFn      func(ctx context.Context, managerName string) error
 
 	Calls struct {
-		ProvisionManager           []service.ManagerProvisionRequest
-		DeprovisionManager         []string
-		RefreshCredentials         []string
-		RefreshManagerCredentials  []string
-		EnsureManagerGatewayAuth   []string
-		ReconcileMCPAuth           []string
+		ProvisionManager            []service.ManagerProvisionRequest
+		DeprovisionManager          []string
+		RefreshCredentials          []string
+		RefreshManagerCredentials   []string
+		EnsureManagerGatewayAuth    []string
+		ReconcileMCPAuth            []string
 		EnsureManagerServiceAccount []string
 		DeleteManagerServiceAccount []string
-		DeleteCredentials          []string
-		RequestManagerSAToken      []string
-		DeactivateMatrixUser       []string
+		DeleteCredentials           []string
+		RequestManagerSAToken       []string
+		LeaveAllManagerRooms        []string
+		DeleteManagerRoom           []string
+		DeleteManagerRoomAlias      []string
 	}
 }
 
@@ -56,7 +60,9 @@ func (m *MockManagerProvisioner) Reset() {
 	m.DeleteManagerServiceAccountFn = nil
 	m.DeleteCredentialsFn = nil
 	m.RequestManagerSATokenFn = nil
-	m.DeactivateMatrixUserFn = nil
+	m.LeaveAllManagerRoomsFn = nil
+	m.DeleteManagerRoomFn = nil
+	m.DeleteManagerRoomAliasFn = nil
 }
 
 func (m *MockManagerProvisioner) ClearCalls() {
@@ -67,17 +73,19 @@ func (m *MockManagerProvisioner) ClearCalls() {
 
 func (m *MockManagerProvisioner) clearCallsLocked() {
 	m.Calls = struct {
-		ProvisionManager           []service.ManagerProvisionRequest
-		DeprovisionManager         []string
-		RefreshCredentials         []string
-		RefreshManagerCredentials  []string
-		EnsureManagerGatewayAuth   []string
-		ReconcileMCPAuth           []string
+		ProvisionManager            []service.ManagerProvisionRequest
+		DeprovisionManager          []string
+		RefreshCredentials          []string
+		RefreshManagerCredentials   []string
+		EnsureManagerGatewayAuth    []string
+		ReconcileMCPAuth            []string
 		EnsureManagerServiceAccount []string
 		DeleteManagerServiceAccount []string
-		DeleteCredentials          []string
-		RequestManagerSAToken      []string
-		DeactivateMatrixUser       []string
+		DeleteCredentials           []string
+		RequestManagerSAToken       []string
+		LeaveAllManagerRooms        []string
+		DeleteManagerRoom           []string
+		DeleteManagerRoomAlias      []string
 	}{}
 }
 
@@ -208,25 +216,49 @@ func (m *MockManagerProvisioner) RequestManagerSAToken(ctx context.Context, mana
 	return "mock-sa-token-manager", nil
 }
 
-func (m *MockManagerProvisioner) DeactivateMatrixUser(ctx context.Context, name string) error {
+func (m *MockManagerProvisioner) LeaveAllManagerRooms(ctx context.Context, managerName string) error {
 	m.mu.Lock()
-	m.Calls.DeactivateMatrixUser = append(m.Calls.DeactivateMatrixUser, name)
-	fn := m.DeactivateMatrixUserFn
+	m.Calls.LeaveAllManagerRooms = append(m.Calls.LeaveAllManagerRooms, managerName)
+	fn := m.LeaveAllManagerRoomsFn
 	m.mu.Unlock()
 	if fn != nil {
-		return fn(ctx, name)
+		return fn(ctx, managerName)
+	}
+	return nil
+}
+
+func (m *MockManagerProvisioner) DeleteManagerRoom(ctx context.Context, roomID string) error {
+	m.mu.Lock()
+	m.Calls.DeleteManagerRoom = append(m.Calls.DeleteManagerRoom, roomID)
+	fn := m.DeleteManagerRoomFn
+	m.mu.Unlock()
+	if fn != nil {
+		return fn(ctx, roomID)
+	}
+	return nil
+}
+
+func (m *MockManagerProvisioner) DeleteManagerRoomAlias(ctx context.Context, managerName string) error {
+	m.mu.Lock()
+	m.Calls.DeleteManagerRoomAlias = append(m.Calls.DeleteManagerRoomAlias, managerName)
+	fn := m.DeleteManagerRoomAliasFn
+	m.mu.Unlock()
+	if fn != nil {
+		return fn(ctx, managerName)
 	}
 	return nil
 }
 
 // CallCounts returns a snapshot of call counts safe for concurrent use.
-func (m *MockManagerProvisioner) CallCounts() (provision, deprovision, refreshManager, deactivate int) {
+// The last slot reports LeaveAllManagerRooms calls (which replaced the
+// legacy DeactivateMatrixUser accounting).
+func (m *MockManagerProvisioner) CallCounts() (provision, deprovision, refreshManager, leaveAllRooms int) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return len(m.Calls.ProvisionManager),
 		len(m.Calls.DeprovisionManager),
 		len(m.Calls.RefreshManagerCredentials),
-		len(m.Calls.DeactivateMatrixUser)
+		len(m.Calls.LeaveAllManagerRooms)
 }
 
 // ServiceAccountCallCounts returns EnsureManagerServiceAccount and DeleteManagerServiceAccount counts.
