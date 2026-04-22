@@ -357,6 +357,9 @@ func (m *Migrator) createTeamCR(ctx context.Context, dynClient dynamic.Interface
 			"model": wModel,
 		}
 		if wEntry, ok := workersReg[wName]; ok {
+			if wEntry.Runtime != "" {
+				wSpec["runtime"] = wEntry.Runtime
+			}
 			if len(wEntry.Skills) > 0 {
 				wSpec["skills"] = toInterfaceSlice(wEntry.Skills)
 			}
