@@ -181,7 +181,7 @@ function Get-Registry {
     }
 
     # Southeast Asia
-    if ($Timezone -match "^(Asia/Singapore|Asia/Bangkok|Asia/Jakarta|Asia/Kuala_Lumpur|Asia/Ho_Chi_Minh|Asia/Manila|Asia/Yangon)") {
+    if ($Timezone -match "^(Asia/Singapore|Asia/Bangkok|Asia/Jakarta|Asia/Makassar|Asia/Jayapura|Asia/Kuala_Lumpur|Asia/Ho_Chi_Minh|Asia/Manila|Asia/Yangon|Asia/Vientiane|Asia/Phnom_Penh|Asia/Pontianak|Asia/Ujung_Pandang)") {
         return "higress-registry.ap-southeast-7.cr.aliyuncs.com"
     }
 
@@ -254,6 +254,8 @@ $script:Messages = @{
     "install.reinstall.warn_workers" = @{ zh = "   - 所有 worker 容器"; en = "   - All worker containers" }
     "install.reinstall.warn_proxy" = @{ zh = "   - Docker API 代理容器: hiclaw-controller"; en = "   - Docker API proxy container: hiclaw-controller" }
     "install.reinstall.removing_proxy" = @{ zh = "正在移除 Docker API 代理容器: hiclaw-controller"; en = "Removing Docker API proxy container: hiclaw-controller" }
+    "install.reinstall.warn_network" = @{ zh = "   - Docker 网络: hiclaw-net"; en = "   - Docker network: hiclaw-net" }
+    "install.reinstall.removing_network" = @{ zh = "正在移除 Docker 网络: hiclaw-net"; en = "Removing Docker network: hiclaw-net" }
     "install.reinstall.confirm_type" = @{ zh = "请输入工作空间路径以确认删除（或按 Ctrl+C 取消）:"; en = "To confirm deletion, please type the workspace path:" }
     "install.reinstall.confirm_path" = @{ zh = "输入路径以确认（或按 Ctrl+C 取消）"; en = "Type the path to confirm (or press Ctrl+C to cancel)" }
     "install.reinstall.path_mismatch" = @{ zh = "路径不匹配。中止重装。输入: '{0}'，期望: '{1}'"; en = "Path mismatch. Aborting reinstall. Input: '{0}', Expected: '{1}'" }
@@ -707,18 +709,31 @@ function ConvertTo-DockerPath {
 function Wait-ManagerReady {
     param(
         [string]$Container = "hiclaw-manager",
-        [int]$Timeout = 300
+        [int]$Timeout = $(if ($env:HICLAW_READY_TIMEOUT) { [int]$env:HICLAW_READY_TIMEOUT } else { 300 })
     )
 
     $elapsed = 0
     Write-Log (Get-Msg "install.wait_ready" -f $Timeout)
 
+    $runtime = if ($script:config.MANAGER_RUNTIME) { $script:config.MANAGER_RUNTIME } else { "openclaw" }
+
     while ($elapsed -lt $Timeout) {
         try {
-            $result = docker exec $Container openclaw gateway health --json 2>$null
-            if ($result -match '"ok"') {
-                Write-Log (Get-Msg "install.wait_ready.ok")
-                return $true
+            switch ($runtime) {
+                "copaw" {
+                    $result = docker exec $Container curl -sf http://127.0.0.1:18799/api/agents 2>$null
+                    if ($result -match '"agents"') {
+                        Write-Log (Get-Msg "install.wait_ready.ok")
+                        return $true
+                    }
+                }
+                default {
+                    $result = docker exec $Container openclaw gateway health --json 2>$null
+                    if ($result -match '"ok"') {
+                        Write-Log (Get-Msg "install.wait_ready.ok")
+                        return $true
+                    }
+                }
             }
         } catch {
             # Ignore errors during polling
@@ -736,7 +751,7 @@ function Wait-ManagerReady {
 function Wait-MatrixReady {
     param(
         [string]$Container = "hiclaw-manager",
-        [int]$Timeout = 300
+        [int]$Timeout = $(if ($env:HICLAW_READY_TIMEOUT) { [int]$env:HICLAW_READY_TIMEOUT } else { 300 })
     )
 
     $elapsed = 0
@@ -817,13 +832,23 @@ HICLAW_REGISTRATION_TOKEN=$($Config.REGISTRATION_TOKEN)
 # GitHub (optional)
 HICLAW_GITHUB_TOKEN=$($Config.GITHUB_TOKEN)
 
-# Nacos defaults for Worker skill discovery / package import (optional)
+# Nacos package import defaults
+HICLAW_NACOS_REGISTRY_URI=$(if ($env:HICLAW_NACOS_REGISTRY_URI) { $env:HICLAW_NACOS_REGISTRY_URI } else { "nacos://market.hiclaw.io:80/public" })
 HICLAW_NACOS_USERNAME=$($env:HICLAW_NACOS_USERNAME)
 HICLAW_NACOS_PASSWORD=$($env:HICLAW_NACOS_PASSWORD)
 HICLAW_NACOS_TOKEN=$($env:HICLAW_NACOS_TOKEN)
 
 # Skills Registry (optional, default: nacos://market.hiclaw.io:80/public)
 HICLAW_SKILLS_API_URL=$(if ($Config.SKILLS_API_URL) { $Config.SKILLS_API_URL } else { "nacos://market.hiclaw.io:80/public" })
+
+# OpenClaw CMS plugin (optional)
+HICLAW_CMS_TRACES_ENABLED=$(if ($env:HICLAW_CMS_TRACES_ENABLED) { $env:HICLAW_CMS_TRACES_ENABLED } else { "false" })
+HICLAW_CMS_ENDPOINT=$($env:HICLAW_CMS_ENDPOINT)
+HICLAW_CMS_LICENSE_KEY=$($env:HICLAW_CMS_LICENSE_KEY)
+HICLAW_CMS_PROJECT=$($env:HICLAW_CMS_PROJECT)
+HICLAW_CMS_WORKSPACE=$($env:HICLAW_CMS_WORKSPACE)
+HICLAW_CMS_SERVICE_NAME=$(if ($env:HICLAW_CMS_SERVICE_NAME) { $env:HICLAW_CMS_SERVICE_NAME } else { "hiclaw-manager" })
+HICLAW_CMS_METRICS_ENABLED=$(if ($env:HICLAW_CMS_METRICS_ENABLED) { $env:HICLAW_CMS_METRICS_ENABLED } else { "false" })
 
 # Worker images (for direct container creation)
 HICLAW_WORKER_IMAGE=$($Config.WORKER_IMAGE)
@@ -847,6 +872,9 @@ HICLAW_PROXY_ALLOWED_REGISTRIES=$($Config.PROXY_ALLOWED_REGISTRIES)
 
 # Worker idle timeout in minutes (default: 720 = 12 hours)
 HICLAW_WORKER_IDLE_TIMEOUT=$($Config.WORKER_IDLE_TIMEOUT)
+
+# JVM Args for Higress Console
+JVM_ARGS=$($env:JVM_ARGS)
 
 # Higress WASM plugin image registry (auto-selected by timezone)
 HIGRESS_ADMIN_WASM_PLUGIN_IMAGE_REGISTRY=$($Config.REGISTRY)
@@ -1159,6 +1187,10 @@ function Test-ShouldSkipStep {
             if ($script:HICLAW_QUICKSTART -and -not $script:HICLAW_UPGRADE) { return $true }
             return $false
         }
+        "Step-ManagerRuntime" {
+            if ($script:HICLAW_NON_INTERACTIVE) { return $true }
+            return $false
+        }
         "Step-Hostshare" {
             if ($script:HICLAW_NON_INTERACTIVE) { return $true }
             if ($script:HICLAW_QUICKSTART) { return $true }
@@ -1350,6 +1382,7 @@ function Step-Existing {
             Write-Host "$($script:ESC)[31m$(Get-Msg 'install.reinstall.warn_workspace' -f $existingWorkspace)$($script:ESC)[0m"
             Write-Host "$($script:ESC)[31m$(Get-Msg 'install.reinstall.warn_workers')$($script:ESC)[0m"
             Write-Host "$($script:ESC)[31m$(Get-Msg 'install.reinstall.warn_proxy')$($script:ESC)[0m"
+            Write-Host "$($script:ESC)[31m$(Get-Msg 'install.reinstall.warn_network')$($script:ESC)[0m"
             Write-Host ""
             Write-Host "$($script:ESC)[31m$(Get-Msg 'install.reinstall.confirm_type')$($script:ESC)[0m"
             Write-Host "$($script:ESC)[31m  $existingWorkspace$($script:ESC)[0m"
@@ -1383,6 +1416,11 @@ function Step-Existing {
             if (Test-Path $script:HICLAW_ENV_FILE) {
                 Write-Log (Get-Msg "install.reinstall.removing_env" -f $script:HICLAW_ENV_FILE)
                 Remove-Item -Force $script:HICLAW_ENV_FILE
+            }
+            $existingNetwork = docker network ls --format "{{.Name}}" 2>$null | Select-String "^hiclaw-net$"
+            if ($existingNetwork) {
+                Write-Log (Get-Msg "install.reinstall.removing_network")
+                docker network rm hiclaw-net *>$null
             }
             Write-Log (Get-Msg "install.reinstall.cleanup_done")
         }
@@ -2199,9 +2237,11 @@ function Install-Manager {
                     --restart unless-stopped `
                     $proxyImage
                 $dockerArgs += @("-e", "HICLAW_CONTROLLER_URL=http://hiclaw-controller:8090")
+                $dockerArgs += @("-e", "HICLAW_CONTAINER_API=http://hiclaw-controller:8090")
                 Write-Log (Get-Msg "docker_proxy.selected_enabled")
             } else {
                 $dockerArgs += @("-v", "//var/run/docker.sock:/var/run/docker.sock")
+                $dockerArgs += @("--security-opt", "label=disable")
                 Write-Log (Get-Msg "install.socket_detected" -f "//var/run/docker.sock")
             }
         } else {
