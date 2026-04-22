@@ -334,40 +334,29 @@ else
             log_fail "Admin is NOT joined in worker room (auto-join may have failed)"
         fi
 
-        # Send Element-style mention. openclaw's monitor requires BOTH
-        # `m.mentions.user_ids` metadata AND a visible mention (matrix.to link
-        # in formatted_body OR a regex match on identity), otherwise the event
-        # is dropped with `reason: "no-mention"`. A worker created from a
-        # minimal SOUL has no custom identity regex, so the metadata-only
-        # form silently fails. Use the helper that mirrors what Element sends.
-        SEND_RESULT=$(matrix_send_mention_message \
+        # Send a mention and wait for the worker's reply with at-least-once
+        # semantics — the helper resends every 30s if no reply arrives, so it
+        # tolerates the worker's first-boot readiness gap (e.g. CoPaw's
+        # catch-up sync that drops messages before next_batch is persisted).
+        # We use a mention because openclaw's monitor requires both
+        # `m.mentions.user_ids` metadata AND a visible mention, otherwise the
+        # event is dropped with `reason: "no-mention"`.
+        log_info "Sending message and waiting for Worker reply (total timeout: 180s, resend every 30s)..."
+        REPLY=$(matrix_send_and_wait_for_reply \
             "${ADMIN_TOKEN}" \
             "${ROOM_ID}" \
             "${WORKER_MATRIX_ID}" \
-            "Hello! Please reply with a short greeting." 2>&1)
+            "Hello! Please reply with a short greeting." \
+            180 30)
 
-        SEND_EVENT=$(echo "${SEND_RESULT}" | jq -r '.event_id // empty' 2>/dev/null)
-        if [ -n "${SEND_EVENT}" ] && [ "${SEND_EVENT}" != "null" ]; then
-            log_pass "Admin sent message to Worker Room (event: ${SEND_EVENT})"
+        if [ -n "${REPLY}" ]; then
+            log_pass "Worker replied: $(echo "${REPLY}" | head -1 | cut -c1-80)..."
         else
-            log_fail "Failed to send message to Worker Room"
-            log_info "Send result: ${SEND_RESULT}"
-        fi
-
-        # Wait for Worker reply
-        if [ -n "${SEND_EVENT}" ]; then
-            log_info "Waiting for Worker reply (timeout: 120s)..."
-            REPLY=$(matrix_wait_for_reply "${ADMIN_TOKEN}" "${ROOM_ID}" "@${TEST_WORKER}" 120)
-
-            if [ -n "${REPLY}" ]; then
-                log_pass "Worker replied: $(echo "${REPLY}" | head -1 | cut -c1-80)..."
-            else
-                log_fail "Worker did not reply within 120s"
-                # Show recent messages for debugging
-                log_info "Recent messages in room:"
-                matrix_read_messages "${ADMIN_TOKEN}" "${ROOM_ID}" 5 2>/dev/null | \
-                    jq -r '.chunk[] | "\(.sender): \(.content.body // "(no body)")"' 2>/dev/null | head -5
-            fi
+            log_fail "Worker did not reply within 180s"
+            # Show recent messages for debugging
+            log_info "Recent messages in room:"
+            matrix_read_messages "${ADMIN_TOKEN}" "${ROOM_ID}" 5 2>/dev/null | \
+                jq -r '.chunk[] | "\(.sender): \(.content.body // "(no body)")"' 2>/dev/null | head -5
         fi
     else
         log_info "Skipping messaging (no admin token or room ID)"
