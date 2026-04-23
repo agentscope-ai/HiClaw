@@ -139,6 +139,15 @@ type Config struct {
 	// Element Web URL (for Gateway route initialization)
 	ElementWebURL string
 
+	// Locale used to render the first-boot Manager onboarding prompt
+	// (welcome message). Sourced from the install-time HICLAW_LANGUAGE
+	// (zh / en) and TZ env vars that the install script forwards into
+	// the controller container. Both are advisory hints — the controller
+	// only embeds them as plain text in the welcome prompt; the agent
+	// itself decides how to interpret them when greeting the admin.
+	UserLanguage string
+	UserTimezone string
+
 	// CMS observability
 	CMSTracesEnabled  bool
 	CMSMetricsEnabled bool
@@ -290,6 +299,9 @@ func LoadConfig() *Config {
 		LLMAPIKey:     os.Getenv("HICLAW_LLM_API_KEY"),
 		OpenAIBaseURL: os.Getenv("HICLAW_OPENAI_BASE_URL"),
 		ElementWebURL: os.Getenv("HICLAW_ELEMENT_WEB_URL"),
+
+		UserLanguage: envOrDefault("HICLAW_LANGUAGE", "zh"),
+		UserTimezone: envOrDefault("TZ", "Asia/Shanghai"),
 
 		CMSTracesEnabled:  envBool("HICLAW_CMS_TRACES_ENABLED"),
 		CMSMetricsEnabled: envBool("HICLAW_CMS_METRICS_ENABLED"),

@@ -24,6 +24,7 @@ type MockManagerProvisioner struct {
 	LeaveAllManagerRoomsFn        func(ctx context.Context, managerName string) error
 	DeleteManagerRoomFn           func(ctx context.Context, roomID string) error
 	DeleteManagerRoomAliasFn      func(ctx context.Context, managerName string) error
+	SendManagerWelcomeFn          func(ctx context.Context, req service.ManagerWelcomeRequest) (bool, error)
 
 	Calls struct {
 		ProvisionManager            []service.ManagerProvisionRequest
@@ -39,6 +40,7 @@ type MockManagerProvisioner struct {
 		LeaveAllManagerRooms        []string
 		DeleteManagerRoom           []string
 		DeleteManagerRoomAlias      []string
+		SendManagerWelcome          []service.ManagerWelcomeRequest
 	}
 }
 
@@ -63,6 +65,7 @@ func (m *MockManagerProvisioner) Reset() {
 	m.LeaveAllManagerRoomsFn = nil
 	m.DeleteManagerRoomFn = nil
 	m.DeleteManagerRoomAliasFn = nil
+	m.SendManagerWelcomeFn = nil
 }
 
 func (m *MockManagerProvisioner) ClearCalls() {
@@ -86,6 +89,7 @@ func (m *MockManagerProvisioner) clearCallsLocked() {
 		LeaveAllManagerRooms        []string
 		DeleteManagerRoom           []string
 		DeleteManagerRoomAlias      []string
+		SendManagerWelcome          []service.ManagerWelcomeRequest
 	}{}
 }
 
@@ -249,6 +253,17 @@ func (m *MockManagerProvisioner) DeleteManagerRoomAlias(ctx context.Context, man
 	return nil
 }
 
+func (m *MockManagerProvisioner) SendManagerWelcome(ctx context.Context, req service.ManagerWelcomeRequest) (bool, error) {
+	m.mu.Lock()
+	m.Calls.SendManagerWelcome = append(m.Calls.SendManagerWelcome, req)
+	fn := m.SendManagerWelcomeFn
+	m.mu.Unlock()
+	if fn != nil {
+		return fn(ctx, req)
+	}
+	return true, nil
+}
+
 // CallCounts returns a snapshot of call counts safe for concurrent use.
 // The last slot reports LeaveAllManagerRooms calls (which replaced the
 // legacy DeactivateMatrixUser accounting).
@@ -280,6 +295,34 @@ func (m *MockManagerProvisioner) CredentialCallCounts() (deleteCredentials, requ
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return len(m.Calls.DeleteCredentials), len(m.Calls.RequestManagerSAToken)
+}
+
+// WelcomeCallCount returns the number of SendManagerWelcome invocations
+// recorded so far. Safe for concurrent use.
+func (m *MockManagerProvisioner) WelcomeCallCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.Calls.SendManagerWelcome)
+}
+
+// WelcomeCallsSnapshot returns a defensive copy of the recorded
+// SendManagerWelcome requests so test assertions can read fields
+// without holding the mock's lock.
+func (m *MockManagerProvisioner) WelcomeCallsSnapshot() []service.ManagerWelcomeRequest {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]service.ManagerWelcomeRequest, len(m.Calls.SendManagerWelcome))
+	copy(out, m.Calls.SendManagerWelcome)
+	return out
+}
+
+// ClearWelcomeCalls drops the recorded SendManagerWelcome requests
+// without resetting other state. Used by tests that want to assert
+// "no further welcome calls happen" after some controller event.
+func (m *MockManagerProvisioner) ClearWelcomeCalls() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.Calls.SendManagerWelcome = nil
 }
 
 var _ service.ManagerProvisioner = (*MockManagerProvisioner)(nil)

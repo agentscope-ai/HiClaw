@@ -74,6 +74,11 @@ type ManagerProvisioner interface {
 	// for the given room. See DeleteWorkerRoom.
 	DeleteManagerRoom(ctx context.Context, roomID string) error
 	DeleteManagerRoomAlias(ctx context.Context, managerName string) error
+	// SendManagerWelcome delivers the first-boot onboarding prompt to the
+	// Manager's Admin DM room. Returns (sent, err) — when sent==false
+	// without an error the manager has not joined the room yet and the
+	// caller should requeue.
+	SendManagerWelcome(ctx context.Context, req ManagerWelcomeRequest) (bool, error)
 }
 
 // ManagerDeployer defines the deployment operations used by ManagerReconciler.

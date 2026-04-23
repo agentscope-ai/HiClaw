@@ -909,6 +909,102 @@ func (p *Provisioner) ProvisionManager(ctx context.Context, req ManagerProvision
 	}, nil
 }
 
+// ManagerWelcomeRequest carries the locale hints that the controller
+// renders into the first-boot onboarding prompt sent to a freshly
+// provisioned Manager Agent.
+type ManagerWelcomeRequest struct {
+	// RoomID is the Admin DM room created by ProvisionManager (Step 4).
+	RoomID string
+	// Language is the install-time HICLAW_LANGUAGE selection ("zh" / "en").
+	// Embedded as plain text in the prompt; the agent decides how to apply.
+	Language string
+	// Timezone is the install-time TZ env (IANA identifier, e.g.
+	// "Asia/Shanghai"). Embedded as plain text so the agent can infer
+	// the admin's likely region and offer additional language options.
+	Timezone string
+}
+
+// SendManagerWelcome delivers the first-boot onboarding prompt that asks
+// the Manager Agent to greet the admin and collect identity preferences
+// (name / language / communication style). It is the new-architecture
+// replacement for the legacy in-container welcome flow that lived in
+// `start-manager-agent.sh` (lines 535-608) and only ran when
+// HICLAW_RUNTIME != "k8s".
+//
+// Idempotency is the caller's responsibility — the controller guards
+// re-send via Manager.Status.WelcomeSent. This method only checks that
+// the Manager Matrix user has joined the room before sending; if not,
+// it returns (sent=false, err=nil) so the reconcile loop can requeue.
+//
+// Returns:
+//   - (true, nil)  — message was successfully delivered.
+//   - (false, nil) — manager not yet joined; caller should requeue.
+//   - (false, err) — unrecoverable error (admin login / Matrix API).
+func (p *Provisioner) SendManagerWelcome(ctx context.Context, req ManagerWelcomeRequest) (bool, error) {
+	if req.RoomID == "" {
+		return false, fmt.Errorf("welcome: empty RoomID")
+	}
+	managerMatrixID := p.matrix.UserID("manager")
+
+	members, err := p.matrix.ListRoomMembers(ctx, req.RoomID)
+	if err != nil {
+		return false, fmt.Errorf("welcome: list members of %s: %w", req.RoomID, err)
+	}
+	managerJoined := false
+	for _, m := range members {
+		if m.UserID == managerMatrixID && m.Membership == "join" {
+			managerJoined = true
+			break
+		}
+	}
+	if !managerJoined {
+		return false, nil
+	}
+
+	language := req.Language
+	if language == "" {
+		language = "zh"
+	}
+	timezone := req.Timezone
+	if timezone == "" {
+		timezone = "Asia/Shanghai"
+	}
+
+	body := renderManagerWelcomeBody(language, timezone)
+	if err := p.matrix.SendMessageAsAdmin(ctx, req.RoomID, body); err != nil {
+		return false, fmt.Errorf("welcome: send to %s: %w", req.RoomID, err)
+	}
+	return true, nil
+}
+
+// renderManagerWelcomeBody returns the verbatim onboarding prompt the
+// Manager Agent receives on first boot. Kept identical in spirit to the
+// legacy `_welcome_msg` heredoc in `manager/scripts/init/start-manager-agent.sh`
+// so the resulting agent behavior (greeting + 4-question Q&A + write
+// SOUL.md + touch ~/soul-configured) is unchanged across architectures.
+func renderManagerWelcomeBody(language, timezone string) string {
+	return fmt.Sprintf(`This is an automated message from the HiClaw setup. This is a fresh installation.
+
+--- Installation Context ---
+User Language: %s  (zh = Chinese, en = English)
+User Timezone: %s  (IANA timezone identifier)
+---
+
+You are an AI agent that manages a team of worker agents. Your identity and personality have not been configured yet — the human admin is about to meet you for the first time.
+
+Please begin the onboarding conversation:
+
+1. Greet the admin warmly and briefly describe what you can do (coordinate workers, manage tasks, run multi-agent projects)
+2. The user has selected "%s" as their preferred language during installation. Use this language for your greeting and all subsequent communication.
+3. The user's timezone is %s. Based on this timezone, you may infer their likely region and suggest additional language options.
+4. Ask them: a) What would they like to call you? b) Communication style preference? c) Any behavior guidelines? d) Confirm default language
+5. After they reply, write their preferences to ~/SOUL.md
+6. Confirm what you wrote, and ask if they would like to adjust anything
+7. Once confirmed, run: touch ~/soul-configured
+
+The human admin will start chatting shortly.`, language, timezone, language, timezone)
+}
+
 // DeprovisionManager cleans up infrastructure for a deleted Manager.
 func (p *Provisioner) DeprovisionManager(ctx context.Context, name string, mcpServers []string) error {
 	logger := log.FromContext(ctx)

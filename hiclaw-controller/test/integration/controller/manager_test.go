@@ -5,6 +5,7 @@ package controller_test
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -851,6 +852,160 @@ func TestManagerUpdate_MCPServersChange_TriggersReauth(t *testing.T) {
 	mcpCount := mockMgrProv.MCPAuthCallCount()
 	if mcpCount == 0 {
 		t.Error("ReconcileMCPAuth should have been called after McpServers change")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Manager Welcome (first-boot onboarding) tests
+// ---------------------------------------------------------------------------
+
+// TestManagerWelcome_HappyPath_SendsOnce verifies that once the manager
+// container reports Running, the controller calls SendManagerWelcome
+// exactly once and persists Status.WelcomeSent=true. Forwarded
+// language/timezone must reflect the values wired from controller config
+// (see suite_test.go: en / America/Los_Angeles).
+func TestManagerWelcome_HappyPath_SendsOnce(t *testing.T) {
+	resetManagerMocks()
+
+	mgrName := fixtures.UniqueName("test-mgr-welcome-happy")
+	mgr := fixtures.NewTestManager(mgrName)
+
+	if err := k8sClient.Create(ctx, mgr); err != nil {
+		t.Fatalf("failed to create Manager CR: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = k8sClient.Delete(ctx, mgr)
+	})
+
+	waitForManagerRunning(t, mgr)
+
+	assertEventually(t, func() error {
+		var m v1beta1.Manager
+		if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(mgr), &m); err != nil {
+			return err
+		}
+		if !m.Status.WelcomeSent {
+			return fmt.Errorf("Status.WelcomeSent=false, want true after Running")
+		}
+		return nil
+	})
+
+	calls := mockMgrProv.WelcomeCallsSnapshot()
+	if len(calls) != 1 {
+		t.Fatalf("SendManagerWelcome called %d times, want exactly 1", len(calls))
+	}
+	got := calls[0]
+	if got.Language != "en" {
+		t.Errorf("welcome request Language=%q, want %q (forwarded from controller config)", got.Language, "en")
+	}
+	if got.Timezone != "America/Los_Angeles" {
+		t.Errorf("welcome request Timezone=%q, want %q (forwarded from controller config)", got.Timezone, "America/Los_Angeles")
+	}
+	if got.RoomID == "" {
+		t.Error("welcome request RoomID is empty, want the provisioned admin DM room")
+	}
+}
+
+// TestManagerWelcome_Idempotent_NoResendOnReconcile verifies the
+// WelcomeSent guard: after the first send, subsequent reconciles must
+// NOT call SendManagerWelcome again — even if the manager container
+// restarts or a spec change re-triggers the loop.
+func TestManagerWelcome_Idempotent_NoResendOnReconcile(t *testing.T) {
+	resetManagerMocks()
+
+	mgrName := fixtures.UniqueName("test-mgr-welcome-idemp")
+	mgr := fixtures.NewTestManager(mgrName)
+
+	if err := k8sClient.Create(ctx, mgr); err != nil {
+		t.Fatalf("failed to create Manager CR: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = k8sClient.Delete(ctx, mgr)
+	})
+
+	waitForManagerRunning(t, mgr)
+	assertEventually(t, func() error {
+		var m v1beta1.Manager
+		if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(mgr), &m); err != nil {
+			return err
+		}
+		if !m.Status.WelcomeSent {
+			return fmt.Errorf("WelcomeSent not yet true")
+		}
+		return nil
+	})
+
+	mockMgrProv.ClearWelcomeCalls()
+
+	triggerManagerReconcile(t, mgr)
+
+	// Wait for at least one full reconcile to happen by observing
+	// RefreshManagerCredentials being called (it runs on every Running
+	// reconcile path).
+	assertEventually(t, func() error {
+		_, _, refreshCount, _ := mockMgrProv.CallCounts()
+		if refreshCount == 0 {
+			return fmt.Errorf("no reconcile observed yet")
+		}
+		return nil
+	})
+
+	if resends := mockMgrProv.WelcomeCallCount(); resends != 0 {
+		t.Errorf("SendManagerWelcome called %d times after WelcomeSent=true, want 0 (must be idempotent)", resends)
+	}
+}
+
+// TestManagerWelcome_NotJoinedYet_RequeuesUntilJoined exercises the
+// short-requeue branch: SendManagerWelcome reports (false, nil) on the
+// first two attempts (manager hasn't joined the DM room yet), then
+// (true, nil). Status.WelcomeSent must only flip after the successful
+// call, and the controller must not consume the failure as fatal.
+func TestManagerWelcome_NotJoinedYet_RequeuesUntilJoined(t *testing.T) {
+	resetManagerMocks()
+
+	var attempts atomic.Int32
+	mockMgrProv.SendManagerWelcomeFn = func(_ context.Context, _ service.ManagerWelcomeRequest) (bool, error) {
+		n := attempts.Add(1)
+		if n < 3 {
+			return false, nil
+		}
+		return true, nil
+	}
+
+	mgrName := fixtures.UniqueName("test-mgr-welcome-wait")
+	mgr := fixtures.NewTestManager(mgrName)
+
+	if err := k8sClient.Create(ctx, mgr); err != nil {
+		t.Fatalf("failed to create Manager CR: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = k8sClient.Delete(ctx, mgr)
+	})
+
+	waitForManagerRunning(t, mgr)
+
+	assertEventually(t, func() error {
+		var m v1beta1.Manager
+		if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(mgr), &m); err != nil {
+			return err
+		}
+		if !m.Status.WelcomeSent {
+			return fmt.Errorf("WelcomeSent=false, attempts=%d (want true after >=3 attempts)", attempts.Load())
+		}
+		return nil
+	})
+
+	if got := attempts.Load(); got < 3 {
+		t.Errorf("SendManagerWelcome called %d times, want >=3 (initial failure + retries)", got)
+	}
+
+	// Status must remain Running — the requeue path is non-fatal.
+	var m v1beta1.Manager
+	if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(mgr), &m); err != nil {
+		t.Fatalf("failed to get Manager: %v", err)
+	}
+	if m.Status.Phase != "Running" {
+		t.Errorf("Phase=%q, want Running (welcome requeue must not flip to Failed)", m.Status.Phase)
 	}
 }
 

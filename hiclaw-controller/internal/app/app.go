@@ -452,6 +452,8 @@ func (a *App) initReconcilers(_ context.Context) error {
 		ResourcePrefix:   resourcePrefix,
 		ManagerResources: a.cfg.ManagerResources(),
 		DefaultRuntime:   a.cfg.ManagerRuntime,
+		UserLanguage:     a.cfg.UserLanguage,
+		UserTimezone:     a.cfg.UserTimezone,
 	}
 	if a.cfg.KubeMode == "embedded" {
 		mgrReconciler.EmbeddedConfig = &controller.ManagerEmbeddedConfig{

@@ -365,6 +365,15 @@ type ManagerStatus struct {
 	ContainerState     string `json:"containerState,omitempty"`
 	Version            string `json:"version,omitempty"`
 	Message            string `json:"message,omitempty"`
+
+	// WelcomeSent records whether the controller has already delivered the
+	// first-boot onboarding prompt to the Admin DM room. Used as the
+	// idempotency guard for reconcileManagerWelcome — once true the
+	// controller will not re-send even if the manager container is later
+	// recreated. The Manager Agent's own `~/soul-configured` file remains
+	// the orthogonal marker that the agent has finished the resulting
+	// onboarding Q&A.
+	WelcomeSent bool `json:"welcomeSent,omitempty"`
 }
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
