@@ -96,5 +96,16 @@ EXPOSE 8080 8001 8090 9001
 # /data: MinIO object storage, kine SQLite, worker credentials
 VOLUME ["/data"]
 
+# Default endpoint + token-file for the bundled `hiclaw` CLI when invoked via
+# `docker exec hiclaw-controller hiclaw …`. The controller process mints a
+# long-lived admin SA token at startup (see internal/app.bootstrapAdminCLIToken)
+# and writes it to HICLAW_AUTH_TOKEN_FILE; the CLI's discoverToken() then
+# auto-loads it so operators don't need to pass `-e HICLAW_AUTH_TOKEN=…` on
+# every exec. Both vars are container-local defaults — `docker exec -e` still
+# overrides them, and neither supervisord nor the controller binary itself
+# read them.
+ENV HICLAW_CONTROLLER_URL=http://127.0.0.1:8090 \
+    HICLAW_AUTH_TOKEN_FILE=/var/run/hiclaw/cli-token
+
 # ---- Start ----
 ENTRYPOINT ["supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]

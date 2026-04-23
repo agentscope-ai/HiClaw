@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
+	"path/filepath"
 
 	v1beta1 "github.com/hiclaw/hiclaw-controller/api/v1beta1"
 	"github.com/hiclaw/hiclaw-controller/internal/accessresolver"
@@ -147,6 +149,19 @@ func (a *App) Start(ctx context.Context) error {
 		}
 		if err := init.Run(ctx); err != nil {
 			logger.Error(err, "cluster initialization failed (non-fatal, continuing)")
+		}
+
+		// Mint a long-lived admin SA token and write it to a known location
+		// so the bundled `hiclaw` CLI inside this container can authenticate
+		// against the controller's HTTP API out of the box (see Dockerfile
+		// ENV HICLAW_AUTH_TOKEN_FILE / HICLAW_CONTROLLER_URL). Embedded mode
+		// only — incluster controllers typically lack the RBAC to mint
+		// arbitrary SA tokens, and operators there have kubectl + their own
+		// credentials anyway.
+		if a.cfg.KubeMode == "embedded" {
+			if err := bootstrapAdminCLIToken(ctx, a.provisioner); err != nil {
+				logger.Error(err, "admin CLI token bootstrap failed (non-fatal, in-container `hiclaw` CLI may return 401 until next reconcile)")
+			}
 		}
 
 		logger.Info("hiclaw-controller ready",
@@ -596,6 +611,56 @@ func (a *App) startInCluster() (*rest.Config, error) {
 		return nil, fmt.Errorf("create controller manager: %w", err)
 	}
 	return restCfg, nil
+}
+
+// =========================================================================
+// In-container `hiclaw` CLI bootstrap (embedded mode only)
+// =========================================================================
+
+// adminCLITokenPath is the well-known location where the embedded controller
+// drops a long-lived admin SA token at startup. The path is also baked into
+// the controller image as a default value of the `HICLAW_AUTH_TOKEN_FILE`
+// env var (see Dockerfile / Dockerfile.embedded), so the bundled `hiclaw`
+// CLI auto-discovers it without per-call flags. Lives under /var/run because:
+// (a) it's per-process-instance state that should not survive container
+// removal, and (b) /var/run is tmpfs on most container runtimes which gives
+// us free token rotation on every container start.
+const adminCLITokenPath = "/var/run/hiclaw/cli-token"
+
+// bootstrapAdminCLIToken ensures the admin ServiceAccount exists, mints a
+// fresh long-lived token for it, and writes it to adminCLITokenPath so the
+// in-container `hiclaw` CLI can authenticate without the operator having to
+// pass `-e HICLAW_AUTH_TOKEN=…` on every `docker exec`.
+//
+// Failures here are surfaced to the caller but treated as non-fatal — the
+// controller is still fully functional, only the in-container CLI sugar is
+// degraded (operator can still hit the HTTP API directly with their own
+// SA token, or re-run after a controller restart).
+func bootstrapAdminCLIToken(ctx context.Context, prov *service.Provisioner) error {
+	if prov == nil {
+		return nil
+	}
+	if err := prov.EnsureAdminServiceAccount(ctx); err != nil {
+		return fmt.Errorf("ensure admin SA: %w", err)
+	}
+	token, err := prov.RequestAdminSAToken(ctx)
+	if err != nil {
+		return fmt.Errorf("mint admin SA token: %w", err)
+	}
+	if token == "" {
+		// k8sClient was nil — embedded mode without an apiserver should
+		// never happen in practice, but this keeps the function safe to
+		// call from unit-test wiring.
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(adminCLITokenPath), 0700); err != nil {
+		return fmt.Errorf("mkdir %s: %w", filepath.Dir(adminCLITokenPath), err)
+	}
+	if err := os.WriteFile(adminCLITokenPath, []byte(token+"\n"), 0600); err != nil {
+		return fmt.Errorf("write %s: %w", adminCLITokenPath, err)
+	}
+	ctrl.Log.WithName("app").Info("admin CLI token written", "path", adminCLITokenPath)
+	return nil
 }
 
 // =========================================================================
