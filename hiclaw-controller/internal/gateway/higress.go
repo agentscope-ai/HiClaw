@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"math/rand"
 	"net/http"
 	"strings"
@@ -26,12 +27,6 @@ type HigressClient struct {
 func NewHigressClient(cfg Config, httpClient *http.Client) *HigressClient {
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: 30 * time.Second}
-	}
-	if cfg.AdminUser == "" {
-		cfg.AdminUser = "admin"
-	}
-	if cfg.AdminPassword == "" {
-		cfg.AdminPassword = "admin"
 	}
 	return &HigressClient{config: cfg, http: httpClient}
 }
@@ -206,6 +201,13 @@ func (c *HigressClient) modifyAIRoutes(ctx context.Context, consumerName string,
 
 	const maxRetries = 5
 
+	var firstErr error
+	recordErr := func(e error) {
+		if firstErr == nil {
+			firstErr = e
+		}
+	}
+
 	for _, raw := range listResp.Data {
 		var routeInfo struct {
 			Name string `json:"name"`
@@ -214,6 +216,7 @@ func (c *HigressClient) modifyAIRoutes(ctx context.Context, consumerName string,
 			continue
 		}
 
+		var lastErr error
 		for attempt := 0; attempt < maxRetries; attempt++ {
 			if err := ctx.Err(); err != nil {
 				return err
@@ -221,7 +224,12 @@ func (c *HigressClient) modifyAIRoutes(ctx context.Context, consumerName string,
 
 			routeBody, sc, err := c.doJSON(ctx, http.MethodGet,
 				"/v1/ai/routes/"+routeInfo.Name, nil)
-			if err != nil || sc != http.StatusOK {
+			if err != nil {
+				lastErr = fmt.Errorf("get AI route %s: %w", routeInfo.Name, err)
+				break
+			}
+			if sc != http.StatusOK {
+				lastErr = fmt.Errorf("get AI route %s: HTTP %d", routeInfo.Name, sc)
 				break
 			}
 
@@ -229,6 +237,7 @@ func (c *HigressClient) modifyAIRoutes(ctx context.Context, consumerName string,
 				Data json.RawMessage `json:"data"`
 			}
 			if err := json.Unmarshal(routeBody, &routeResp); err != nil {
+				lastErr = fmt.Errorf("decode AI route %s envelope: %w", routeInfo.Name, err)
 				break
 			}
 			routeData := routeResp.Data
@@ -238,6 +247,7 @@ func (c *HigressClient) modifyAIRoutes(ctx context.Context, consumerName string,
 
 			var route map[string]interface{}
 			if err := json.Unmarshal(routeData, &route); err != nil {
+				lastErr = fmt.Errorf("decode AI route %s: %w", routeInfo.Name, err)
 				break
 			}
 
@@ -251,8 +261,6 @@ func (c *HigressClient) modifyAIRoutes(ctx context.Context, consumerName string,
 			if add {
 				if !containsString(consumers, consumerName) {
 					consumers = append(consumers, consumerName)
-					authConfig["allowedConsumers"] = consumers
-					route["authConfig"] = authConfig
 				}
 				// Always PUT to trigger WASM key-auth resync — the consumer
 				// may have been created after the route was last written,
@@ -268,20 +276,27 @@ func (c *HigressClient) modifyAIRoutes(ctx context.Context, consumerName string,
 			_, sc, err = c.doJSON(ctx, http.MethodPut,
 				"/v1/ai/routes/"+routeInfo.Name, route)
 			if err != nil {
+				lastErr = fmt.Errorf("put AI route %s: %w", routeInfo.Name, err)
 				break
 			}
 			if sc == http.StatusOK {
+				lastErr = nil
 				break
 			}
 			if sc == http.StatusConflict {
+				lastErr = fmt.Errorf("put AI route %s: HTTP 409 (conflict)", routeInfo.Name)
 				time.Sleep(time.Duration(rand.Intn(3)+1) * time.Second)
 				continue
 			}
+			lastErr = fmt.Errorf("put AI route %s: HTTP %d", routeInfo.Name, sc)
 			break
+		}
+		if lastErr != nil {
+			recordErr(lastErr)
 		}
 	}
 
-	return nil
+	return firstErr
 }
 
 func (c *HigressClient) AuthorizeMCPServers(ctx context.Context, consumerName string, mcpServers []string) ([]string, error) {
@@ -447,34 +462,75 @@ func (c *HigressClient) EnsureAIProvider(ctx context.Context, req AIProviderRequ
 	return fmt.Errorf("ensure AI provider %s: HTTP %d", req.Name, sc)
 }
 
+// EnsureAIRoute creates the AI route skeleton (name, path, upstream, key-auth
+// framework) only if it does not already exist. It deliberately never writes
+// authConfig.allowedConsumers: that field is owned by Manager/Worker
+// reconcilers via AuthorizeAIRoutes / DeauthorizeAIRoutes. Re-running this
+// function on an already-provisioned cluster is a true no-op and will never
+// touch the authorization state, eliminating the restart-time race that
+// previously reset allowedConsumers and produced 403s.
 func (c *HigressClient) EnsureAIRoute(ctx context.Context, req AIRouteRequest) error {
-	body := map[string]interface{}{
-		"name":    req.Name,
-		"domains": []string{},
-		"pathPredicate": map[string]interface{}{
-			"matchType":     "PRE",
-			"matchValue":    req.PathPrefix,
-			"caseSensitive": false,
-		},
-		"upstreams": []map[string]interface{}{
-			{"provider": req.Provider, "weight": 100, "modelMapping": map[string]interface{}{}},
-		},
-	}
-	// Always enable key-auth on AI routes so the auth framework is in place.
-	// Consumers are bound later via AuthorizeAIRoutes after they are created.
-	body["authConfig"] = map[string]interface{}{
-		"enabled":                true,
-		"allowedCredentialTypes": []string{"key-auth"},
-		"allowedConsumers":       req.AllowedConsumers,
-	}
-	_, sc, err := c.doJSON(ctx, http.MethodPost, "/v1/ai/routes", body)
+	getBody, sc, err := c.doJSON(ctx, http.MethodGet, "/v1/ai/routes/"+req.Name, nil)
 	if err != nil {
-		return fmt.Errorf("ensure AI route %s: %w", req.Name, err)
+		return fmt.Errorf("ensure AI route %s: check existence: %w", req.Name, err)
 	}
-	if sc == 200 || sc == 201 || sc == 409 {
+
+	switch sc {
+	case http.StatusOK:
+		var resp struct {
+			Data map[string]interface{} `json:"data"`
+		}
+		if jerr := json.Unmarshal(getBody, &resp); jerr == nil && resp.Data != nil {
+			existingPath := ""
+			if p, ok := resp.Data["pathPredicate"].(map[string]interface{}); ok {
+				existingPath, _ = p["matchValue"].(string)
+			}
+			existingProvider := ""
+			if ups, ok := resp.Data["upstreams"].([]interface{}); ok && len(ups) > 0 {
+				if u0, ok := ups[0].(map[string]interface{}); ok {
+					existingProvider, _ = u0["provider"].(string)
+				}
+			}
+			if existingPath != req.PathPrefix || existingProvider != req.Provider {
+				log.Printf("[WARN] AI route %s already exists with divergent skeleton (path=%q provider=%q, want path=%q provider=%q); leaving auth state untouched",
+					req.Name, existingPath, existingProvider, req.PathPrefix, req.Provider)
+			}
+		}
 		return nil
+
+	case http.StatusNotFound:
+		body := map[string]interface{}{
+			"name":    req.Name,
+			"domains": []string{},
+			"pathPredicate": map[string]interface{}{
+				"matchType":     "PRE",
+				"matchValue":    req.PathPrefix,
+				"caseSensitive": false,
+			},
+			"upstreams": []map[string]interface{}{
+				{"provider": req.Provider, "weight": 100, "modelMapping": map[string]interface{}{}},
+			},
+			// Enable the key-auth framework, but deliberately omit
+			// allowedConsumers: Higress defaults it to [] and Manager/Worker
+			// reconcilers will populate it via AuthorizeAIRoutes once their
+			// consumers exist. We never write this field here.
+			"authConfig": map[string]interface{}{
+				"enabled":                true,
+				"allowedCredentialTypes": []string{"key-auth"},
+			},
+		}
+		_, psc, perr := c.doJSON(ctx, http.MethodPost, "/v1/ai/routes", body)
+		if perr != nil {
+			return fmt.Errorf("ensure AI route %s: create: %w", req.Name, perr)
+		}
+		if psc == http.StatusOK || psc == http.StatusCreated || psc == http.StatusConflict {
+			return nil
+		}
+		return fmt.Errorf("ensure AI route %s: create: HTTP %d", req.Name, psc)
+
+	default:
+		return fmt.Errorf("ensure AI route %s: check existence: HTTP %d", req.Name, sc)
 	}
-	return fmt.Errorf("ensure AI route %s: HTTP %d", req.Name, sc)
 }
 
 func (c *HigressClient) Healthy(ctx context.Context) error {

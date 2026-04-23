@@ -210,6 +210,11 @@ type ManagerResponse struct {
 	RoomID       string `json:"roomID,omitempty"`
 	Version      string `json:"version,omitempty"`
 	Message      string `json:"message,omitempty"`
+	// WelcomeSent mirrors ManagerStatus.WelcomeSent so installers / CLI can
+	// poll for first-boot onboarding completion (DM joined + LLM auth ready
+	// + welcome prompt actually delivered). Always present (false until set)
+	// so the install script can rely on a stable JSON shape.
+	WelcomeSent bool `json:"welcomeSent"`
 }
 
 type ManagerListResponse struct {

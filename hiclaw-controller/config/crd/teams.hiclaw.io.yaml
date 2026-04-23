@@ -99,6 +99,40 @@ spec:
                           type: array
                           items:
                             type: string
+                    accessEntries:
+                      type: array
+                      description: >
+                        Cloud credential scope declarations for the team leader.
+                        Only honored when the controller runs with a credential-
+                        provider sidecar. Ignored in local higress+minio
+                        deployments. When empty the controller applies team-
+                        member defaults (agents/<name>/* + shared/* +
+                        teams/<team>/* on the configured bucket). Leader and
+                        team workers share the same default scope.
+                      items:
+                        type: object
+                        required: [service]
+                        properties:
+                          service:
+                            type: string
+                            enum: [object-storage, ai-gateway]
+                            description: Logical cloud service identifier
+                          permissions:
+                            type: array
+                            items:
+                              type: string
+                              enum: [read, write, list, delete]
+                          scope:
+                            type: object
+                            description: >
+                              Schema-less scope blob. For object-storage use keys
+                              bucketRef|bucket and prefixes (list of strings). For
+                              ai-gateway use keys gatewayRef|gatewayId and
+                              resources (list of strings). Template vars
+                              ${self.name} / ${self.kind} / ${self.namespace} /
+                              ${self.team} are expanded by the controller before
+                              the request reaches the provider.
+                            x-kubernetes-preserve-unknown-fields: true
                 workers:
                   type: array
                   items:
@@ -166,6 +200,40 @@ spec:
                         type: string
                         enum: [Running, Sleeping, Stopped]
                         description: "Desired lifecycle state for this team worker (default: Running)"
+                      accessEntries:
+                        type: array
+                        description: >
+                          Cloud credential scope declarations for this team
+                          worker. Only honored when the controller runs with a
+                          credential-provider sidecar. Ignored in local higress+
+                          minio deployments. When empty the controller applies
+                          team-member defaults (agents/<name>/* + shared/* +
+                          teams/<team>/* on the configured bucket).
+                        items:
+                          type: object
+                          required: [service]
+                          properties:
+                            service:
+                              type: string
+                              enum: [object-storage, ai-gateway]
+                              description: Logical cloud service identifier
+                            permissions:
+                              type: array
+                              items:
+                                type: string
+                                enum: [read, write, list, delete]
+                            scope:
+                              type: object
+                              description: >
+                                Schema-less scope blob. For object-storage use
+                                keys bucketRef|bucket and prefixes (list of
+                                strings). For ai-gateway use keys gatewayRef|
+                                gatewayId and resources (list of strings).
+                                Template vars ${self.name} / ${self.kind} /
+                                ${self.namespace} / ${self.team} are expanded by
+                                the controller before the request reaches the
+                                provider.
+                              x-kubernetes-preserve-unknown-fields: true
             status:
               type: object
               properties:

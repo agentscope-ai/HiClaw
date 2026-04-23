@@ -160,6 +160,7 @@ func (r *ManagerReconciler) createManagerContainer(ctx context.Context, s *manag
 			"app":               r.ResourcePrefix.ManagerAppLabel(),
 			"hiclaw.io/manager": m.Name,
 		},
+		Owner: m,
 	}
 	if wb.Name() != "k8s" {
 		token, err := r.Provisioner.RequestManagerSAToken(ctx, m.Name)

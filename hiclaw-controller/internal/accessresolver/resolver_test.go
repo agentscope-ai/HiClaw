@@ -52,17 +52,50 @@ func TestResolveWorker_DefaultEntries(t *testing.T) {
 	if session != "hiclaw-worker-alice" {
 		t.Fatalf("session = %q", session)
 	}
-	if len(entries) != 2 {
-		t.Fatalf("expected 2 default entries, got %d", len(entries))
+	// Standalone workers now default to a single object-storage entry
+	// that folds agents/<name>/* + shared/* together, mirroring the
+	// embedded MinIO policy which grants both prefixes RW.
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 default entry, got %d", len(entries))
 	}
-	for _, e := range entries {
-		if e.Scope.Bucket != "hiclaw-test" {
-			t.Fatalf("bucket not resolved: %+v", e.Scope)
+	e := entries[0]
+	if e.Service != credprovider.ServiceObjectStorage {
+		t.Fatalf("service = %q", e.Service)
+	}
+	if e.Scope.Bucket != "hiclaw-test" {
+		t.Fatalf("bucket not resolved: %+v", e.Scope)
+	}
+	if !hasPrefix(e.Scope.Prefixes, "agents/alice/*") {
+		t.Fatalf("expected agents/alice/* prefix, got %+v", e.Scope.Prefixes)
+	}
+	if !hasPrefix(e.Scope.Prefixes, "shared/*") {
+		t.Fatalf("expected shared/* prefix, got %+v", e.Scope.Prefixes)
+	}
+	if !hasAllPerms(e.Permissions, "read", "write", "list", "delete") {
+		t.Fatalf("expected RW shared/* permissions, got %+v", e.Permissions)
+	}
+}
+
+func hasPrefix(prefixes []string, want string) bool {
+	for _, p := range prefixes {
+		if p == want {
+			return true
 		}
 	}
-	if got := entries[0].Scope.Prefixes[0]; got != "agents/alice/*" {
-		t.Fatalf("template not expanded: %q", got)
+	return false
+}
+
+func hasAllPerms(perms []string, want ...string) bool {
+	set := make(map[string]struct{}, len(perms))
+	for _, p := range perms {
+		set[p] = struct{}{}
 	}
+	for _, w := range want {
+		if _, ok := set[w]; !ok {
+			return false
+		}
+	}
+	return true
 }
 
 func TestResolveWorker_CustomBucketRef(t *testing.T) {
@@ -285,5 +318,144 @@ func TestResolveForCaller_RejectedRoles(t *testing.T) {
 	_, _, err := r.ResolveForCaller(context.Background(), &auth.CallerIdentity{Role: auth.RoleAdmin})
 	if err == nil {
 		t.Fatalf("expected error for admin role")
+	}
+}
+
+func newAlphaTeam() *v1beta1.Team {
+	team := &v1beta1.Team{}
+	team.Name = "alpha"
+	team.Namespace = testNS
+	team.Spec.Leader = v1beta1.LeaderSpec{Name: "lead"}
+	team.Spec.Workers = []v1beta1.TeamWorkerSpec{{Name: "w1"}}
+	return team
+}
+
+func TestResolveTeamLeader_DefaultEntries(t *testing.T) {
+	team := newAlphaTeam()
+	c := newFakeClient(t, team)
+
+	r := New(c, testNS, "hiclaw-test", "", auth.DefaultResourcePrefix)
+	session, entries, err := r.ResolveForCaller(context.Background(), &auth.CallerIdentity{
+		Role:     auth.RoleTeamLeader,
+		Username: "lead",
+		Team:     "alpha",
+	})
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if session != "hiclaw-worker-lead" {
+		t.Fatalf("session = %q, want hiclaw-worker-lead", session)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 default entry, got %d", len(entries))
+	}
+	e := entries[0]
+	if e.Scope.Bucket != "hiclaw-test" {
+		t.Fatalf("bucket = %q", e.Scope.Bucket)
+	}
+	for _, want := range []string{"agents/lead/*", "shared/*", "teams/alpha/*"} {
+		if !hasPrefix(e.Scope.Prefixes, want) {
+			t.Fatalf("missing prefix %q in %+v", want, e.Scope.Prefixes)
+		}
+	}
+	if !hasAllPerms(e.Permissions, "read", "write", "list", "delete") {
+		t.Fatalf("expected RW permissions, got %+v", e.Permissions)
+	}
+}
+
+func TestResolveTeamWorker_DefaultEntries(t *testing.T) {
+	team := newAlphaTeam()
+	c := newFakeClient(t, team)
+
+	r := New(c, testNS, "hiclaw-test", "", auth.DefaultResourcePrefix)
+	session, entries, err := r.ResolveForCaller(context.Background(), &auth.CallerIdentity{
+		Role:       auth.RoleWorker,
+		Username:   "w1",
+		WorkerName: "w1",
+		Team:       "alpha",
+	})
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if session != "hiclaw-worker-w1" {
+		t.Fatalf("session = %q", session)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 default entry, got %d", len(entries))
+	}
+	e := entries[0]
+	for _, want := range []string{"agents/w1/*", "shared/*", "teams/alpha/*"} {
+		if !hasPrefix(e.Scope.Prefixes, want) {
+			t.Fatalf("missing prefix %q in %+v", want, e.Scope.Prefixes)
+		}
+	}
+	if hasPrefix(e.Scope.Prefixes, "agents/lead/*") {
+		t.Fatalf("team worker must not see leader's prefix: %+v", e.Scope.Prefixes)
+	}
+	if !hasAllPerms(e.Permissions, "read", "write", "list", "delete") {
+		t.Fatalf("expected RW permissions, got %+v", e.Permissions)
+	}
+}
+
+func TestResolveTeamMember_CustomEntries(t *testing.T) {
+	team := newAlphaTeam()
+	team.Spec.Workers[0].AccessEntries = []v1beta1.AccessEntry{
+		{
+			Service:     credprovider.ServiceObjectStorage,
+			Permissions: []string{"read"},
+			Scope: rawJSON(t, map[string]any{
+				"bucketRef": "workspace",
+				"prefixes":  []string{"custom/${self.team}/*", "agents/${self.name}/data/*"},
+			}),
+		},
+	}
+	c := newFakeClient(t, team)
+
+	r := New(c, testNS, "hiclaw-test", "", auth.DefaultResourcePrefix)
+	_, entries, err := r.ResolveForCaller(context.Background(), &auth.CallerIdentity{
+		Role:       auth.RoleWorker,
+		Username:   "w1",
+		WorkerName: "w1",
+		Team:       "alpha",
+	})
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("got %d entries, want 1 (defaults must not leak when custom entries are set)", len(entries))
+	}
+	got := entries[0].Scope.Prefixes
+	if !hasPrefix(got, "custom/alpha/*") {
+		t.Fatalf("${self.team} not expanded: %+v", got)
+	}
+	if !hasPrefix(got, "agents/w1/data/*") {
+		t.Fatalf("${self.name} not expanded: %+v", got)
+	}
+	if len(entries[0].Permissions) != 1 || entries[0].Permissions[0] != "read" {
+		t.Fatalf("permissions must come from CR, got %+v", entries[0].Permissions)
+	}
+}
+
+func TestResolveTeamMember_TeamCRMissing(t *testing.T) {
+	c := newFakeClient(t)
+
+	r := New(c, testNS, "hiclaw-test", "", auth.DefaultResourcePrefix)
+	_, entries, err := r.ResolveForCaller(context.Background(), &auth.CallerIdentity{
+		Role:       auth.RoleWorker,
+		Username:   "ghost-worker",
+		WorkerName: "ghost-worker",
+		Team:       "ghost",
+	})
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 default entry, got %d", len(entries))
+	}
+	got := entries[0].Scope.Prefixes
+	for _, want := range []string{"agents/ghost-worker/*", "shared/*", "teams/ghost/*"} {
+		if !hasPrefix(got, want) {
+			t.Fatalf("missing prefix %q in %+v", want, got)
+		}
 	}
 }

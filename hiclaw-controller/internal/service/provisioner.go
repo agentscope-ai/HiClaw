@@ -3,6 +3,8 @@ package service
 import (
 	"context"
 	"fmt"
+	"net/http"
+	"strings"
 	"time"
 
 	v1beta1 "github.com/hiclaw/hiclaw-controller/api/v1beta1"
@@ -91,6 +93,29 @@ type ProvisionerConfig struct {
 	ManagerPassword   string
 	ManagerGatewayKey string
 
+	// AIGatewayURL is the data-plane URL of the AI gateway (e.g.
+	// "http://aigw-local.hiclaw.io:8080"). Used by IsManagerLLMAuthReady to
+	// probe whether the gateway can actually serve a chat-completions
+	// request bearing the manager's bearer token — i.e. whether Higress's
+	// WASM key-auth filter has finished syncing the freshly-bound consumer
+	// credential AND the upstream provider answers with the configured
+	// model. Auth propagation alone takes ~40-45s on first install, far
+	// longer than the manager Matrix user's auto-join of the Admin DM
+	// (~5-10s after container start), so "manager joined the DM room" is
+	// NOT a sufficient readiness signal for the welcome prompt: the prompt
+	// would land while the agent's first /v1/chat/completions call still
+	// 401s, and the onboarding turn would be silently lost.
+	AIGatewayURL string
+
+	// ManagerModel is the model name the Manager Agent will use when it
+	// composes its first reply to the welcome prompt. The probe in
+	// IsManagerLLMAuthReady issues a real chat-completions request against
+	// this model so a 200 response proves the entire path the manager
+	// will exercise (auth filter → route → upstream → model resolution)
+	// is live. Sourced from Config.ManagerModel which already resolves
+	// HICLAW_MANAGER_MODEL → HICLAW_DEFAULT_MODEL → "qwen3.5-plus".
+	ManagerModel string
+
 	// ManagerEnabled reflects HICLAW_MANAGER_ENABLED. When false, no Manager
 	// CR is ever created, so the Matrix user `@manager:<domain>` does not
 	// exist on Tuwunel. Worker room creation must therefore skip inviting
@@ -118,6 +143,18 @@ type Provisioner struct {
 	managerPassword   string
 	managerGatewayKey string
 	managerEnabled    bool
+
+	// aiGatewayURL is the data-plane base URL used by IsManagerLLMAuthReady.
+	// Empty in tests / unconfigured deploys; the probe treats empty as
+	// "ready" so the welcome reconcile does not block forever in those
+	// scenarios (the actual send may still surface auth errors, which the
+	// reconcile logs but does not retry — see manager_reconcile_welcome.go).
+	aiGatewayURL string
+	// managerModel is the LLM the welcome-readiness probe asks for when
+	// it issues its tiny chat-completions request. Empty → probe falls
+	// back to the same "treat as ready" behavior as empty aiGatewayURL,
+	// so misconfigured / test deploys never wedge the welcome.
+	managerModel string
 }
 
 func NewProvisioner(cfg ProvisionerConfig) *Provisioner {
@@ -136,6 +173,8 @@ func NewProvisioner(cfg ProvisionerConfig) *Provisioner {
 		managerPassword:   cfg.ManagerPassword,
 		managerGatewayKey: cfg.ManagerGatewayKey,
 		managerEnabled:    cfg.ManagerEnabled,
+		aiGatewayURL:      cfg.AIGatewayURL,
+		managerModel:      cfg.ManagerModel,
 	}
 }
 
@@ -564,6 +603,26 @@ func (p *Provisioner) EnsureManagerGatewayAuth(ctx context.Context, managerName,
 	return nil
 }
 
+// EnsureWorkerGatewayAuth ensures the Worker's gateway consumer exists and is
+// authorized on AI routes. Called during controller restart / member reconcile
+// to defensively restore auth that may have been lost (e.g. if the Higress
+// route was rewritten, or after upgrade with fresh Higress state). Mirrors
+// EnsureManagerGatewayAuth but uses the worker-scoped consumer name.
+func (p *Provisioner) EnsureWorkerGatewayAuth(ctx context.Context, workerName, gatewayKey string) error {
+	consumerName := "worker-" + workerName
+	_, err := p.gateway.EnsureConsumer(ctx, gateway.ConsumerRequest{
+		Name:          consumerName,
+		CredentialKey: gatewayKey,
+	})
+	if err != nil {
+		return fmt.Errorf("ensure consumer: %w", err)
+	}
+	if err := p.gateway.AuthorizeAIRoutes(ctx, consumerName); err != nil {
+		return fmt.Errorf("authorize AI routes: %w", err)
+	}
+	return nil
+}
+
 // ReconcileMCPAuth reauthorizes MCP servers for a consumer. Returns the list of
 // successfully authorized server names.
 func (p *Provisioner) ReconcileMCPAuth(ctx context.Context, consumerName string, mcpServers []string) ([]string, error) {
@@ -907,6 +966,200 @@ func (p *Provisioner) ProvisionManager(ctx context.Context, req ManagerProvision
 		MatrixPassword: creds.MatrixPassword,
 		AuthorizedMCPs: authorizedMCPs,
 	}, nil
+}
+
+// ManagerWelcomeRequest carries the locale hints that the controller
+// renders into the first-boot onboarding prompt sent to a freshly
+// provisioned Manager Agent.
+type ManagerWelcomeRequest struct {
+	// RoomID is the Admin DM room created by ProvisionManager (Step 4).
+	RoomID string
+	// Language is the install-time HICLAW_LANGUAGE selection ("zh" / "en").
+	// Embedded as plain text in the prompt; the agent decides how to apply.
+	Language string
+	// Timezone is the install-time TZ env (IANA identifier, e.g.
+	// "Asia/Shanghai"). Embedded as plain text so the agent can infer
+	// the admin's likely region and offer additional language options.
+	Timezone string
+}
+
+// SendManagerWelcome delivers the first-boot onboarding prompt that asks
+// the Manager Agent to greet the admin and collect identity preferences
+// (name / language / communication style). It is the new-architecture
+// replacement for the legacy in-container welcome flow that lived in
+// `start-manager-agent.sh` (lines 535-608) and only ran when
+// HICLAW_RUNTIME != "k8s".
+//
+// Idempotency is the caller's responsibility — the controller guards
+// re-send via Manager.Status.WelcomeSent. This method only checks that
+// the Manager Matrix user has joined the room before sending; if not,
+// it returns (sent=false, err=nil) so the reconcile loop can requeue.
+//
+// Returns:
+//   - (true, nil)  — message was successfully delivered.
+//   - (false, nil) — manager not yet joined; caller should requeue.
+//   - (false, err) — unrecoverable error (admin login / Matrix API).
+// llmAuthProbePromptTemplate renders the chat-completions body the
+// readiness probe sends. It uses the same model the Manager Agent will
+// use for its real first reply, and asks for a one-word answer so the
+// per-probe cost is negligible (~10-20 tokens total round-trip) even
+// though we may issue several probes during the gateway's WASM
+// key-auth propagation window per fresh install.
+//
+// Format chosen to maximise compatibility:
+//   - Only the universally-supported `model` and `messages` fields. No
+//     `max_tokens` — some openai-compat providers (notably Bedrock-fronted
+//     models and o1/o3-style reasoning families) reject the parameter
+//     outright with a 400, which would defeat the point of probing
+//     (readiness would never go true on those backends).
+//   - The user message is a direct, brevity-instructed prompt; the
+//     assistant typically replies with 1-2 tokens. We do not parse the
+//     response body — only the HTTP status matters.
+const llmAuthProbePromptTemplate = `{"model":%q,"messages":[{"role":"user","content":"Reply with only one word: ok"}]}`
+
+// IsManagerLLMAuthReady reports whether the manager's bearer token can
+// currently drive a real LLM call through the AI gateway — i.e. whether
+// (a) Higress's WASM key-auth filter has finished syncing the
+// freshly-bound consumer credential onto the AI route, and (b) the
+// upstream provider is reachable and serving the configured model.
+// Together these are exactly what the Manager Agent needs in order to
+// successfully compose its first reply to the welcome prompt. Joining
+// the Admin DM Room (~5-10s after container start) is strictly faster
+// than gateway propagation (~40-45s, the gap the legacy
+// `start-manager-agent.sh` papered over with `sleep 45`); sending the
+// welcome on the join signal alone would deliver a prompt the manager
+// receives but cannot reply to, and the onboarding turn would be
+// silently lost.
+//
+// Probe shape:
+//   - POST <AIGatewayURL>/v1/chat/completions with the manager's bearer
+//     token and a tiny chat body whose `model` is the actual
+//     ManagerModel and whose only user message asks for a one-word
+//     answer. This is the same code path the manager will exercise on
+//     its first real reply, so a successful probe is end-to-end
+//     proof-of-life rather than a synthetic "auth filter only" check.
+//   - HTTP 200 → ready, return (true, nil).
+//   - HTTP 401 / 403 → auth not yet propagated → return (false, nil).
+//     This is the expected state during the propagation window; we do
+//     NOT return an error here so the reconciler requeues quietly
+//     without spamming WARN-level logs.
+//   - Any other status (400, 404, 429, 5xx, …) → return (false, err).
+//     The reconciler surfaces it at log-level so the operator can spot
+//     persistent misconfigurations (wrong model name, upstream provider
+//     down, quota exhausted). Better a delayed welcome than one the
+//     manager cannot answer — we never give up, only the operator's
+//     attention escalates as the warnings accumulate.
+//   - Network / dial errors → returned as error; same WARN-and-retry.
+//
+// Empty AIGatewayURL, ManagerModel, or gatewayKey → return (true, nil)
+// so unit tests and bring-your-own-gateway deploys (where the
+// controller doesn't know the data-plane URL or the model) do not
+// stall the welcome forever.
+func (p *Provisioner) IsManagerLLMAuthReady(ctx context.Context, gatewayKey string) (bool, error) {
+	if p.aiGatewayURL == "" || p.managerModel == "" || gatewayKey == "" {
+		return true, nil
+	}
+	url := strings.TrimRight(p.aiGatewayURL, "/") + "/v1/chat/completions"
+	body := fmt.Sprintf(llmAuthProbePromptTemplate, p.managerModel)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, strings.NewReader(body))
+	if err != nil {
+		return false, fmt.Errorf("welcome: build llm probe: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+gatewayKey)
+	req.Header.Set("Content-Type", "application/json")
+	// 30s timeout: a real LLM call can legitimately take several seconds
+	// (cold-start, slow upstream); we want to wait long enough for a
+	// healthy answer but not so long that a wedged backend stalls every
+	// welcome reconcile for this manager.
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return false, fmt.Errorf("welcome: llm probe %s: %w", url, err)
+	}
+	defer resp.Body.Close()
+	switch {
+	case resp.StatusCode == http.StatusOK:
+		return true, nil
+	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
+		return false, nil
+	default:
+		return false, fmt.Errorf("welcome: llm probe %s returned HTTP %d (model=%q)", url, resp.StatusCode, p.managerModel)
+	}
+}
+
+// IsManagerJoinedDM reports whether the Manager's Matrix user is currently
+// `join`ed to the supplied DM room. Pure read; safe to poll on every
+// reconcile while waiting for the agent's first /sync to land its
+// auto-join. See `reconcileManagerWelcome` for the rationale on why this
+// MUST be separate from the actual send: claim-before-send would otherwise
+// churn the status field with claim/rollback patches on every requeue.
+func (p *Provisioner) IsManagerJoinedDM(ctx context.Context, roomID string) (bool, error) {
+	if roomID == "" {
+		return false, fmt.Errorf("welcome: empty RoomID")
+	}
+	managerMatrixID := p.matrix.UserID("manager")
+	members, err := p.matrix.ListRoomMembers(ctx, roomID)
+	if err != nil {
+		return false, fmt.Errorf("welcome: list members of %s: %w", roomID, err)
+	}
+	for _, m := range members {
+		if m.UserID == managerMatrixID && m.Membership == "join" {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// SendManagerWelcomeMessage posts the first-boot onboarding prompt as the
+// homeserver admin into the given DM room. The caller (reconcile loop)
+// MUST have already (a) verified membership via IsManagerJoinedDM and
+// (b) committed the WelcomeSent=true claim to the API server, so that a
+// racing reconcile cannot also reach this point and double-deliver.
+func (p *Provisioner) SendManagerWelcomeMessage(ctx context.Context, req ManagerWelcomeRequest) error {
+	if req.RoomID == "" {
+		return fmt.Errorf("welcome: empty RoomID")
+	}
+	language := req.Language
+	if language == "" {
+		language = "zh"
+	}
+	timezone := req.Timezone
+	if timezone == "" {
+		timezone = "Asia/Shanghai"
+	}
+	body := renderManagerWelcomeBody(language, timezone)
+	if err := p.matrix.SendMessageAsAdmin(ctx, req.RoomID, body); err != nil {
+		return fmt.Errorf("welcome: send to %s: %w", req.RoomID, err)
+	}
+	return nil
+}
+
+// renderManagerWelcomeBody returns the verbatim onboarding prompt the
+// Manager Agent receives on first boot. Kept identical in spirit to the
+// legacy `_welcome_msg` heredoc in `manager/scripts/init/start-manager-agent.sh`
+// so the resulting agent behavior (greeting + 4-question Q&A + write
+// SOUL.md + touch ~/soul-configured) is unchanged across architectures.
+func renderManagerWelcomeBody(language, timezone string) string {
+	return fmt.Sprintf(`This is an automated message from the HiClaw setup. This is a fresh installation.
+
+--- Installation Context ---
+User Language: %s  (zh = Chinese, en = English)
+User Timezone: %s  (IANA timezone identifier)
+---
+
+You are an AI agent that manages a team of worker agents. Your identity and personality have not been configured yet — the human admin is about to meet you for the first time.
+
+Please begin the onboarding conversation:
+
+1. Greet the admin warmly and briefly describe what you can do (coordinate workers, manage tasks, run multi-agent projects)
+2. The user has selected "%s" as their preferred language during installation. Use this language for your greeting and all subsequent communication.
+3. The user's timezone is %s. Based on this timezone, you may infer their likely region and suggest additional language options.
+4. Ask them: a) What would they like to call you? b) Communication style preference? c) Any behavior guidelines? d) Confirm default language
+5. After they reply, write their preferences to ~/SOUL.md
+6. Confirm what you wrote, and ask if they would like to adjust anything
+7. Once confirmed, run: touch ~/soul-configured
+
+The human admin will start chatting shortly.`, language, timezone, language, timezone)
 }
 
 // DeprovisionManager cleans up infrastructure for a deleted Manager.
