@@ -113,11 +113,13 @@ class Worker:
         self._copaw_working_dir = self.config.install_dir / self.worker_name / ".copaw"
         self._copaw_working_dir.mkdir(parents=True, exist_ok=True)
 
-        # Write SOUL.md / AGENTS.md into CoPaw workspace dir (workspaces/default/)
-        # CoPaw reads system_prompt_files from workspace dir, not .copaw root.
+        # Write SOUL.md / AGENTS.md / HEARTBEAT.md into CoPaw workspace dir
+        # (workspaces/default/). CoPaw reads system_prompt_files from workspace
+        # dir, not .copaw root. HEARTBEAT.md is read by the Agent via shell tool
+        # during heartbeat turns — must be co-located with SOUL.md/AGENTS.md.
         workspace_dir = self._copaw_working_dir / "workspaces" / "default"
         workspace_dir.mkdir(parents=True, exist_ok=True)
-        for name in ("SOUL.md", "AGENTS.md"):
+        for name in ("SOUL.md", "AGENTS.md", "HEARTBEAT.md"):
             src = self.sync.local_dir / name
             if src.exists():
                 (workspace_dir / name).write_text(src.read_text())
