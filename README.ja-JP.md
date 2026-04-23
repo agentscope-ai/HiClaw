@@ -106,6 +106,64 @@ Set-ExecutionPolicy Bypass -Scope Process -Force; $wc=New-Object Net.WebClient; 
 
 すべての HiClaw コンテナ（Manager、Worker、docker-proxy）、Docker ボリューム、ネットワーク、env ファイル、ワークスペースディレクトリ、インストールログが削除されます。
 
+## Kubernetes へのインストール（Helm）
+
+チーム共有や本番運用では、公式 Helm Chart を使って任意の Kubernetes クラスタに HiClaw をインストールできます。デフォルト構成には Higress AI ゲートウェイ、Tuwunel（Matrix）、MinIO、HiClaw Controller がすべて含まれており、外部依存はありません。
+
+**前提条件**
+
+- Kubernetes 1.24+（kind / minikube / k3s / マネージド K8s すべて対応）
+- Helm 3.7+
+- デフォルトの StorageClass（Tuwunel と MinIO の PVC 用）
+
+**インストール**
+
+```bash
+helm repo add higress.io https://higress.io/helm-charts
+helm repo update
+
+helm install hiclaw higress.io/hiclaw \
+  -n hiclaw-system --create-namespace \
+  --render-subchart-notes \
+  --set credentials.llmApiKey=<your-llm-api-key> \
+  --set credentials.adminPassword=<your-admin-password> \
+  --set gateway.publicURL=http://localhost:18080
+```
+
+| 値 | 必須 | 説明 |
+|---|---|---|
+| `credentials.llmApiKey` | 必須 | LLM プロバイダーの API キー |
+| `gateway.publicURL` | 必須 | ユーザーが Element Web にアクセスする公開 URL（port-forward 環境では `http://localhost:18080`、本番では `https://hiclaw.example.com` 等） |
+| `credentials.adminPassword` | 推奨 | Matrix 管理者パスワード。空のままだと自動生成（後で Secret から読み出す必要あり） |
+| `credentials.llmProvider` | 任意 | LLM プロバイダー名、デフォルトは `qwen` |
+| `credentials.defaultModel` | 任意 | デフォルトモデル、例: `qwen3.5-plus` |
+
+設定可能な全パラメータ（ゲートウェイ／ストレージの provider、イメージタグ、リソース、永続化など）は [`helm/hiclaw/values.yaml`](helm/hiclaw/values.yaml) を参照してください。
+
+**アクセス**
+
+```bash
+kubectl port-forward -n hiclaw-system svc/higress-gateway 18080:80
+```
+
+ブラウザで http://localhost:18080 を開き Element Web にログインしてください。本番クラスタでは Ingress / LoadBalancer / DNS を `svc/higress-gateway` に向け、それに合わせて `gateway.publicURL` を設定してください。
+
+**アップグレード**
+
+```bash
+helm repo update
+helm upgrade hiclaw higress.io/hiclaw -n hiclaw-system --reuse-values
+```
+
+**アンインストール**
+
+```bash
+helm uninstall hiclaw -n hiclaw-system
+kubectl delete namespace hiclaw-system
+```
+
+Kubernetes ネイティブなアーキテクチャ（CRD、Controller、宣言的な `Worker` / `Team` / `Human` リソース）の詳細は [docs/k8s-native-agent-orch.md](docs/k8s-native-agent-orch.md) を参照してください。
+
 ## 仕組み
 
 ### Manager — あなたの AI チーフオブスタッフ
