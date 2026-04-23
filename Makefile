@@ -108,6 +108,7 @@ LINES          ?= 50
         test test-quick test-installed test-embedded \
         install install-embedded uninstall uninstall-embedded replay replay-log \
         verify wait-ready wait-ready-embedded \
+        sync-crds check-crd-sync \
         status logs \
         mirror-images clean help
 
@@ -726,6 +727,21 @@ local-k8s-up: ## Create kind cluster and deploy HiClaw via Helm
 
 local-k8s-down: ## Tear down the local HiClaw kind cluster
 	@bash hack/local-k8s-down.sh
+
+sync-crds: ## Sync CRDs from hiclaw-controller/config/crd/ to helm/hiclaw/crds/
+	@echo "==> Syncing CRDs to Helm chart..."
+	@cp hiclaw-controller/config/crd/*.yaml helm/hiclaw/crds/
+	@echo "==> CRDs synced"
+
+check-crd-sync: ## Verify CRDs are in sync between controller and Helm chart
+	@if ! diff -r hiclaw-controller/config/crd/ helm/hiclaw/crds/ >/dev/null 2>&1; then \
+		echo "ERROR: CRD files are out of sync."; \
+		echo "Source of truth: hiclaw-controller/config/crd/"; \
+		echo "Run 'make sync-crds' to fix."; \
+		diff -r hiclaw-controller/config/crd/ helm/hiclaw/crds/; \
+		exit 1; \
+	fi
+	@echo "==> CRDs are in sync"
 
 helm-lint: ## Lint Helm chart
 	@helm dependency build helm/hiclaw/

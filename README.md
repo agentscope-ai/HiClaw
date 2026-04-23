@@ -116,7 +116,7 @@ For shared / production deployments you can install HiClaw on any Kubernetes clu
 - Helm 3.7+
 - A default StorageClass (for the Tuwunel + MinIO PVCs)
 
-**Install**
+**Install (OpenAI / OpenAI-compatible)**
 
 ```bash
 helm repo add higress.io https://higress.io/helm-charts
@@ -125,18 +125,69 @@ helm repo update
 helm install hiclaw higress.io/hiclaw \
   -n hiclaw-system --create-namespace \
   --render-subchart-notes \
-  --set credentials.llmApiKey=<your-llm-api-key> \
+  --set credentials.llmApiKey=<your-api-key> \
   --set credentials.adminPassword=<your-admin-password> \
   --set gateway.publicURL=http://localhost:18080
 ```
+
+For non-OpenAI providers that expose an OpenAI-compatible API, also set `llmBaseUrl`:
+
+```bash
+helm install hiclaw higress.io/hiclaw \
+  -n hiclaw-system --create-namespace \
+  --render-subchart-notes \
+  --set credentials.llmApiKey=<your-api-key> \
+  --set credentials.llmBaseUrl=https://your-provider.example.com/v1 \
+  --set credentials.defaultModel=your-model-name \
+  --set credentials.adminPassword=<your-admin-password> \
+  --set gateway.publicURL=http://localhost:18080
+```
+
+<details>
+<summary>Using Qwen (通义千问) instead</summary>
+
+```bash
+helm install hiclaw higress.io/hiclaw \
+  -n hiclaw-system --create-namespace \
+  --render-subchart-notes \
+  --set credentials.llmApiKey=<your-qwen-api-key> \
+  --set credentials.llmProvider=qwen \
+  --set credentials.defaultModel=qwen3.5-plus \
+  --set credentials.adminPassword=<your-admin-password> \
+  --set gateway.publicURL=http://localhost:18080
+```
+
+</details>
 
 | Value | Required | Description |
 |---|---|---|
 | `credentials.llmApiKey` | yes | API key for your LLM provider |
 | `gateway.publicURL` | yes | Public URL where users will reach Element Web (e.g. `http://localhost:18080` for port-forward, or `https://hiclaw.example.com` for an Ingress) |
 | `credentials.adminPassword` | recommended | Matrix admin password; auto-generated if left empty (you'll have to read it back from the Secret) |
-| `credentials.llmProvider` | no | LLM provider name, defaults to `qwen` |
-| `credentials.defaultModel` | no | Default model, e.g. `qwen3.5-plus` |
+| `credentials.llmProvider` | no | LLM provider name, defaults to `openai` |
+| `credentials.defaultModel` | no | Default model, defaults to `gpt-4o` |
+| `credentials.llmBaseUrl` | no | OpenAI-compatible base URL (e.g. `https://api.deepseek.com/v1`). Leave empty for official OpenAI API |
+
+**Multi-Region Image Registry**
+
+The default `global.imageRegistry` points to the China region (`higress-registry.cn-hangzhou.cr.aliyuncs.com/higress`). If you are deploying outside China, override it for faster image pulls:
+
+| Region | Registry |
+|---|---|
+| China (default) | `higress-registry.cn-hangzhou.cr.aliyuncs.com/higress` |
+| North America | `higress-registry.us-west-1.cr.aliyuncs.com/higress` |
+| Southeast Asia | `higress-registry.ap-southeast-7.cr.aliyuncs.com/higress` |
+
+```bash
+# Example: deploy from the North America registry
+helm install hiclaw higress.io/hiclaw \
+  -n hiclaw-system --create-namespace \
+  --render-subchart-notes \
+  --set global.imageRegistry=higress-registry.us-west-1.cr.aliyuncs.com/higress \
+  --set credentials.llmApiKey=<your-api-key> \
+  --set credentials.adminPassword=<your-admin-password> \
+  --set gateway.publicURL=http://localhost:18080
+```
 
 For all configurable values (gateway/storage providers, image tags, resources, persistence, etc.) see [`helm/hiclaw/values.yaml`](helm/hiclaw/values.yaml).
 

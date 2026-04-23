@@ -142,7 +142,7 @@ Set-ExecutionPolicy Bypass -Scope Process -Force; $wc=New-Object Net.WebClient; 
 - Helm 3.7+
 - 默认 StorageClass（用于 Tuwunel 与 MinIO 的 PVC）
 
-**安装**
+**安装（OpenAI / OpenAI 兼容模式）**
 
 ```bash
 helm repo add higress.io https://higress.io/helm-charts
@@ -151,18 +151,69 @@ helm repo update
 helm install hiclaw higress.io/hiclaw \
   -n hiclaw-system --create-namespace \
   --render-subchart-notes \
-  --set credentials.llmApiKey=<你的-LLM-API-Key> \
+  --set credentials.llmApiKey=<你的-API-Key> \
   --set credentials.adminPassword=<你的-管理员密码> \
   --set gateway.publicURL=http://localhost:18080
 ```
+
+如果使用非 OpenAI 但兼容 OpenAI API 的服务商，还需设置 `llmBaseUrl`：
+
+```bash
+helm install hiclaw higress.io/hiclaw \
+  -n hiclaw-system --create-namespace \
+  --render-subchart-notes \
+  --set credentials.llmApiKey=<你的-API-Key> \
+  --set credentials.llmBaseUrl=https://your-provider.example.com/v1 \
+  --set credentials.defaultModel=your-model-name \
+  --set credentials.adminPassword=<你的-管理员密码> \
+  --set gateway.publicURL=http://localhost:18080
+```
+
+<details>
+<summary>使用通义千问（Qwen）</summary>
+
+```bash
+helm install hiclaw higress.io/hiclaw \
+  -n hiclaw-system --create-namespace \
+  --render-subchart-notes \
+  --set credentials.llmApiKey=<你的-通义千问-API-Key> \
+  --set credentials.llmProvider=qwen \
+  --set credentials.defaultModel=qwen3.5-plus \
+  --set credentials.adminPassword=<你的-管理员密码> \
+  --set gateway.publicURL=http://localhost:18080
+```
+
+</details>
 
 | 参数 | 是否必填 | 说明 |
 |---|---|---|
 | `credentials.llmApiKey` | 必填 | LLM 服务商 API Key |
 | `gateway.publicURL` | 必填 | 用户访问 Element Web 的对外地址（端口转发场景填 `http://localhost:18080`，正式环境填 `https://hiclaw.example.com` 等） |
 | `credentials.adminPassword` | 推荐 | Matrix 管理员密码；留空时会自动生成（之后需要从 Secret 中读取） |
-| `credentials.llmProvider` | 可选 | LLM 服务商名，默认 `qwen` |
-| `credentials.defaultModel` | 可选 | 默认模型，例如 `qwen3.5-plus` |
+| `credentials.llmProvider` | 可选 | LLM 服务商名，默认 `openai` |
+| `credentials.defaultModel` | 可选 | 默认模型，默认 `gpt-4o` |
+| `credentials.llmBaseUrl` | 可选 | OpenAI 兼容的 Base URL（例如 `https://api.deepseek.com/v1`）。使用官方 OpenAI API 时留空 |
+
+**多地域镜像仓库**
+
+默认 `global.imageRegistry` 指向中国区域（`higress-registry.cn-hangzhou.cr.aliyuncs.com/higress`）。如果在中国大陆以外部署，可切换至就近区域以加速镜像拉取：
+
+| 区域 | Registry |
+|---|---|
+| 中国（默认） | `higress-registry.cn-hangzhou.cr.aliyuncs.com/higress` |
+| 北美 | `higress-registry.us-west-1.cr.aliyuncs.com/higress` |
+| 东南亚 | `higress-registry.ap-southeast-7.cr.aliyuncs.com/higress` |
+
+```bash
+# 示例：使用北美镜像仓库部署
+helm install hiclaw higress.io/hiclaw \
+  -n hiclaw-system --create-namespace \
+  --render-subchart-notes \
+  --set global.imageRegistry=higress-registry.us-west-1.cr.aliyuncs.com/higress \
+  --set credentials.llmApiKey=<你的-API-Key> \
+  --set credentials.adminPassword=<你的-管理员密码> \
+  --set gateway.publicURL=http://localhost:18080
+```
 
 完整可配置项（网关/存储 provider、镜像 tag、资源、持久化等）请参考 [`helm/hiclaw/values.yaml`](helm/hiclaw/values.yaml)。
 

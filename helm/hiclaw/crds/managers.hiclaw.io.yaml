@@ -28,13 +28,13 @@ spec:
                     to "openclaw" if neither is set.
                 image:
                   type: string
-                  description: Custom Docker image for the Manager agent
+                  description: Custom Docker image for the Manager Agent
                 soul:
                   type: string
-                  description: Custom SOUL.md content (overrides image default)
+                  description: Custom SOUL.md content
                 agents:
                   type: string
-                  description: Custom AGENTS.md content (overrides image default)
+                  description: Custom AGENTS.md content
                 skills:
                   type: array
                   items:
@@ -44,10 +44,14 @@ spec:
                   type: array
                   items:
                     type: string
-                  description: MCP Servers to authorize via Gateway
+                  description: MCP servers to authorize via Gateway
                 package:
                   type: string
-                  description: "Package URI: file://, http(s)://, nacos://, or packages/{name}.zip"
+                  description: "Package URI: file://, http(s)://, or nacos://"
+                state:
+                  type: string
+                  enum: [Running, Sleeping, Stopped]
+                  description: "Desired lifecycle state (default: Running). The controller reconciles actual state toward this."
                 config:
                   type: object
                   properties:
@@ -59,7 +63,7 @@ spec:
                       description: "Worker idle timeout before auto-sleep (default: 720m)"
                     notifyChannel:
                       type: string
-                      description: "Admin notification channel (default: admin-dm)"
+                      description: "Notification channel (default: admin-dm)"
                 accessEntries:
                   type: array
                   description: >
@@ -98,15 +102,13 @@ spec:
                 observedGeneration:
                   type: integer
                   format: int64
-                  description: Last spec generation reconciled by the controller
                 phase:
                   type: string
-                  enum: [Pending, Running, Updating, Failed]
+                  enum: [Pending, Running, Sleeping, Updating, Stopped, Failed]
                 matrixUserID:
                   type: string
                 roomID:
                   type: string
-                  description: Admin DM room ID
                 containerState:
                   type: string
                 version:
