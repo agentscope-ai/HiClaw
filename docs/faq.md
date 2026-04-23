@@ -48,7 +48,7 @@ Starting from v1.1.0, HiClaw switched from a **single all-in-one container** to 
 
 | Component | Old (≤v1.0.9) | New (v1.1.0+) |
 |-----------|---------------|---------------|
-| Infrastructure (Higress, Tuwunel, MinIO, Element Web) | Bundled inside `hiclaw-manager` | Runs in `hiclaw-embedded` (controller) container |
+| Infrastructure (Higress, Tuwunel, MinIO, Element Web) | Bundled inside `hiclaw-manager` | Runs in `hiclaw-controller` container (from the `hiclaw-embedded` image) |
 | Manager Agent | Inside `hiclaw-manager` | Separate `hiclaw-manager` container (lightweight, agent only) |
 | Worker management | Shell scripts (`create-worker.sh`) + `workers-registry.json` | Declarative CRDs via `hiclaw` CLI (`hiclaw create worker`, `hiclaw apply`) |
 | Worker runtimes | OpenClaw only | OpenClaw, QwenPaw, or Hermes |
@@ -64,7 +64,7 @@ Starting from v1.1.0, HiClaw switched from a **single all-in-one container** to 
 
 ```bash
 docker ps
-# hiclaw-embedded      -- Controller + all infrastructure services
+# hiclaw-controller    -- Controller + all infrastructure services
 # hiclaw-manager       -- Manager Agent (lightweight)
 # hiclaw-worker-alice  -- Worker containers (created on demand)
 ```
@@ -73,12 +73,12 @@ docker ps
 
 ## How to use the hiclaw CLI to manage resources
 
-The `hiclaw` CLI is pre-installed inside the `hiclaw-embedded` (controller) container. You can exec into the container to query, create, update, or delete any HiClaw resource directly — without going through the Manager Agent.
+The `hiclaw` CLI is pre-installed inside the `hiclaw-controller` container. You can exec into the container to query, create, update, or delete any HiClaw resource directly — without going through the Manager Agent.
 
 **Enter the controller container:**
 
 ```bash
-docker exec -it hiclaw-embedded sh
+docker exec -it hiclaw-controller sh
 ```
 
 ### Query resources
@@ -232,7 +232,7 @@ If the Manager Agent is unresponsive after installation, check the logs.
 
 ```bash
 # Controller (infrastructure) logs
-docker logs hiclaw-embedded
+docker logs hiclaw-controller
 
 # Manager Agent logs
 docker logs hiclaw-manager
@@ -540,13 +540,13 @@ If Manager stops responding or you see error codes like 404 or 503, check these 
 In the new architecture, verify both the controller and Manager containers are running:
 
 ```bash
-docker ps | grep -E "hiclaw-embedded|hiclaw-manager"
+docker ps | grep -E "hiclaw-controller|hiclaw-manager"
 ```
 
 If `hiclaw-manager` is not running, check the controller logs:
 
 ```bash
-docker logs hiclaw-embedded
+docker logs hiclaw-controller
 ```
 
 ### 2. Check session status
@@ -569,7 +569,7 @@ If the session is corrupted, try sending `/new` as a standalone message in the c
 If resetting the session doesn't help, check the Higress AI Gateway log. In the new architecture, Higress runs inside the controller container:
 
 ```bash
-docker exec -it hiclaw-embedded cat /var/log/hiclaw/higress-gateway.log
+docker exec -it hiclaw-controller cat /var/log/hiclaw/higress-gateway.log
 ```
 
 Search the log for the relevant status code. Common causes:
@@ -611,10 +611,10 @@ docker logs hiclaw-manager
 docker exec -it hiclaw-manager ls .openclaw/agents/main/sessions/
 
 # Controller / infrastructure logs
-docker logs hiclaw-embedded
+docker logs hiclaw-controller
 
 # Higress Gateway log (inside the controller container)
-docker exec -it hiclaw-embedded cat /var/log/hiclaw/higress-gateway.log
+docker exec -it hiclaw-controller cat /var/log/hiclaw/higress-gateway.log
 ```
 
 For OpenClaw Control UI (visual session inspection), open:

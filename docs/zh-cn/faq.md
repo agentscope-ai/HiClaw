@@ -48,7 +48,7 @@ HICLAW_VERSION=v1.1.0 bash <(curl -sSL https://higress.ai/hiclaw/install.sh)
 
 | 组件 | 旧架构（≤v1.0.9） | 新架构（v1.1.0+） |
 |------|-------------------|-------------------|
-| 基础设施（Higress、Tuwunel、MinIO、Element Web） | 打包在 `hiclaw-manager` 内 | 运行在 `hiclaw-embedded`（Controller）容器中 |
+| 基础设施（Higress、Tuwunel、MinIO、Element Web） | 打包在 `hiclaw-manager` 内 | 运行在 `hiclaw-controller` 容器中（使用 `hiclaw-embedded` 镜像） |
 | Manager Agent | 在 `hiclaw-manager` 内 | 独立的 `hiclaw-manager` 容器（轻量级，仅 Agent） |
 | Worker 管理 | Shell 脚本（`create-worker.sh`）+ `workers-registry.json` | 声明式 CRD，通过 `hiclaw` CLI（`hiclaw create worker`、`hiclaw apply`） |
 | Worker 运行时 | 仅 OpenClaw | OpenClaw、QwenPaw 或 Hermes |
@@ -64,7 +64,7 @@ HICLAW_VERSION=v1.1.0 bash <(curl -sSL https://higress.ai/hiclaw/install.sh)
 
 ```bash
 docker ps
-# hiclaw-embedded      -- Controller + 所有基础设施服务
+# hiclaw-controller    -- Controller + 所有基础设施服务
 # hiclaw-manager       -- Manager Agent（轻量级）
 # hiclaw-worker-alice  -- Worker 容器（按需创建）
 ```
@@ -73,12 +73,12 @@ docker ps
 
 ## 如何使用 hiclaw CLI 管理资源
 
-`hiclaw` CLI 预装在 `hiclaw-embedded`（Controller）容器内。你可以 exec 进入该容器，直接查询、创建、修改或删除任何 HiClaw 资源——无需通过 Manager Agent。
+`hiclaw` CLI 预装在 `hiclaw-controller` 容器内。你可以 exec 进入该容器，直接查询、创建、修改或删除任何 HiClaw 资源——无需通过 Manager Agent。
 
 **进入 Controller 容器：**
 
 ```bash
-docker exec -it hiclaw-embedded sh
+docker exec -it hiclaw-controller sh
 ```
 
 ### 查询资源
@@ -232,7 +232,7 @@ Attempted: higress/hiclaw-embedded:v1.1.0 and higress/hiclaw-embedded:latest
 
 ```bash
 # Controller（基础设施）日志
-docker logs hiclaw-embedded
+docker logs hiclaw-controller
 
 # Manager Agent 日志
 docker logs hiclaw-manager
@@ -544,13 +544,13 @@ docker exec -it <worker-name> openclaw tui
 在新架构下，首先确认 Controller 和 Manager 容器都在运行：
 
 ```bash
-docker ps | grep -E "hiclaw-embedded|hiclaw-manager"
+docker ps | grep -E "hiclaw-controller|hiclaw-manager"
 ```
 
 如果 `hiclaw-manager` 未运行，查看 Controller 日志：
 
 ```bash
-docker logs hiclaw-embedded
+docker logs hiclaw-controller
 ```
 
 ### 2. 检查 Session 状态
@@ -573,7 +573,7 @@ docker exec -it hiclaw-manager openclaw tui
 如果重置 session 后问题仍然存在，查看 Higress AI 网关日志。在新架构下，Higress 运行在 Controller 容器内：
 
 ```bash
-docker exec -it hiclaw-embedded cat /var/log/hiclaw/higress-gateway.log
+docker exec -it hiclaw-controller cat /var/log/hiclaw/higress-gateway.log
 ```
 
 在日志中搜索对应的状态码，常见原因：
@@ -615,10 +615,10 @@ docker logs hiclaw-manager
 docker exec -it hiclaw-manager ls .openclaw/agents/main/sessions/
 
 # Controller / 基础设施日志
-docker logs hiclaw-embedded
+docker logs hiclaw-controller
 
 # Higress 网关日志（在 Controller 容器内）
-docker exec -it hiclaw-embedded cat /var/log/hiclaw/higress-gateway.log
+docker exec -it hiclaw-controller cat /var/log/hiclaw/higress-gateway.log
 ```
 
 OpenClaw Control UI（可视化 session 检查），打开：
