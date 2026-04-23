@@ -4,6 +4,7 @@
 
 - [如何查看当前 HiClaw 版本](#如何查看当前-hiclaw-版本)
 - [新架构说明（v1.1.0+）](#新架构说明v110)
+- [如何使用 hiclaw CLI 管理资源](#如何使用-hiclaw-cli-管理资源)
 - [如何对接飞书/钉钉/企业微信/Discord/Telegram](#如何对接飞书钉钉企业微信discordtelegram)
 - [Windows 下执行安装脚本闪退](#windows-下执行安装脚本闪退)
 - [安装失败：embedded 镜像 "manifest unknown"](#安装失败embedded-镜像-manifest-unknown)
@@ -15,7 +16,6 @@
 - [如何切换 Worker 的模型](#如何切换-worker-的模型)
 - [如何切换 Worker 的运行时](#如何切换-worker-的运行时)
 - [如何使用 Worker 模板市场](#如何使用-worker-模板市场)
-- [如何声明式管理资源](#如何声明式管理资源)
 - [HiClaw 支持发送和接收文件吗](#hiclaw-支持发送和接收文件吗)
 - [为什么 Manager/Worker 一直显示"输入中"](#为什么-managerworker-一直显示输入中)
 - [Manager/Worker 不回复消息怎么办](#managerworker-不回复消息怎么办)
@@ -68,6 +68,134 @@ docker ps
 # hiclaw-manager       -- Manager Agent（轻量级）
 # hiclaw-worker-alice  -- Worker 容器（按需创建）
 ```
+
+---
+
+## 如何使用 hiclaw CLI 管理资源
+
+`hiclaw` CLI 预装在 `hiclaw-embedded`（Controller）容器内。你可以 exec 进入该容器，直接查询、创建、修改或删除任何 HiClaw 资源——无需通过 Manager Agent。
+
+**进入 Controller 容器：**
+
+```bash
+docker exec -it hiclaw-embedded sh
+```
+
+### 查询资源
+
+```bash
+# 集群概览
+hiclaw status
+
+# 列出所有 Worker（表格格式）
+hiclaw get workers
+
+# 以 JSON 格式列出 Worker（便于脚本处理）
+hiclaw get workers -o json
+
+# 查看特定 Worker 的详细信息
+hiclaw get workers alice
+hiclaw get workers alice -o json
+
+# 列出某个团队中的 Worker
+hiclaw get workers --team dev-team
+
+# 列出所有团队
+hiclaw get teams
+
+# 列出所有 Human
+hiclaw get humans
+
+# 列出所有 Manager
+hiclaw get managers
+
+# 查看 Controller 版本
+hiclaw version
+```
+
+### 创建资源
+
+```bash
+# 使用默认模型和运行时创建 Worker
+hiclaw create worker --name alice
+
+# 指定模型和运行时创建 Worker
+hiclaw create worker --name bob --model claude-sonnet-4-6 --runtime hermes
+
+# 创建带技能和 MCP Server 的 Worker
+hiclaw create worker --name charlie --skills github-operations --mcp-servers github
+
+# 使用自定义 SOUL.md 创建 Worker
+hiclaw create worker --name diana --soul-file /path/to/SOUL.md
+
+# 创建 Worker 但不等待就绪
+hiclaw create worker --name eve --no-wait
+
+# 创建团队
+hiclaw create team --name dev-team --goal "全栈 Web 开发"
+
+# 创建 Human
+hiclaw create human --name john --level 1
+
+# 创建 Manager
+hiclaw create manager --name default --model qwen3.5-plus
+```
+
+### 修改资源
+
+```bash
+# 切换 Worker 模型
+hiclaw update worker --name alice --model claude-sonnet-4-6
+
+# 切换 Worker 运行时（会触发容器重建）
+hiclaw update worker --name alice --runtime hermes
+
+# 更新 Worker 技能
+hiclaw update worker --name alice --skills github-operations,code-review
+
+# 添加 MCP Server 访问权限
+hiclaw update worker --name alice --mcp-servers github,sentry
+```
+
+### 应用 YAML 定义
+
+```bash
+# 应用单个 YAML 资源
+hiclaw apply -f worker-alice.yaml
+
+# 从 zip 包导入 Worker
+hiclaw apply worker --name alice --zip worker-package.zip
+```
+
+### Worker 生命周期管理
+
+```bash
+# 停止（休眠）Worker
+hiclaw worker sleep --name alice
+
+# 唤醒休眠中的 Worker
+hiclaw worker wake --name alice
+
+# 查看 Worker 状态
+hiclaw worker status --name alice
+```
+
+### 删除资源
+
+```bash
+# 删除 Worker（停止容器、清理 Matrix 账号和网关 Consumer）
+hiclaw delete worker alice
+
+# 删除团队
+hiclaw delete team dev-team
+
+# 删除 Human
+hiclaw delete human john
+```
+
+> **提示：** Manager Agent 的大部分操作（创建 Worker、切换模型、分配任务）底层都调用了同一套 `hiclaw` CLI。直接使用 CLI 适合调试、批量操作或自动化脚本场景。
+
+声明式 YAML 资源定义的完整文档请参阅 [声明式资源管理](declarative-resource-management.md)。
 
 ---
 
@@ -334,49 +462,6 @@ hiclaw apply -f my-worker.yaml
 ```
 
 在 YAML 中通过 `package` 引用市场模板。
-
----
-
-## 如何声明式管理资源
-
-HiClaw v1.1.0+ 支持 Kubernetes 风格的声明式资源管理，通过 `hiclaw` CLI 操作：
-
-**创建 Worker：**
-
-```bash
-hiclaw create worker --name alice --model qwen3.5-plus --runtime openclaw
-```
-
-**查看 Worker：**
-
-```bash
-hiclaw get workers
-hiclaw get workers -o json
-```
-
-**应用 YAML 定义：**
-
-```bash
-hiclaw apply -f worker-alice.yaml
-```
-
-**创建团队：**
-
-```yaml
-apiVersion: hiclaw.io/v1beta1
-kind: Team
-metadata:
-  name: dev-team
-spec:
-  goal: "全栈 Web 应用开发"
-  workers:
-    - name: alice
-      model: qwen3.5-plus
-    - name: bob
-      model: qwen3.5-plus
-```
-
-完整文档请参阅 [声明式资源管理](declarative-resource-management.md)。
 
 ---
 

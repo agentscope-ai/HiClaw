@@ -4,6 +4,7 @@
 
 - [How to check the current HiClaw version](#how-to-check-the-current-hiclaw-version)
 - [Understanding the new architecture (v1.1.0+)](#understanding-the-new-architecture-v110)
+- [How to use the hiclaw CLI to manage resources](#how-to-use-the-hiclaw-cli-to-manage-resources)
 - [How to connect Feishu/DingTalk/WeCom/Discord/Telegram](#how-to-connect-feishudingtalkwecomdiscordtelegram)
 - [Installation script exits immediately on Windows](#installation-script-exits-immediately-on-windows)
 - [Installation fails: "manifest unknown" for embedded image](#installation-fails-manifest-unknown-for-embedded-image)
@@ -15,7 +16,6 @@
 - [How to switch a Worker's model](#how-to-switch-a-workers-model)
 - [How to switch a Worker's runtime](#how-to-switch-a-workers-runtime)
 - [How to use the Worker Template Marketplace](#how-to-use-the-worker-template-marketplace)
-- [How to manage resources declaratively](#how-to-manage-resources-declaratively)
 - [Does HiClaw support sending and receiving files](#does-hiclaw-support-sending-and-receiving-files)
 - [Why does Manager/Worker keep showing "typing"](#why-does-managerworker-keep-showing-typing)
 - [Manager/Worker not responding to messages](#managerworker-not-responding-to-messages)
@@ -68,6 +68,134 @@ docker ps
 # hiclaw-manager       -- Manager Agent (lightweight)
 # hiclaw-worker-alice  -- Worker containers (created on demand)
 ```
+
+---
+
+## How to use the hiclaw CLI to manage resources
+
+The `hiclaw` CLI is pre-installed inside the `hiclaw-embedded` (controller) container. You can exec into the container to query, create, update, or delete any HiClaw resource directly — without going through the Manager Agent.
+
+**Enter the controller container:**
+
+```bash
+docker exec -it hiclaw-embedded sh
+```
+
+### Query resources
+
+```bash
+# Cluster overview
+hiclaw status
+
+# List all workers (table format)
+hiclaw get workers
+
+# List workers as JSON (useful for scripting)
+hiclaw get workers -o json
+
+# Get details of a specific worker
+hiclaw get workers alice
+hiclaw get workers alice -o json
+
+# List workers in a specific team
+hiclaw get workers --team dev-team
+
+# List all teams
+hiclaw get teams
+
+# List all humans
+hiclaw get humans
+
+# List managers
+hiclaw get managers
+
+# Check controller version
+hiclaw version
+```
+
+### Create resources
+
+```bash
+# Create a worker with default model and runtime
+hiclaw create worker --name alice
+
+# Create a worker with specific model and runtime
+hiclaw create worker --name bob --model claude-sonnet-4-6 --runtime hermes
+
+# Create a worker with skills and MCP servers
+hiclaw create worker --name charlie --skills github-operations --mcp-servers github
+
+# Create a worker with a custom SOUL.md
+hiclaw create worker --name diana --soul-file /path/to/SOUL.md
+
+# Create a worker without waiting for it to be ready
+hiclaw create worker --name eve --no-wait
+
+# Create a team
+hiclaw create team --name dev-team --goal "Full-stack web development"
+
+# Create a human
+hiclaw create human --name john --level 1
+
+# Create a manager
+hiclaw create manager --name default --model qwen3.5-plus
+```
+
+### Update resources
+
+```bash
+# Switch a worker's model
+hiclaw update worker --name alice --model claude-sonnet-4-6
+
+# Switch a worker's runtime (triggers container recreation)
+hiclaw update worker --name alice --runtime hermes
+
+# Update a worker's skills
+hiclaw update worker --name alice --skills github-operations,code-review
+
+# Add MCP server access
+hiclaw update worker --name alice --mcp-servers github,sentry
+```
+
+### Apply YAML definitions
+
+```bash
+# Apply a single YAML resource
+hiclaw apply -f worker-alice.yaml
+
+# Import a worker from a zip package
+hiclaw apply worker --name alice --zip worker-package.zip
+```
+
+### Worker lifecycle
+
+```bash
+# Stop (sleep) a worker
+hiclaw worker sleep --name alice
+
+# Wake a sleeping worker
+hiclaw worker wake --name alice
+
+# Check a worker's status
+hiclaw worker status --name alice
+```
+
+### Delete resources
+
+```bash
+# Delete a worker (stops container, cleans up Matrix account and gateway consumer)
+hiclaw delete worker alice
+
+# Delete a team
+hiclaw delete team dev-team
+
+# Delete a human
+hiclaw delete human john
+```
+
+> **Tip:** Most Manager Agent operations (creating workers, switching models, assigning tasks) ultimately call the same `hiclaw` CLI under the hood. Using the CLI directly is useful for debugging, bulk operations, or automation scripts.
+
+For declarative YAML resource definitions, see [Declarative Resource Management](declarative-resource-management.md).
 
 ---
 
@@ -330,49 +458,6 @@ hiclaw apply -f my-worker.yaml
 ```
 
 With a `package` reference in the YAML pointing to a marketplace template.
-
----
-
-## How to manage resources declaratively
-
-HiClaw v1.1.0+ supports Kubernetes-style declarative resource management via the `hiclaw` CLI:
-
-**Create a Worker:**
-
-```bash
-hiclaw create worker --name alice --model qwen3.5-plus --runtime openclaw
-```
-
-**List Workers:**
-
-```bash
-hiclaw get workers
-hiclaw get workers -o json
-```
-
-**Apply a YAML definition:**
-
-```bash
-hiclaw apply -f worker-alice.yaml
-```
-
-**Create a Team:**
-
-```yaml
-apiVersion: hiclaw.io/v1beta1
-kind: Team
-metadata:
-  name: dev-team
-spec:
-  goal: "Full-stack web application development"
-  workers:
-    - name: alice
-      model: qwen3.5-plus
-    - name: bob
-      model: qwen3.5-plus
-```
-
-For complete documentation, see [Declarative Resource Management](declarative-resource-management.md).
 
 ---
 
