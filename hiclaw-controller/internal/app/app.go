@@ -436,9 +436,9 @@ func (a *App) initReconcilers(_ context.Context) error {
 	}
 
 	if err := (&controller.HumanReconciler{
-		Client: a.mgr.GetClient(),
-		Matrix: a.matrix,
-		Legacy: a.legacy,
+		Client:      a.mgr.GetClient(),
+		Provisioner: a.provisioner,
+		Legacy:      a.legacy,
 	}).SetupWithManager(a.mgr); err != nil {
 		return fmt.Errorf("setup HumanReconciler: %w", err)
 	}

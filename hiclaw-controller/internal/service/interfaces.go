@@ -91,6 +91,62 @@ type ManagerEnvBuilderI interface {
 	BuildManager(managerName string, prov *ManagerProvisionResult, spec v1beta1.ManagerSpec) map[string]string
 }
 
+// HumanProvisioner defines the Matrix-level operations HumanReconciler needs.
+// Implemented by *Provisioner; extracted for testability so the reconciler
+// can be driven against a mock without a live Matrix homeserver.
+//
+// Surface intentionally narrow: Humans have no gateway consumer, no MinIO
+// account, no container, no backend pod — just a Matrix user plus a set of
+// room memberships. Keeping the interface focused on those concerns avoids
+// pulling the heavier Worker/Manager credential + registry machinery into
+// the Human path.
+type HumanProvisioner interface {
+	// EnsureHumanUser registers a new Matrix account for this human, or
+	// logs in an existing one. Called only during first-time provisioning
+	// (Status.MatrixUserID == ""); steady-state reconciles must use
+	// LoginAsHuman with the stored password instead to avoid triggering
+	// the orphan-recovery password reset inside matrix.EnsureUser, which
+	// would clobber any user-initiated password change made in Element.
+	EnsureHumanUser(ctx context.Context, name string) (*HumanCredentials, error)
+
+	// LoginAsHuman obtains a fresh access token for an already-provisioned
+	// human using the caller-supplied password. Returns an error when the
+	// password no longer matches (e.g. the user changed it in Element);
+	// callers treat that as a soft failure and fall back to admin-only
+	// room management on this reconcile pass.
+	LoginAsHuman(ctx context.Context, name, password string) (string, error)
+
+	// MatrixUserID builds the full "@<name>:<domain>" form.
+	MatrixUserID(name string) string
+
+	// InviteToRoom invites userID to roomID using the admin token.
+	// Idempotent: returns nil when the user is already joined/invited.
+	InviteToRoom(ctx context.Context, roomID, userID string) error
+
+	// JoinRoomAs joins roomID with the given user access token. Required
+	// for private (trusted_private_chat) rooms, which need the invitee to
+	// accept the pending invite before membership takes effect.
+	JoinRoomAs(ctx context.Context, roomID, userToken string) error
+
+	// KickFromRoom removes userID from roomID using the admin token.
+	// Idempotent: returns nil when the user is not a member.
+	KickFromRoom(ctx context.Context, roomID, userID, reason string) error
+
+	// ForceLeaveRoom asks the Tuwunel admin bot to force-leave userID out
+	// of roomID via "!admin users force-leave-room". Fire-and-forget at
+	// the bot layer, but the admin message delivery itself is confirmed.
+	ForceLeaveRoom(ctx context.Context, userID, roomID string) error
+}
+
+// HumanCredentials is the subset of matrix.UserCredentials that the Human
+// reconcile path consumes. Decoupled from matrix.UserCredentials so the
+// reconciler does not import internal/matrix directly.
+type HumanCredentials struct {
+	UserID      string
+	AccessToken string
+	Password    string
+}
+
 // Compile-time interface satisfaction checks.
 var (
 	_ WorkerProvisioner = (*Provisioner)(nil)
@@ -100,4 +156,6 @@ var (
 	_ ManagerProvisioner = (*Provisioner)(nil)
 	_ ManagerDeployer    = (*Deployer)(nil)
 	_ ManagerEnvBuilderI = (*WorkerEnvBuilder)(nil)
+
+	_ HumanProvisioner = (*Provisioner)(nil)
 )
