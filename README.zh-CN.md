@@ -132,6 +132,64 @@ Set-ExecutionPolicy Bypass -Scope Process -Force; $wc=New-Object Net.WebClient; 
 
 将移除所有 HiClaw 容器（Manager、Worker、docker-proxy）、Docker 卷、网络、env 文件、工作空间目录和安装日志。
 
+## Kubernetes 部署（Helm）
+
+如果希望在团队内共享或生产环境部署 HiClaw，可以使用官方 Helm Chart 在任意 Kubernetes 集群上安装。默认配置内置了 Higress AI 网关、Tuwunel（Matrix）、MinIO 与 HiClaw Controller，无需额外依赖。
+
+**前置条件**
+
+- Kubernetes 1.24+（kind / minikube / k3s / 各类托管 K8s 均可）
+- Helm 3.7+
+- 默认 StorageClass（用于 Tuwunel 与 MinIO 的 PVC）
+
+**安装**
+
+```bash
+helm repo add higress.io https://higress.io/helm-charts
+helm repo update
+
+helm install hiclaw higress.io/hiclaw \
+  -n hiclaw-system --create-namespace \
+  --render-subchart-notes \
+  --set credentials.llmApiKey=<你的-LLM-API-Key> \
+  --set credentials.adminPassword=<你的-管理员密码> \
+  --set gateway.publicURL=http://localhost:18080
+```
+
+| 参数 | 是否必填 | 说明 |
+|---|---|---|
+| `credentials.llmApiKey` | 必填 | LLM 服务商 API Key |
+| `gateway.publicURL` | 必填 | 用户访问 Element Web 的对外地址（端口转发场景填 `http://localhost:18080`，正式环境填 `https://hiclaw.example.com` 等） |
+| `credentials.adminPassword` | 推荐 | Matrix 管理员密码；留空时会自动生成（之后需要从 Secret 中读取） |
+| `credentials.llmProvider` | 可选 | LLM 服务商名，默认 `qwen` |
+| `credentials.defaultModel` | 可选 | 默认模型，例如 `qwen3.5-plus` |
+
+完整可配置项（网关/存储 provider、镜像 tag、资源、持久化等）请参考 [`helm/hiclaw/values.yaml`](helm/hiclaw/values.yaml)。
+
+**访问**
+
+```bash
+kubectl port-forward -n hiclaw-system svc/higress-gateway 18080:80
+```
+
+然后在浏览器中打开 http://localhost:18080 登录 Element Web。生产集群中请通过 Ingress / LoadBalancer / DNS 指向 `svc/higress-gateway`，并相应地修改 `gateway.publicURL`。
+
+**升级**
+
+```bash
+helm repo update
+helm upgrade hiclaw higress.io/hiclaw -n hiclaw-system --reuse-values
+```
+
+**卸载**
+
+```bash
+helm uninstall hiclaw -n hiclaw-system
+kubectl delete namespace hiclaw-system
+```
+
+更深入的 K8s Native 架构说明（CRD、Controller、声明式 `Worker` / `Team` / `Human` 资源）请参考 [docs/zh-cn/k8s-native-agent-orch.md](docs/zh-cn/k8s-native-agent-orch.md)。
+
 ## 工作方式
 
 ### Manager 是你的 AI 管家
