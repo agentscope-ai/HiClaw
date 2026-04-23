@@ -86,6 +86,10 @@ type ProvisionerConfig struct {
 	// labels. Empty falls back to auth.DefaultResourcePrefix ("hiclaw-").
 	ResourcePrefix authpkg.ResourcePrefix
 
+	// ControllerName identifies this controller instance. Stamped on every
+	// ServiceAccount created by the provisioner via hiclaw.io/controller.
+	ControllerName string
+
 	// Pre-generated Manager secrets (from install script env).
 	// When set, used instead of generating random credentials.
 	ManagerPassword   string
@@ -114,6 +118,7 @@ type Provisioner struct {
 	matrixDomain   string
 	adminUser      string
 	resourcePrefix authpkg.ResourcePrefix
+	controllerName string
 
 	managerPassword   string
 	managerGatewayKey string
@@ -133,6 +138,7 @@ func NewProvisioner(cfg ProvisionerConfig) *Provisioner {
 		matrixDomain:      cfg.MatrixDomain,
 		adminUser:         cfg.AdminUser,
 		resourcePrefix:    cfg.ResourcePrefix.Or(authpkg.DefaultResourcePrefix),
+		controllerName:    cfg.ControllerName,
 		managerPassword:   cfg.ManagerPassword,
 		managerGatewayKey: cfg.ManagerGatewayKey,
 		managerEnabled:    cfg.ManagerEnabled,

@@ -46,6 +46,12 @@ type WorkerReconciler struct {
 	// "no operator preference" — backend.ResolveRuntime will fall back to
 	// "openclaw".
 	DefaultRuntime string
+
+	// ControllerName identifies this controller instance. Stamped on every
+	// Pod/SA/Secret created under this reconciler via the
+	// hiclaw.io/controller label so multiple controller instances sharing a
+	// namespace do not cross-watch each other's resources.
+	ControllerName string
 }
 
 func (r *WorkerReconciler) Reconcile(ctx context.Context, req reconcile.Request) (retres reconcile.Result, reterr error) {
@@ -109,7 +115,7 @@ func (r *WorkerReconciler) reconcileNormal(ctx context.Context, w *v1beta1.Worke
 		ResourcePrefix: r.ResourcePrefix,
 		DefaultRuntime: r.DefaultRuntime,
 	}
-	mctx := workerMemberContext(w)
+	mctx := r.workerMemberContext(w)
 	state := &MemberState{}
 
 	if res, err := ReconcileMemberInfra(ctx, deps, mctx, state); err != nil || res.RequeueAfter > 0 {
@@ -158,7 +164,7 @@ func (r *WorkerReconciler) reconcileDelete(ctx context.Context, w *v1beta1.Worke
 		ResourcePrefix: r.ResourcePrefix,
 		DefaultRuntime: r.DefaultRuntime,
 	}
-	mctx := workerMemberContext(w)
+	mctx := r.workerMemberContext(w)
 
 	_ = ReconcileMemberDelete(ctx, deps, mctx)
 
@@ -221,8 +227,11 @@ func (r *WorkerReconciler) reconcileLegacy(ctx context.Context, w *v1beta1.Worke
 }
 
 // workerMemberContext translates a Worker CR into a MemberContext for the
-// shared member reconcile helpers.
-func workerMemberContext(w *v1beta1.Worker) MemberContext {
+// shared member reconcile helpers. The returned PodLabels carry this
+// controller instance's identity (hiclaw.io/controller) and the member
+// role (hiclaw.io/role) so downstream Pod creation can stamp them
+// symmetrically with Team-managed members.
+func (r *WorkerReconciler) workerMemberContext(w *v1beta1.Worker) MemberContext {
 	role := roleForAnnotations(w.Annotations["hiclaw.io/role"], w.Annotations["hiclaw.io/team-leader"])
 	return MemberContext{
 		Name:               w.Name,
@@ -231,6 +240,10 @@ func workerMemberContext(w *v1beta1.Worker) MemberContext {
 		Spec:               w.Spec,
 		Generation:         w.Generation,
 		ObservedGeneration: w.Status.ObservedGeneration,
+		PodLabels: map[string]string{
+			v1beta1.LabelController: r.ControllerName,
+			"hiclaw.io/role":        role.String(),
+		},
 		// For Worker CR, spec change is detected the classic way:
 		// Generation increments on every spec mutation; ObservedGeneration
 		// is written after a successful reconcile. Status defaults to 0

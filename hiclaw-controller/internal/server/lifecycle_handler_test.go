@@ -171,4 +171,3 @@ func (s *stubWorkerBackend) Stop(_ context.Context, _ string) error {
 func (s *stubWorkerBackend) Status(context.Context, string) (*backend.WorkerResult, error) {
 	return &backend.WorkerResult{Backend: "stub", Status: s.status}, nil
 }
-func (s *stubWorkerBackend) List(context.Context) ([]backend.WorkerResult, error) { return nil, nil }

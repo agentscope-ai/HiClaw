@@ -60,9 +60,9 @@ func (d *DockerBackend) WithPrefix(prefix string) *DockerBackend {
 	return &cp
 }
 
-func (d *DockerBackend) Name() string                        { return "docker" }
-func (d *DockerBackend) DeploymentMode() string               { return DeployLocal }
-func (d *DockerBackend) NeedsCredentialInjection() bool       { return false }
+func (d *DockerBackend) Name() string                   { return "docker" }
+func (d *DockerBackend) DeploymentMode() string         { return DeployLocal }
+func (d *DockerBackend) NeedsCredentialInjection() bool { return false }
 
 func (d *DockerBackend) Available(ctx context.Context) bool {
 	// Check socket file exists
@@ -362,60 +362,6 @@ func (d *DockerBackend) Status(ctx context.Context, name string) (*WorkerResult,
 	}, nil
 }
 
-func (d *DockerBackend) List(ctx context.Context) ([]WorkerResult, error) {
-	filters, _ := json.Marshal(map[string][]string{
-		"name": {d.containerPrefix},
-	})
-	u := fmt.Sprintf("http://localhost/containers/json?all=true&filters=%s", url.QueryEscape(string(filters)))
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
-	if err != nil {
-		return nil, err
-	}
-	resp, err := d.client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("docker list: %w", err)
-	}
-	defer resp.Body.Close()
-
-	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("docker list failed (status %d): %s", resp.StatusCode, string(body))
-	}
-
-	var containers []struct {
-		ID    string   `json:"Id"`
-		Names []string `json:"Names"`
-		State string   `json:"State"`
-	}
-	if err := json.Unmarshal(body, &containers); err != nil {
-		return nil, fmt.Errorf("parse list response: %w", err)
-	}
-
-	results := make([]WorkerResult, 0, len(containers))
-	for _, c := range containers {
-		name := ""
-		for _, n := range c.Names {
-			n = strings.TrimPrefix(n, "/")
-			if strings.HasPrefix(n, d.containerPrefix) {
-				name = strings.TrimPrefix(n, d.containerPrefix)
-				break
-			}
-		}
-		if name == "" {
-			continue
-		}
-		results = append(results, WorkerResult{
-			Name:           name,
-			Backend:        "docker",
-			DeploymentMode: DeployLocal,
-			Status:         normalizeDockerStatus(c.State),
-			ContainerID:    c.ID,
-			RawStatus:      c.State,
-		})
-	}
-	return results, nil
-}
-
 // --- internal helpers ---
 
 // ensureImage checks if an image exists locally and pulls it if not.
@@ -498,21 +444,21 @@ func (d *DockerBackend) startContainer(ctx context.Context, nameOrID string) err
 
 // dockerCreatePayload is the Docker Engine API container create body.
 type dockerCreatePayload struct {
-	Image            string                              `json:"Image"`
-	Env              []string                            `json:"Env,omitempty"`
-	WorkingDir       string                              `json:"WorkingDir,omitempty"`
-	ExposedPorts     map[string]struct{}                  `json:"ExposedPorts,omitempty"`
-	HostConfig       *dockerHostConfig                    `json:"HostConfig,omitempty"`
-	NetworkingConfig *dockerNetworkingConfig               `json:"NetworkingConfig,omitempty"`
+	Image            string                  `json:"Image"`
+	Env              []string                `json:"Env,omitempty"`
+	WorkingDir       string                  `json:"WorkingDir,omitempty"`
+	ExposedPorts     map[string]struct{}     `json:"ExposedPorts,omitempty"`
+	HostConfig       *dockerHostConfig       `json:"HostConfig,omitempty"`
+	NetworkingConfig *dockerNetworkingConfig `json:"NetworkingConfig,omitempty"`
 }
 
 type dockerHostConfig struct {
-	NetworkMode   string                               `json:"NetworkMode,omitempty"`
-	ExtraHosts    []string                             `json:"ExtraHosts,omitempty"`
-	Binds         []string                             `json:"Binds,omitempty"`
-	PortBindings  map[string][]dockerPortBinding        `json:"PortBindings,omitempty"`
-	RestartPolicy *dockerRestartPolicy                  `json:"RestartPolicy,omitempty"`
-	SecurityOpt   []string                             `json:"SecurityOpt,omitempty"`
+	NetworkMode   string                         `json:"NetworkMode,omitempty"`
+	ExtraHosts    []string                       `json:"ExtraHosts,omitempty"`
+	Binds         []string                       `json:"Binds,omitempty"`
+	PortBindings  map[string][]dockerPortBinding `json:"PortBindings,omitempty"`
+	RestartPolicy *dockerRestartPolicy           `json:"RestartPolicy,omitempty"`
+	SecurityOpt   []string                       `json:"SecurityOpt,omitempty"`
 }
 
 type dockerRestartPolicy struct {

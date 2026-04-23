@@ -406,44 +406,6 @@ func TestDockerDeleteNotFound(t *testing.T) {
 	}
 }
 
-func TestDockerList(t *testing.T) {
-	srv := mockDockerAPI(t)
-	defer srv.Close()
-	b := newTestDockerBackend(t, srv.URL)
-
-	// Empty list
-	workers, err := b.List(context.Background())
-	if err != nil {
-		t.Fatalf("List failed: %v", err)
-	}
-	if len(workers) != 0 {
-		t.Errorf("expected empty list, got %d", len(workers))
-	}
-
-	// Create two workers
-	b.Create(context.Background(), CreateRequest{Name: "w1", Image: "img:latest"})
-	b.Create(context.Background(), CreateRequest{Name: "w2", Image: "img:latest"})
-
-	workers, err = b.List(context.Background())
-	if err != nil {
-		t.Fatalf("List failed: %v", err)
-	}
-	if len(workers) != 2 {
-		t.Errorf("expected 2 workers, got %d", len(workers))
-	}
-
-	names := map[string]bool{}
-	for _, w := range workers {
-		names[w.Name] = true
-		if w.Backend != "docker" {
-			t.Errorf("expected backend docker, got %s", w.Backend)
-		}
-	}
-	if !names["w1"] || !names["w2"] {
-		t.Errorf("expected workers w1 and w2, got %v", names)
-	}
-}
-
 func TestNormalizeDockerStatus(t *testing.T) {
 	cases := []struct {
 		input    string

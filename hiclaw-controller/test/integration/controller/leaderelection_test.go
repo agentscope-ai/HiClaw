@@ -65,11 +65,12 @@ func TestLeaderElection_SingleInstance_BecomesLeader(t *testing.T) {
 	}
 
 	reconciler := &controller.WorkerReconciler{
-		Client:      mgr.GetClient(),
-		Provisioner: prov,
-		Deployer:    deploy,
-		Backend:     backend.NewRegistry([]backend.WorkerBackend{be}),
-		EnvBuilder:  env,
+		Client:         mgr.GetClient(),
+		Provisioner:    prov,
+		Deployer:       deploy,
+		Backend:        backend.NewRegistry([]backend.WorkerBackend{be}),
+		EnvBuilder:     env,
+		ControllerName: "test-ctl",
 	}
 	if err := reconciler.SetupWithManager(mgr); err != nil {
 		t.Fatalf("failed to setup reconciler: %v", err)
@@ -147,22 +148,24 @@ func TestLeaderElection_TwoInstances_OnlyOneReconciles(t *testing.T) {
 	}
 
 	recA := &controller.WorkerReconciler{
-		Client:      mgrA.GetClient(),
-		Provisioner: provA,
-		Deployer:    deployA,
-		Backend:     backend.NewRegistry([]backend.WorkerBackend{beA}),
-		EnvBuilder:  envA,
+		Client:         mgrA.GetClient(),
+		Provisioner:    provA,
+		Deployer:       deployA,
+		Backend:        backend.NewRegistry([]backend.WorkerBackend{beA}),
+		EnvBuilder:     envA,
+		ControllerName: "test-ctl-a",
 	}
 	if err := recA.SetupWithManager(mgrA); err != nil {
 		t.Fatalf("setup reconciler A: %v", err)
 	}
 
 	recB := &controller.WorkerReconciler{
-		Client:      mgrB.GetClient(),
-		Provisioner: provB,
-		Deployer:    deployB,
-		Backend:     backend.NewRegistry([]backend.WorkerBackend{beB}),
-		EnvBuilder:  envB,
+		Client:         mgrB.GetClient(),
+		Provisioner:    provB,
+		Deployer:       deployB,
+		Backend:        backend.NewRegistry([]backend.WorkerBackend{beB}),
+		EnvBuilder:     envB,
+		ControllerName: "test-ctl-b",
 	}
 	if err := recB.SetupWithManager(mgrB); err != nil {
 		t.Fatalf("setup reconciler B: %v", err)

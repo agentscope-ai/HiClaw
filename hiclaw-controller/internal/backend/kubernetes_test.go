@@ -2,7 +2,6 @@ package backend
 
 import (
 	"context"
-	"strings"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -128,26 +127,6 @@ func (f *fakeK8sPodClient) Delete(_ context.Context, name string, _ metav1.Delet
 	}
 	delete(f.store, name)
 	return nil
-}
-
-func (f *fakeK8sPodClient) List(_ context.Context, opts metav1.ListOptions) (*corev1.PodList, error) {
-	list := &corev1.PodList{}
-	var wantApp string
-	if idx := strings.Index(opts.LabelSelector, "app="); idx >= 0 {
-		rest := opts.LabelSelector[idx+len("app="):]
-		if comma := strings.IndexAny(rest, ",;"); comma >= 0 {
-			wantApp = rest[:comma]
-		} else {
-			wantApp = rest
-		}
-	}
-	for _, pod := range f.store {
-		if wantApp != "" && pod.Labels["app"] != wantApp {
-			continue
-		}
-		list.Items = append(list.Items, *pod.DeepCopy())
-	}
-	return list, nil
 }
 
 func newTestK8sBackend(objects ...*corev1.Pod) *K8sBackend {
@@ -312,43 +291,6 @@ func TestK8sStopAndDelete(t *testing.T) {
 	}
 	if result.Status != StatusNotFound {
 		t.Fatalf("expected not_found after stop, got %s", result.Status)
-	}
-}
-
-func TestK8sList(t *testing.T) {
-	b := newTestK8sBackend(
-		&corev1.Pod{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "hiclaw-worker-w1",
-				Namespace: "hiclaw",
-				Labels: map[string]string{
-					"app":               "hiclaw-worker",
-					"hiclaw.io/worker":  "w1",
-					"hiclaw.io/runtime": "openclaw",
-				},
-			},
-			Status: corev1.PodStatus{Phase: corev1.PodRunning},
-		},
-		&corev1.Pod{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "hiclaw-worker-w2",
-				Namespace: "hiclaw",
-				Labels: map[string]string{
-					"app":               "hiclaw-worker",
-					"hiclaw.io/worker":  "w2",
-					"hiclaw.io/runtime": "copaw",
-				},
-			},
-			Status: corev1.PodStatus{Phase: corev1.PodPending},
-		},
-	)
-
-	workers, err := b.List(context.Background())
-	if err != nil {
-		t.Fatalf("List failed: %v", err)
-	}
-	if len(workers) != 2 {
-		t.Fatalf("expected 2 workers, got %d", len(workers))
 	}
 }
 
@@ -632,7 +574,13 @@ spec:
       effect: NoSchedule
 `)
 
-	if _, err := b.Create(context.Background(), CreateRequest{Name: "alice"}); err != nil {
+	if _, err := b.Create(context.Background(), CreateRequest{
+		Name: "alice",
+		Labels: map[string]string{
+			"app":              "hiclaw-worker",
+			"hiclaw.io/worker": "alice",
+		},
+	}); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 	pod, err := b.client.Pods("hiclaw").Get(context.Background(), "hiclaw-worker-alice", metav1.GetOptions{})
@@ -645,9 +593,6 @@ spec:
 	}
 	if pod.Annotations["kubeone.ali/appinstance-name"] != "magic-ctl" {
 		t.Fatalf("appinstance annotation: %+v", pod.Annotations)
-	}
-	if pod.Annotations["hiclaw.io/created-by"] != "controller" {
-		t.Fatalf("overlay annotation missing: %+v", pod.Annotations)
 	}
 	if pod.Labels["nsm.alibabacloud.com/inject-sidecar"] != "ansm-magic-xxx" {
 		t.Fatalf("ANSM label: %+v", pod.Labels)
@@ -944,8 +889,7 @@ func TestClassifyAPIError(t *testing.T) {
 // TestK8sCreate_CustomResourcePrefix verifies that the worker pod's "app"
 // label and the default SA-name fallback derive from K8sConfig.ResourcePrefix
 // — critical for multi-tenant deployments sharing a namespace where the
-// hard-coded "hiclaw-worker" value would cause List selector collisions
-// across tenants.
+// hard-coded "hiclaw-worker" value would cause collisions across tenants.
 func TestK8sCreate_CustomResourcePrefix(t *testing.T) {
 	client := newFakeK8sCoreClient()
 	cfg := K8sConfig{
@@ -960,6 +904,10 @@ func TestK8sCreate_CustomResourcePrefix(t *testing.T) {
 	if _, err := b.Create(context.Background(), CreateRequest{
 		Name:               "alice",
 		ServiceAccountName: "teamB-worker-alice",
+		Labels: map[string]string{
+			"app":              "teamB-worker",
+			"hiclaw.io/worker": "alice",
+		},
 	}); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -970,26 +918,6 @@ func TestK8sCreate_CustomResourcePrefix(t *testing.T) {
 	}
 	if pod.Labels["app"] != "teamB-worker" {
 		t.Fatalf("app label = %q, want teamB-worker", pod.Labels["app"])
-	}
-
-	// List must filter on the tenant-specific label and only return pods
-	// from this tenant, even if another tenant's pod sits in the same
-	// namespace with a different "app" label.
-	injected := &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "hiclaw-worker-other",
-			Namespace: "hiclaw",
-			Labels:    map[string]string{"app": "hiclaw-worker"},
-		},
-	}
-	client.injectPod(injected)
-
-	results, err := b.List(context.Background())
-	if err != nil {
-		t.Fatalf("List: %v", err)
-	}
-	if len(results) != 1 || results[0].Name != "alice" {
-		t.Fatalf("List should have returned only teamB pod, got %+v", results)
 	}
 }
 

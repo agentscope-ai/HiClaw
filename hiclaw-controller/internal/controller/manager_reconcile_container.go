@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	v1beta1 "github.com/hiclaw/hiclaw-controller/api/v1beta1"
 	authpkg "github.com/hiclaw/hiclaw-controller/internal/auth"
 	"github.com/hiclaw/hiclaw-controller/internal/backend"
 	"github.com/hiclaw/hiclaw-controller/internal/service"
@@ -157,8 +158,11 @@ func (r *ManagerReconciler) createManagerContainer(ctx context.Context, s *manag
 		ServiceAccountName: saName,
 		Resources:          r.ManagerResources,
 		Labels: map[string]string{
-			"app":               r.ResourcePrefix.ManagerAppLabel(),
-			"hiclaw.io/manager": m.Name,
+			"app":                   r.ResourcePrefix.ManagerAppLabel(),
+			"hiclaw.io/manager":     m.Name,
+			"hiclaw.io/role":        "manager",
+			"hiclaw.io/runtime":     backend.ResolveRuntime(m.Spec.Runtime, r.DefaultRuntime),
+			v1beta1.LabelController: r.ControllerName,
 		},
 	}
 	if wb.Name() != "k8s" {

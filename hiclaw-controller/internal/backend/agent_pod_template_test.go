@@ -18,7 +18,7 @@ func baseOverlay() PodOverlay {
 		Name:               "hiclaw-worker-alice",
 		Namespace:          "hiclaw",
 		Labels:             map[string]string{"app": "hiclaw-worker", "hiclaw.io/worker": "alice"},
-		Annotations:        map[string]string{"hiclaw.io/created-by": "controller"},
+		Annotations:        map[string]string{"hiclaw.io/test-overlay": "controller"},
 		ServiceAccountName: "hiclaw-worker-alice",
 		Container: corev1.Container{
 			Name:            "worker",
@@ -137,7 +137,7 @@ func TestApplyPodTemplate_MetadataAnnotationsMerge(t *testing.T) {
 			Annotations: map[string]string{
 				"foo": "bar",
 				// overlay should overwrite this key
-				"hiclaw.io/created-by": "should-be-overwritten",
+				"hiclaw.io/test-overlay": "should-be-overwritten",
 			},
 		},
 	}
@@ -145,8 +145,8 @@ func TestApplyPodTemplate_MetadataAnnotationsMerge(t *testing.T) {
 	if pod.Annotations["foo"] != "bar" {
 		t.Fatalf("template annotation dropped: %+v", pod.Annotations)
 	}
-	if pod.Annotations["hiclaw.io/created-by"] != "controller" {
-		t.Fatalf("overlay must win on created-by: %q", pod.Annotations["hiclaw.io/created-by"])
+	if pod.Annotations["hiclaw.io/test-overlay"] != "controller" {
+		t.Fatalf("overlay must win on annotation: %q", pod.Annotations["hiclaw.io/test-overlay"])
 	}
 }
 

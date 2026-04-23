@@ -23,7 +23,6 @@ type MockWorkerBackend struct {
 	StartFn  func(ctx context.Context, name string) error
 	StopFn   func(ctx context.Context, name string) error
 	StatusFn func(ctx context.Context, name string) (*backend.WorkerResult, error)
-	ListFn   func(ctx context.Context) ([]backend.WorkerResult, error)
 
 	containerState map[string]backend.WorkerStatus
 
@@ -33,7 +32,6 @@ type MockWorkerBackend struct {
 		Start  []string
 		Stop   []string
 		Status []string
-		List   int
 	}
 }
 
@@ -55,7 +53,6 @@ func (m *MockWorkerBackend) Reset() {
 	m.StartFn = nil
 	m.StopFn = nil
 	m.StatusFn = nil
-	m.ListFn = nil
 }
 
 // ClearCalls resets call records only, preserving Fn overrides and container state.
@@ -72,7 +69,6 @@ func (m *MockWorkerBackend) clearCallsLocked() {
 		Start  []string
 		Stop   []string
 		Status []string
-		List   int
 	}{}
 }
 
@@ -214,17 +210,6 @@ func (m *MockWorkerBackend) Status(ctx context.Context, name string) (*backend.W
 		Backend: m.Name(),
 		Status:  backend.StatusNotFound,
 	}, nil
-}
-
-func (m *MockWorkerBackend) List(ctx context.Context) ([]backend.WorkerResult, error) {
-	m.mu.Lock()
-	m.Calls.List++
-	fn := m.ListFn
-	m.mu.Unlock()
-	if fn != nil {
-		return fn(ctx)
-	}
-	return nil, nil
 }
 
 // CallSnapshot returns a snapshot of call records safe for concurrent use.

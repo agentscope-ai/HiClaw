@@ -656,18 +656,16 @@ func buildDesiredMembers(t *v1beta1.Team, controllerName string) []MemberContext
 		}
 		return false
 	}
-	// memberLabels returns the base PodLabels for a team member, optionally
-	// stamped with hiclaw.io/controller so the resulting Pod lands inside
-	// the owning controller's label-scoped informer cache.
+	// memberLabels returns the base PodLabels for a team member stamped
+	// with the owning controller's identity. In in-cluster mode
+	// controllerName is always non-empty (see Config.validate), so no
+	// defensive check is needed.
 	memberLabels := func(role MemberRole) map[string]string {
-		labels := map[string]string{
-			"hiclaw.io/team": t.Name,
-			"hiclaw.io/role": role.String(),
+		return map[string]string{
+			"hiclaw.io/team":        t.Name,
+			"hiclaw.io/role":        role.String(),
+			v1beta1.LabelController: controllerName,
 		}
-		if controllerName != "" {
-			labels[v1beta1.LabelController] = controllerName
-		}
-		return labels
 	}
 	members := make([]MemberContext, 0, 1+len(t.Spec.Workers))
 
@@ -764,8 +762,8 @@ func memberSpecChanged(t *v1beta1.Team, role MemberRole, name string) bool {
 // JSON key churn.
 func hashMemberSourceSpec(t *v1beta1.Team, role MemberRole, name string) string {
 	type leaderInput struct {
-		Leader     v1beta1.LeaderSpec          `json:"leader"`
-		TeamPolicy *v1beta1.ChannelPolicySpec  `json:"teamPolicy,omitempty"`
+		Leader     v1beta1.LeaderSpec         `json:"leader"`
+		TeamPolicy *v1beta1.ChannelPolicySpec `json:"teamPolicy,omitempty"`
 	}
 	type workerInput struct {
 		Worker       v1beta1.TeamWorkerSpec     `json:"worker"`

@@ -125,10 +125,13 @@ type CreateRequest struct {
 	// When set, NamePrefix and containerPrefix are ignored for naming.
 	ContainerName string `json:"-"`
 
-	// Labels are additional K8s labels merged into the Pod metadata.
-	// If "app" is present, it overrides the default "hiclaw-worker".
-	// If "hiclaw.io/worker" should be omitted (e.g. for Manager pods),
-	// set an alternative identity label (e.g. "hiclaw.io/manager").
+	// Labels carries the full K8s label set for the Pod. Callers own the
+	// identity labels (`app`, `hiclaw.io/worker` or `hiclaw.io/manager`,
+	// `hiclaw.io/controller`, `hiclaw.io/role`, `hiclaw.io/team` when
+	// applicable). The backend does NOT synthesize tenant/role defaults;
+	// it only stamps `hiclaw.io/runtime` from the resolved runtime value
+	// (the backend alone knows the post-resolution value after
+	// `ResolveRuntime`).
 	Labels map[string]string `json:"-"`
 
 	// Volumes are host bind mounts (Docker backend only; ignored by K8s).
@@ -193,7 +196,4 @@ type WorkerBackend interface {
 
 	// Status returns the current status of a worker.
 	Status(ctx context.Context, name string) (*WorkerResult, error)
-
-	// List returns all workers managed by this backend.
-	List(ctx context.Context) ([]WorkerResult, error)
 }

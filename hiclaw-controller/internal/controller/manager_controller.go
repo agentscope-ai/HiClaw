@@ -45,6 +45,11 @@ type ManagerReconciler struct {
 	// (Config.ManagerRuntime). Distinct from WorkerReconciler.DefaultRuntime
 	// because Backend.Create is shared and cannot tell which env var applies.
 	DefaultRuntime string
+
+	// ControllerName identifies this controller instance. Stamped on every
+	// Manager Pod via hiclaw.io/controller so multi-instance deployments
+	// sharing a namespace do not cross-watch each other's resources.
+	ControllerName string
 }
 
 // managerContainerName returns the container/pod name for a Manager CR.

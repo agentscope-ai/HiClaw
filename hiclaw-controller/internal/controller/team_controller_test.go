@@ -70,8 +70,8 @@ func TestBuildDesiredMembers_LeaderAndWorkers(t *testing.T) {
 //   - leader with a matching stored hash   → SpecChanged=false
 //   - worker whose spec was mutated         → SpecChanged=true
 //   - worker with no stored hash (brand new) → SpecChanged=false (initial
-//       creation is driven by the backend.StatusNotFound branch, not by
-//       SpecChanged — see memberSpecChanged doc for why)
+//     creation is driven by the backend.StatusNotFound branch, not by
+//     SpecChanged — see memberSpecChanged doc for why)
 //
 // This is the regression guard for the bug where TeamReconciler tore down
 // every pod on every reconcile because MemberContext.ObservedGeneration was
@@ -343,13 +343,11 @@ func TestBuildDesiredMembers_StampsControllerLabelOnPodLabels(t *testing.T) {
 		if got := m.PodLabels[v1beta1.LabelController]; got != "ctrl-a" {
 			t.Fatalf("member %s: expected controller label ctrl-a in PodLabels, got %q (labels=%v)", m.Name, got, m.PodLabels)
 		}
-	}
-
-	// Empty ControllerName must not stamp any label (embedded mode).
-	membersNoCtrl := buildDesiredMembers(team, "")
-	for _, m := range membersNoCtrl {
-		if _, present := m.PodLabels[v1beta1.LabelController]; present {
-			t.Fatalf("member %s: expected no controller label when ControllerName empty, got %q", m.Name, m.PodLabels[v1beta1.LabelController])
+		if got := m.PodLabels["hiclaw.io/team"]; got != team.Name {
+			t.Fatalf("member %s: expected team label %q, got %q", m.Name, team.Name, got)
+		}
+		if m.PodLabels["hiclaw.io/role"] == "" {
+			t.Fatalf("member %s: expected non-empty hiclaw.io/role", m.Name)
 		}
 	}
 }

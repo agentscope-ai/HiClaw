@@ -359,7 +359,11 @@ func (a *App) initServiceLayer(_ context.Context) error {
 
 	var credStore service.CredentialStore
 	if cfg.KubeMode == "incluster" && a.k8sClient != nil {
-		credStore = &service.SecretCredentialStore{Client: a.k8sClient, Namespace: a.namespace}
+		credStore = &service.SecretCredentialStore{
+			Client:         a.k8sClient,
+			Namespace:      a.namespace,
+			ControllerName: cfg.ControllerName,
+		}
 	} else {
 		credStore = &service.FileCredentialStore{Dir: cfg.CredsDir()}
 	}
@@ -376,6 +380,7 @@ func (a *App) initServiceLayer(_ context.Context) error {
 		MatrixDomain:      cfg.MatrixDomain,
 		AdminUser:         cfg.MatrixAdminUser,
 		ResourcePrefix:    authpkg.ResourcePrefix(cfg.ResourcePrefix),
+		ControllerName:    cfg.ControllerName,
 		ManagerPassword:   cfg.ManagerPassword,
 		ManagerGatewayKey: cfg.ManagerGatewayKey,
 		ManagerEnabled:    cfg.ManagerEnabled,
@@ -416,6 +421,7 @@ func (a *App) initReconcilers(_ context.Context) error {
 		ResourcePrefix: resourcePrefix,
 		Legacy:         a.legacy,
 		DefaultRuntime: a.cfg.DefaultWorkerRuntime,
+		ControllerName: a.cfg.ControllerName,
 	}).SetupWithManager(a.mgr); err != nil {
 		return fmt.Errorf("setup WorkerReconciler: %w", err)
 	}
@@ -452,6 +458,7 @@ func (a *App) initReconcilers(_ context.Context) error {
 		ResourcePrefix:   resourcePrefix,
 		ManagerResources: a.cfg.ManagerResources(),
 		DefaultRuntime:   a.cfg.ManagerRuntime,
+		ControllerName:   a.cfg.ControllerName,
 	}
 	if a.cfg.KubeMode == "embedded" {
 		mgrReconciler.EmbeddedConfig = &controller.ManagerEmbeddedConfig{

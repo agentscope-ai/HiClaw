@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	v1beta1 "github.com/hiclaw/hiclaw-controller/api/v1beta1"
 	authpkg "github.com/hiclaw/hiclaw-controller/internal/auth"
 	authenticationv1 "k8s.io/api/authentication/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -34,8 +35,9 @@ func (p *Provisioner) EnsureServiceAccount(ctx context.Context, workerName strin
 			Name:      saName,
 			Namespace: ns,
 			Labels: map[string]string{
-				"app":              p.resourcePrefix.WorkerAppLabel(),
-				"hiclaw.io/worker": workerName,
+				"app":                   p.resourcePrefix.WorkerAppLabel(),
+				"hiclaw.io/worker":      workerName,
+				v1beta1.LabelController: p.controllerName,
 			},
 		},
 	}
@@ -84,8 +86,9 @@ func (p *Provisioner) EnsureManagerServiceAccount(ctx context.Context, managerNa
 			Name:      saName,
 			Namespace: ns,
 			Labels: map[string]string{
-				"app":               p.resourcePrefix.ManagerAppLabel(),
-				"hiclaw.io/manager": managerName,
+				"app":                   p.resourcePrefix.ManagerAppLabel(),
+				"hiclaw.io/manager":     managerName,
+				v1beta1.LabelController: p.controllerName,
 			},
 		},
 	}
