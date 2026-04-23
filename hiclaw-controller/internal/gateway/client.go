@@ -19,14 +19,6 @@ type Client interface {
 	// DeauthorizeAIRoutes removes the consumer from all AI routes' allowedConsumers.
 	DeauthorizeAIRoutes(ctx context.Context, consumerName string) error
 
-	// AuthorizeMCPServers adds the consumer to the specified MCP servers' allowedConsumers.
-	// If mcpServers is empty, authorizes all existing MCP servers.
-	// Returns the list of MCP server names that were successfully authorized.
-	AuthorizeMCPServers(ctx context.Context, consumerName string, mcpServers []string) ([]string, error)
-
-	// DeauthorizeMCPServers removes the consumer from MCP servers' allowedConsumers.
-	DeauthorizeMCPServers(ctx context.Context, consumerName string, mcpServers []string) error
-
 	// ExposePort creates gateway resources to expose a worker port.
 	ExposePort(ctx context.Context, req PortExposeRequest) error
 

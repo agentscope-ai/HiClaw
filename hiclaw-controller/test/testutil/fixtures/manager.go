@@ -28,7 +28,7 @@ func NewTestManagerWithPhase(name, phase string) *v1beta1.Manager {
 }
 
 // NewTestManagerWithMCPServers creates a Manager CR with MCP servers configured.
-func NewTestManagerWithMCPServers(name string, mcpServers []string) *v1beta1.Manager {
+func NewTestManagerWithMCPServers(name string, mcpServers []v1beta1.MCPServer) *v1beta1.Manager {
 	m := NewTestManager(name)
 	m.Spec.McpServers = mcpServers
 	return m

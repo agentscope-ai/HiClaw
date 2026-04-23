@@ -253,20 +253,41 @@ func (m *Migrator) extractModel(ctx context.Context, workerName string) string {
 	return strings.TrimPrefix(defaultModel, "hiclaw-gateway/")
 }
 
-func (m *Migrator) extractMCPServers(ctx context.Context, workerName string) []string {
+func (m *Migrator) extractMCPServers(ctx context.Context, workerName string) []map[string]interface{} {
 	data := m.readAgentFile(ctx, workerName, "mcporter-servers.json")
 	if data == nil {
 		return nil
 	}
-	var servers map[string]interface{}
-	if err := json.Unmarshal(data, &servers); err != nil {
+	var raw map[string]interface{}
+	if err := json.Unmarshal(data, &raw); err != nil {
 		return nil
 	}
-	names := make([]string, 0, len(servers))
-	for name := range servers {
-		names = append(names, name)
+
+	servers := raw
+	if wrapped, ok := raw["mcpServers"].(map[string]interface{}); ok {
+		servers = wrapped
 	}
-	return names
+
+	out := make([]map[string]interface{}, 0, len(servers))
+	for name, v := range servers {
+		entry := map[string]interface{}{
+			"name": name,
+		}
+		if m, ok := v.(map[string]interface{}); ok {
+			if urlStr, ok := m["url"].(string); ok && urlStr != "" {
+				entry["url"] = urlStr
+			}
+			if transportStr, ok := m["transport"].(string); ok && transportStr != "" {
+				entry["transport"] = transportStr
+			} else {
+				entry["transport"] = "http"
+			}
+		} else {
+			entry["transport"] = "http"
+		}
+		out = append(out, entry)
+	}
+	return out
 }
 
 func (m *Migrator) readAgentFile(ctx context.Context, workerName, filename string) []byte {
@@ -312,7 +333,7 @@ func (m *Migrator) createStandaloneWorkerCR(ctx context.Context, res dynamic.Res
 		spec["skills"] = toInterfaceSlice(entry.Skills)
 	}
 	if len(mcpServers) > 0 {
-		spec["mcpServers"] = toInterfaceSlice(mcpServers)
+		spec["mcpServers"] = mcpServersToInterfaceSlice(mcpServers)
 	}
 
 	obj := &unstructured.Unstructured{
@@ -365,7 +386,7 @@ func (m *Migrator) createTeamCR(ctx context.Context, dynClient dynamic.Interface
 			}
 			mcpServers := m.extractMCPServers(ctx, wName)
 			if len(mcpServers) > 0 {
-				wSpec["mcpServers"] = toInterfaceSlice(mcpServers)
+				wSpec["mcpServers"] = mcpServersToInterfaceSlice(mcpServers)
 			}
 			if wEntry.Image != nil && *wEntry.Image != "" {
 				wSpec["image"] = *wEntry.Image
@@ -447,6 +468,14 @@ func toInterfaceSlice(ss []string) []interface{} {
 	result := make([]interface{}, len(ss))
 	for i, s := range ss {
 		result[i] = s
+	}
+	return result
+}
+
+func mcpServersToInterfaceSlice(entries []map[string]interface{}) []interface{} {
+	result := make([]interface{}, len(entries))
+	for i, e := range entries {
+		result[i] = e
 	}
 	return result
 }

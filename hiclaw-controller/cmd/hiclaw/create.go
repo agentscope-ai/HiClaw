@@ -37,7 +37,6 @@ func createWorkerCmd() *cobra.Command {
 		soul        string
 		soulFile    string
 		skills      string
-		mcpServers  string
 		packageURI  string
 		expose      string
 		team        string
@@ -54,8 +53,9 @@ func createWorkerCmd() *cobra.Command {
 
   hiclaw create worker --name alice --model qwen3.5-plus
   hiclaw create worker --name alice --soul-file /path/to/SOUL.md --skills github-operations
-  hiclaw create worker --name bob --model claude-sonnet-4-6 --mcp-servers github -o json
-  hiclaw create worker --name charlie --runtime copaw --expose 8080,3000`,
+  hiclaw create worker --name charlie --runtime copaw --expose 8080,3000
+
+To configure mcpServers, use a YAML manifest and pass it with 'hiclaw apply -f worker.yaml'.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if name == "" {
 				return fmt.Errorf("--name is required")
@@ -94,9 +94,6 @@ func createWorkerCmd() *cobra.Command {
 			setIfNotEmpty(req, "role", role)
 			if skills != "" {
 				req["skills"] = splitCSV(skills)
-			}
-			if mcpServers != "" {
-				req["mcpServers"] = splitCSV(mcpServers)
 			}
 			if expose != "" {
 				req["expose"] = parseExposePorts(expose)
@@ -139,7 +136,6 @@ func createWorkerCmd() *cobra.Command {
 	cmd.Flags().StringVar(&soul, "soul", "", "Worker SOUL.md content (inline)")
 	cmd.Flags().StringVar(&soulFile, "soul-file", "", "Path to SOUL.md file (overrides --soul)")
 	cmd.Flags().StringVar(&skills, "skills", "", "Comma-separated built-in skills")
-	cmd.Flags().StringVar(&mcpServers, "mcp-servers", "", "Comma-separated MCP servers")
 	cmd.Flags().StringVar(&packageURI, "package", "", "Package URI (nacos://, http://, oss://) or shorthand")
 	cmd.Flags().StringVar(&expose, "expose", "", "Comma-separated ports to expose (e.g. 8080,3000)")
 	cmd.Flags().StringVar(&team, "team", "", "Team name (assigns worker to a team)")

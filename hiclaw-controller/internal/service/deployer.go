@@ -28,7 +28,10 @@ type WorkerDeployRequest struct {
 	MatrixToken    string
 	GatewayKey     string
 	MatrixPassword string
-	AuthorizedMCPs []string
+
+	// MCP servers declared in spec.mcpServers. The deployer translates this into
+	// mcporter-servers.json and injects Authorization: Bearer <GatewayKey>.
+	McpServers []v1beta1.MCPServer
 
 	TeamAdminMatrixID string
 
@@ -198,8 +201,8 @@ func (d *Deployer) DeployWorkerConfig(ctx context.Context, req WorkerDeployReque
 	}
 
 	// --- mcporter-servers.json ---
-	if len(req.AuthorizedMCPs) > 0 {
-		mcporterJSON, err := d.agentConfig.GenerateMcporterConfig(req.GatewayKey, "", req.AuthorizedMCPs)
+	if len(req.McpServers) > 0 {
+		mcporterJSON, err := d.agentConfig.GenerateMcporterConfig(req.GatewayKey, req.McpServers)
 		if err != nil {
 			logger.Error(err, "mcporter config generation failed (non-fatal)")
 		} else if mcporterJSON != nil {
@@ -341,8 +344,12 @@ type ManagerDeployRequest struct {
 	MatrixToken    string
 	GatewayKey     string
 	MatrixPassword string
-	AuthorizedMCPs []string
-	IsUpdate       bool
+
+	// MCP servers declared in spec.mcpServers. The deployer translates this into
+	// mcporter-servers.json and injects Authorization: Bearer <GatewayKey>.
+	McpServers []v1beta1.MCPServer
+
+	IsUpdate bool
 }
 
 // DeployManagerConfig generates and pushes Manager configuration files to OSS.
@@ -395,8 +402,8 @@ func (d *Deployer) DeployManagerConfig(ctx context.Context, req ManagerDeployReq
 	}
 
 	// --- mcporter-servers.json ---
-	if len(req.AuthorizedMCPs) > 0 {
-		mcporterJSON, err := d.agentConfig.GenerateMcporterConfig(req.GatewayKey, "", req.AuthorizedMCPs)
+	if len(req.McpServers) > 0 {
+		mcporterJSON, err := d.agentConfig.GenerateMcporterConfig(req.GatewayKey, req.McpServers)
 		if err != nil {
 			logger.Error(err, "mcporter config generation failed (non-fatal)")
 		} else if mcporterJSON != nil {

@@ -85,7 +85,10 @@ spec:
   model: claude-sonnet-4-6           # required: LLM model
   runtime: copaw                     # openclaw | copaw (default openclaw)
   skills: [github-operations]        # platform built-in skills
-  mcpServers: [github]               # MCP servers authorized via Gateway
+  mcpServers:                        # MCP servers callable via mcporter
+    - name: github
+      url: https://gateway.example.com/mcp-servers/github/mcp
+      transport: http                # "http" (default) or "sse"
   package: file://./alice-pkg.zip    # optional: file/http(s)/nacos/packages/…
   soul: |                            # persona
     You are a frontend-focused engineer...
@@ -125,7 +128,9 @@ spec:
     - name: alice
       model: claude-sonnet-4-6
       skills: [github-operations]
-      mcpServers: [github]
+      mcpServers:
+        - name: github
+          url: https://gateway.example.com/mcp-servers/github/mcp
     - name: bob
       model: qwen3.5-plus
       runtime: copaw
@@ -172,7 +177,9 @@ spec:
   # soul: | …                         # optional SOUL.md override
   # agents: | …                       # optional AGENTS.md override
   skills: [worker-management]         # on-demand Manager skills
-  mcpServers: [github]
+  mcpServers:
+    - name: github
+      url: https://gateway.example.com/mcp-servers/github/mcp
   # package: https://…/mgr.zip       # optional; same URI semantics as Worker
   config:
     heartbeatInterval: 15m

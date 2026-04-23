@@ -632,6 +632,68 @@ func TestWorkerDelete_ProvisionFailed_StillCleans(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// Worker MCP config propagation
+// ---------------------------------------------------------------------------
+
+func TestWorkerUpdate_MCPServersChange_RewritesMcporterJSON(t *testing.T) {
+	resetMocks()
+
+	workerName := fixtures.UniqueName("test-worker-mcp")
+	worker := fixtures.NewTestWorker(workerName)
+	worker.Spec.McpServers = []v1beta1.MCPServer{
+		{Name: "github", URL: "https://gw.example.com/mcp-servers/github/mcp"},
+	}
+
+	if err := k8sClient.Create(ctx, worker); err != nil {
+		t.Fatalf("failed to create Worker CR: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = k8sClient.Delete(ctx, worker)
+	})
+
+	waitForRunning(t, worker)
+
+	clearAllCalls()
+
+	updatedServers := []v1beta1.MCPServer{
+		{Name: "github", URL: "https://gw.example.com/mcp-servers/github/mcp"},
+		{Name: "jira", URL: "https://gw.example.com/mcp-servers/jira/mcp", Transport: "sse"},
+	}
+	updateSpecField(t, worker, func(w *v1beta1.Worker) {
+		w.Spec.McpServers = updatedServers
+	})
+
+	assertEventually(t, func() error {
+		var w v1beta1.Worker
+		if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(worker), &w); err != nil {
+			return err
+		}
+		if w.Status.ObservedGeneration != w.Generation {
+			return fmt.Errorf("ObservedGeneration=%d, want %d", w.Status.ObservedGeneration, w.Generation)
+		}
+		for _, req := range mockDeploy.Calls.DeployWorkerConfig {
+			if req.Name != workerName {
+				continue
+			}
+			if len(req.McpServers) != len(updatedServers) {
+				continue
+			}
+			match := true
+			for i, s := range updatedServers {
+				if req.McpServers[i].Name != s.Name || req.McpServers[i].URL != s.URL || req.McpServers[i].Transport != s.Transport {
+					match = false
+					break
+				}
+			}
+			if match {
+				return nil
+			}
+		}
+		return fmt.Errorf("DeployWorkerConfig not called with updated McpServers=%v (calls=%d)", updatedServers, len(mockDeploy.Calls.DeployWorkerConfig))
+	})
+}
+
+// ---------------------------------------------------------------------------
 // Test helpers
 // ---------------------------------------------------------------------------
 
