@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	v1beta1 "github.com/hiclaw/hiclaw-controller/api/v1beta1"
+	"github.com/hiclaw/hiclaw-controller/internal/agentconfig"
 	authpkg "github.com/hiclaw/hiclaw-controller/internal/auth"
 	"github.com/hiclaw/hiclaw-controller/internal/backend"
 	"github.com/hiclaw/hiclaw-controller/internal/service"
@@ -66,6 +67,9 @@ type MemberContext struct {
 	TeamName          string
 	TeamLeaderName    string
 	TeamAdminMatrixID string
+
+	// Heartbeat config from Team CR leader spec (nil for non-leader members)
+	Heartbeat *agentconfig.HeartbeatConfig
 
 	// ExistingMatrixUserID is non-empty when prior provisioning has recorded a
 	// Matrix user; the Infra phase then uses RefreshCredentials instead of
@@ -236,6 +240,7 @@ func ReconcileMemberConfig(ctx context.Context, d MemberDeps, m MemberContext, s
 		MatrixPassword:    state.ProvResult.MatrixPassword,
 		AuthorizedMCPs:    authorizedMCPs,
 		TeamAdminMatrixID: m.TeamAdminMatrixID,
+		Heartbeat:         m.Heartbeat,
 		IsUpdate:          m.IsUpdate,
 	}); err != nil {
 		return fmt.Errorf("deploy worker config: %w", err)

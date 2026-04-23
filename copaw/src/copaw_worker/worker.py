@@ -117,12 +117,21 @@ class Worker:
         # (workspaces/default/). CoPaw reads system_prompt_files from workspace
         # dir, not .copaw root. HEARTBEAT.md is read by the Agent via shell tool
         # during heartbeat turns — must be co-located with SOUL.md/AGENTS.md.
+        # HEARTBEAT.md is seed-only: written on first boot, then fully owned by
+        # the agent. SOUL.md and AGENTS.md are always overwritten from L1.
         workspace_dir = self._copaw_working_dir / "workspaces" / "default"
         workspace_dir.mkdir(parents=True, exist_ok=True)
-        for name in ("SOUL.md", "AGENTS.md", "HEARTBEAT.md"):
+        for name in ("SOUL.md", "AGENTS.md"):
             src = self.sync.local_dir / name
             if src.exists():
                 (workspace_dir / name).write_text(src.read_text())
+        for name in ("HEARTBEAT.md",):
+            dst = workspace_dir / name
+            if dst.exists():
+                continue
+            src = self.sync.local_dir / name
+            if src.exists():
+                dst.write_text(src.read_text())
 
         # 5. Bridge openclaw.json -> CoPaw workspaces/default/agent.json + providers.json
         #    Infer gateway port from FS endpoint so bridge's _port_remap uses

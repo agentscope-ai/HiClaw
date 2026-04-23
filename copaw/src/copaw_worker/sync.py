@@ -528,7 +528,7 @@ def push_local(sync: FileSync, since: float = 0) -> list[str]:
     # runtime.  These are "inner" copies derived from the "outer" files at
     # the sync root.  If the Agent modifies them, propagate changes back to
     # the outer layer so the normal push cycle uploads them to MinIO.
-    _INNER_OUTER_FILES = ("AGENTS.md", "SOUL.md")
+    _INNER_OUTER_FILES = ("AGENTS.md", "SOUL.md", "HEARTBEAT.md")
     copaw_ws_dir = local_dir / ".copaw" / "workspaces" / "default"
     for name in _INNER_OUTER_FILES:
         inner = copaw_ws_dir / name

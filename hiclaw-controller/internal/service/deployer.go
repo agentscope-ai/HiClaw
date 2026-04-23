@@ -32,6 +32,9 @@ type WorkerDeployRequest struct {
 
 	TeamAdminMatrixID string
 
+	// Heartbeat config from Team CR leader spec (nil for non-leader workers)
+	Heartbeat *agentconfig.HeartbeatConfig
+
 	IsUpdate bool
 }
 
@@ -169,6 +172,7 @@ func (d *Deployer) DeployWorkerConfig(ctx context.Context, req WorkerDeployReque
 		ModelName:      req.Spec.Model,
 		TeamLeaderName: req.TeamLeaderName,
 		ChannelPolicy:  channelPolicy,
+		Heartbeat:      req.Heartbeat,
 	})
 	if err != nil {
 		return fmt.Errorf("config generation failed: %w", err)
@@ -490,6 +494,11 @@ func (d *Deployer) pushBuiltinSkills(ctx context.Context, workerName, agentPrefi
 func (d *Deployer) pushBuiltinTopLevelFiles(ctx context.Context, workerName, agentPrefix, role, runtime string) error {
 	agentDir := d.builtinAgentDir(role, runtime)
 	for _, name := range []string{"HEARTBEAT.md"} {
+		ossKey := agentPrefix + "/" + name
+		if existing, _ := d.oss.GetObject(ctx, ossKey); existing != nil {
+			log.FromContext(ctx).Info("seed-only: skipping (already in MinIO)", "file", name, "worker", workerName)
+			continue
+		}
 		src := filepath.Join(agentDir, name)
 		content, err := os.ReadFile(src)
 		if err != nil {
@@ -498,7 +507,7 @@ func (d *Deployer) pushBuiltinTopLevelFiles(ctx context.Context, workerName, age
 			}
 			return err
 		}
-		if err := d.oss.PutObject(ctx, agentPrefix+"/"+name, content); err != nil {
+		if err := d.oss.PutObject(ctx, ossKey, content); err != nil {
 			return err
 		}
 	}

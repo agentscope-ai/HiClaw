@@ -446,6 +446,12 @@ def _apply_policy(
             _set_path(existing, path, _deep_merge_local_wins(remote_value, local_value))
         return
 
+    if policy == "seed":
+        local_value = _get_path(existing, path)
+        if local_value is _MISSING:
+            _set_path(existing, path, remote_value)
+        return
+
     raise ValueError(f"unknown merge policy: {policy}")
 
 
@@ -499,10 +505,10 @@ _CONTROLLER_FIELDS: list[tuple[tuple[str, ...], str, _PolicyDeriver]] = [
      lambda c, ic: _resolve_embedding_config(c, ic) if _resolve_embedding_config(c, ic) is not None else _MISSING),
 
     # ── heartbeat ────────────────────────────────────────────────────────
-    # Controller-sourced on Manager (via openclaw.agents.defaults.heartbeat);
-    # Workers' openclaw.json never declares heartbeat so deriver returns
-    # _MISSING and the key is untouched.
-    (("heartbeat",), "remote-wins", _derive_heartbeat),
+    # Seed-only: controller provides the initial heartbeat config on first
+    # boot; after that the user/agent owns it (can adjust every, disable,
+    # etc.) and restarts will not overwrite their changes.
+    (("heartbeat",), "seed", _derive_heartbeat),
 ]
 
 

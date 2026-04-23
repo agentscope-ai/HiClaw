@@ -27,6 +27,12 @@ type Config struct {
 	CMSServiceName    string
 }
 
+// HeartbeatConfig describes the heartbeat settings to embed in openclaw.json.
+type HeartbeatConfig struct {
+	Enabled bool
+	Every   string // e.g. "30m", "1h"
+}
+
 // WorkerConfigRequest describes everything needed to generate a worker's config files.
 type WorkerConfigRequest struct {
 	WorkerName     string // e.g. "worker-alice"
@@ -35,6 +41,7 @@ type WorkerConfigRequest struct {
 	ModelName      string // optional: override default model
 	TeamLeaderName string // if non-empty, this is a team worker
 	ChannelPolicy  *ChannelPolicy // optional communication policy overrides
+	Heartbeat      *HeartbeatConfig // optional: team leader heartbeat settings
 }
 
 // ChannelPolicy describes additive/subtractive communication rules.

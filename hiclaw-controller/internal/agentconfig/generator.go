@@ -161,6 +161,17 @@ func (g *Generator) GenerateOpenClawConfig(req WorkerConfigRequest) ([]byte, err
 		},
 	}
 
+	// Add heartbeat config for team leaders
+	if req.Heartbeat != nil && req.Heartbeat.Enabled {
+		agents := config["agents"].(map[string]interface{})
+		defaults := agents["defaults"].(map[string]interface{})
+		hb := map[string]interface{}{"enabled": true}
+		if req.Heartbeat.Every != "" {
+			hb["every"] = req.Heartbeat.Every
+		}
+		defaults["heartbeat"] = hb
+	}
+
 	// Add embedding model for memory search if configured
 	if g.config.EmbeddingModel != "" {
 		agents := config["agents"].(map[string]interface{})
