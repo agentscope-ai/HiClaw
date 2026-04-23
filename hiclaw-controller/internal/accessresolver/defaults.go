@@ -23,10 +23,10 @@ import (
 )
 
 // DefaultEntriesForWorker returns the CR-layer default AccessEntry set
-// applied when a Worker CR omits spec.accessEntries. It mirrors the
-// legacy hard-coded worker role: read/write/list/delete on the worker's
-// own agent prefix plus read/list on the shared prefix, scoped to the
-// workspace bucket.
+// applied when a Worker CR omits spec.accessEntries. Mirrors the
+// embedded-mode MinIO policy produced by oss.MinIOAdminClient.buildWorkerPolicy
+// (for a standalone worker): read/write/list/delete on the worker's own
+// agent prefix and on the shared prefix, scoped to the workspace bucket.
 //
 // The returned entries still contain the ${self.name} template — they
 // are resolved by Resolver.ResolveForCaller before leaving the
@@ -38,15 +38,41 @@ func DefaultEntriesForWorker() []v1beta1.AccessEntry {
 			Permissions: []string{"read", "write", "list", "delete"},
 			Scope: jsonObj(map[string]any{
 				"bucketRef": "workspace",
-				"prefixes":  []any{"agents/${self.name}/*"},
+				"prefixes": []any{
+					"agents/${self.name}/*",
+					"shared/*",
+				},
 			}),
 		},
+	}
+}
+
+// DefaultEntriesForTeamMember returns the CR-layer default AccessEntry
+// set applied when a LeaderSpec or TeamWorkerSpec omits accessEntries.
+// Mirrors the embedded-mode policy produced by
+// oss.MinIOAdminClient.buildWorkerPolicy when teamName != "": read/
+// write/list/delete on the member's own agent prefix, on the shared
+// prefix, and on the team-scoped prefix.
+//
+// Leader and team workers share the same default scope — the leader is
+// not elevated with cross-member access. Cross-member collaboration is
+// expected to flow through the shared teams/<team>/* prefix.
+//
+// The returned entries contain the ${self.name} / ${self.team} templates
+// which are resolved by Resolver.resolveTeamMember before leaving the
+// controller.
+func DefaultEntriesForTeamMember() []v1beta1.AccessEntry {
+	return []v1beta1.AccessEntry{
 		{
 			Service:     credprovider.ServiceObjectStorage,
-			Permissions: []string{"read", "list"},
+			Permissions: []string{"read", "write", "list", "delete"},
 			Scope: jsonObj(map[string]any{
 				"bucketRef": "workspace",
-				"prefixes":  []any{"shared/*"},
+				"prefixes": []any{
+					"agents/${self.name}/*",
+					"shared/*",
+					"teams/${self.team}/*",
+				},
 			}),
 		},
 	}

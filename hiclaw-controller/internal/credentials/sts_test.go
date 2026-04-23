@@ -86,16 +86,37 @@ func TestIssueForCaller_WorkerDefaultEntries(t *testing.T) {
 	if fake.lastReq.SessionName != "hiclaw-worker-alice" {
 		t.Fatalf("session = %q", fake.lastReq.SessionName)
 	}
-	if len(fake.lastReq.Entries) != 2 {
-		t.Fatalf("expected 2 default entries, got %d", len(fake.lastReq.Entries))
+	// Standalone workers now default to a single object-storage entry
+	// covering agents/<name>/* + shared/* (both RW), mirroring the
+	// embedded MinIO policy.
+	if len(fake.lastReq.Entries) != 1 {
+		t.Fatalf("expected 1 default entry, got %d", len(fake.lastReq.Entries))
 	}
-	for _, e := range fake.lastReq.Entries {
-		if e.Scope.Bucket != "test-bucket" {
-			t.Fatalf("bucket not resolved in %+v", e.Scope)
+	got := fake.lastReq.Entries[0]
+	if got.Scope.Bucket != "test-bucket" {
+		t.Fatalf("bucket not resolved in %+v", got.Scope)
+	}
+	wantPrefixes := map[string]bool{"agents/alice/*": false, "shared/*": false}
+	for _, p := range got.Scope.Prefixes {
+		if _, ok := wantPrefixes[p]; ok {
+			wantPrefixes[p] = true
 		}
 	}
-	if got := fake.lastReq.Entries[0].Scope.Prefixes[0]; got != "agents/alice/*" {
-		t.Fatalf("template not expanded: %q", got)
+	for p, seen := range wantPrefixes {
+		if !seen {
+			t.Fatalf("missing prefix %q in %+v", p, got.Scope.Prefixes)
+		}
+	}
+	wantPerms := map[string]bool{"read": false, "write": false, "list": false, "delete": false}
+	for _, perm := range got.Permissions {
+		if _, ok := wantPerms[perm]; ok {
+			wantPerms[perm] = true
+		}
+	}
+	for perm, seen := range wantPerms {
+		if !seen {
+			t.Fatalf("missing permission %q in %+v", perm, got.Permissions)
+		}
 	}
 }
 
