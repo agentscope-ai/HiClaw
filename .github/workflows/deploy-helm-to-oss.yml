@@ -3,17 +3,38 @@ name: Deploy Helm Chart to OSS
 on:
   push:
     tags:
-    - "v*.*.*"
-  workflow_dispatch: ~
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g. v1.2.3)'
+        required: true
+        type: string
 
 jobs:
   deploy-helm-to-oss:
     runs-on: ubuntu-latest
-    environment:
-      name: oss
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - id: calc-version
+        name: Resolve version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            RAW_VERSION="${{ github.event.inputs.version }}"
+          else
+            RAW_VERSION="${{ github.ref_name }}"
+          fi
+          # Validate format: vX.Y.Z optionally followed by a pre-release suffix (e.g. -rc1, -beta.2)
+          if ! echo "${RAW_VERSION}" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+            echo "ERROR: invalid version format: ${RAW_VERSION} (expected vX.Y.Z or vX.Y.Z-suffix)"
+            exit 1
+          fi
+          # Helm chart version must not have the leading 'v'
+          VERSION="${RAW_VERSION#v}"
+          echo "Version=${VERSION}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
 
       - name: Download Helm Charts Index
         uses: go-choppy/ossutil-github-action@master
@@ -22,13 +43,6 @@ jobs:
           accessKey: ${{ secrets.ACCESS_KEYID }}
           accessSecret: ${{ secrets.ACCESS_KEYSECRET }}
           endpoint: oss-cn-hongkong.aliyuncs.com
-
-      - id: calc-version
-        name: Calculate Version Number
-        run: |
-          version=$(echo ${{ github.ref_name }} | cut -c2-)
-          echo "Version=$version"
-          echo "version=$version" >> $GITHUB_OUTPUT
 
       - name: Build Artifact
         uses: stefanprodan/kube-tools@v1

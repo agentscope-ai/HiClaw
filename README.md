@@ -106,6 +106,64 @@ Set-ExecutionPolicy Bypass -Scope Process -Force; $wc=New-Object Net.WebClient; 
 
 This removes all HiClaw containers (Manager, Workers, docker-proxy), Docker volume, network, env file, workspace directory, and install log.
 
+## Install on Kubernetes (Helm)
+
+For shared / production deployments you can install HiClaw on any Kubernetes cluster via the official Helm chart. The default profile bundles the Higress AI gateway, Tuwunel (Matrix), MinIO and the HiClaw controller — no external dependencies required.
+
+**Prerequisites**
+
+- Kubernetes 1.24+ (kind / minikube / k3s / managed K8s — all work)
+- Helm 3.7+
+- A default StorageClass (for the Tuwunel + MinIO PVCs)
+
+**Install**
+
+```bash
+helm repo add higress.io https://higress.io/helm-charts
+helm repo update
+
+helm install hiclaw higress.io/hiclaw \
+  -n hiclaw-system --create-namespace \
+  --render-subchart-notes \
+  --set credentials.llmApiKey=<your-llm-api-key> \
+  --set credentials.adminPassword=<your-admin-password> \
+  --set gateway.publicURL=http://localhost:18080
+```
+
+| Value | Required | Description |
+|---|---|---|
+| `credentials.llmApiKey` | yes | API key for your LLM provider |
+| `gateway.publicURL` | yes | Public URL where users will reach Element Web (e.g. `http://localhost:18080` for port-forward, or `https://hiclaw.example.com` for an Ingress) |
+| `credentials.adminPassword` | recommended | Matrix admin password; auto-generated if left empty (you'll have to read it back from the Secret) |
+| `credentials.llmProvider` | no | LLM provider name, defaults to `qwen` |
+| `credentials.defaultModel` | no | Default model, e.g. `qwen3.5-plus` |
+
+For all configurable values (gateway/storage providers, image tags, resources, persistence, etc.) see [`helm/hiclaw/values.yaml`](helm/hiclaw/values.yaml).
+
+**Access**
+
+```bash
+kubectl port-forward -n hiclaw-system svc/higress-gateway 18080:80
+```
+
+Then open http://localhost:18080 in your browser and log in to Element Web. For an actual cluster, configure an Ingress / LoadBalancer / DNS record pointing at `svc/higress-gateway` and set `gateway.publicURL` accordingly.
+
+**Upgrade**
+
+```bash
+helm repo update
+helm upgrade hiclaw higress.io/hiclaw -n hiclaw-system --reuse-values
+```
+
+**Uninstall**
+
+```bash
+helm uninstall hiclaw -n hiclaw-system
+kubectl delete namespace hiclaw-system
+```
+
+For the Kubernetes-native architecture (CRDs, controller, declarative `Worker` / `Team` / `Human` resources), see [docs/k8s-native-agent-orch.md](docs/k8s-native-agent-orch.md).
+
 ## How It Works
 
 ### Manager as Your AI Chief of Staff

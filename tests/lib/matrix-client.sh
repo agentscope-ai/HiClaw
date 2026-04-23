@@ -210,6 +210,95 @@ matrix_wait_for_reply() {
     return 1
 }
 
+# Wait for a reply from a specific user that matches a (case-insensitive) regex.
+#
+# Usage: matrix_wait_for_reply_matching <token> <room_id> <from_user_prefix> <pattern> \
+#        [timeout_seconds] [nudge_token nudge_room nudge_message nudge_interval]
+#
+# Returns: the body of the FIRST matching reply (printed to stdout), exit 0 on
+# match, or exit 1 on timeout. Non-matching new replies during the wait are
+# logged via log_info so the test artifact still captures the agent's
+# progressive ack messages.
+#
+# WHY this exists in addition to matrix_wait_for_reply: some Manager runtimes
+# (notably CoPaw) reply progressively — the very first DM ack may be a generic
+# "let me set that up" without yet naming the Worker, with the Worker name
+# appearing in a follow-up reply 5-30s later. Tests that need to assert on
+# specific content (e.g. the Worker's name) should use this helper rather than
+# locking onto the first ack.
+matrix_wait_for_reply_matching() {
+    local token="$1"
+    local room_id="$2"
+    local from_user="$3"
+    local pattern="$4"
+    local timeout="${5:-180}"
+    local nudge_token="${6:-}"
+    local nudge_room="${7:-}"
+    local nudge_message="${8:-}"
+    local nudge_interval="${9:-600}"
+    local elapsed=0
+
+    # Snapshot the baseline event_id so we only consider NEW messages.
+    local baseline_event
+    baseline_event=$(matrix_read_messages "${token}" "${room_id}" 20 2>/dev/null | \
+        jq -r --arg user "${from_user}" \
+        '[.chunk[] | select(.sender | startswith($user)) | select(.type == "m.room.message") | select(.content.body != null) | .event_id] | first // ""' 2>/dev/null)
+
+    # Track which non-matching new replies we've already logged, to avoid
+    # repeating them on every poll.
+    local seen_log=""
+
+    while [ "${elapsed}" -lt "${timeout}" ]; do
+        sleep 10
+        elapsed=$((elapsed + 10))
+
+        if [ -n "${nudge_token}" ] && [ -n "${nudge_room}" ] && [ -n "${nudge_message}" ] \
+                && [ $((elapsed % nudge_interval)) -eq 0 ]; then
+            log_info "Sending nudge to Manager (elapsed: ${elapsed}s)..."
+            matrix_send_message "${nudge_token}" "${nudge_room}" "${nudge_message}" 2>/dev/null || true
+        fi
+
+        local messages
+        messages=$(matrix_read_messages "${token}" "${room_id}" 30 2>/dev/null) || continue
+
+        # Collect all NEW replies from the target user (oldest -> newest order)
+        # by walking messages until we hit the baseline event_id. matrix_read_messages
+        # returns newest-first (dir=b), so we reverse the chunk for chronological order.
+        local new_replies
+        new_replies=$(echo "${messages}" | jq -r --arg user "${from_user}" --arg baseline "${baseline_event}" '
+            [ .chunk[]
+              | select(.sender | startswith($user))
+              | select(.type == "m.room.message")
+              | select(.content.body != null)
+            ] as $msgs
+            | ($msgs | map(.event_id) | index($baseline)) as $idx
+            | (if $idx == null then $msgs else $msgs[0:$idx] end) | reverse
+            | .[] | "\(.event_id)\t\(.content.body | gsub("\n";" "))"
+        ' 2>/dev/null)
+
+        if [ -z "${new_replies}" ]; then
+            continue
+        fi
+
+        # Iterate chronologically, return on first match.
+        local line event body
+        while IFS=$'\t' read -r event body; do
+            [ -z "${event}" ] && continue
+            if echo "${body}" | grep -qiE "${pattern}" 2>/dev/null; then
+                echo "${body}"
+                return 0
+            fi
+            # Log non-matching new replies once each, so debugging is easier.
+            if [[ "${seen_log}" != *"|${event}|"* ]]; then
+                seen_log="${seen_log}|${event}|"
+                log_info "Manager reply does not yet match '${pattern}' (waiting): $(echo "${body}" | head -c 200)"
+            fi
+        done <<< "${new_replies}"
+    done
+
+    return 1
+}
+
 # Send a mention message to a worker and wait for its reply, with at-least-once
 # semantics (resends the message periodically if no reply comes).
 #
