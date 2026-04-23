@@ -657,15 +657,24 @@ func buildDesiredMembers(t *v1beta1.Team, controllerName string) []MemberContext
 		return false
 	}
 	// memberLabels returns the base PodLabels for a team member stamped
-	// with the owning controller's identity. In in-cluster mode
-	// controllerName is always non-empty (see Config.validate), so no
-	// defensive check is needed.
-	memberLabels := func(role MemberRole) map[string]string {
-		return map[string]string{
-			"hiclaw.io/team":        t.Name,
-			"hiclaw.io/role":        role.String(),
-			v1beta1.LabelController: controllerName,
-		}
+	// with the owning controller's identity. The four layers merged here
+	// (low-to-high): Team.metadata.labels (team-wide defaults), the
+	// per-member spec.labels (perMemberLabels, overrides team-wide on
+	// collision), then the controller-forced system labels (highest).
+	// Controller system labels deliberately come last so any reserved
+	// key a user writes is silently overridden rather than rejected.
+	// In in-cluster mode controllerName is always non-empty (see
+	// Config.validate), so no defensive check is needed.
+	memberLabels := func(role MemberRole, perMemberLabels map[string]string) map[string]string {
+		return mergeLabels(
+			t.ObjectMeta.Labels,
+			perMemberLabels,
+			map[string]string{
+				"hiclaw.io/team":        t.Name,
+				"hiclaw.io/role":        role.String(),
+				v1beta1.LabelController: controllerName,
+			},
+		)
 	}
 	members := make([]MemberContext, 0, 1+len(t.Spec.Workers))
 
@@ -682,7 +691,7 @@ func buildDesiredMembers(t *v1beta1.Team, controllerName string) []MemberContext
 		TeamName:          t.Name,
 		TeamLeaderName:    "",
 		TeamAdminMatrixID: teamAdminMatrixID(t),
-		PodLabels:         memberLabels(RoleTeamLeader),
+		PodLabels:         memberLabels(RoleTeamLeader, t.Spec.Leader.Labels),
 	})
 
 	for _, w := range t.Spec.Workers {
@@ -699,7 +708,7 @@ func buildDesiredMembers(t *v1beta1.Team, controllerName string) []MemberContext
 			TeamName:          t.Name,
 			TeamLeaderName:    t.Spec.Leader.Name,
 			TeamAdminMatrixID: teamAdminMatrixID(t),
-			PodLabels:         memberLabels(RoleTeamWorker),
+			PodLabels:         memberLabels(RoleTeamWorker, w.Labels),
 		})
 	}
 	return members

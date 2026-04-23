@@ -148,6 +148,10 @@ func (r *ManagerReconciler) createManagerContainer(ctx context.Context, s *manag
 	managerEnv := r.EnvBuilder.BuildManager(m.Name, prov, m.Spec)
 	containerName := r.managerContainerName(m.Name)
 	saName := r.ResourcePrefix.SAName(authpkg.RoleManager, m.Name)
+	// Pod labels are layered low-to-high: CR metadata.labels, CR
+	// spec.labels, then controller-forced system labels. The last layer
+	// wins on collision so a user-supplied `hiclaw.io/controller` (or
+	// any other reserved key) cannot spoof the controller identity.
 	createReq := backend.CreateRequest{
 		Name:               m.Name,
 		ContainerName:      containerName,
@@ -157,13 +161,17 @@ func (r *ManagerReconciler) createManagerContainer(ctx context.Context, s *manag
 		Env:                managerEnv,
 		ServiceAccountName: saName,
 		Resources:          r.ManagerResources,
-		Labels: map[string]string{
-			"app":                   r.ResourcePrefix.ManagerAppLabel(),
-			"hiclaw.io/manager":     m.Name,
-			"hiclaw.io/role":        "manager",
-			"hiclaw.io/runtime":     backend.ResolveRuntime(m.Spec.Runtime, r.DefaultRuntime),
-			v1beta1.LabelController: r.ControllerName,
-		},
+		Labels: mergeLabels(
+			m.ObjectMeta.Labels,
+			m.Spec.Labels,
+			map[string]string{
+				"app":                   r.ResourcePrefix.ManagerAppLabel(),
+				"hiclaw.io/manager":     m.Name,
+				"hiclaw.io/role":        "manager",
+				"hiclaw.io/runtime":     backend.ResolveRuntime(m.Spec.Runtime, r.DefaultRuntime),
+				v1beta1.LabelController: r.ControllerName,
+			},
+		),
 	}
 	if wb.Name() != "k8s" {
 		token, err := r.Provisioner.RequestManagerSAToken(ctx, m.Name)

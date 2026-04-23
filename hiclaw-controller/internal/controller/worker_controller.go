@@ -227,10 +227,13 @@ func (r *WorkerReconciler) reconcileLegacy(ctx context.Context, w *v1beta1.Worke
 }
 
 // workerMemberContext translates a Worker CR into a MemberContext for the
-// shared member reconcile helpers. The returned PodLabels carry this
-// controller instance's identity (hiclaw.io/controller) and the member
-// role (hiclaw.io/role) so downstream Pod creation can stamp them
-// symmetrically with Team-managed members.
+// shared member reconcile helpers. The returned PodLabels are built by
+// layering four sources low-to-high: ConfigMap-based pod template (added
+// downstream by ApplyPodTemplate), the CR's metadata.labels, the CR's
+// spec.labels, and the controller-forced system labels (controller name
+// and member role). Controller-forced keys deliberately come last so
+// anything the user writes that collides (e.g. `hiclaw.io/controller`)
+// is silently overridden rather than rejected.
 func (r *WorkerReconciler) workerMemberContext(w *v1beta1.Worker) MemberContext {
 	role := roleForAnnotations(w.Annotations["hiclaw.io/role"], w.Annotations["hiclaw.io/team-leader"])
 	return MemberContext{
@@ -240,10 +243,14 @@ func (r *WorkerReconciler) workerMemberContext(w *v1beta1.Worker) MemberContext 
 		Spec:               w.Spec,
 		Generation:         w.Generation,
 		ObservedGeneration: w.Status.ObservedGeneration,
-		PodLabels: map[string]string{
-			v1beta1.LabelController: r.ControllerName,
-			"hiclaw.io/role":        role.String(),
-		},
+		PodLabels: mergeLabels(
+			w.ObjectMeta.Labels,
+			w.Spec.Labels,
+			map[string]string{
+				v1beta1.LabelController: r.ControllerName,
+				"hiclaw.io/role":        role.String(),
+			},
+		),
 		// For Worker CR, spec change is detected the classic way:
 		// Generation increments on every spec mutation; ObservedGeneration
 		// is written after a successful reconcile. Status defaults to 0
