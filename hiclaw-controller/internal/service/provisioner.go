@@ -3,6 +3,8 @@ package service
 import (
 	"context"
 	"fmt"
+	"net/http"
+	"strings"
 	"time"
 
 	v1beta1 "github.com/hiclaw/hiclaw-controller/api/v1beta1"
@@ -91,6 +93,18 @@ type ProvisionerConfig struct {
 	ManagerPassword   string
 	ManagerGatewayKey string
 
+	// AIGatewayURL is the data-plane URL of the AI gateway (e.g.
+	// "http://aigw-local.hiclaw.io:8080"). Used by IsManagerLLMAuthReady to
+	// probe whether Higress's WASM key-auth filter has finished syncing the
+	// freshly-bound consumer credential into its in-memory config — that
+	// propagation takes ~40-45s on first install, far longer than the
+	// manager Matrix user's auto-join of the Admin DM (~5-10s after
+	// container start), so "manager joined the DM room" is NOT a sufficient
+	// readiness signal for the welcome prompt: the prompt would land while
+	// the agent's first /v1/chat/completions call still 401s, and the agent
+	// would silently fail the onboarding turn.
+	AIGatewayURL string
+
 	// ManagerEnabled reflects HICLAW_MANAGER_ENABLED. When false, no Manager
 	// CR is ever created, so the Matrix user `@manager:<domain>` does not
 	// exist on Tuwunel. Worker room creation must therefore skip inviting
@@ -118,6 +132,13 @@ type Provisioner struct {
 	managerPassword   string
 	managerGatewayKey string
 	managerEnabled    bool
+
+	// aiGatewayURL is the data-plane base URL used by IsManagerLLMAuthReady.
+	// Empty in tests / unconfigured deploys; the probe treats empty as
+	// "ready" so the welcome reconcile does not block forever in those
+	// scenarios (the actual send may still surface auth errors, which the
+	// reconcile logs but does not retry — see manager_reconcile_welcome.go).
+	aiGatewayURL string
 }
 
 func NewProvisioner(cfg ProvisionerConfig) *Provisioner {
@@ -136,6 +157,7 @@ func NewProvisioner(cfg ProvisionerConfig) *Provisioner {
 		managerPassword:   cfg.ManagerPassword,
 		managerGatewayKey: cfg.ManagerGatewayKey,
 		managerEnabled:    cfg.ManagerEnabled,
+		aiGatewayURL:      cfg.AIGatewayURL,
 	}
 }
 
@@ -940,6 +962,82 @@ type ManagerWelcomeRequest struct {
 //   - (true, nil)  — message was successfully delivered.
 //   - (false, nil) — manager not yet joined; caller should requeue.
 //   - (false, err) — unrecoverable error (admin login / Matrix API).
+// llmAuthProbeBody is the sentinel request body sent by IsManagerLLMAuthReady
+// to /v1/chat/completions. The shape is intentionally a syntactically valid
+// OpenAI ChatCompletions payload so the request travels through the WASM
+// key-auth filter (which is what we actually want to probe), but the
+// `__hiclaw_auth_probe__` model name and empty `messages` array guarantee
+// the upstream provider — whether it's DashScope, OpenAI, Bedrock, or any
+// other openai-compat backend — will reject the request with HTTP 4xx
+// (400 / 422 / "model not found") BEFORE it reaches any token-billed code
+// path. We never hit the LLM, so the probe is free to call on every
+// reconcile while waiting for auth to propagate.
+const llmAuthProbeBody = `{"model":"__hiclaw_auth_probe__","messages":[],"max_tokens":1}`
+
+// IsManagerLLMAuthReady reports whether the AI gateway has finished syncing
+// the manager's consumer credential into its WASM key-auth filter — i.e.
+// whether a request with the manager's bearer token would currently pass
+// the auth check on the AI route. Higress's WASM plugin loads the
+// allowedConsumers list lazily after a route or consumer change; on a
+// fresh install the activation latency is ~40-45s (verified during PoC,
+// see [design/poc-tech-verification.md] and the legacy `sleep 45` in
+// `start-manager-agent.sh`). During that window, the manager Matrix user
+// has typically already auto-joined the Admin DM Room (~10s), so
+// "joined the DM room" is NOT a sufficient readiness signal — sending
+// the welcome too early lands a prompt the manager receives but cannot
+// act on (its first /v1/chat/completions call to formulate a reply 401s
+// against the gateway), and OpenClaw / hermes / copaw silently drop the
+// turn.
+//
+// Probe semantics:
+//   - We POST a sentinel ChatCompletions body (see llmAuthProbeBody) with
+//     the manager's bearer token to <AIGatewayURL>/v1/chat/completions.
+//     The path is what matters: Higress runs the WASM key-auth filter on
+//     the entire AI route prefix, so this exercises the exact same auth
+//     path the manager will use for its real LLM calls. We deliberately
+//     do NOT probe /v1/models because not every openai-compat provider
+//     implements that endpoint and a 404 from the upstream would be
+//     ambiguous w.r.t. auth state.
+//   - HTTP 401 / 403 → consumer key not yet recognised by the auth
+//     filter → return (false, nil) so the reconciler requeues.
+//   - Any other response (200, 400, 404, 429, 5xx, …) → the WASM filter
+//     accepted the bearer and forwarded the request, so auth is ready.
+//     We do not look at the response body.
+//   - Network / dial errors → return (false, err); the reconciler
+//     surfaces the error and requeues. Treating these as "ready" would
+//     race-trigger a welcome send the moment the gateway briefly hiccups.
+//
+// Empty AIGatewayURL or empty gatewayKey → return (true, nil) so unit
+// tests and bring-your-own-gateway deploys (where the controller does
+// not know the data-plane URL) do not stall the welcome forever. The
+// downstream SendManagerWelcomeMessage call will surface any genuine
+// auth failure in its log.
+func (p *Provisioner) IsManagerLLMAuthReady(ctx context.Context, gatewayKey string) (bool, error) {
+	if p.aiGatewayURL == "" || gatewayKey == "" {
+		return true, nil
+	}
+	url := strings.TrimRight(p.aiGatewayURL, "/") + "/v1/chat/completions"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, strings.NewReader(llmAuthProbeBody))
+	if err != nil {
+		return false, fmt.Errorf("welcome: build llm auth probe: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+gatewayKey)
+	req.Header.Set("Content-Type", "application/json")
+	// Short timeout: the probe should be near-instant against a healthy
+	// in-cluster gateway. A long hang here would block all welcome
+	// reconciles for this manager.
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return false, fmt.Errorf("welcome: probe ai gateway %s: %w", url, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		return false, nil
+	}
+	return true, nil
+}
+
 // IsManagerJoinedDM reports whether the Manager's Matrix user is currently
 // `join`ed to the supplied DM room. Pure read; safe to poll on every
 // reconcile while waiting for the agent's first /sync to land its

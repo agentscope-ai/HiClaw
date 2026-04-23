@@ -379,6 +379,7 @@ func (a *App) initServiceLayer(_ context.Context) error {
 		ManagerPassword:   cfg.ManagerPassword,
 		ManagerGatewayKey: cfg.ManagerGatewayKey,
 		ManagerEnabled:    cfg.ManagerEnabled,
+		AIGatewayURL:      cfg.WorkerEnv.AIGatewayURL,
 	})
 
 	a.envBuilder = service.NewWorkerEnvBuilder(cfg.WorkerEnv)

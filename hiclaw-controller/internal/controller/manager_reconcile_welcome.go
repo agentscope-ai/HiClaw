@@ -52,9 +52,32 @@ const welcomeRequeueInterval = 5 * time.Second
 //  2. Skip if no RoomID — provisioning hasn't reached Step 4 yet.
 //  3. Skip if container not Running/Ready (no point if OpenClaw isn't
 //     up to receive the message anyway).
-//  4. Read membership via IsManagerJoinedDM. Side-effect-free, so safe to
-//     poll on every requeue. If not joined, RequeueAfter and exit
-//     WITHOUT touching status — no claim churn while we wait.
+//  4. Two side-effect-free readiness gates, polled on every requeue
+//     WITHOUT touching status (no claim churn while we wait):
+//
+//     a. IsManagerJoinedDM — the manager Matrix user must have actually
+//     joined the Admin DM room before we send. Otherwise the welcome
+//     lands in the room's historical timeline, which OpenClaw / hermes /
+//     copaw drop during their first-boot catch-up sync.
+//
+//     b. IsManagerLLMAuthReady — Higress's WASM key-auth filter must
+//     have finished syncing the manager's consumer credential. This
+//     activation is asynchronous and takes ~40-45s on first install
+//     (the legacy `start-manager-agent.sh` papered over it with a
+//     `sleep 45` after Higress setup). Auto-join (~10s) lands long
+//     before auth propagation (~45s), so gating on join alone would
+//     deliver the welcome while the manager's first
+//     /v1/chat/completions call is still 401ing — the prompt arrives,
+//     the agent tries to reply, the LLM call fails, and the onboarding
+//     turn is silently lost. The probe POSTs a sentinel body that
+//     never reaches the upstream LLM (see Provisioner.IsManagerLLMAuthReady).
+//
+//     Either signal returning false → RequeueAfter and exit. We poll
+//     both on every requeue rather than caching the first one because
+//     the cost is two cheap HTTP calls against the local homeserver and
+//     gateway, and remembering the join-then-wait-for-auth state across
+//     reconciles would require yet another Status field.
+//
 //  5. CLAIM the slot: set WelcomeSent=true and immediately Status().Patch
 //     with optimistic concurrency. If another reconcile already claimed
 //     and committed, our patch returns Conflict and we abort with no
@@ -98,6 +121,8 @@ func (r *ManagerReconciler) reconcileManagerWelcome(ctx context.Context, s *mana
 		}
 	}
 
+	// Readiness gate (a): manager must be in the DM room so the welcome
+	// lands as a live event rather than historical timeline.
 	joined, err := r.Provisioner.IsManagerJoinedDM(ctx, m.Status.RoomID)
 	if err != nil {
 		// Best-effort: log and try again on the next reconcile. Don't
@@ -110,6 +135,28 @@ func (r *ManagerReconciler) reconcileManagerWelcome(ctx context.Context, s *mana
 	if !joined {
 		logger.V(1).Info("manager not yet joined DM room, requeue for welcome",
 			"manager", m.Name, "roomID", m.Status.RoomID)
+		return reconcile.Result{RequeueAfter: welcomeRequeueInterval}, nil
+	}
+
+	// Readiness gate (b): Higress WASM key-auth must have propagated the
+	// manager's consumer key onto the AI route. Without this the welcome
+	// lands but the manager's reply attempt 401s against the gateway and
+	// the onboarding turn is lost. s.provResult.GatewayKey is the freshly
+	// minted key for both the first-boot path and the credential-refresh
+	// path — reconcileManagerInfrastructure populates it in both.
+	gatewayKey := ""
+	if s.provResult != nil {
+		gatewayKey = s.provResult.GatewayKey
+	}
+	authReady, err := r.Provisioner.IsManagerLLMAuthReady(ctx, gatewayKey)
+	if err != nil {
+		logger.Error(err, "manager welcome llm-auth probe failed (non-fatal, will retry)",
+			"manager", m.Name)
+		return reconcile.Result{RequeueAfter: welcomeRequeueInterval}, nil
+	}
+	if !authReady {
+		logger.V(1).Info("manager llm-auth not yet propagated by gateway, requeue for welcome",
+			"manager", m.Name)
 		return reconcile.Result{RequeueAfter: welcomeRequeueInterval}, nil
 	}
 

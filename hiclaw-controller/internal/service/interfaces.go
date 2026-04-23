@@ -76,14 +76,30 @@ type ManagerProvisioner interface {
 	DeleteManagerRoomAlias(ctx context.Context, managerName string) error
 	// IsManagerJoinedDM returns true when the Manager's Matrix user has
 	// already joined the given Admin DM room. Used by reconcileManagerWelcome
-	// as a *side-effect-free* gate before claiming the WelcomeSent slot, so
-	// requeuing while waiting for the agent's first /sync auto-join doesn't
-	// thrash the status field with claim/rollback patches.
+	// as one of two *side-effect-free* gates before claiming the WelcomeSent
+	// slot (the other being IsManagerLLMAuthReady). Sending the welcome
+	// before the manager has joined would land the prompt in the room's
+	// historical timeline, which OpenClaw / hermes / copaw drop during
+	// their first-boot catch-up sync.
 	IsManagerJoinedDM(ctx context.Context, roomID string) (bool, error)
+	// IsManagerLLMAuthReady returns true when Higress's WASM key-auth
+	// filter has finished syncing the manager's consumer credential into
+	// its in-memory config — i.e. when a request bearing the manager's
+	// gateway key would currently pass the AI route's auth check. The
+	// filter activation is asynchronous and takes ~40-45s on first install
+	// (the legacy `start-manager-agent.sh` papered over this with a
+	// `sleep 45` after Higress setup). Joining the DM room (~10s) is
+	// strictly faster than auth propagation (~45s), so reconcileManagerWelcome
+	// MUST gate on both signals — sending after only the join check would
+	// deliver a prompt the manager receives but cannot reply to (its first
+	// /v1/chat/completions call 401s) and the onboarding turn is silently
+	// lost.
+	IsManagerLLMAuthReady(ctx context.Context, gatewayKey string) (bool, error)
 	// SendManagerWelcomeMessage renders and posts the first-boot onboarding
 	// prompt as the homeserver admin into the given DM room. Pure side
-	// effect, no membership check — caller must guarantee the manager has
-	// joined and that it has won the WelcomeSent claim race.
+	// effect, no readiness checks — caller must guarantee the manager has
+	// joined the room AND the gateway has propagated its auth, AND that it
+	// has won the WelcomeSent claim race.
 	SendManagerWelcomeMessage(ctx context.Context, req ManagerWelcomeRequest) error
 }
 

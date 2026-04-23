@@ -1012,6 +1012,69 @@ func TestManagerWelcome_NotJoinedYet_RequeuesUntilJoined(t *testing.T) {
 	}
 }
 
+// TestManagerWelcome_LLMAuthNotReady_RequeuesUntilPropagated exercises
+// the second readiness gate: even when the manager has joined the DM
+// room, the controller must hold off on SendManagerWelcomeMessage until
+// IsManagerLLMAuthReady reports true. This guards against the
+// well-known Higress WASM key-auth propagation lag (~40-45s on first
+// install) — sending the welcome too early lands a prompt the manager
+// receives but cannot reply to (its first /v1/chat/completions call
+// 401s against the gateway).
+//
+// The mock keeps IsManagerJoinedDM=true throughout so the test isolates
+// the auth-readiness branch; IsManagerLLMAuthReady starts returning
+// false and flips to true after a few polls. The controller must
+// requeue (no claim, no send) until the auth signal flips, then send
+// exactly once.
+func TestManagerWelcome_LLMAuthNotReady_RequeuesUntilPropagated(t *testing.T) {
+	resetManagerMocks()
+
+	var authChecks atomic.Int32
+	mockMgrProv.IsManagerLLMAuthReadyFn = func(_ context.Context, _ string) (bool, error) {
+		n := authChecks.Add(1)
+		return n >= 3, nil
+	}
+
+	mgrName := fixtures.UniqueName("test-mgr-welcome-auth")
+	mgr := fixtures.NewTestManager(mgrName)
+
+	if err := k8sClient.Create(ctx, mgr); err != nil {
+		t.Fatalf("failed to create Manager CR: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = k8sClient.Delete(ctx, mgr)
+	})
+
+	waitForManagerRunning(t, mgr)
+
+	assertEventually(t, func() error {
+		var m v1beta1.Manager
+		if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(mgr), &m); err != nil {
+			return err
+		}
+		if !m.Status.WelcomeSent {
+			return fmt.Errorf("WelcomeSent=false, authChecks=%d sends=%d (want true after auth propagates)",
+				authChecks.Load(), mockMgrProv.WelcomeCallCount())
+		}
+		return nil
+	})
+
+	if got := authChecks.Load(); got < 3 {
+		t.Errorf("IsManagerLLMAuthReady called %d times, want >=3 (waited at least 2 polls before auth propagated)", got)
+	}
+	if sends := mockMgrProv.WelcomeCallCount(); sends != 1 {
+		t.Errorf("SendManagerWelcomeMessage called %d times, want exactly 1 (auth-readiness gate must not pre-emptively send)", sends)
+	}
+
+	var m v1beta1.Manager
+	if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(mgr), &m); err != nil {
+		t.Fatalf("failed to get Manager: %v", err)
+	}
+	if m.Status.Phase != "Running" {
+		t.Errorf("Phase=%q, want Running (welcome requeue must not flip to Failed)", m.Status.Phase)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Manager test helpers
 // ---------------------------------------------------------------------------
