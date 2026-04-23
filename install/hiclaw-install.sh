@@ -728,6 +728,14 @@ msg() {
         "install.welcome_msg.send_failed.en") text="WARNING: Failed to send welcome message" ;;
         "install.welcome_msg.sent.zh") text="欢迎消息已发送给 Manager" ;;
         "install.welcome_msg.sent.en") text="Welcome message sent to Manager" ;;
+        "install.welcome_msg.waiting.zh") text="等待 Manager 发送欢迎消息（Higress 路由授权 + LLM 探活，约 45-90s）..." ;;
+        "install.welcome_msg.waiting.en") text="Waiting for Manager to send the welcome message (Higress route auth + LLM probe, ~45-90s)..." ;;
+        "install.welcome_msg.confirmed.zh") text="Manager 已确认发送欢迎消息（status.welcomeSent=true，用时 %ss）" ;;
+        "install.welcome_msg.confirmed.en") text="Manager confirmed welcome message sent (status.welcomeSent=true, %ss elapsed)" ;;
+        "install.welcome_msg.timeout.zh") text="警告: 等待 Manager 发送欢迎消息超时（%ss）。请稍后在 Element Web 中确认，或运行 'docker exec -e HICLAW_AUTH_TOKEN_FILE=/data/admin-token hiclaw-controller hiclaw get managers default' 查看状态" ;;
+        "install.welcome_msg.timeout.en") text="WARNING: Timed out (%ss) waiting for Manager to send the welcome message. Check Element Web later, or run 'docker exec -e HICLAW_AUTH_TOKEN_FILE=/data/admin-token hiclaw-controller hiclaw get managers default' to inspect status" ;;
+        "install.welcome_msg.poll_unavailable.zh") text="提示: hiclaw-controller 内未找到 hiclaw CLI，跳过 welcome 等待（旧镜像？）" ;;
+        "install.welcome_msg.poll_unavailable.en") text="Note: hiclaw CLI not found inside hiclaw-controller; skipping welcome wait (old image?)" ;;
         # --- Final output panel ---
         "success.title.zh") text="=== HiClaw Manager 已启动！===" ;;
         "success.title.en") text="=== HiClaw Manager Started! ===" ;;
@@ -2824,6 +2832,39 @@ CREDEOF
         # Enable yolo mode in agent if requested
         if [ "${HICLAW_YOLO:-}" = "1" ]; then
             ${DOCKER_CMD} exec hiclaw-manager touch /root/manager-workspace/yolo-mode 2>/dev/null || true
+        fi
+
+        # Wait for the controller to send the first-boot welcome message.
+        # The controller gates this on (a) Manager joining the DM room and
+        # (b) Higress WASM key-auth propagation actually clearing /v1/chat/completions
+        # for the Manager's gateway key — typically ~45-90s on a fresh install.
+        # We poll Manager CR Status.WelcomeSent via the in-container hiclaw CLI,
+        # using the persisted admin token at /data/admin-token.
+        if ${DOCKER_CMD} exec hiclaw-controller sh -c 'command -v hiclaw' >/dev/null 2>&1; then
+            log "$(msg install.welcome_msg.waiting)"
+            local _welcome_wait=0
+            local _welcome_max="${HICLAW_WELCOME_TIMEOUT:-300}"
+            local _welcome_done=0
+            while [ $_welcome_wait -lt $_welcome_max ]; do
+                # `-e` overrides the env for this exec only — never touches the
+                # container's process env. `tr -d` strips any stray quoting/CR
+                # so the grep stays portable across BSD/GNU.
+                local _wjson
+                _wjson=$(${DOCKER_CMD} exec -e HICLAW_AUTH_TOKEN_FILE=/data/admin-token hiclaw-controller \
+                    hiclaw get managers default -o json 2>/dev/null || true)
+                if [ -n "${_wjson}" ] && printf '%s' "${_wjson}" | tr -d ' \r\n' | grep -q '"welcomeSent":true'; then
+                    log "$(msg install.welcome_msg.confirmed "${_welcome_wait}")"
+                    _welcome_done=1
+                    break
+                fi
+                sleep 3
+                _welcome_wait=$((_welcome_wait + 3))
+            done
+            if [ $_welcome_done -ne 1 ]; then
+                log "$(msg install.welcome_msg.timeout "${_welcome_max}")"
+            fi
+        else
+            log "$(msg install.welcome_msg.poll_unavailable)"
         fi
 
     else

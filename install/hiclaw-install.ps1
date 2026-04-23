@@ -510,6 +510,10 @@ $script:Messages = @{
     "install.welcome_msg.sending" = @{ zh = "正在向 Manager 发送欢迎消息..."; en = "Sending welcome message to Manager..." }
     "install.welcome_msg.send_failed" = @{ zh = "警告: 发送欢迎消息失败"; en = "WARNING: Failed to send welcome message" }
     "install.welcome_msg.sent" = @{ zh = "欢迎消息已发送给 Manager"; en = "Welcome message sent to Manager" }
+    "install.welcome_msg.waiting" = @{ zh = "等待 Manager 发送欢迎消息（Higress 路由授权 + LLM 探活，约 45-90s）..."; en = "Waiting for Manager to send the welcome message (Higress route auth + LLM probe, ~45-90s)..." }
+    "install.welcome_msg.confirmed" = @{ zh = "Manager 已确认发送欢迎消息（status.welcomeSent=true，用时 {0}s）"; en = "Manager confirmed welcome message sent (status.welcomeSent=true, {0}s elapsed)" }
+    "install.welcome_msg.timeout" = @{ zh = "警告: 等待 Manager 发送欢迎消息超时（{0}s）。请稍后在 Element Web 中确认，或运行 'docker exec -e HICLAW_AUTH_TOKEN_FILE=/data/admin-token hiclaw-controller hiclaw get managers default' 查看状态"; en = "WARNING: Timed out ({0}s) waiting for Manager to send the welcome message. Check Element Web later, or run 'docker exec -e HICLAW_AUTH_TOKEN_FILE=/data/admin-token hiclaw-controller hiclaw get managers default' to inspect status" }
+    "install.welcome_msg.poll_unavailable" = @{ zh = "提示: hiclaw-controller 内未找到 hiclaw CLI，跳过 welcome 等待（旧镜像？）"; en = "Note: hiclaw CLI not found inside hiclaw-controller; skipping welcome wait (old image?)" }
 
     # --- Final output panel ---
     "success.title" = @{ zh = "=== HiClaw Manager 已启动！==="; en = "=== HiClaw Manager Started! ===" }
@@ -2655,6 +2659,44 @@ function Install-Manager {
         # the controller (the manager only exposes the agent runtime).
         Wait-ManagerReady -Container "hiclaw-manager"
         Wait-MatrixReady -Container "hiclaw-controller"
+
+        # Wait for the controller to actually deliver the first-boot welcome
+        # message. Gated by the controller on (a) Manager joining the DM room
+        # and (b) Higress WASM key-auth propagating to /v1/chat/completions for
+        # the Manager's gateway key — typically ~45-90s on a fresh install.
+        # We poll Manager CR status.welcomeSent via the in-container hiclaw CLI,
+        # using the persisted admin token at /data/admin-token.
+        $hasHiclawCli = $false
+        try {
+            docker exec hiclaw-controller sh -c 'command -v hiclaw' *> $null
+            if ($LASTEXITCODE -eq 0) { $hasHiclawCli = $true }
+        } catch {}
+
+        if ($hasHiclawCli) {
+            Write-Log (Get-Msg "install.welcome_msg.waiting")
+            $welcomeMax = if ($env:HICLAW_WELCOME_TIMEOUT) { [int]$env:HICLAW_WELCOME_TIMEOUT } else { 300 }
+            $welcomeWait = 0
+            $welcomeDone = $false
+            while ($welcomeWait -lt $welcomeMax) {
+                $wjson = ""
+                try {
+                    $wjson = docker exec -e HICLAW_AUTH_TOKEN_FILE=/data/admin-token hiclaw-controller `
+                        hiclaw get managers default -o json 2>$null
+                } catch {}
+                if ($wjson -and ($wjson -replace '\s', '') -match '"welcomeSent":true') {
+                    Write-Log (Get-Msg "install.welcome_msg.confirmed" $welcomeWait)
+                    $welcomeDone = $true
+                    break
+                }
+                Start-Sleep -Seconds 3
+                $welcomeWait += 3
+            }
+            if (-not $welcomeDone) {
+                Write-Log (Get-Msg "install.welcome_msg.timeout" $welcomeMax)
+            }
+        } else {
+            Write-Log (Get-Msg "install.welcome_msg.poll_unavailable")
+        }
     } else {
         # Run container (legacy path)
         Write-Log (Get-Msg "install.starting_manager")
