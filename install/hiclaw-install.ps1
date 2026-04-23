@@ -587,6 +587,7 @@ $script:Messages = @{
     "uninstall.removing_volume" = @{ zh = "正在移除 Docker 卷: hiclaw-data"; en = "Removing Docker volume: hiclaw-data" }
     "uninstall.removing_env" = @{ zh = "正在移除 env 文件: {0}"; en = "Removing env file: {0}" }
     "uninstall.removing_proxy" = @{ zh = "正在停止并移除 Docker API 代理容器: hiclaw-docker-proxy"; en = "Stopping and removing Docker API proxy container: hiclaw-docker-proxy" }
+    "uninstall.stopping_controller" = @{ zh = "正在停止并移除 hiclaw-controller (内嵌 Tuwunel/MinIO/Higress)..."; en = "Stopping and removing hiclaw-controller (embedded Tuwunel/MinIO/Higress)..." }
     "uninstall.removing_network" = @{ zh = "正在移除 Docker 网络: hiclaw-net"; en = "Removing Docker network: hiclaw-net" }
     "uninstall.removing_workspace" = @{ zh = "正在移除工作空间目录: {0}"; en = "Removing workspace directory: {0}" }
     "uninstall.removing_log" = @{ zh = "正在移除日志文件: {0}"; en = "Removing log file: {0}" }
@@ -2864,12 +2865,27 @@ function Uninstall-HiClaw {
         }
     }
 
-    # Stop and remove docker-proxy
+    # Stop and remove docker-proxy (legacy <= v1.0.x; current arch uses
+    # hiclaw-controller for the same role)
     $proxy = docker ps -a --format "{{.Names}}" 2>$null | Select-String "^hiclaw-docker-proxy$"
     if ($proxy) {
         Write-Log (Get-Msg "uninstall.removing_proxy")
         docker stop hiclaw-docker-proxy *>$null
         docker rm hiclaw-docker-proxy *>$null
+    }
+
+    # Stop and remove the embedded controller container. MUST happen
+    # before the `docker volume rm hiclaw-data` step below -- in embedded
+    # mode hiclaw-controller mounts hiclaw-data at /data (Tuwunel DB,
+    # MinIO state, Higress state, all the room messages), and `volume rm`
+    # against an in-use volume fails silently. Skipping this used to
+    # leave room/message history behind across "uninstall + reinstall"
+    # cycles. See PR #692.
+    $controller = docker ps -a --format "{{.Names}}" 2>$null | Select-String "^hiclaw-controller$"
+    if ($controller) {
+        Write-Log (Get-Msg "uninstall.stopping_controller")
+        docker stop hiclaw-controller *>$null
+        docker rm hiclaw-controller *>$null
     }
 
     # Remove Docker volume (read custom name from env file if available)

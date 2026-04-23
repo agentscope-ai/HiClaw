@@ -846,6 +846,8 @@ msg() {
         "uninstall.removing_env.en") text="Removing env file: %s" ;;
         "uninstall.removing_proxy.zh") text="正在停止并移除 Docker API 代理容器: hiclaw-docker-proxy" ;;
         "uninstall.removing_proxy.en") text="Stopping and removing Docker API proxy container: hiclaw-docker-proxy" ;;
+        "uninstall.stopping_controller.zh") text="正在停止并移除 hiclaw-controller (内嵌 Tuwunel/MinIO/Higress)..." ;;
+        "uninstall.stopping_controller.en") text="Stopping and removing hiclaw-controller (embedded Tuwunel/MinIO/Higress)..." ;;
         "uninstall.removing_network.zh") text="正在移除 Docker 网络: hiclaw-net" ;;
         "uninstall.removing_network.en") text="Removing Docker network: hiclaw-net" ;;
         "uninstall.removing_workspace.zh") text="正在移除工作空间目录: %s" ;;
@@ -3189,11 +3191,25 @@ uninstall_hiclaw() {
         done
     fi
 
-    # Stop and remove docker-proxy
+    # Stop and remove docker-proxy (legacy ≤ v1.0.x; current arch uses
+    # hiclaw-controller for the same role)
     if ${DOCKER_CMD} ps -a --format '{{.Names}}' 2>/dev/null | grep -q "^hiclaw-docker-proxy$"; then
         log "$(msg uninstall.removing_proxy)"
         ${DOCKER_CMD} stop hiclaw-docker-proxy >/dev/null 2>&1 || true
         ${DOCKER_CMD} rm hiclaw-docker-proxy >/dev/null 2>&1 || true
+    fi
+
+    # Stop and remove the embedded controller container. MUST happen
+    # before the `docker volume rm hiclaw-data` step below — in embedded
+    # mode hiclaw-controller mounts hiclaw-data at /data (Tuwunel DB,
+    # MinIO state, Higress state, all the room messages), and `volume
+    # rm` against an in-use volume fails silently because of the trailing
+    # `|| true`. Skipping this used to leave room/message history behind
+    # across "uninstall + reinstall" cycles. See PR #692.
+    if ${DOCKER_CMD} ps -a --format '{{.Names}}' 2>/dev/null | grep -q "^hiclaw-controller$"; then
+        log "$(msg uninstall.stopping_controller)"
+        ${DOCKER_CMD} stop hiclaw-controller >/dev/null 2>&1 || true
+        ${DOCKER_CMD} rm hiclaw-controller >/dev/null 2>&1 || true
     fi
 
     # Read env file for data/workspace info before removing
