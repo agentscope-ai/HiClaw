@@ -85,13 +85,16 @@ jobs:
           Multi-architecture images (amd64 + arm64):
 
           \`\`\`bash
-          # Manager
+          # Embedded all-in-one (infra + controller; pulled by the installer)
+          docker pull ${REGISTRY}/${REPO}/hiclaw-embedded:${VERSION}
+
+          # Manager (lightweight; spawned by the embedded controller)
           docker pull ${REGISTRY}/${REPO}/hiclaw-manager:${VERSION}
 
           # Worker
           docker pull ${REGISTRY}/${REPO}/hiclaw-worker:${VERSION}
 
-          # Controller
+          # Controller (used standalone in k8s; bundled inside hiclaw-embedded for docker installs)
           docker pull ${REGISTRY}/${REPO}/hiclaw-controller:${VERSION}
           \`\`\`
 

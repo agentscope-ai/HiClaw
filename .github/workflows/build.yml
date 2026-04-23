@@ -63,7 +63,7 @@ jobs:
       # also pushes :latest in the same buildx call, so no separate step needed.
       - name: Build and push multi-arch images
         run: |
-          make push-manager push-manager-copaw push-worker push-copaw-worker push-hermes-worker push-hiclaw-controller \
+          make push-manager push-manager-copaw push-worker push-copaw-worker push-hermes-worker push-hiclaw-controller push-embedded \
             VERSION=${{ steps.meta.outputs.version }} \
             REGISTRY=${{ env.REGISTRY }} \
             REPO=${{ env.REPO }} \
@@ -79,6 +79,7 @@ jobs:
           COPAW_WORKER_IMAGE: ${{ env.REGISTRY }}/${{ env.REPO }}/hiclaw-copaw-worker
           HERMES_WORKER_IMAGE: ${{ env.REGISTRY }}/${{ env.REPO }}/hiclaw-hermes-worker
           CONTROLLER_IMAGE: ${{ env.REGISTRY }}/${{ env.REPO }}/hiclaw-controller
+          EMBEDDED_IMAGE: ${{ env.REGISTRY }}/${{ env.REPO }}/hiclaw-embedded
         run: |
           echo "### Build Summary" >> $GITHUB_STEP_SUMMARY
           echo "- Manager: \`${MANAGER_IMAGE}:${{ steps.meta.outputs.version }}\`" >> $GITHUB_STEP_SUMMARY
@@ -87,5 +88,6 @@ jobs:
           echo "- CoPaw Worker: \`${COPAW_WORKER_IMAGE}:${{ steps.meta.outputs.version }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- Hermes Worker: \`${HERMES_WORKER_IMAGE}:${{ steps.meta.outputs.version }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- Controller: \`${CONTROLLER_IMAGE}:${{ steps.meta.outputs.version }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Embedded: \`${EMBEDDED_IMAGE}:${{ steps.meta.outputs.version }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- Base: \`${OPENCLAW_BASE_IMAGE}:latest\` (pre-built, not rebuilt here)" >> $GITHUB_STEP_SUMMARY
           echo "- Platforms: \`linux/amd64, linux/arm64\`" >> $GITHUB_STEP_SUMMARY

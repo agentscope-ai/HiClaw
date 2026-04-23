@@ -931,14 +931,18 @@ resolve_image_tags() {
     EMBEDDED_IMAGE="${HICLAW_INSTALL_EMBEDDED_IMAGE:-${HICLAW_REGISTRY}/higress/hiclaw-embedded:${HICLAW_VERSION}}"
 }
 
-# Resolve the embedded controller image: try the versioned tag first; if the registry
-# doesn't have it (old version without embedded support), set HICLAW_USE_EMBEDDED=0
-# to fall back to the legacy all-in-one manager architecture.
+# Resolve the embedded controller image. Embedded mode is the only supported
+# architecture since PR #616 (manager image no longer bundles Higress/Tuwunel/MinIO).
+# If the embedded image is unavailable for the requested version, fail fast with an
+# actionable error rather than silently falling back to the legacy single-container
+# path — that path is permanently broken with the slim manager image and would just
+# leave the user with a manager container looping on "Waiting for Higress Gateway".
 # Sets EMBEDDED_IMAGE and HICLAW_USE_EMBEDDED.
 resolve_embedded_image() {
     HICLAW_USE_EMBEDDED=1
 
-    # If the user explicitly overrode the image, respect it as-is.
+    # If the user explicitly overrode the image (e.g. `make install-embedded` passes
+    # a locally-built tag), respect it as-is without any registry probe.
     if [ -n "${HICLAW_INSTALL_EMBEDDED_IMAGE:-}" ]; then
         EMBEDDED_IMAGE="${HICLAW_INSTALL_EMBEDDED_IMAGE}"
         return 0
@@ -955,14 +959,36 @@ resolve_embedded_image() {
 
     if ${DOCKER_CMD} pull "${_versioned}" >/dev/null 2>&1; then
         EMBEDDED_IMAGE="${_versioned}"
-    elif ${DOCKER_CMD} pull "${_latest}" >/dev/null 2>&1; then
+        return 0
+    fi
+    if ${DOCKER_CMD} pull "${_latest}" >/dev/null 2>&1; then
         log "embedded ${HICLAW_VERSION} not found, using latest"
         EMBEDDED_IMAGE="${_latest}"
-    else
-        # No embedded image available — fall back to legacy architecture
-        log "No embedded image available, using legacy all-in-one manager architecture"
-        HICLAW_USE_EMBEDDED=0
+        return 0
     fi
+
+    # Escape hatch for older versions (HICLAW_VERSION <= v1.0.9) whose manager image
+    # still bundled the infrastructure — opt-in only, never silent.
+    if [ "${HICLAW_FORCE_LEGACY:-0}" = "1" ]; then
+        log "WARNING: HICLAW_FORCE_LEGACY=1 — using legacy all-in-one manager architecture."
+        log "WARNING: This requires HICLAW_VERSION <= v1.0.9 (older bundled manager image)."
+        log "WARNING: Newer slim manager images will hang on 'Waiting for Higress Gateway'."
+        HICLAW_USE_EMBEDDED=0
+        return 0
+    fi
+
+    error "Embedded controller image is not available in the registry:"
+    error "  - tried: ${_versioned}"
+    error "  - tried: ${_latest}"
+    error ""
+    error "Embedded mode is the only supported architecture since PR #616."
+    error "How to resolve:"
+    error "  1) Pin to a HICLAW_VERSION whose embedded image has been published, or"
+    error "     wait for the release pipeline to publish it."
+    error "  2) For a local build, run:  make install-embedded"
+    error "     (builds and uses the local embedded image without touching the registry)."
+    error "  3) Override with a custom image:  HICLAW_INSTALL_EMBEDDED_IMAGE=...  ./hiclaw-install.sh"
+    exit 1
 }
 
 # ============================================================
