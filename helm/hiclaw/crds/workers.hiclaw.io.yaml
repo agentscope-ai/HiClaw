@@ -94,6 +94,18 @@ spec:
                   type: string
                   enum: [Running, Sleeping, Stopped]
                   description: "Desired lifecycle state (default: Running). The controller reconciles actual state toward this."
+                labels:
+                  type: object
+                  additionalProperties:
+                    type: string
+                  description: >
+                    User-defined Pod labels stamped onto this worker's Pod.
+                    Merged on top of the ConfigMap-based pod-template overlay
+                    and CR metadata.labels, and below controller-forced
+                    system labels (hiclaw.io/controller, hiclaw.io/worker,
+                    hiclaw.io/role, hiclaw.io/runtime, app). Entries whose
+                    keys collide with those system labels are silently
+                    overridden.
                 accessEntries:
                   type: array
                   description: >
@@ -131,7 +143,6 @@ spec:
                 observedGeneration:
                   type: integer
                   format: int64
-                  description: Last spec generation reconciled by the controller
                 phase:
                   type: string
                   enum: [Pending, Running, Sleeping, Updating, Stopped, Failed]

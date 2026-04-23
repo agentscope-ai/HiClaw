@@ -80,6 +80,15 @@ spec:
                       type: string
                       enum: [Running, Sleeping, Stopped]
                       description: "Desired lifecycle state for the team leader (default: Running)"
+                    labels:
+                      type: object
+                      additionalProperties:
+                        type: string
+                      description: >
+                        User-defined Pod labels stamped onto the team leader Pod.
+                        Merged on top of Team.metadata.labels and below controller
+                        system labels. Entries whose keys collide with system labels
+                        are silently overridden.
                     channelPolicy:
                       type: object
                       properties:
@@ -166,6 +175,15 @@ spec:
                         type: string
                         enum: [Running, Sleeping, Stopped]
                         description: "Desired lifecycle state for this team worker (default: Running)"
+                      labels:
+                        type: object
+                        additionalProperties:
+                          type: string
+                        description: >
+                          User-defined Pod labels stamped onto this team worker Pod.
+                          Merged on top of Team.metadata.labels and below controller
+                          system labels. Entries whose keys collide with system labels
+                          are silently overridden.
             status:
               type: object
               properties:
