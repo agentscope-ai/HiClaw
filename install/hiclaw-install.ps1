@@ -514,7 +514,7 @@ $script:Messages = @{
     "install.welcome_msg.confirmed" = @{ zh = "Manager 已确认发送欢迎消息（status.welcomeSent=true，用时 {0}s）"; en = "Manager confirmed welcome message sent (status.welcomeSent=true, {0}s elapsed)" }
     "install.welcome_msg.timeout" = @{ zh = "警告: 在 {0}s 内未观察到 Manager 发送欢迎消息（status.welcomeSent=true）。安装仍然成功，所有服务已就绪——可继续按下方提示登录 Element Web。"; en = "WARNING: Did not observe the Manager sending its welcome message (status.welcomeSent=true) within {0}s. Installation is still successful, all services are up — continue with the Element Web instructions below." }
     "install.welcome_msg.timeout_hint" = @{ zh = "手动触发 onboarding: 登录 Element Web → 打开与 Manager 的 DM 房间 → 发送任意一句话（例如 `"hi`"），Manager 会接管对话并开始引导。"; en = "Manual onboarding: log in to Element Web -> open the DM with the Manager -> send any message (e.g. `"hi`") and the Manager will take over and start the guided setup." }
-    "install.welcome_msg.timeout_inspect" = @{ zh = "排查命令: docker exec hiclaw-manager hiclaw get managers default"; en = "Inspect status: docker exec hiclaw-manager hiclaw get managers default" }
+    "install.welcome_msg.timeout_inspect" = @{ zh = "排查命令: docker exec hiclaw-controller hiclaw get managers default"; en = "Inspect status: docker exec hiclaw-controller hiclaw get managers default" }
     "install.welcome_msg.poll_unavailable" = @{ zh = "提示: hiclaw-manager 内未找到 hiclaw CLI，跳过 welcome 等待（旧镜像？）"; en = "Note: hiclaw CLI not found inside hiclaw-manager; skipping welcome wait (old image?)" }
 
     # --- Final output panel ---
@@ -2667,17 +2667,21 @@ function Install-Manager {
         # and (b) Higress WASM key-auth propagating to /v1/chat/completions for
         # the Manager's gateway key — typically ~45-90s on a fresh install.
         # We poll Manager CR status.welcomeSent via the in-container hiclaw
-        # CLI, exec'd inside hiclaw-manager (NOT hiclaw-controller): the
-        # manager already has the right HICLAW_AUTH_TOKEN (a real SA-issued
-        # JWT, validated by the controller's TokenReview) and
-        # HICLAW_CONTROLLER_URL=http://hiclaw-controller:8090 in env. The
-        # /data/admin-token file in the controller is the static token for
-        # the embedded kube-apiserver; it parses as user "admin" not
-        # "system:serviceaccount:..." so the controller's HTTP API rejects
-        # it with 401.
+        # CLI, exec'd inside hiclaw-controller (the source-of-truth container
+        # — its bundled CLI binary is always in lockstep with the controller
+        # binary serving the HTTP API, since they're the same `go build`
+        # output. The hiclaw-manager container's CLI may lag the controller
+        # across image upgrades and silently drop the welcomeSent field,
+        # leaving this loop hung). The controller mints a long-lived admin
+        # SA token at startup and writes it to
+        # HICLAW_AUTH_TOKEN_FILE=/var/run/hiclaw/cli-token (set as a Dockerfile
+        # ENV default), so a bare `docker exec hiclaw-controller hiclaw …`
+        # auto-discovers both the endpoint and the token. The brief window
+        # after container start before bootstrapAdminCLIToken completes is
+        # absorbed by the loop's silent retry.
         $hasHiclawCli = $false
         try {
-            docker exec hiclaw-manager sh -c 'command -v hiclaw' *> $null
+            docker exec hiclaw-controller sh -c 'command -v hiclaw' *> $null
             if ($LASTEXITCODE -eq 0) { $hasHiclawCli = $true }
         } catch {}
 
@@ -2689,7 +2693,7 @@ function Install-Manager {
             while ($welcomeWait -lt $welcomeMax) {
                 $wjson = ""
                 try {
-                    $wjson = docker exec hiclaw-manager `
+                    $wjson = docker exec hiclaw-controller `
                         hiclaw get managers default -o json 2>$null
                 } catch {}
                 if ($wjson -and ($wjson -replace '\s', '') -match '"welcomeSent":true') {
