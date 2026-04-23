@@ -28,12 +28,13 @@ type MockWorkerBackend struct {
 	containerState map[string]backend.WorkerStatus
 
 	Calls struct {
-		Create []string
-		Delete []string
-		Start  []string
-		Stop   []string
-		Status []string
-		List   int
+		Create     []string
+		CreateReqs []backend.CreateRequest
+		Delete     []string
+		Start      []string
+		Stop       []string
+		Status     []string
+		List       int
 	}
 }
 
@@ -67,12 +68,13 @@ func (m *MockWorkerBackend) ClearCalls() {
 
 func (m *MockWorkerBackend) clearCallsLocked() {
 	m.Calls = struct {
-		Create []string
-		Delete []string
-		Start  []string
-		Stop   []string
-		Status []string
-		List   int
+		Create     []string
+		CreateReqs []backend.CreateRequest
+		Delete     []string
+		Start      []string
+		Stop       []string
+		Status     []string
+		List       int
 	}{}
 }
 
@@ -98,6 +100,7 @@ func (m *MockWorkerBackend) NeedsCredentialInjection() bool   { return false }
 func (m *MockWorkerBackend) Create(ctx context.Context, req backend.CreateRequest) (*backend.WorkerResult, error) {
 	m.mu.Lock()
 	m.Calls.Create = append(m.Calls.Create, req.Name)
+	m.Calls.CreateReqs = append(m.Calls.CreateReqs, req)
 	fn := m.CreateFn
 	m.mu.Unlock()
 
@@ -225,6 +228,30 @@ func (m *MockWorkerBackend) List(ctx context.Context) ([]backend.WorkerResult, e
 		return fn(ctx)
 	}
 	return nil, nil
+}
+
+// LastCreateReq returns the most recent CreateRequest recorded by Create,
+// or (zero, false) if Create has not been invoked.
+func (m *MockWorkerBackend) LastCreateReq() (backend.CreateRequest, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if len(m.Calls.CreateReqs) == 0 {
+		return backend.CreateRequest{}, false
+	}
+	return m.Calls.CreateReqs[len(m.Calls.CreateReqs)-1], true
+}
+
+// FindCreateReq returns the most recent CreateRequest whose Name matches the
+// given value, or (zero, false) if no matching request was recorded.
+func (m *MockWorkerBackend) FindCreateReq(name string) (backend.CreateRequest, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for i := len(m.Calls.CreateReqs) - 1; i >= 0; i-- {
+		if m.Calls.CreateReqs[i].Name == name {
+			return m.Calls.CreateReqs[i], true
+		}
+	}
+	return backend.CreateRequest{}, false
 }
 
 // CallSnapshot returns a snapshot of call records safe for concurrent use.

@@ -764,8 +764,8 @@ func memberSpecChanged(t *v1beta1.Team, role MemberRole, name string) bool {
 // JSON key churn.
 func hashMemberSourceSpec(t *v1beta1.Team, role MemberRole, name string) string {
 	type leaderInput struct {
-		Leader     v1beta1.LeaderSpec          `json:"leader"`
-		TeamPolicy *v1beta1.ChannelPolicySpec  `json:"teamPolicy,omitempty"`
+		Leader     v1beta1.LeaderSpec         `json:"leader"`
+		TeamPolicy *v1beta1.ChannelPolicySpec `json:"teamPolicy,omitempty"`
 	}
 	type workerInput struct {
 		Worker       v1beta1.TeamWorkerSpec     `json:"worker"`
@@ -828,6 +828,7 @@ func leaderWorkerSpec(t *v1beta1.Team) v1beta1.WorkerSpec {
 		Package:       t.Spec.Leader.Package,
 		ChannelPolicy: policy,
 		State:         t.Spec.Leader.State,
+		Env:           t.Spec.Leader.Env,
 	}
 }
 
@@ -863,6 +864,7 @@ func teamWorkerSpecToWorkerSpec(t *v1beta1.Team, w v1beta1.TeamWorkerSpec) v1bet
 		Expose:        w.Expose,
 		ChannelPolicy: policy,
 		State:         w.State,
+		Env:           w.Env,
 	}
 }
 

@@ -70,8 +70,8 @@ func TestBuildDesiredMembers_LeaderAndWorkers(t *testing.T) {
 //   - leader with a matching stored hash   → SpecChanged=false
 //   - worker whose spec was mutated         → SpecChanged=true
 //   - worker with no stored hash (brand new) → SpecChanged=false (initial
-//       creation is driven by the backend.StatusNotFound branch, not by
-//       SpecChanged — see memberSpecChanged doc for why)
+//     creation is driven by the backend.StatusNotFound branch, not by
+//     SpecChanged — see memberSpecChanged doc for why)
 //
 // This is the regression guard for the bug where TeamReconciler tore down
 // every pod on every reconcile because MemberContext.ObservedGeneration was
@@ -148,6 +148,47 @@ func TestHashMemberSourceSpec_IgnoresPeerChanges(t *testing.T) {
 	if hashMemberSourceSpec(base, RoleTeamWorker, "alpha-dev") ==
 		hashMemberSourceSpec(mutated, RoleTeamWorker, "alpha-dev") {
 		t.Errorf("alpha-dev hash unchanged after model mutation; expected different")
+	}
+}
+
+// TestHashMemberSourceSpec_EnvChangeFlipsHash ensures user-defined env edits
+// on either LeaderSpec or TeamWorkerSpec propagate through
+// hashMemberSourceSpec, so the reconciler recreates the container when env
+// changes.
+func TestHashMemberSourceSpec_EnvChangeFlipsHash(t *testing.T) {
+	base := &v1beta1.Team{}
+	base.Name = "alpha"
+	base.Spec.Leader = v1beta1.LeaderSpec{
+		Name:  "alpha-lead",
+		Model: "gpt-4o",
+		Env:   map[string]string{"FOO": "1"},
+	}
+	base.Spec.Workers = []v1beta1.TeamWorkerSpec{
+		{Name: "alpha-dev", Model: "gpt-4o", Env: map[string]string{"BAR": "1"}},
+	}
+
+	// Leader env edit.
+	leaderMut := base.DeepCopy()
+	leaderMut.Spec.Leader.Env = map[string]string{"FOO": "2"}
+	if hashMemberSourceSpec(base, RoleTeamLeader, "alpha-lead") ==
+		hashMemberSourceSpec(leaderMut, RoleTeamLeader, "alpha-lead") {
+		t.Errorf("leader hash unchanged after Env edit; expected different")
+	}
+
+	// Worker env edit.
+	workerMut := base.DeepCopy()
+	workerMut.Spec.Workers[0].Env = map[string]string{"BAR": "2"}
+	if hashMemberSourceSpec(base, RoleTeamWorker, "alpha-dev") ==
+		hashMemberSourceSpec(workerMut, RoleTeamWorker, "alpha-dev") {
+		t.Errorf("alpha-dev hash unchanged after Env edit; expected different")
+	}
+
+	// Adding a key to a worker's env also flips the hash.
+	workerAdd := base.DeepCopy()
+	workerAdd.Spec.Workers[0].Env = map[string]string{"BAR": "1", "BAZ": "1"}
+	if hashMemberSourceSpec(base, RoleTeamWorker, "alpha-dev") ==
+		hashMemberSourceSpec(workerAdd, RoleTeamWorker, "alpha-dev") {
+		t.Errorf("alpha-dev hash unchanged after Env key addition; expected different")
 	}
 }
 

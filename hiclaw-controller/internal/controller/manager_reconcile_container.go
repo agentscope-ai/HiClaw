@@ -145,6 +145,7 @@ func (r *ManagerReconciler) createManagerContainer(ctx context.Context, s *manag
 	}
 
 	managerEnv := r.EnvBuilder.BuildManager(m.Name, prov, m.Spec)
+	mergeUserEnv(managerEnv, m.Spec.Env, logger, "manager/"+m.Name)
 	containerName := r.managerContainerName(m.Name)
 	saName := r.ResourcePrefix.SAName(authpkg.RoleManager, m.Name)
 	createReq := backend.CreateRequest{
