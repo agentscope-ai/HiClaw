@@ -115,7 +115,7 @@ Escape rules inside the `--soul "..."` string:
 |------|-------------|
 | `--name` | Worker name (required, lowercase, >3 chars) |
 | `--soul` | **Required.** Full SOUL.md content as a single quoted string. Do NOT use `--soul-file` — file-based input is fragile because the upstream file write (heredoc/redirect) may silently produce 0 bytes. |
-| `--model` | Model ID. If not specified, defaults to `qwen3.5-plus` |
+| `--model` | Model ID. If not specified, defaults to `$HICLAW_DEFAULT_MODEL` (set at install time and propagated to your container by the controller); falls back to `qwen3.5-plus` only when that env var is also unset. |
 | `--skills` | Comma-separated built-in skills to assign |
 | `--mcp-servers` | Comma-separated MCP servers to authorize |
 | `--runtime` | Agent runtime: `openclaw` (default), `copaw`, or `hermes` |
