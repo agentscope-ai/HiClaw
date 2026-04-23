@@ -512,7 +512,9 @@ $script:Messages = @{
     "install.welcome_msg.sent" = @{ zh = "欢迎消息已发送给 Manager"; en = "Welcome message sent to Manager" }
     "install.welcome_msg.waiting" = @{ zh = "等待 Manager 发送欢迎消息（Higress 路由授权 + LLM 探活，约 45-90s）..."; en = "Waiting for Manager to send the welcome message (Higress route auth + LLM probe, ~45-90s)..." }
     "install.welcome_msg.confirmed" = @{ zh = "Manager 已确认发送欢迎消息（status.welcomeSent=true，用时 {0}s）"; en = "Manager confirmed welcome message sent (status.welcomeSent=true, {0}s elapsed)" }
-    "install.welcome_msg.timeout" = @{ zh = "警告: 等待 Manager 发送欢迎消息超时（{0}s）。请稍后在 Element Web 中确认，或运行 'docker exec hiclaw-manager hiclaw get managers default' 查看状态"; en = "WARNING: Timed out ({0}s) waiting for Manager to send the welcome message. Check Element Web later, or run 'docker exec hiclaw-manager hiclaw get managers default' to inspect status" }
+    "install.welcome_msg.timeout" = @{ zh = "警告: 在 {0}s 内未观察到 Manager 发送欢迎消息（status.welcomeSent=true）。安装仍然成功，所有服务已就绪——可继续按下方提示登录 Element Web。"; en = "WARNING: Did not observe the Manager sending its welcome message (status.welcomeSent=true) within {0}s. Installation is still successful, all services are up — continue with the Element Web instructions below." }
+    "install.welcome_msg.timeout_hint" = @{ zh = "手动触发 onboarding: 登录 Element Web → 打开与 Manager 的 DM 房间 → 发送任意一句话（例如 `"hi`"），Manager 会接管对话并开始引导。"; en = "Manual onboarding: log in to Element Web -> open the DM with the Manager -> send any message (e.g. `"hi`") and the Manager will take over and start the guided setup." }
+    "install.welcome_msg.timeout_inspect" = @{ zh = "排查命令: docker exec hiclaw-manager hiclaw get managers default"; en = "Inspect status: docker exec hiclaw-manager hiclaw get managers default" }
     "install.welcome_msg.poll_unavailable" = @{ zh = "提示: hiclaw-manager 内未找到 hiclaw CLI，跳过 welcome 等待（旧镜像？）"; en = "Note: hiclaw CLI not found inside hiclaw-manager; skipping welcome wait (old image?)" }
 
     # --- Final output panel ---
@@ -2699,7 +2701,12 @@ function Install-Manager {
                 $welcomeWait += 3
             }
             if (-not $welcomeDone) {
+                # Non-fatal: install is still good. Keep going to the success
+                # banner so the admin can use Element Web to nudge Manager into
+                # onboarding manually (one DM message is enough).
                 Write-Log (Get-Msg "install.welcome_msg.timeout" $welcomeMax)
+                Write-Log (Get-Msg "install.welcome_msg.timeout_hint")
+                Write-Log (Get-Msg "install.welcome_msg.timeout_inspect")
             }
         } else {
             Write-Log (Get-Msg "install.welcome_msg.poll_unavailable")

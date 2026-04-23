@@ -732,8 +732,12 @@ msg() {
         "install.welcome_msg.waiting.en") text="Waiting for Manager to send the welcome message (Higress route auth + LLM probe, ~45-90s)..." ;;
         "install.welcome_msg.confirmed.zh") text="Manager 已确认发送欢迎消息（status.welcomeSent=true，用时 %ss）" ;;
         "install.welcome_msg.confirmed.en") text="Manager confirmed welcome message sent (status.welcomeSent=true, %ss elapsed)" ;;
-        "install.welcome_msg.timeout.zh") text="警告: 等待 Manager 发送欢迎消息超时（%ss）。请稍后在 Element Web 中确认，或运行 'docker exec hiclaw-manager hiclaw get managers default' 查看状态" ;;
-        "install.welcome_msg.timeout.en") text="WARNING: Timed out (%ss) waiting for Manager to send the welcome message. Check Element Web later, or run 'docker exec hiclaw-manager hiclaw get managers default' to inspect status" ;;
+        "install.welcome_msg.timeout.zh") text="警告: 在 %ss 内未观察到 Manager 发送欢迎消息（status.welcomeSent=true）。安装仍然成功，所有服务已就绪——可继续按下方提示登录 Element Web。" ;;
+        "install.welcome_msg.timeout.en") text="WARNING: Did not observe the Manager sending its welcome message (status.welcomeSent=true) within %ss. Installation is still successful, all services are up — continue with the Element Web instructions below." ;;
+        "install.welcome_msg.timeout_hint.zh") text="手动触发 onboarding: 登录 Element Web → 打开与 Manager 的 DM 房间 → 发送任意一句话（例如 \"hi\"），Manager 会接管对话并开始引导。" ;;
+        "install.welcome_msg.timeout_hint.en") text="Manual onboarding: log in to Element Web → open the DM with the Manager → send any message (e.g. \"hi\") and the Manager will take over and start the guided setup." ;;
+        "install.welcome_msg.timeout_inspect.zh") text="排查命令: docker exec hiclaw-manager hiclaw get managers default" ;;
+        "install.welcome_msg.timeout_inspect.en") text="Inspect status: docker exec hiclaw-manager hiclaw get managers default" ;;
         "install.welcome_msg.poll_unavailable.zh") text="提示: hiclaw-manager 内未找到 hiclaw CLI，跳过 welcome 等待（旧镜像？）" ;;
         "install.welcome_msg.poll_unavailable.en") text="Note: hiclaw CLI not found inside hiclaw-manager; skipping welcome wait (old image?)" ;;
         # --- Final output panel ---
@@ -2867,7 +2871,12 @@ CREDEOF
                 _welcome_wait=$((_welcome_wait + 3))
             done
             if [ $_welcome_done -ne 1 ]; then
+                # Non-fatal: install is still good. Keep going to the success
+                # banner so the admin can use Element Web to nudge Manager into
+                # onboarding manually (one DM message is enough).
                 log "$(msg install.welcome_msg.timeout "${_welcome_max}")"
+                log "$(msg install.welcome_msg.timeout_hint)"
+                log "$(msg install.welcome_msg.timeout_inspect)"
             fi
         else
             log "$(msg install.welcome_msg.poll_unavailable)"
