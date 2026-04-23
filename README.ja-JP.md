@@ -165,7 +165,7 @@ helm install hiclaw higress.io/hiclaw \
 | `gateway.publicURL` | 必須 | ユーザーが Element Web にアクセスする公開 URL（port-forward 環境では `http://localhost:18080`、本番では `https://hiclaw.example.com` 等） |
 | `credentials.adminPassword` | 推奨 | Matrix 管理者パスワード。空のままだと自動生成（後で Secret から読み出す必要あり） |
 | `credentials.llmProvider` | 任意 | LLM プロバイダー名、デフォルトは `openai` |
-| `credentials.defaultModel` | 任意 | デフォルトモデル、デフォルトは `gpt-4o` |
+| `credentials.defaultModel` | 任意 | デフォルトモデル、デフォルトは `gpt-5.4` |
 | `credentials.llmBaseUrl` | 任意 | OpenAI 互換のベース URL（例: `https://api.deepseek.com/v1`）。公式 OpenAI API を使用する場合は空のまま |
 
 **マルチリージョンイメージレジストリ**

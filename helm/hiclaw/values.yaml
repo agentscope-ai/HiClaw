@@ -19,7 +19,7 @@ credentials:
   adminPassword: ""           # Matrix admin password (auto-generated if empty)
   llmApiKey: ""               # LLM API key (required)
   llmProvider: "openai"
-  defaultModel: "gpt-4o"
+  defaultModel: "gpt-5.4"
   llmBaseUrl: ""              # OpenAI-compatible base URL (e.g. https://api.openai.com/v1)
 
 # ── Matrix ────────────────────────────────────────────────────────────────

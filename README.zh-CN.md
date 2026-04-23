@@ -191,7 +191,7 @@ helm install hiclaw higress.io/hiclaw \
 | `gateway.publicURL` | 必填 | 用户访问 Element Web 的对外地址（端口转发场景填 `http://localhost:18080`，正式环境填 `https://hiclaw.example.com` 等） |
 | `credentials.adminPassword` | 推荐 | Matrix 管理员密码；留空时会自动生成（之后需要从 Secret 中读取） |
 | `credentials.llmProvider` | 可选 | LLM 服务商名，默认 `openai` |
-| `credentials.defaultModel` | 可选 | 默认模型，默认 `gpt-4o` |
+| `credentials.defaultModel` | 可选 | 默认模型，默认 `gpt-5.4` |
 | `credentials.llmBaseUrl` | 可选 | OpenAI 兼容的 Base URL（例如 `https://api.deepseek.com/v1`）。使用官方 OpenAI API 时留空 |
 
 **多地域镜像仓库**
