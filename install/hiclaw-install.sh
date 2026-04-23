@@ -732,10 +732,10 @@ msg() {
         "install.welcome_msg.waiting.en") text="Waiting for Manager to send the welcome message (Higress route auth + LLM probe, ~45-90s)..." ;;
         "install.welcome_msg.confirmed.zh") text="Manager 已确认发送欢迎消息（status.welcomeSent=true，用时 %ss）" ;;
         "install.welcome_msg.confirmed.en") text="Manager confirmed welcome message sent (status.welcomeSent=true, %ss elapsed)" ;;
-        "install.welcome_msg.timeout.zh") text="警告: 等待 Manager 发送欢迎消息超时（%ss）。请稍后在 Element Web 中确认，或运行 'docker exec -e HICLAW_AUTH_TOKEN_FILE=/data/admin-token hiclaw-controller hiclaw get managers default' 查看状态" ;;
-        "install.welcome_msg.timeout.en") text="WARNING: Timed out (%ss) waiting for Manager to send the welcome message. Check Element Web later, or run 'docker exec -e HICLAW_AUTH_TOKEN_FILE=/data/admin-token hiclaw-controller hiclaw get managers default' to inspect status" ;;
-        "install.welcome_msg.poll_unavailable.zh") text="提示: hiclaw-controller 内未找到 hiclaw CLI，跳过 welcome 等待（旧镜像？）" ;;
-        "install.welcome_msg.poll_unavailable.en") text="Note: hiclaw CLI not found inside hiclaw-controller; skipping welcome wait (old image?)" ;;
+        "install.welcome_msg.timeout.zh") text="警告: 等待 Manager 发送欢迎消息超时（%ss）。请稍后在 Element Web 中确认，或运行 'docker exec hiclaw-manager hiclaw get managers default' 查看状态" ;;
+        "install.welcome_msg.timeout.en") text="WARNING: Timed out (%ss) waiting for Manager to send the welcome message. Check Element Web later, or run 'docker exec hiclaw-manager hiclaw get managers default' to inspect status" ;;
+        "install.welcome_msg.poll_unavailable.zh") text="提示: hiclaw-manager 内未找到 hiclaw CLI，跳过 welcome 等待（旧镜像？）" ;;
+        "install.welcome_msg.poll_unavailable.en") text="Note: hiclaw CLI not found inside hiclaw-manager; skipping welcome wait (old image?)" ;;
         # --- Final output panel ---
         "success.title.zh") text="=== HiClaw Manager 已启动！===" ;;
         "success.title.en") text="=== HiClaw Manager Started! ===" ;;
@@ -2839,18 +2839,24 @@ CREDEOF
         # (b) Higress WASM key-auth propagation actually clearing /v1/chat/completions
         # for the Manager's gateway key — typically ~45-90s on a fresh install.
         # We poll Manager CR Status.WelcomeSent via the in-container hiclaw CLI,
-        # using the persisted admin token at /data/admin-token.
-        if ${DOCKER_CMD} exec hiclaw-controller sh -c 'command -v hiclaw' >/dev/null 2>&1; then
+        # exec'd inside hiclaw-manager (NOT hiclaw-controller): the manager
+        # container already has the right HICLAW_AUTH_TOKEN (a real SA-issued
+        # JWT, validated by the controller's TokenReview against its embedded
+        # apiserver) and HICLAW_CONTROLLER_URL=http://hiclaw-controller:8090
+        # in env. The /data/admin-token file in the controller is the static
+        # token for the embedded kube-apiserver; it parses as user "admin"
+        # not "system:serviceaccount:..." so the controller's HTTP API
+        # rejects it with 401.
+        if ${DOCKER_CMD} exec hiclaw-manager sh -c 'command -v hiclaw' >/dev/null 2>&1; then
             log "$(msg install.welcome_msg.waiting)"
             local _welcome_wait=0
             local _welcome_max="${HICLAW_WELCOME_TIMEOUT:-300}"
             local _welcome_done=0
             while [ $_welcome_wait -lt $_welcome_max ]; do
-                # `-e` overrides the env for this exec only — never touches the
-                # container's process env. `tr -d` strips any stray quoting/CR
-                # so the grep stays portable across BSD/GNU.
+                # `tr -d` strips whitespace/CR so the grep stays robust to
+                # any future change in go-json field ordering or formatting.
                 local _wjson
-                _wjson=$(${DOCKER_CMD} exec -e HICLAW_AUTH_TOKEN_FILE=/data/admin-token hiclaw-controller \
+                _wjson=$(${DOCKER_CMD} exec hiclaw-manager \
                     hiclaw get managers default -o json 2>/dev/null || true)
                 if [ -n "${_wjson}" ] && printf '%s' "${_wjson}" | tr -d ' \r\n' | grep -q '"welcomeSent":true'; then
                     log "$(msg install.welcome_msg.confirmed "${_welcome_wait}")"
