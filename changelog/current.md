@@ -19,6 +19,8 @@ Record image-affecting changes to `manager/`, `worker/`, `copaw/`, `hermes/`, `o
 
 
 - **Multi-Container Architecture** — The Manager image no longer bundles Higress, Tuwunel, MinIO, or Element Web. Infrastructure services run exclusively in the `hiclaw-embedded` image (controller container), and the Manager is a lightweight agent-only container (~1.7 GB smaller). This enables independent scaling, restart isolation, and clean separation of concerns.
+- **OpenClaw 2026.4.x Upgrade & 1.7 GB Image Shrink** — Upgraded the bundled OpenClaw engine to `hiclaw-2026.4.14`, bringing Matrix private-network SSRF fixes, structured Matrix debug logging (`HICLAW_MATRIX_DEBUG=1`), and the gateway Control UI port unification. The `openclaw-base` image was rebased from `higress/all-in-one` (~1.79 GB) onto `higress/ubuntu:24.04` (~103 MB), shrinking every downstream image (manager, worker, copaw-worker, hermes-worker) by approximately 1.7 GB. Key compatibility fixes included: pinning `gateway.bind = "lan"` for cross-container access, `autoJoin = "always"` for reliable Matrix room joins, and `dangerouslyAllowPrivateNetwork = true` for the embedded homeserver's FQDN-over-loopback setup.
+
 
 - **Auto-Migrate from v1.0.9** — Upgrading from v1.0.9 automatically migrates `workers-registry.json` data to CRD resources. Worker runtime, model, skills, MCP servers, and team membership are all preserved. The controller detects legacy state on first boot and creates matching Worker/Team CRs.
 
@@ -85,6 +87,8 @@ Record image-affecting changes to `manager/`, `worker/`, `copaw/`, `hermes/`, `o
 
 
 - **多容器架构** — Manager 镜像不再打包 Higress、Tuwunel、MinIO 和 Element Web。基础设施服务专属于 `hiclaw-embedded` 镜像（Controller 容器），Manager 是轻量级的纯 Agent 容器（减小约 1.7 GB）。这实现了独立扩缩容、重启隔离和清晰的职责分离。
+- **OpenClaw 2026.4.x 升级 & 镜像瘦身 1.7 GB** — 内置 OpenClaw 引擎升级至 `hiclaw-2026.4.14`，带来 Matrix 私有网络安全修复、结构化 Matrix 调试日志（`HICLAW_MATRIX_DEBUG=1`）以及网关 Control UI 端口统一。`openclaw-base` 基础镜像从 `higress/all-in-one`（~1.79 GB）重置为 `higress/ubuntu:24.04`（~103 MB），所有下游镜像（manager、worker、copaw-worker、hermes-worker）缩减约 1.7 GB。关键兼容性修复包括：设置 `gateway.bind = "lan"` 以支持跨容器访问、`autoJoin = "always"` 确保 Matrix 房间可靠加入、`dangerouslyAllowPrivateNetwork = true` 适配内嵌 homeserver 的 FQDN-over-loopback 方案。
+
 
 - **从 v1.0.9 自动迁移** — 从 v1.0.9 升级时自动将 `workers-registry.json` 数据迁移为 CRD 资源。Worker 的运行时、模型、技能、MCP Server 和团队成员关系全部保留。Controller 在首次启动时检测旧版状态并创建对应的 Worker/Team CR。
 
