@@ -331,24 +331,62 @@ def export_matrix_messages(out_dir: Path, since_epoch: float, redact: bool,
 # ---------------------------------------------------------------------------
 
 def detect_runtime(container: str) -> tuple[str, str]:
-    std = ".openclaw/agents/main/sessions"
-    if docker_exec(container, f"test -d {std} && echo yes || echo no").strip() == "yes":
-        return "openclaw", std
+    """Probe known absolute session-dir locations across runtimes & container types.
 
-    hermes_dir = ".hermes/sessions"
-    if docker_exec(container, f"test -d {hermes_dir} && echo yes || echo no").strip() == "yes":
-        return "hermes", hermes_dir
+    Returns (runtime_name, absolute_sessions_dir). Empty tuple if none found.
+
+    Layout reference (verified against worker/scripts/worker-entrypoint.sh,
+    copaw/scripts/copaw-worker-entrypoint.sh, copaw/AGENTS.md and
+    tests/lib/agent-metrics.sh):
+
+      Manager (any runtime, HOME=/root/manager-workspace):
+        openclaw -> /root/manager-workspace/.openclaw/agents/main/sessions
+        hermes   -> /root/manager-workspace/.hermes/sessions
+        copaw    -> /root/manager-workspace/.copaw/workspaces/default/sessions
+
+      OpenClaw / Hermes Worker (HOME=/root/hiclaw-fs/agents/<name>):
+        openclaw -> /root/hiclaw-fs/agents/<name>/.openclaw/agents/main/sessions
+        hermes   -> /root/hiclaw-fs/agents/<name>/.hermes/sessions
+
+      CoPaw Worker (HOME=/root/.hiclaw-worker/<name>, also reachable via
+      /root/hiclaw-fs symlink that points to that same dir):
+        copaw    -> /root/.hiclaw-worker/<name>/.copaw/workspaces/default/sessions
+        copaw    -> /root/hiclaw-fs/.copaw/workspaces/default/sessions  (alt)
+    """
+    candidates: list[tuple[str, str]] = [
+        ("openclaw", "/root/manager-workspace/.openclaw/agents/main/sessions"),
+        ("hermes",   "/root/manager-workspace/.hermes/sessions"),
+        ("copaw",    "/root/manager-workspace/.copaw/workspaces/default/sessions"),
+    ]
 
     worker_name = docker_exec(container, "echo $HICLAW_WORKER_NAME").strip()
     if worker_name:
-        copaw_dir = f"{worker_name}/.copaw/sessions"
-        if docker_exec(container, f"test -d '{copaw_dir}' && echo yes || echo no").strip() == "yes":
-            return "copaw", copaw_dir
+        candidates.extend([
+            ("openclaw", f"/root/hiclaw-fs/agents/{worker_name}/.openclaw/agents/main/sessions"),
+            ("hermes",   f"/root/hiclaw-fs/agents/{worker_name}/.hermes/sessions"),
+            ("copaw",    f"/root/.hiclaw-worker/{worker_name}/.copaw/workspaces/default/sessions"),
+            ("copaw",    "/root/hiclaw-fs/.copaw/workspaces/default/sessions"),
+        ])
 
-    found = docker_exec(container, "find . -maxdepth 3 \\( -path '*/.hermes/sessions' -o -path '*/.copaw/sessions' \\) -type d 2>/dev/null | head -1").strip()
+    for runtime, path in candidates:
+        if docker_exec(container, f"test -d '{path}' && echo yes || echo no").strip() == "yes":
+            return runtime, path
+
+    # Last-resort: scan from / for any known session dir layout.
+    found = docker_exec(
+        container,
+        "find / -maxdepth 7 \\( "
+        "-path '*/.openclaw/agents/main/sessions' "
+        "-o -path '*/.hermes/sessions' "
+        "-o -path '*/.copaw/workspaces/default/sessions' "
+        "\\) -type d 2>/dev/null | head -1",
+    ).strip()
     if found:
-        runtime = "hermes" if "/.hermes/sessions" in found else "copaw"
-        return runtime, found.lstrip("./")
+        if "/.openclaw/" in found:
+            return "openclaw", found
+        if "/.hermes/" in found:
+            return "hermes", found
+        return "copaw", found
 
     return "", ""
 

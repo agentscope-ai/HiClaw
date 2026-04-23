@@ -169,9 +169,23 @@ Repeat the poll once every 5-10s while still `Pending`. If still `Pending` after
 
 ## Post-creation
 
-`hiclaw create worker` alone does **not** notify the admin. You must complete all three steps below, in this exact order. Do not skip Step 2 — it is the reply the admin DM has been waiting on since they asked you to create the Worker.
+`hiclaw create worker` alone does **not** notify the admin. The post-creation flow differs by **your own runtime** (the runtime running the Manager Agent), because that determines whether you can send incremental DM messages or only one final reply per turn.
 
-### Step 1. Verify Worker is Running
+### Choose your post-creation flow
+
+Run `echo "${HICLAW_MANAGER_RUNTIME:-openclaw}"` if unsure. Then follow the matching path below.
+
+**OpenClaw / Hermes Manager** — incremental DM messages are supported, so polling-then-reply within a single turn is fine: → use **Path A**.
+
+**CoPaw Manager** — only the final text reply of a turn reaches admin in DM (see `copaw-manager-agent/AGENTS.md` "Message Sending Rules"). Polling for `phase=Running` blocks the reply for 30-60s+ and tends to compound when admin sends a follow-up message during that window (the runtime queues both, then the model conflates them and replies only to the latest). → use **Path B (fast-reply)**.
+
+---
+
+### Path A — OpenClaw / Hermes Manager (poll-then-reply)
+
+Complete all three steps in this exact order. Do not skip Step 2 — it is the reply the admin DM has been waiting on since they asked you to create the Worker.
+
+#### A1. Verify Worker is Running
 
 ```bash
 hiclaw get workers -o json
@@ -179,9 +193,9 @@ hiclaw get workers -o json
 
 Confirm the target Worker's `phase` is `"Running"`. If `"Pending"`, check again shortly. If `"Failed"`, report the `message` field to admin and stop.
 
-### Step 2. Reply to admin in the DM — THIS IS YOUR FINAL TEXT RESPONSE
+#### A2. Reply to admin in the DM — THIS IS YOUR FINAL TEXT RESPONSE
 
-This step has no shell command on purpose. The admin is currently in a DM session with you; the reply the test (and the admin) is waiting on is **the text you return at the end of this turn**, not another tool call. Do not use `copaw channels send`, `curl`, or any other messaging CLI for this — those are for group rooms, not admin DMs.
+This step has no shell command on purpose. The admin is currently in a DM session with you; the reply the test (and the admin) is waiting on is **the text you return at the end of this turn**, not another tool call.
 
 Make sure your final response for this turn contains at least:
 
@@ -193,9 +207,9 @@ Note: By default, Workers only accept @mentions from Manager and admin — not f
 
 Failing to emit this reply is the number-one cause of "Manager replied to create … (value is empty or null)" test failures.
 
-### Step 3. Greet the Worker in the Worker's Room
+#### A3. Greet the Worker in the Worker's Room
 
-After Step 2's reply is prepared, greet the Worker via the helper script. It auto-detects your runtime and handles all shell escaping, flag naming, and the `@<name>:${HICLAW_MATRIX_DOMAIN}` mention format, so you do not have to build the command by hand:
+After Step A2's reply is prepared, greet the Worker via the helper script. It auto-detects your runtime and handles all shell escaping, flag naming, and the `@<name>:${HICLAW_MATRIX_DOMAIN}` mention format:
 
 ```bash
 bash /opt/hiclaw/agent/skills/worker-management/scripts/send-worker-greeting.sh \
@@ -205,7 +219,57 @@ bash /opt/hiclaw/agent/skills/worker-management/scripts/send-worker-greeting.sh 
 
 `<ROOM_ID>` is the `room_id` field from the `hiclaw create worker -o json` response. Pass `--text "<custom message>"` to personalize the greeting.
 
-If the helper exits with code 2 instead of sending (this happens on non-CoPaw runtimes), it prints the target room, mention, and message text — deliver that greeting via your native message channel to the printed room.
+If the helper exits with code 2 instead of sending, it prints the target room, mention, and message text — deliver that greeting via your native message channel to the printed room.
+
+---
+
+### Path B — CoPaw Manager (fast-reply, deferred greeting)
+
+**Hard rule for CoPaw**: your create-worker turn MUST emit its final DM reply within ~60s of receiving the admin's request. Polling for `phase=Running` and greeting the Worker happen in **separate later turns**, not in the same turn as the admin reply.
+
+#### B1. Confirm controller accepted the create request
+
+You already ran `hiclaw create worker ... --no-wait -o json` in Step 2 above. The JSON response should contain `"phase": "Pending"` (or similar acceptance fields like `"name"`, `"room_id"`). That is enough — **do NOT** loop on `hiclaw get workers -o json` here.
+
+If the create call returned an error or the response is missing the expected fields, report the error to admin in your final text reply and stop. Do not retry the create call (that returns 409 Conflict).
+
+#### B2. Record the new Worker for follow-up
+
+Append a one-line entry to `~/pending-workers.json` (create the file if missing) so your next heartbeat knows to poll status and send the greeting:
+
+```bash
+ROOM_ID=$(hiclaw get workers -o json | jq -r --arg n "<NAME>" '.[] | select(.name==$n) | .room_id // empty')
+mkdir -p ~/ && touch ~/pending-workers.json
+jq -n --arg name "<NAME>" --arg room "${ROOM_ID}" --arg ts "$(date -Iseconds)" \
+  '{name:$name, room_id:$room, queued_at:$ts}' \
+  >> ~/pending-workers.json
+```
+
+If `room_id` is empty (controller hasn't created the room yet), still record `name` only — heartbeat will look it up later.
+
+#### B3. Reply to admin — THIS IS YOUR FINAL TEXT RESPONSE
+
+End your turn with text along these lines (do NOT use `copaw channels send` for this — see "Message Sending Rules" in `copaw-manager-agent/AGENTS.md`):
+
+```
+Creating Worker <NAME> now. The controller has accepted the request; container will reach Running in ~30-60s.
+
+I'll greet <NAME> in their Worker room and confirm back here once they're up. Remember to @mention <NAME> when giving tasks.
+
+Note: By default, Workers only accept @mentions from Manager and admin — not from each other. Peer mentions can be enabled explicitly per-project.
+```
+
+This reply mentions the Worker name explicitly so the admin (and the integration tests in `tests/test-06-multi-worker.sh`) can see the request was acknowledged before any heavy provisioning work blocks the next turn.
+
+#### B4. (Next heartbeat) Drain `~/pending-workers.json`
+
+In your **next** heartbeat or self-triggered turn, for each entry in `~/pending-workers.json`:
+
+1. `hiclaw get workers -o json` and check the entry's `phase`. If still `Pending` and queued < 90s ago, leave it for a later heartbeat. If `Failed`, notify admin in DM and remove the entry.
+2. If `Running`, run `send-worker-greeting.sh --worker <NAME> --room "<ROOM_ID>"` to greet the Worker in their room, then notify admin in DM with: `"<NAME> is now Running and greeted."`
+3. Remove the processed entry from `~/pending-workers.json`.
+
+If you have HEARTBEAT.md, add a one-line bullet there reminding yourself to drain `~/pending-workers.json` at every heartbeat.
 
 ## Imported Worker Pull-Up
 
