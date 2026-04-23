@@ -247,8 +247,11 @@ func (m *MockProvisioner) DeleteWorkerRoom(ctx context.Context, roomID string) e
 }
 
 func (m *MockProvisioner) MatrixUserID(name string) string {
-	if m.MatrixUserIDFn != nil {
-		return m.MatrixUserIDFn(name)
+	m.mu.Lock()
+	fn := m.MatrixUserIDFn
+	m.mu.Unlock()
+	if fn != nil {
+		return fn(name)
 	}
 	return "@" + name + ":localhost"
 }
