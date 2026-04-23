@@ -380,16 +380,17 @@ $script:Messages = @{
 
     # --- Default worker runtime ---
     "worker_runtime.title" = @{ zh = "--- 默认 Worker 运行时 ---"; en = "--- Default Worker Runtime ---" }
-    "worker_runtime.openclaw" = @{ zh = "OpenClaw（Node.js 容器，~500MB 内存）"; en = "OpenClaw (Node.js container, ~500MB RAM)" }
-    "worker_runtime.copaw" = @{ zh = "CoPaw（Python 容器，~150MB 内存，默认关闭控制台，可跟 Manager 对话按需开启）"; en = "CoPaw (Python container, ~150MB RAM, console off by default, enable on demand via Manager)" }
-    "worker_runtime.choice" = @{ zh = "请选择 [1/2]"; en = "Enter choice [1/2]" }
+    "worker_runtime.openclaw" = @{ zh = "OpenClaw"; en = "OpenClaw" }
+    "worker_runtime.copaw" = @{ zh = "QwenPaw"; en = "QwenPaw" }
+    "worker_runtime.hermes" = @{ zh = "Hermes"; en = "Hermes" }
+    "worker_runtime.choice" = @{ zh = "请选择 [1/2/3]"; en = "Enter choice [1/2/3]" }
     "worker_runtime.selected" = @{ zh = "默认 Worker 运行时: {0}"; en = "Default Worker runtime: {0}" }
     "worker_runtime.title_short" = @{ zh = "默认 Worker 运行时"; en = "Default Worker Runtime" }
 
     # --- Manager runtime ---
     "manager_runtime.title" = @{ zh = "--- Manager 运行时 ---"; en = "--- Manager Runtime ---" }
-    "manager_runtime.openclaw" = @{ zh = "OpenClaw（Node.js）"; en = "OpenClaw (Node.js)" }
-    "manager_runtime.copaw" = @{ zh = "CoPaw（Python，AgentScope 框架）"; en = "CoPaw (Python, AgentScope framework)" }
+    "manager_runtime.openclaw" = @{ zh = "OpenClaw"; en = "OpenClaw" }
+    "manager_runtime.copaw" = @{ zh = "QwenPaw"; en = "QwenPaw" }
     "manager_runtime.choice" = @{ zh = "请选择 [1/2]"; en = "Enter choice [1/2]" }
     "manager_runtime.selected" = @{ zh = "Manager 运行时: {0}"; en = "Manager runtime: {0}" }
     "manager_runtime.title_short" = @{ zh = "Manager 运行时"; en = "Manager Runtime" }
@@ -534,7 +535,7 @@ $script:Messages = @{
     "success.higress_console" = @{ zh = "  Higress 控制台: http://localhost:{0}（用户名: {1} / 密码: {2}）"; en = "  Higress Console: http://localhost:{0} (Username: {1} / Password: {2})" }
     "success.manager_console" = @{ zh = "  Manager 控制台（本地）: http://localhost:{0}（无需登录）"; en = "  Manager Console (local): http://localhost:{0} (no login required)" }
     "success.manager_console_gateway" = @{ zh = "  Manager 控制台（网关）: http://console-local.hiclaw.io（用户名: {0} / 密码: {1}）"; en = "  Manager Console (gateway): http://console-local.hiclaw.io (Username: {0} / Password: {1})" }
-    "success.copaw_console" = @{ zh = "  CoPaw 控制台（本地）: http://localhost:{0}（无需登录）"; en = "  CoPaw Console (local): http://localhost:{0} (no login required)" }
+    "success.copaw_console" = @{ zh = "  QwenPaw 控制台（本地）: http://localhost:{0}（无需登录）"; en = "  QwenPaw Console (local): http://localhost:{0} (no login required)" }
     "success.switch_llm.title" = @{ zh = "--- 切换 LLM 提供商 ---"; en = "--- Switch LLM Providers ---" }
     "success.switch_llm.hint" = @{ zh = "  您可以通过 Higress 控制台切换到其他 LLM 提供商（OpenAI、Anthropic 等）。"; en = "  You can switch to other LLM providers (OpenAI, Anthropic, etc.) via Higress Console." }
     "success.switch_llm.docs" = @{ zh = "  详细说明请参阅:"; en = "  For detailed instructions, see:" }
@@ -1769,6 +1770,7 @@ function Step-Runtime {
     Write-Host ""
     Write-Host "  1) $(Get-Msg 'worker_runtime.openclaw')"
     Write-Host "  2) $(Get-Msg 'worker_runtime.copaw')"
+    Write-Host "  3) $(Get-Msg 'worker_runtime.hermes')"
     Write-Host ""
 
     if ($script:HICLAW_NON_INTERACTIVE) {
@@ -1778,7 +1780,11 @@ function Step-Runtime {
         $rtChoice = Read-Host (Get-Msg "worker_runtime.choice")
         if ($rtChoice -eq "b") { $script:StepResult = "back"; return }
         if ($rtChoice) {
-            $script:config.DEFAULT_WORKER_RUNTIME = if ($rtChoice -eq "2") { "copaw" } else { "openclaw" }
+            $script:config.DEFAULT_WORKER_RUNTIME = switch ($rtChoice) {
+                "2" { "copaw" }
+                "3" { "hermes" }
+                default { "openclaw" }
+            }
         } else {
             $script:config.DEFAULT_WORKER_RUNTIME = $env:HICLAW_DEFAULT_WORKER_RUNTIME
         }
@@ -1788,7 +1794,11 @@ function Step-Runtime {
         $rtChoice = Read-Host (Get-Msg "worker_runtime.choice")
         if ($rtChoice -eq "b") { $script:StepResult = "back"; return }
         $rtChoice = if ($rtChoice) { $rtChoice } else { "1" }
-        $script:config.DEFAULT_WORKER_RUNTIME = if ($rtChoice -eq "2") { "copaw" } else { "openclaw" }
+        $script:config.DEFAULT_WORKER_RUNTIME = switch ($rtChoice) {
+            "2" { "copaw" }
+            "3" { "hermes" }
+            default { "openclaw" }
+        }
     }
     Write-Log (Get-Msg "worker_runtime.selected" -f $script:config.DEFAULT_WORKER_RUNTIME)
 }
