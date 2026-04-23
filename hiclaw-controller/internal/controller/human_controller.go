@@ -92,12 +92,6 @@ func (r *HumanReconciler) reconcileHumanNormal(ctx context.Context, s *humanScop
 	r.reconcileHumanRooms(ctx, s)
 	r.reconcileHumanLegacy(ctx, s)
 
-	logger := log.FromContext(ctx)
-	logger.V(1).Info("human reconciled",
-		"name", s.human.Name,
-		"matrixUserID", s.human.Status.MatrixUserID,
-		"rooms", len(s.human.Status.Rooms))
-
 	return reconcile.Result{RequeueAfter: reconcileInterval}, nil
 }
 

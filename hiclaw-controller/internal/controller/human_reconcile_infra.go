@@ -47,7 +47,7 @@ func (r *HumanReconciler) reconcileHumanInfra(ctx context.Context, s *humanScope
 	h.Status.InitialPassword = creds.Password
 	s.userToken = creds.AccessToken
 
-	log.FromContext(ctx).Info("human matrix account provisioned",
+	log.FromContext(ctx).Info("human created",
 		"name", h.Name, "matrixUserID", creds.UserID)
 	return nil
 }
