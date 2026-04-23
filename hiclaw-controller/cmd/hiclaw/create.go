@@ -64,7 +64,7 @@ func createWorkerCmd() *cobra.Command {
 				return err
 			}
 			if model == "" {
-				model = "qwen3.5-plus"
+				model = defaultWorkerModel()
 			}
 			if soulFile != "" {
 				data, err := os.ReadFile(soulFile)
@@ -132,7 +132,7 @@ func createWorkerCmd() *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&name, "name", "", "Worker name (required)")
-	cmd.Flags().StringVar(&model, "model", "", "LLM model ID (default: qwen3.5-plus)")
+	cmd.Flags().StringVar(&model, "model", "", "LLM model ID (default: $HICLAW_DEFAULT_MODEL, else qwen3.5-plus)")
 	cmd.Flags().StringVar(&runtime, "runtime", "", "Agent runtime (openclaw|copaw|hermes)")
 	cmd.Flags().StringVar(&image, "image", "", "Container image override")
 	cmd.Flags().StringVar(&identity, "identity", "", "Worker identity description")
@@ -418,6 +418,20 @@ func createManagerCmd() *cobra.Command {
 // ---------------------------------------------------------------------------
 
 var workerNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
+
+// defaultWorkerModel returns the model ID to use when a CLI flag does not
+// specify --model. It prefers the install-time configured model
+// (HICLAW_DEFAULT_MODEL, propagated by the controller into both the manager
+// and worker containers via WorkerEnvBuilder); only when the env var is unset
+// does it fall back to the historical "qwen3.5-plus" default. Without this
+// fallback every `hiclaw create worker` / `hiclaw apply worker` invoked by the
+// Manager Agent would silently override the admin's install-time model choice.
+func defaultWorkerModel() string {
+	if m := strings.TrimSpace(os.Getenv("HICLAW_DEFAULT_MODEL")); m != "" {
+		return m
+	}
+	return "qwen3.5-plus"
+}
 
 func validateWorkerName(name string) error {
 	name = strings.TrimSpace(name)

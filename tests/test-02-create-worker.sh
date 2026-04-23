@@ -61,15 +61,24 @@ matrix_send_message "${ADMIN_TOKEN}" "${DM_ROOM}" \
 
 log_info "Waiting for Manager to create Worker Alice..."
 
-# Wait for Manager reply (up to 5 minutes — worker creation involves multiple LLM calls)
-REPLY=$(matrix_wait_for_reply "${ADMIN_TOKEN}" "${DM_ROOM}" "@manager" 300 \
+# Wait for a Manager DM reply that explicitly names 'alice'.
+#
+# Why we tolerate progressive replies: some Manager runtimes (notably CoPaw)
+# emit one or more interim acks before the reply that actually names the
+# Worker — for example "I need to set up the GitHub MCP server first" when the
+# admin's request bundles a precondition like "she should have access to
+# GitHub MCP". The follow-up reply ("...let me create Worker 'alice'...")
+# arrives 5-30s later. matrix_wait_for_reply_matching keeps reading new
+# Manager messages until one matches 'alice' (or until the 5min timeout),
+# while still logging the interim acks so the test artifact captures them.
+REPLY=$(matrix_wait_for_reply_matching "${ADMIN_TOKEN}" "${DM_ROOM}" "@manager" "alice" 300 \
     "${ADMIN_TOKEN}" "${DM_ROOM}" "Please check if the worker creation request has been processed.")
 
 log_section "Verify Manager Response"
 
 log_info "Manager reply (first 500 chars): $(echo "${REPLY}" | head -c 500)"
 
-assert_not_empty "${REPLY}" "Manager replied to create worker request"
+assert_not_empty "${REPLY}" "Manager replied to create worker request mentioning 'alice'"
 assert_contains_i "${REPLY}" "alice" "Reply mentions worker name 'alice'"
 
 # Show error logs on failure for debugging

@@ -140,6 +140,37 @@ done
 
 ---
 
+### 5b. Drain Pending Worker Greetings
+
+If `~/pending-workers.json` exists, the previous admin DM turn(s) finished early after `hiclaw create worker --no-wait` and deferred the post-creation polling/greeting to you. Process every entry:
+
+```bash
+test -s ~/pending-workers.json || true
+```
+
+For each entry (one JSON object per line):
+
+1. Look up current status:
+   ```bash
+   PHASE=$(hiclaw get workers -o json | jq -r --arg n "<NAME>" '.[] | select(.name==$n) | .phase // "Unknown"')
+   ```
+2. **`Pending`** and queued < 90s ago — leave the entry, drain again next heartbeat.
+3. **`Pending`** and queued > 90s ago — flag the anomaly to admin in DM (Step 7) and remove the entry.
+4. **`Failed`** — read the worker's `message` field, notify admin in DM with the failure reason, remove the entry.
+5. **`Running`** — fetch `room_id`, greet the Worker, then notify admin in DM that the Worker is up:
+   ```bash
+   ROOM_ID=$(hiclaw get workers -o json | jq -r --arg n "<NAME>" '.[] | select(.name==$n) | .room_id // empty')
+   bash /opt/hiclaw/agent/skills/worker-management/scripts/send-worker-greeting.sh \
+     --worker "<NAME>" --room "${ROOM_ID}"
+   # Then notify admin via copaw channels send to the resolved admin DM room:
+   #   "<NAME> is now Running and greeted in their Worker room."
+   ```
+   Remove the entry from `~/pending-workers.json` after successful greeting + notify.
+
+To remove a processed entry, rewrite the file without that line (e.g. `jq -c 'select(.name != "<NAME>")' ~/pending-workers.json > ~/pending-workers.json.tmp && mv ~/pending-workers.json.tmp ~/pending-workers.json`).
+
+---
+
 ### 6. Worker Container Lifecycle Management
 
 Only execute when the container API is available (check first):

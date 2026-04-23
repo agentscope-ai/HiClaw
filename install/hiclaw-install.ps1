@@ -380,16 +380,17 @@ $script:Messages = @{
 
     # --- Default worker runtime ---
     "worker_runtime.title" = @{ zh = "--- 默认 Worker 运行时 ---"; en = "--- Default Worker Runtime ---" }
-    "worker_runtime.openclaw" = @{ zh = "OpenClaw（Node.js 容器，~500MB 内存）"; en = "OpenClaw (Node.js container, ~500MB RAM)" }
-    "worker_runtime.copaw" = @{ zh = "CoPaw（Python 容器，~150MB 内存，默认关闭控制台，可跟 Manager 对话按需开启）"; en = "CoPaw (Python container, ~150MB RAM, console off by default, enable on demand via Manager)" }
-    "worker_runtime.choice" = @{ zh = "请选择 [1/2]"; en = "Enter choice [1/2]" }
+    "worker_runtime.openclaw" = @{ zh = "OpenClaw"; en = "OpenClaw" }
+    "worker_runtime.copaw" = @{ zh = "QwenPaw"; en = "QwenPaw" }
+    "worker_runtime.hermes" = @{ zh = "Hermes"; en = "Hermes" }
+    "worker_runtime.choice" = @{ zh = "请选择 [1/2/3]"; en = "Enter choice [1/2/3]" }
     "worker_runtime.selected" = @{ zh = "默认 Worker 运行时: {0}"; en = "Default Worker runtime: {0}" }
     "worker_runtime.title_short" = @{ zh = "默认 Worker 运行时"; en = "Default Worker Runtime" }
 
     # --- Manager runtime ---
     "manager_runtime.title" = @{ zh = "--- Manager 运行时 ---"; en = "--- Manager Runtime ---" }
-    "manager_runtime.openclaw" = @{ zh = "OpenClaw（Node.js）"; en = "OpenClaw (Node.js)" }
-    "manager_runtime.copaw" = @{ zh = "CoPaw（Python，AgentScope 框架）"; en = "CoPaw (Python, AgentScope framework)" }
+    "manager_runtime.openclaw" = @{ zh = "OpenClaw"; en = "OpenClaw" }
+    "manager_runtime.copaw" = @{ zh = "QwenPaw"; en = "QwenPaw" }
     "manager_runtime.choice" = @{ zh = "请选择 [1/2]"; en = "Enter choice [1/2]" }
     "manager_runtime.selected" = @{ zh = "Manager 运行时: {0}"; en = "Manager runtime: {0}" }
     "manager_runtime.title_short" = @{ zh = "Manager 运行时"; en = "Manager Runtime" }
@@ -534,7 +535,7 @@ $script:Messages = @{
     "success.higress_console" = @{ zh = "  Higress 控制台: http://localhost:{0}（用户名: {1} / 密码: {2}）"; en = "  Higress Console: http://localhost:{0} (Username: {1} / Password: {2})" }
     "success.manager_console" = @{ zh = "  Manager 控制台（本地）: http://localhost:{0}（无需登录）"; en = "  Manager Console (local): http://localhost:{0} (no login required)" }
     "success.manager_console_gateway" = @{ zh = "  Manager 控制台（网关）: http://console-local.hiclaw.io（用户名: {0} / 密码: {1}）"; en = "  Manager Console (gateway): http://console-local.hiclaw.io (Username: {0} / Password: {1})" }
-    "success.copaw_console" = @{ zh = "  CoPaw 控制台（本地）: http://localhost:{0}（无需登录）"; en = "  CoPaw Console (local): http://localhost:{0} (no login required)" }
+    "success.copaw_console" = @{ zh = "  QwenPaw 控制台（本地）: http://localhost:{0}（无需登录）"; en = "  QwenPaw Console (local): http://localhost:{0} (no login required)" }
     "success.switch_llm.title" = @{ zh = "--- 切换 LLM 提供商 ---"; en = "--- Switch LLM Providers ---" }
     "success.switch_llm.hint" = @{ zh = "  您可以通过 Higress 控制台切换到其他 LLM 提供商（OpenAI、Anthropic 等）。"; en = "  You can switch to other LLM providers (OpenAI, Anthropic, etc.) via Higress Console." }
     "success.switch_llm.docs" = @{ zh = "  详细说明请参阅:"; en = "  For detailed instructions, see:" }
@@ -707,6 +708,66 @@ function ConvertTo-DockerPath {
         return "/$drive$rest"
     }
     return $fullPath.Replace("\", "/")
+}
+
+# Resolve the embedded controller image. Embedded mode is the only supported
+# architecture since PR #616 (manager image no longer bundles Higress/Tuwunel/MinIO).
+# Mirrors install/hiclaw-install.sh::resolve_embedded_image — fail fast when the
+# embedded image is unavailable rather than silently falling back to the broken
+# legacy single-container path.
+# Sets $script:EMBEDDED_IMAGE and $script:HICLAW_USE_EMBEDDED.
+function Resolve-EmbeddedImage {
+    $script:HICLAW_USE_EMBEDDED = "1"
+
+    # Explicit override always wins (used by `make install-embedded` for local builds).
+    if ($env:HICLAW_INSTALL_EMBEDDED_IMAGE) {
+        $script:EMBEDDED_IMAGE = $env:HICLAW_INSTALL_EMBEDDED_IMAGE
+        return
+    }
+
+    $versioned = "$($script:HICLAW_REGISTRY)/higress/hiclaw-embedded:$($script:HICLAW_VERSION)"
+    $latestTag = "$($script:HICLAW_REGISTRY)/higress/hiclaw-embedded:latest"
+
+    if ($script:HICLAW_VERSION -eq "latest") {
+        $script:EMBEDDED_IMAGE = $latestTag
+        return
+    }
+
+    docker pull $versioned *>$null
+    if ($LASTEXITCODE -eq 0) {
+        $script:EMBEDDED_IMAGE = $versioned
+        return
+    }
+    docker pull $latestTag *>$null
+    if ($LASTEXITCODE -eq 0) {
+        Write-Log "embedded $($script:HICLAW_VERSION) not found, using latest"
+        $script:EMBEDDED_IMAGE = $latestTag
+        return
+    }
+
+    # Escape hatch for older versions (HICLAW_VERSION <= v1.0.9) whose manager image
+    # still bundled the infrastructure — opt-in only, never silent.
+    if ($env:HICLAW_FORCE_LEGACY -eq "1") {
+        Write-Log "WARNING: HICLAW_FORCE_LEGACY=1 - using legacy all-in-one manager architecture."
+        Write-Log "WARNING: This requires HICLAW_VERSION <= v1.0.9 (older bundled manager image)."
+        Write-Log "WARNING: Newer slim manager images will hang on 'Waiting for Higress Gateway'."
+        $script:HICLAW_USE_EMBEDDED = "0"
+        return
+    }
+
+    Write-Host "$($script:ESC)[31m[HiClaw ERROR]$($script:ESC)[0m Embedded controller image is not available in the registry:" -ForegroundColor Red
+    Write-Host "  - tried: $versioned" -ForegroundColor Red
+    Write-Host "  - tried: $latestTag" -ForegroundColor Red
+    Write-Host "" -ForegroundColor Red
+    Write-Host "Embedded mode is the only supported architecture since PR #616." -ForegroundColor Red
+    Write-Host "How to resolve:" -ForegroundColor Red
+    Write-Host "  1) Pin to a HICLAW_VERSION whose embedded image has been published, or" -ForegroundColor Red
+    Write-Host "     wait for the release pipeline to publish it." -ForegroundColor Red
+    Write-Host "  2) For a local build, run:  make install-embedded" -ForegroundColor Red
+    Write-Host "     (builds and uses the local embedded image without touching the registry)." -ForegroundColor Red
+    Write-Host "  3) Override with a custom image:" -ForegroundColor Red
+    Write-Host "     `$env:HICLAW_INSTALL_EMBEDDED_IMAGE=...; .\hiclaw-install.ps1" -ForegroundColor Red
+    Exit-Script 1
 }
 
 function Wait-ManagerReady {
@@ -1185,7 +1246,14 @@ function Test-ShouldSkipStep {
             if ($script:HICLAW_QUICKSTART) { return $true }
             return $false
         }
-        { $_ -in @("Step-E2ee", "Step-Idle", "Step-DockerProxy") } {
+        { $_ -in @("Step-E2ee", "Step-Idle") } {
+            if ($script:HICLAW_NON_INTERACTIVE) { return $true }
+            if ($script:HICLAW_QUICKSTART -and -not $script:HICLAW_UPGRADE) { return $true }
+            return $false
+        }
+        "Step-DockerProxy" {
+            # Embedded controller IS the proxy/orchestrator — no separate proxy step needed.
+            if ($script:HICLAW_USE_EMBEDDED -eq "1") { return $true }
             if ($script:HICLAW_NON_INTERACTIVE) { return $true }
             if ($script:HICLAW_QUICKSTART -and -not $script:HICLAW_UPGRADE) { return $true }
             return $false
@@ -1769,6 +1837,7 @@ function Step-Runtime {
     Write-Host ""
     Write-Host "  1) $(Get-Msg 'worker_runtime.openclaw')"
     Write-Host "  2) $(Get-Msg 'worker_runtime.copaw')"
+    Write-Host "  3) $(Get-Msg 'worker_runtime.hermes')"
     Write-Host ""
 
     if ($script:HICLAW_NON_INTERACTIVE) {
@@ -1778,7 +1847,11 @@ function Step-Runtime {
         $rtChoice = Read-Host (Get-Msg "worker_runtime.choice")
         if ($rtChoice -eq "b") { $script:StepResult = "back"; return }
         if ($rtChoice) {
-            $script:config.DEFAULT_WORKER_RUNTIME = if ($rtChoice -eq "2") { "copaw" } else { "openclaw" }
+            $script:config.DEFAULT_WORKER_RUNTIME = switch ($rtChoice) {
+                "2" { "copaw" }
+                "3" { "hermes" }
+                default { "openclaw" }
+            }
         } else {
             $script:config.DEFAULT_WORKER_RUNTIME = $env:HICLAW_DEFAULT_WORKER_RUNTIME
         }
@@ -1788,7 +1861,11 @@ function Step-Runtime {
         $rtChoice = Read-Host (Get-Msg "worker_runtime.choice")
         if ($rtChoice -eq "b") { $script:StepResult = "back"; return }
         $rtChoice = if ($rtChoice) { $rtChoice } else { "1" }
-        $script:config.DEFAULT_WORKER_RUNTIME = if ($rtChoice -eq "2") { "copaw" } else { "openclaw" }
+        $script:config.DEFAULT_WORKER_RUNTIME = switch ($rtChoice) {
+            "2" { "copaw" }
+            "3" { "hermes" }
+            default { "openclaw" }
+        }
     }
     Write-Log (Get-Msg "worker_runtime.selected" -f $script:config.DEFAULT_WORKER_RUNTIME)
 }
@@ -2017,6 +2094,11 @@ function Install-Manager {
         "$($script:HICLAW_REGISTRY)/higress/hiclaw-controller:$($script:HICLAW_VERSION)"
     }
 
+    # Resolve embedded controller image (sets $script:EMBEDDED_IMAGE and
+    # $script:HICLAW_USE_EMBEDDED). Errors out fast if no embedded image is available
+    # for the requested version (mirrors the bash installer behavior).
+    Resolve-EmbeddedImage
+
     Write-Log (Get-Msg "install.registry" -f $script:HICLAW_REGISTRY)
     Write-Log ""
     Write-Log (Get-Msg "install.dir" -f (Get-Location))
@@ -2186,44 +2268,66 @@ function Install-Manager {
     # Write env file
     New-EnvFile -Config $config -Path $script:HICLAW_ENV_FILE
 
-    # Build Docker arguments
-    $dockerArgs = @(
-        "run", "-d",
-        "--name", "hiclaw-manager",
-        "--env-file", $script:HICLAW_ENV_FILE,
-        "-e", "HOME=/root/manager-workspace",
-        "-w", "/root/manager-workspace",
-        "-e", "HOST_ORIGINAL_HOME=$($config.HOST_SHARE_DIR)",
-        "-e", "HICLAW_MANAGER_RUNTIME=$($config.MANAGER_RUNTIME)"
-    )
+    # Manager image selection (used by both embedded — passed to controller via env —
+    # and legacy — used directly as `docker run` target).
+    $managerImage = if ($config.MANAGER_RUNTIME -eq "copaw") { $script:MANAGER_COPAW_IMAGE } else { $script:MANAGER_IMAGE }
+    $portPrefix = if ($config.LOCAL_ONLY -eq "1") { "127.0.0.1:" } else { "" }
 
-    # Timezone
-    $dockerArgs += @("-e", "TZ=$($script:HICLAW_TIMEZONE)")
-
-    # Docker socket mount (Windows uses named pipe)
-    # On Windows, we test socket availability by running docker commands
-    $socketMounted = $false
+    # Ensure hiclaw-net Docker network exists. Used in both modes — the embedded
+    # controller and the spawned manager/worker containers all join it and rely on
+    # network aliases for *-local.hiclaw.io DNS resolution.
     if ($script:HICLAW_MOUNT_SOCKET) {
         $socketAvailable = Test-DockerRunning
         if ($socketAvailable) {
-            # Ensure hiclaw-net Docker network exists; Manager joins it with network aliases
-            # so workers can resolve *-local.hiclaw.io via Docker DNS without ExtraHosts.
             docker network inspect hiclaw-net *>$null
             if ($LASTEXITCODE -ne 0) { docker network create hiclaw-net *>$null }
+        } else {
+            Write-Log (Get-Msg "install.socket_not_found")
+            if (-not $script:HICLAW_NON_INTERACTIVE) {
+                Write-Host ""
+                Write-Host "$($script:ESC)[33m$(Get-Msg 'install.socket_confirm.title')$($script:ESC)[0m"
+                Write-Host ""
+                Write-Host (Get-Msg 'install.socket_confirm.message')
+                Write-Host ""
+                $confirm = Read-Host (Get-Msg 'install.socket_confirm.prompt')
+                if ($confirm -ne 'y' -and $confirm -ne 'Y') {
+                    Write-Log (Get-Msg 'install.socket_confirm.cancelled')
+                    exit 0
+                }
+            }
+        }
+    }
+
+    if ($script:HICLAW_USE_EMBEDDED -ne "1") {
+        # ============================================================
+        # Legacy architecture: all-in-one manager container
+        # (only entered when HICLAW_FORCE_LEGACY=1 — broken with the slim manager
+        #  image shipped since PR #616; kept solely for HICLAW_VERSION <= v1.0.9)
+        # ============================================================
+
+        $dockerArgs = @(
+            "run", "-d",
+            "--name", "hiclaw-manager",
+            "--env-file", $script:HICLAW_ENV_FILE,
+            "-e", "HOME=/root/manager-workspace",
+            "-w", "/root/manager-workspace",
+            "-e", "HOST_ORIGINAL_HOME=$($config.HOST_SHARE_DIR)",
+            "-e", "HICLAW_MANAGER_RUNTIME=$($config.MANAGER_RUNTIME)"
+        )
+
+        $dockerArgs += @("-e", "TZ=$($script:HICLAW_TIMEZONE)")
+
+        if ($script:HICLAW_MOUNT_SOCKET -and (Test-DockerRunning)) {
             $dockerArgs += @("--network", "hiclaw-net")
-            # Workers hardcode these three internal domains to reach manager services,
-            # so they must always be network aliases regardless of user domain config.
             $dockerArgs += @("--network-alias", "matrix-local.hiclaw.io")
             $dockerArgs += @("--network-alias", "aigw-local.hiclaw.io")
             $dockerArgs += @("--network-alias", "fs-local.hiclaw.io")
-            # Also alias any *-local.hiclaw.io user-configured domains that differ from the fixed ones above.
             foreach ($domain in @($config.MATRIX_CLIENT_DOMAIN, $config.CONSOLE_DOMAIN)) {
                 if ($domain -match '-local\.hiclaw\.io$') {
                     $dockerArgs += @("--network-alias", $domain)
                 }
             }
 
-            # Start Docker API proxy if enabled
             if ($config.DOCKER_PROXY -eq "1") {
                 $proxyImage = $script:CONTROLLER_IMAGE
                 Write-Log "Starting Docker API proxy..."
@@ -2247,82 +2351,85 @@ function Install-Manager {
                 $dockerArgs += @("--security-opt", "label=disable")
                 Write-Log (Get-Msg "install.socket_detected" -f "//var/run/docker.sock")
             }
-        } else {
-            Write-Log (Get-Msg "install.socket_not_found")
-            # Interactive confirmation when socket not found
-            if (-not $script:HICLAW_NON_INTERACTIVE) {
-                Write-Host ""
-                Write-Host "$($script:ESC)[33m$(Get-Msg 'install.socket_confirm.title')$($script:ESC)[0m"
-                Write-Host ""
-                Write-Host (Get-Msg 'install.socket_confirm.message')
-                Write-Host ""
-                $confirm = Read-Host (Get-Msg 'install.socket_confirm.prompt')
-                if ($confirm -ne 'y' -and $confirm -ne 'Y') {
-                    Write-Log (Get-Msg 'install.socket_confirm.cancelled')
-                    exit 0
-                }
-            }
         }
+
+        $dockerArgs += @("-p", "${portPrefix}$($config.PORT_GATEWAY):8080")
+        $dockerArgs += @("-p", "${portPrefix}$($config.PORT_CONSOLE):8001")
+        $dockerArgs += @("-p", "${portPrefix}$($config.PORT_ELEMENT_WEB):8088")
+        $dockerArgs += @("-p", "127.0.0.1:$($config.PORT_MANAGER_CONSOLE):18888")
+
+        $dockerArgs += @("-v", "$($config.DATA_DIR):/data")
+
+        $wsDockerPath = ConvertTo-DockerPath -Path $config.WORKSPACE_DIR
+        $dockerArgs += @("-v", "${wsDockerPath}:/root/manager-workspace")
+
+        $shareDockerPath = ConvertTo-DockerPath -Path $config.HOST_SHARE_DIR
+        $dockerArgs += @("-v", "${shareDockerPath}:/host-share")
+        Write-Log (Get-Msg "host_share.sharing" -f $config.HOST_SHARE_DIR)
+
+        if ($env:HICLAW_YOLO -eq "1") {
+            $dockerArgs += @("-e", "HICLAW_YOLO=1")
+            Write-Log (Get-Msg "install.yolo")
+        }
+
+        if ($env:HICLAW_MATRIX_DEBUG -eq "1") {
+            $dockerArgs += @("-e", "HICLAW_MATRIX_DEBUG=1")
+        }
+
+        $dockerArgs += @("--restart", "unless-stopped")
+        $dockerArgs += $managerImage
     }
 
-    # Port mappings
-    $portPrefix = if ($config.LOCAL_ONLY -eq "1") { "127.0.0.1:" } else { "" }
-    $dockerArgs += @("-p", "${portPrefix}$($config.PORT_GATEWAY):8080")
-    $dockerArgs += @("-p", "${portPrefix}$($config.PORT_CONSOLE):8001")
-    $dockerArgs += @("-p", "${portPrefix}$($config.PORT_ELEMENT_WEB):8088")
-    $dockerArgs += @("-p", "127.0.0.1:$($config.PORT_MANAGER_CONSOLE):18888")
-
-    # Data mount: Docker volume
-    $dockerArgs += @("-v", "$($config.DATA_DIR):/data")
-
-    # Workspace mount
-    $wsDockerPath = ConvertTo-DockerPath -Path $config.WORKSPACE_DIR
-    $dockerArgs += @("-v", "${wsDockerPath}:/root/manager-workspace")
-
-    # Host share mount
-    $shareDockerPath = ConvertTo-DockerPath -Path $config.HOST_SHARE_DIR
-    $dockerArgs += @("-v", "${shareDockerPath}:/host-share")
-    Write-Log (Get-Msg "host_share.sharing" -f $config.HOST_SHARE_DIR)
-
-    # YOLO mode
-    if ($env:HICLAW_YOLO -eq "1") {
-        $dockerArgs += @("-e", "HICLAW_YOLO=1")
-        Write-Log (Get-Msg "install.yolo")
-    }
-
-    # Matrix-plugin debug tracing
-    if ($env:HICLAW_MATRIX_DEBUG -eq "1") {
-        $dockerArgs += @("-e", "HICLAW_MATRIX_DEBUG=1")
-    }
-
-    # Restart policy
-    $dockerArgs += @("--restart", "unless-stopped")
-
-    # Image (select based on Manager runtime)
-    $managerImage = if ($config.MANAGER_RUNTIME -eq "copaw") { $script:MANAGER_COPAW_IMAGE } else { $script:MANAGER_IMAGE }
-    $dockerArgs += $managerImage
-
-    # Check if the Docker volume exists; create if not (reuse on reinstall)
+    # Check if the Docker volume exists; create if not (reuse on reinstall) — both modes.
     $volumeExists = docker volume ls -q 2>$null | Select-String "^$($config.DATA_DIR)$"
     if (-not $volumeExists) {
         docker volume create $config.DATA_DIR | Out-Null
     }
 
-    # Pull images (skip if already exists locally)
-    # For local images (prefix "hiclaw/"), skip pull if exists
-    # For remote images, always pull to get updates
+    # Pull images (skip if already exists locally for `hiclaw/`-prefixed local builds).
     $LocalImagePrefix = "hiclaw/"
-    if ($managerImage.StartsWith($LocalImagePrefix)) {
-        $managerImageExists = docker image inspect $managerImage 2>$null
-        if ($LASTEXITCODE -eq 0) {
-            Write-Log (Get-Msg "install.image.exists" -f $managerImage)
+    if ($script:HICLAW_USE_EMBEDDED -eq "1") {
+        # Embedded image was already pulled by Resolve-EmbeddedImage unless overridden;
+        # for an explicit override we still need to ensure it is present locally.
+        if ($env:HICLAW_INSTALL_EMBEDDED_IMAGE) {
+            if ($script:EMBEDDED_IMAGE.StartsWith($LocalImagePrefix)) {
+                $imgExists = docker image inspect $script:EMBEDDED_IMAGE 2>$null
+                if ($LASTEXITCODE -ne 0) {
+                    Write-Log "Pulling embedded image: $($script:EMBEDDED_IMAGE)"
+                    & docker pull $script:EMBEDDED_IMAGE
+                }
+            } else {
+                Write-Log "Pulling embedded image: $($script:EMBEDDED_IMAGE)"
+                & docker pull $script:EMBEDDED_IMAGE
+            }
+        }
+        # Manager image — controller will spawn it inside; pull here so the spawn doesn't
+        # have to wait on the network.
+        if ($managerImage.StartsWith($LocalImagePrefix)) {
+            $imgExists = docker image inspect $managerImage 2>$null
+            if ($LASTEXITCODE -eq 0) {
+                Write-Log (Get-Msg "install.image.exists" -f $managerImage)
+            } else {
+                Write-Log (Get-Msg "install.image.pulling_manager" -f $managerImage)
+                & docker pull $managerImage
+            }
         } else {
             Write-Log (Get-Msg "install.image.pulling_manager" -f $managerImage)
             & docker pull $managerImage
         }
     } else {
-        Write-Log (Get-Msg "install.image.pulling_manager" -f $managerImage)
-        & docker pull $managerImage
+        if ($managerImage.StartsWith($LocalImagePrefix)) {
+            $managerImageExists = docker image inspect $managerImage 2>$null
+            if ($LASTEXITCODE -eq 0) {
+                Write-Log (Get-Msg "install.image.exists" -f $managerImage)
+            } else {
+                Write-Log (Get-Msg "install.image.pulling_manager" -f $managerImage)
+                & docker pull $managerImage
+            }
+        } else {
+            Write-Log (Get-Msg "install.image.pulling_manager" -f $managerImage)
+            & docker pull $managerImage
+        }
     }
 
     # Pull all worker runtime images (workers may use any runtime regardless of the default)
@@ -2375,15 +2482,186 @@ function Install-Manager {
         docker rm -f $legacy.Line *>$null
     }
 
-    # Run container
-    Write-Log (Get-Msg "install.starting_manager")
-    & docker $dockerArgs
+    if ($script:HICLAW_USE_EMBEDDED -eq "1") {
+        # ============================================================
+        # New architecture: embedded controller + auto-created manager
+        # (controller container hosts Higress / Tuwunel / MinIO / Element Web /
+        #  controller binary, then spawns the lightweight manager container)
+        # ============================================================
 
-    # Wait for ready
-    Wait-ManagerReady -Container "hiclaw-manager"
+        # Internal port: 8080 (Higress gateway inside the controller container).
+        $internalGwPort = 8080
 
-    # Wait for Matrix server to be ready
-    Wait-MatrixReady -Container "hiclaw-manager"
+        $matrixDomain = if ($config.MATRIX_DOMAIN) {
+            $config.MATRIX_DOMAIN
+        } else {
+            "matrix-local.hiclaw.io:$($config.PORT_GATEWAY)"
+        }
+        $aigwDomain = if ($config.AI_GATEWAY_DOMAIN) { $config.AI_GATEWAY_DOMAIN } else { "aigw-local.hiclaw.io" }
+        if ($aigwDomain -notmatch ":") { $aigwDomain = "${aigwDomain}:${internalGwPort}" }
+        $fsDomain = if ($config.FS_DOMAIN) { $config.FS_DOMAIN } else { "fs-local.hiclaw.io" }
+        if ($fsDomain -notmatch ":") { $fsDomain = "${fsDomain}:${internalGwPort}" }
+
+        $ctrlArgs = @(
+            "run", "-d",
+            "--name", "hiclaw-controller",
+            "--network", "hiclaw-net",
+            "--network-alias", "matrix-local.hiclaw.io",
+            "--network-alias", "aigw-local.hiclaw.io",
+            "--network-alias", "fs-local.hiclaw.io",
+            "-e", "HICLAW_ADMIN_USER=$($config.ADMIN_USER)",
+            "-e", "HICLAW_ADMIN_PASSWORD=$($config.ADMIN_PASSWORD)",
+            "-e", "HICLAW_MANAGER_PASSWORD=$($config.MANAGER_PASSWORD)",
+            "-e", "HICLAW_REGISTRATION_TOKEN=$($config.REGISTRATION_TOKEN)",
+            "-e", "HICLAW_MINIO_USER=$($config.MINIO_USER)",
+            "-e", "HICLAW_MINIO_PASSWORD=$($config.MINIO_PASSWORD)",
+            "-e", "HICLAW_LLM_PROVIDER=$($config.LLM_PROVIDER)",
+            "-e", "HICLAW_LLM_API_KEY=$($config.LLM_API_KEY)",
+            "-e", "HICLAW_DEFAULT_MODEL=$($config.DEFAULT_MODEL)",
+            "-e", "HICLAW_MANAGER_GATEWAY_KEY=$($config.MANAGER_GATEWAY_KEY)",
+            "-e", "HICLAW_MANAGER_RUNTIME=$($config.MANAGER_RUNTIME)",
+            "-e", "HICLAW_MANAGER_IMAGE=$managerImage",
+            "-e", "HICLAW_DEFAULT_WORKER_RUNTIME=$($config.DEFAULT_WORKER_RUNTIME)",
+            "-e", "HICLAW_WORKER_IMAGE=$($script:WORKER_IMAGE)",
+            "-e", "HICLAW_COPAW_WORKER_IMAGE=$($script:COPAW_WORKER_IMAGE)",
+            "-e", "HICLAW_HERMES_WORKER_IMAGE=$($script:HERMES_WORKER_IMAGE)",
+            "-e", "HICLAW_MATRIX_DOMAIN=$matrixDomain",
+            "-e", "HICLAW_ELEMENT_HOMESERVER_URL=http://127.0.0.1:$($config.PORT_GATEWAY)",
+            "-e", "HICLAW_MATRIX_URL=http://127.0.0.1:6167",
+            "-e", "HICLAW_MATRIX_E2EE=$($config.MATRIX_E2EE)",
+            "-e", "HICLAW_MINIO_ENDPOINT=http://127.0.0.1:9000",
+            "-e", "HICLAW_MINIO_BUCKET=hiclaw-storage",
+            "-e", "HICLAW_STORAGE_PREFIX=hiclaw/hiclaw-storage",
+            "-e", "HICLAW_FS_ENDPOINT=http://127.0.0.1:9000",
+            "-e", "HICLAW_AI_GATEWAY_URL=http://$aigwDomain",
+            "-e", "HICLAW_CONTROLLER_URL=http://hiclaw-controller:8090",
+            "-e", "HICLAW_DOCKER_NETWORK=hiclaw-net",
+            "-e", "HICLAW_WORKSPACE_DIR=$($config.WORKSPACE_DIR)",
+            "-e", "HICLAW_HOST_SHARE_DIR=$($config.HOST_SHARE_DIR)",
+            "-e", "HICLAW_MANAGER_ENABLED=true",
+            "-e", "HICLAW_PORT_MANAGER_CONSOLE=$($config.PORT_MANAGER_CONSOLE)"
+        )
+
+        if ($script:HICLAW_TIMEZONE) {
+            $ctrlArgs += @("-e", "TZ=$($script:HICLAW_TIMEZONE)")
+        }
+        if ($env:HICLAW_YOLO -eq "1") {
+            $ctrlArgs += @("-e", "HICLAW_YOLO=1")
+        }
+        if ($env:HICLAW_MATRIX_DEBUG -eq "1") {
+            $ctrlArgs += @("-e", "HICLAW_MATRIX_DEBUG=1")
+        }
+        if ($config.GITHUB_TOKEN) {
+            $ctrlArgs += @("-e", "HICLAW_GITHUB_TOKEN=$($config.GITHUB_TOKEN)")
+        }
+        if ($config.EMBEDDING_MODEL) {
+            $ctrlArgs += @("-e", "HICLAW_EMBEDDING_MODEL=$($config.EMBEDDING_MODEL)")
+        }
+        if ($config.OPENAI_BASE_URL) {
+            $ctrlArgs += @("-e", "HICLAW_OPENAI_BASE_URL=$($config.OPENAI_BASE_URL)")
+        }
+        if ($script:HICLAW_LANGUAGE) {
+            $ctrlArgs += @("-e", "HICLAW_LANGUAGE=$($script:HICLAW_LANGUAGE)")
+        }
+
+        # Mount the docker socket so the controller can spawn manager + workers.
+        $ctrlArgs += @("-v", "//var/run/docker.sock:/var/run/docker.sock")
+        $ctrlArgs += @("--security-opt", "label=disable")
+
+        # Persistent data + workspace mounts (manager workspace is bind-mounted under
+        # /root/hiclaw-fs/agents/manager so the controller can hand it to the spawned
+        # manager container).
+        $ctrlArgs += @("-v", "$($config.DATA_DIR):/data")
+        $wsDockerPath = ConvertTo-DockerPath -Path $config.WORKSPACE_DIR
+        $ctrlArgs += @("-v", "${wsDockerPath}:/root/hiclaw-fs/agents/manager")
+        Write-Log (Get-Msg "host_share.sharing" -f $config.HOST_SHARE_DIR)
+
+        # Externally exposed ports — only the gateway / Higress console / Element Web,
+        # since the manager console is now spawned inside its own container by the
+        # controller (port mapping is handled there).
+        $ctrlArgs += @("-p", "${portPrefix}$($config.PORT_GATEWAY):8080")
+        $ctrlArgs += @("-p", "${portPrefix}$($config.PORT_CONSOLE):8001")
+        $ctrlArgs += @("-p", "${portPrefix}$($config.PORT_ELEMENT_WEB):8088")
+
+        $ctrlArgs += @("--restart", "unless-stopped")
+        $ctrlArgs += $script:EMBEDDED_IMAGE
+
+        Write-Log (Get-Msg "install.starting_manager")
+        & docker $ctrlArgs
+        Write-Log "Embedded controller started: hiclaw-controller"
+
+        # Wait for infra inside the controller container.
+        function Wait-EmbeddedUrl {
+            param([string]$Url, [string]$Container, [int]$MaxWait, [string]$Description)
+            $elapsed = 0
+            Write-Log "Waiting for $Description..."
+            while ($elapsed -lt $MaxWait) {
+                docker exec $Container curl -sf $Url *>$null
+                if ($LASTEXITCODE -eq 0) {
+                    Write-Log "$Description is ready (${elapsed}s)"
+                    return $true
+                }
+                Start-Sleep -Seconds 2
+                $elapsed += 2
+            }
+            Write-Host "$($script:ESC)[31m[HiClaw ERROR]$($script:ESC)[0m $Description not ready after ${MaxWait}s" -ForegroundColor Red
+            return $false
+        }
+
+        if (-not (Wait-EmbeddedUrl "http://127.0.0.1:6167/_tuwunel/server_version" "hiclaw-controller" 120 "Tuwunel (Matrix)")) { Exit-Script 1 }
+        if (-not (Wait-EmbeddedUrl "http://127.0.0.1:9000/minio/health/live"        "hiclaw-controller"  60 "MinIO"))             { Exit-Script 1 }
+        if (-not (Wait-EmbeddedUrl "http://127.0.0.1:8080/status"                   "hiclaw-controller" 120 "Higress Gateway"))   { Exit-Script 1 }
+
+        # Wait for the controller to spawn the Manager Agent container.
+        Write-Log "Waiting for Manager Agent container..."
+        $mgrWait = 0
+        $mgrMax = 300
+        while ($mgrWait -lt $mgrMax) {
+            $found = docker ps --format "{{.Names}}" 2>$null | Select-String "^hiclaw-manager$"
+            if ($found) {
+                Write-Log "Manager Agent container detected (${mgrWait}s)"
+                break
+            }
+            Start-Sleep -Seconds 3
+            $mgrWait += 3
+        }
+        if ($mgrWait -ge $mgrMax) {
+            Write-Host "$($script:ESC)[31m[HiClaw ERROR]$($script:ESC)[0m Manager Agent container not created after ${mgrMax}s" -ForegroundColor Red
+            Write-Log "Controller logs:"
+            docker exec hiclaw-controller tail -30 /var/log/hiclaw/hiclaw-controller-error.log 2>$null
+            Exit-Script 1
+        }
+
+        # Wait for Manager Agent container to reach `running` state.
+        Write-Log "Waiting for Manager Agent to start..."
+        $agentWait = 0
+        while ($agentWait -lt 120) {
+            $state = docker inspect --format "{{.State.Status}}" hiclaw-manager 2>$null
+            if ($state -eq "running") {
+                Write-Log "Manager Agent is running"
+                break
+            }
+            Start-Sleep -Seconds 2
+            $agentWait += 2
+        }
+
+        if ($env:HICLAW_YOLO -eq "1") {
+            docker exec hiclaw-manager touch /root/manager-workspace/yolo-mode 2>$null
+        }
+
+        # Wait for the Manager Agent's runtime + Matrix to be reachable. In embedded
+        # mode Tuwunel lives in `hiclaw-controller`, so the Matrix probe must target
+        # the controller (the manager only exposes the agent runtime).
+        Wait-ManagerReady -Container "hiclaw-manager"
+        Wait-MatrixReady -Container "hiclaw-controller"
+    } else {
+        # Run container (legacy path)
+        Write-Log (Get-Msg "install.starting_manager")
+        & docker $dockerArgs
+
+        Wait-ManagerReady -Container "hiclaw-manager"
+        Wait-MatrixReady -Container "hiclaw-manager"
+    }
 
     # Create OpenAI-compatible provider if needed
     if ($config.LLM_PROVIDER -eq "openai-compat") {
@@ -2436,8 +2714,13 @@ function Install-Manager {
     Write-Log ""
     Write-Log (Get-Msg "success.other_consoles")
     Write-Log (Get-Msg "success.higress_console" -f $config.PORT_CONSOLE, $config.ADMIN_USER, $config.ADMIN_PASSWORD)
-    Write-Log (Get-Msg "success.manager_console" -f $config.PORT_MANAGER_CONSOLE)
-    Write-Log (Get-Msg "success.manager_console_gateway" -f $config.ADMIN_USER, $config.ADMIN_PASSWORD)
+    if ($script:HICLAW_USE_EMBEDDED -ne "1") {
+        # In embedded mode the manager runs in its own auto-spawned container with
+        # its own console-port mapping handled by the controller, so don't print a
+        # host-side URL/credentials hint here.
+        Write-Log (Get-Msg "success.manager_console" -f $config.PORT_MANAGER_CONSOLE)
+        Write-Log (Get-Msg "success.manager_console_gateway" -f $config.ADMIN_USER, $config.ADMIN_PASSWORD)
+    }
     Write-Log ""
     Write-Log (Get-Msg "success.switch_llm.title")
     Write-Log (Get-Msg "success.switch_llm.hint")

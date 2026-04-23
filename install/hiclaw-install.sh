@@ -446,8 +446,8 @@ msg() {
         "port.element_prompt.en") text="Host port for Element Web direct access (8088 inside container)" ;;
         "port.manager_console_prompt.zh") text="Manager 控制台主机端口（容器内 18888）" ;;
         "port.manager_console_prompt.en") text="Host port for Manager console (18888 inside container)" ;;
-        "port.copaw_app_prompt.zh") text="CoPaw App API 主机端口（容器内 18799）" ;;
-        "port.copaw_app_prompt.en") text="Host port for CoPaw App API (18799 inside container)" ;;
+        "port.copaw_app_prompt.zh") text="QwenPaw App API 主机端口（容器内 18799）" ;;
+        "port.copaw_app_prompt.en") text="Host port for QwenPaw App API (18799 inside container)" ;;
         # --- Local-only binding ---
         "port.local_only.title.zh") text="--- 网络访问模式 ---" ;;
         "port.local_only.title.en") text="--- Network Access Mode ---" ;;
@@ -516,22 +516,24 @@ msg() {
         # --- Default worker runtime ---
         "worker_runtime.title.zh") text="--- 默认 Worker 运行时 ---" ;;
         "worker_runtime.title.en") text="--- Default Worker Runtime ---" ;;
-        "worker_runtime.openclaw.zh") text="OpenClaw（Node.js 容器，~500MB 内存）" ;;
-        "worker_runtime.openclaw.en") text="OpenClaw (Node.js container, ~500MB RAM)" ;;
-        "worker_runtime.copaw.zh") text="CoPaw（Python 容器，~150MB 内存，默认关闭控制台，可跟 Manager 对话按需开启）" ;;
-        "worker_runtime.copaw.en") text="CoPaw (Python container, ~150MB RAM, console off by default, enable on demand via Manager)" ;;
-        "worker_runtime.choice.zh") text="请选择 [1/2]" ;;
-        "worker_runtime.choice.en") text="Enter choice [1/2]" ;;
+        "worker_runtime.openclaw.zh") text="OpenClaw" ;;
+        "worker_runtime.openclaw.en") text="OpenClaw" ;;
+        "worker_runtime.copaw.zh") text="QwenPaw" ;;
+        "worker_runtime.copaw.en") text="QwenPaw" ;;
+        "worker_runtime.hermes.zh") text="Hermes" ;;
+        "worker_runtime.hermes.en") text="Hermes" ;;
+        "worker_runtime.choice.zh") text="请选择 [1/2/3]" ;;
+        "worker_runtime.choice.en") text="Enter choice [1/2/3]" ;;
         "worker_runtime.selected.zh") text="默认 Worker 运行时: %s" ;;
         "worker_runtime.selected.en") text="Default Worker runtime: %s" ;;
         "worker_runtime.title_short.zh") text="默认 Worker 运行时" ;;
         "worker_runtime.title_short.en") text="Default Worker Runtime" ;;
         "manager_runtime.title.zh") text="--- Manager 运行时 ---" ;;
         "manager_runtime.title.en") text="--- Manager Runtime ---" ;;
-        "manager_runtime.openclaw.zh") text="OpenClaw（Node.js）" ;;
-        "manager_runtime.openclaw.en") text="OpenClaw (Node.js)" ;;
-        "manager_runtime.copaw.zh") text="CoPaw（Python，AgentScope 框架）" ;;
-        "manager_runtime.copaw.en") text="CoPaw (Python, AgentScope framework)" ;;
+        "manager_runtime.openclaw.zh") text="OpenClaw" ;;
+        "manager_runtime.openclaw.en") text="OpenClaw" ;;
+        "manager_runtime.copaw.zh") text="QwenPaw" ;;
+        "manager_runtime.copaw.en") text="QwenPaw" ;;
         "manager_runtime.choice.zh") text="请选择 [1/2]" ;;
         "manager_runtime.choice.en") text="Enter choice [1/2]" ;;
         "manager_runtime.selected.zh") text="Manager 运行时: %s" ;;
@@ -770,8 +772,8 @@ msg() {
         "success.manager_console.en") text="  Manager Console (local): http://localhost:%s (no login required)" ;;
         "success.manager_console_gateway.zh") text="  Manager 控制台（网关）: http://console-local.hiclaw.io（用户名: %s / 密码: %s）" ;;
         "success.manager_console_gateway.en") text="  Manager Console (gateway): http://console-local.hiclaw.io (Username: %s / Password: %s)" ;;
-        "success.copaw_console.zh") text="  CoPaw App API: http://localhost:%s（无需登录）" ;;
-        "success.copaw_console.en") text="  CoPaw App API: http://localhost:%s (no login required)" ;;
+        "success.copaw_console.zh") text="  QwenPaw App API: http://localhost:%s（无需登录）" ;;
+        "success.copaw_console.en") text="  QwenPaw App API: http://localhost:%s (no login required)" ;;
         "success.switch_llm.title.zh") text="--- 切换 LLM 提供商 ---" ;;
         "success.switch_llm.title.en") text="--- Switch LLM Providers ---" ;;
         "success.switch_llm.hint.zh") text="  您可以通过 Higress 控制台切换到其他 LLM 提供商（OpenAI、Anthropic 等）。" ;;
@@ -929,14 +931,18 @@ resolve_image_tags() {
     EMBEDDED_IMAGE="${HICLAW_INSTALL_EMBEDDED_IMAGE:-${HICLAW_REGISTRY}/higress/hiclaw-embedded:${HICLAW_VERSION}}"
 }
 
-# Resolve the embedded controller image: try the versioned tag first; if the registry
-# doesn't have it (old version without embedded support), set HICLAW_USE_EMBEDDED=0
-# to fall back to the legacy all-in-one manager architecture.
+# Resolve the embedded controller image. Embedded mode is the only supported
+# architecture since PR #616 (manager image no longer bundles Higress/Tuwunel/MinIO).
+# If the embedded image is unavailable for the requested version, fail fast with an
+# actionable error rather than silently falling back to the legacy single-container
+# path — that path is permanently broken with the slim manager image and would just
+# leave the user with a manager container looping on "Waiting for Higress Gateway".
 # Sets EMBEDDED_IMAGE and HICLAW_USE_EMBEDDED.
 resolve_embedded_image() {
     HICLAW_USE_EMBEDDED=1
 
-    # If the user explicitly overrode the image, respect it as-is.
+    # If the user explicitly overrode the image (e.g. `make install-embedded` passes
+    # a locally-built tag), respect it as-is without any registry probe.
     if [ -n "${HICLAW_INSTALL_EMBEDDED_IMAGE:-}" ]; then
         EMBEDDED_IMAGE="${HICLAW_INSTALL_EMBEDDED_IMAGE}"
         return 0
@@ -953,14 +959,36 @@ resolve_embedded_image() {
 
     if ${DOCKER_CMD} pull "${_versioned}" >/dev/null 2>&1; then
         EMBEDDED_IMAGE="${_versioned}"
-    elif ${DOCKER_CMD} pull "${_latest}" >/dev/null 2>&1; then
+        return 0
+    fi
+    if ${DOCKER_CMD} pull "${_latest}" >/dev/null 2>&1; then
         log "embedded ${HICLAW_VERSION} not found, using latest"
         EMBEDDED_IMAGE="${_latest}"
-    else
-        # No embedded image available — fall back to legacy architecture
-        log "No embedded image available, using legacy all-in-one manager architecture"
-        HICLAW_USE_EMBEDDED=0
+        return 0
     fi
+
+    # Escape hatch for older versions (HICLAW_VERSION <= v1.0.9) whose manager image
+    # still bundled the infrastructure — opt-in only, never silent.
+    if [ "${HICLAW_FORCE_LEGACY:-0}" = "1" ]; then
+        log "WARNING: HICLAW_FORCE_LEGACY=1 — using legacy all-in-one manager architecture."
+        log "WARNING: This requires HICLAW_VERSION <= v1.0.9 (older bundled manager image)."
+        log "WARNING: Newer slim manager images will hang on 'Waiting for Higress Gateway'."
+        HICLAW_USE_EMBEDDED=0
+        return 0
+    fi
+
+    error "Embedded controller image is not available in the registry:"
+    error "  - tried: ${_versioned}"
+    error "  - tried: ${_latest}"
+    error ""
+    error "Embedded mode is the only supported architecture since PR #616."
+    error "How to resolve:"
+    error "  1) Pin to a HICLAW_VERSION whose embedded image has been published, or"
+    error "     wait for the release pipeline to publish it."
+    error "  2) For a local build, run:  make install-embedded"
+    error "     (builds and uses the local embedded image without touching the registry)."
+    error "  3) Override with a custom image:  HICLAW_INSTALL_EMBEDDED_IMAGE=...  ./hiclaw-install.sh"
+    exit 1
 }
 
 # ============================================================
@@ -1932,6 +1960,7 @@ step_runtime() {
     echo ""
     echo "  1) $(msg worker_runtime.openclaw)"
     echo "  2) $(msg worker_runtime.copaw)"
+    echo "  3) $(msg worker_runtime.hermes)"
     echo ""
     if [ "${HICLAW_NON_INTERACTIVE}" = "1" ]; then
         HICLAW_DEFAULT_WORKER_RUNTIME="${HICLAW_DEFAULT_WORKER_RUNTIME:-openclaw}"
@@ -1943,6 +1972,7 @@ step_runtime() {
         if [ -n "${_runtime_choice}" ]; then
             case "${_runtime_choice}" in
                 2) HICLAW_DEFAULT_WORKER_RUNTIME="copaw" ;;
+                3) HICLAW_DEFAULT_WORKER_RUNTIME="hermes" ;;
                 *) HICLAW_DEFAULT_WORKER_RUNTIME="openclaw" ;;
             esac
         fi
@@ -1953,6 +1983,7 @@ step_runtime() {
         _runtime_choice="${_runtime_choice:-1}"
         case "${_runtime_choice}" in
             2) HICLAW_DEFAULT_WORKER_RUNTIME="copaw" ;;
+            3) HICLAW_DEFAULT_WORKER_RUNTIME="hermes" ;;
             *) HICLAW_DEFAULT_WORKER_RUNTIME="openclaw" ;;
         esac
     fi
