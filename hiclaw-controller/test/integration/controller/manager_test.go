@@ -956,20 +956,19 @@ func TestManagerWelcome_Idempotent_NoResendOnReconcile(t *testing.T) {
 }
 
 // TestManagerWelcome_NotJoinedYet_RequeuesUntilJoined exercises the
-// short-requeue branch: SendManagerWelcome reports (false, nil) on the
-// first two attempts (manager hasn't joined the DM room yet), then
-// (true, nil). Status.WelcomeSent must only flip after the successful
-// call, and the controller must not consume the failure as fatal.
+// pre-claim membership-poll branch: IsManagerJoinedDM reports false on
+// the first two attempts (manager hasn't auto-joined the DM room yet),
+// then true. SendManagerWelcomeMessage must not be called until the
+// membership check passes, Status.WelcomeSent must only flip on the
+// successful path, and the controller must NOT touch status while
+// waiting (no claim/rollback churn).
 func TestManagerWelcome_NotJoinedYet_RequeuesUntilJoined(t *testing.T) {
 	resetManagerMocks()
 
-	var attempts atomic.Int32
-	mockMgrProv.SendManagerWelcomeFn = func(_ context.Context, _ service.ManagerWelcomeRequest) (bool, error) {
-		n := attempts.Add(1)
-		if n < 3 {
-			return false, nil
-		}
-		return true, nil
+	var joinChecks atomic.Int32
+	mockMgrProv.IsManagerJoinedDMFn = func(_ context.Context, _ string) (bool, error) {
+		n := joinChecks.Add(1)
+		return n >= 3, nil
 	}
 
 	mgrName := fixtures.UniqueName("test-mgr-welcome-wait")
@@ -990,13 +989,17 @@ func TestManagerWelcome_NotJoinedYet_RequeuesUntilJoined(t *testing.T) {
 			return err
 		}
 		if !m.Status.WelcomeSent {
-			return fmt.Errorf("WelcomeSent=false, attempts=%d (want true after >=3 attempts)", attempts.Load())
+			return fmt.Errorf("WelcomeSent=false, joinChecks=%d sends=%d (want true after the membership poll passes)",
+				joinChecks.Load(), mockMgrProv.WelcomeCallCount())
 		}
 		return nil
 	})
 
-	if got := attempts.Load(); got < 3 {
-		t.Errorf("SendManagerWelcome called %d times, want >=3 (initial failure + retries)", got)
+	if got := joinChecks.Load(); got < 3 {
+		t.Errorf("IsManagerJoinedDM called %d times, want >=3 (waited at least 2 polls before membership landed)", got)
+	}
+	if sends := mockMgrProv.WelcomeCallCount(); sends != 1 {
+		t.Errorf("SendManagerWelcomeMessage called %d times, want exactly 1 (membership-poll branch must not pre-emptively send)", sends)
 	}
 
 	// Status must remain Running — the requeue path is non-fatal.

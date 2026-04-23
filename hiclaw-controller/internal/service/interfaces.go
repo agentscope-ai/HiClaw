@@ -74,11 +74,17 @@ type ManagerProvisioner interface {
 	// for the given room. See DeleteWorkerRoom.
 	DeleteManagerRoom(ctx context.Context, roomID string) error
 	DeleteManagerRoomAlias(ctx context.Context, managerName string) error
-	// SendManagerWelcome delivers the first-boot onboarding prompt to the
-	// Manager's Admin DM room. Returns (sent, err) — when sent==false
-	// without an error the manager has not joined the room yet and the
-	// caller should requeue.
-	SendManagerWelcome(ctx context.Context, req ManagerWelcomeRequest) (bool, error)
+	// IsManagerJoinedDM returns true when the Manager's Matrix user has
+	// already joined the given Admin DM room. Used by reconcileManagerWelcome
+	// as a *side-effect-free* gate before claiming the WelcomeSent slot, so
+	// requeuing while waiting for the agent's first /sync auto-join doesn't
+	// thrash the status field with claim/rollback patches.
+	IsManagerJoinedDM(ctx context.Context, roomID string) (bool, error)
+	// SendManagerWelcomeMessage renders and posts the first-boot onboarding
+	// prompt as the homeserver admin into the given DM room. Pure side
+	// effect, no membership check — caller must guarantee the manager has
+	// joined and that it has won the WelcomeSent claim race.
+	SendManagerWelcomeMessage(ctx context.Context, req ManagerWelcomeRequest) error
 }
 
 // ManagerDeployer defines the deployment operations used by ManagerReconciler.

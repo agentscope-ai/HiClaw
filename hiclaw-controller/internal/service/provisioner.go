@@ -940,27 +940,38 @@ type ManagerWelcomeRequest struct {
 //   - (true, nil)  — message was successfully delivered.
 //   - (false, nil) — manager not yet joined; caller should requeue.
 //   - (false, err) — unrecoverable error (admin login / Matrix API).
-func (p *Provisioner) SendManagerWelcome(ctx context.Context, req ManagerWelcomeRequest) (bool, error) {
-	if req.RoomID == "" {
+// IsManagerJoinedDM reports whether the Manager's Matrix user is currently
+// `join`ed to the supplied DM room. Pure read; safe to poll on every
+// reconcile while waiting for the agent's first /sync to land its
+// auto-join. See `reconcileManagerWelcome` for the rationale on why this
+// MUST be separate from the actual send: claim-before-send would otherwise
+// churn the status field with claim/rollback patches on every requeue.
+func (p *Provisioner) IsManagerJoinedDM(ctx context.Context, roomID string) (bool, error) {
+	if roomID == "" {
 		return false, fmt.Errorf("welcome: empty RoomID")
 	}
 	managerMatrixID := p.matrix.UserID("manager")
-
-	members, err := p.matrix.ListRoomMembers(ctx, req.RoomID)
+	members, err := p.matrix.ListRoomMembers(ctx, roomID)
 	if err != nil {
-		return false, fmt.Errorf("welcome: list members of %s: %w", req.RoomID, err)
+		return false, fmt.Errorf("welcome: list members of %s: %w", roomID, err)
 	}
-	managerJoined := false
 	for _, m := range members {
 		if m.UserID == managerMatrixID && m.Membership == "join" {
-			managerJoined = true
-			break
+			return true, nil
 		}
 	}
-	if !managerJoined {
-		return false, nil
-	}
+	return false, nil
+}
 
+// SendManagerWelcomeMessage posts the first-boot onboarding prompt as the
+// homeserver admin into the given DM room. The caller (reconcile loop)
+// MUST have already (a) verified membership via IsManagerJoinedDM and
+// (b) committed the WelcomeSent=true claim to the API server, so that a
+// racing reconcile cannot also reach this point and double-deliver.
+func (p *Provisioner) SendManagerWelcomeMessage(ctx context.Context, req ManagerWelcomeRequest) error {
+	if req.RoomID == "" {
+		return fmt.Errorf("welcome: empty RoomID")
+	}
 	language := req.Language
 	if language == "" {
 		language = "zh"
@@ -969,12 +980,11 @@ func (p *Provisioner) SendManagerWelcome(ctx context.Context, req ManagerWelcome
 	if timezone == "" {
 		timezone = "Asia/Shanghai"
 	}
-
 	body := renderManagerWelcomeBody(language, timezone)
 	if err := p.matrix.SendMessageAsAdmin(ctx, req.RoomID, body); err != nil {
-		return false, fmt.Errorf("welcome: send to %s: %w", req.RoomID, err)
+		return fmt.Errorf("welcome: send to %s: %w", req.RoomID, err)
 	}
-	return true, nil
+	return nil
 }
 
 // renderManagerWelcomeBody returns the verbatim onboarding prompt the
