@@ -6,12 +6,12 @@
 #
 # Build args:
 #   HIGRESS_REGISTRY           - base image registry (default: cn-hangzhou)
-#   OPENCLAW_BASE_IMAGE        - openclaw-base image (default: hiclaw/openclaw-base:latest)
+#   OPENCLAW_BASE_IMAGE        - openclaw-base image (default: hiclaw/openclaw-base:20260423-8359cbc)
 #   OPENCLAW_CMS_PLUGIN_URL    - observability plugin tarball URL (bundled unconditionally)
 # ============================================================
 
 ARG HIGRESS_REGISTRY=higress-registry.cn-hangzhou.cr.aliyuncs.com
-ARG OPENCLAW_BASE_IMAGE=hiclaw/openclaw-base:20260327-74de2f2
+ARG OPENCLAW_BASE_IMAGE=hiclaw/openclaw-base:20260423-8359cbc
 ARG HICLAW_CONTROLLER_IMAGE=hiclaw/hiclaw-controller:latest
 
 # ============ Stage 1: mc (MinIO Client) ============
