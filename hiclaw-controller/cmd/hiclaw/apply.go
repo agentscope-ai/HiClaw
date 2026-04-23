@@ -192,7 +192,7 @@ func applyWorkerSubCmd() *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&name, "name", "", "Worker name (required)")
-	cmd.Flags().StringVar(&model, "model", "", "LLM model ID (default: qwen3.5-plus)")
+	cmd.Flags().StringVar(&model, "model", "", "LLM model ID (default: $HICLAW_DEFAULT_MODEL, else qwen3.5-plus)")
 	cmd.Flags().StringVar(&zipFile, "zip", "", "Local ZIP package (manifest.json)")
 	cmd.Flags().StringVar(&runtime, "runtime", "", "Agent runtime (openclaw|copaw|hermes)")
 	cmd.Flags().StringVar(&image, "image", "", "Container image override")
@@ -221,7 +221,7 @@ func applyWorkerZip(name, zipPath, runtimeOverride string) error {
 
 	model, manifestRuntime := extractWorkerFieldsFromZip(zipData)
 	if model == "" {
-		model = "qwen3.5-plus"
+		model = defaultWorkerModel()
 	}
 	runtime := runtimeOverride
 	if runtime == "" {
@@ -277,7 +277,7 @@ func applyWorkerParams(name, model, runtime, image, identity, soul, soulFile,
 	skills, mcpServers, packageURI, expose, team, role string) error {
 
 	if model == "" {
-		model = "qwen3.5-plus"
+		model = defaultWorkerModel()
 	}
 	if soulFile != "" {
 		data, err := os.ReadFile(soulFile)
@@ -349,7 +349,8 @@ func applyWorkerParams(name, model, runtime, image, identity, soul, soulFile,
 //
 // Either return value may be empty when the manifest does not declare it (or
 // when the ZIP has no manifest at all). Callers are expected to fall back to
-// their own defaults (model → "qwen3.5-plus", runtime → server-side default).
+// their own defaults (model → defaultWorkerModel(), which prefers
+// $HICLAW_DEFAULT_MODEL; runtime → server-side default).
 func extractWorkerFieldsFromZip(zipData []byte) (model, runtime string) {
 	r, err := zip.NewReader(bytes.NewReader(zipData), int64(len(zipData)))
 	if err != nil {

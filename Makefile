@@ -39,6 +39,8 @@ COPAW_WORKER_TAG   ?= $(COPAW_WORKER_IMAGE):$(VERSION)
 HERMES_WORKER_TAG  ?= $(HERMES_WORKER_IMAGE):$(VERSION)
 OPENCLAW_BASE_TAG  ?= $(OPENCLAW_BASE_IMAGE):$(VERSION)
 CONTROLLER_TAG     ?= $(CONTROLLER_IMAGE):$(VERSION)
+EMBEDDED_IMAGE     ?= $(REGISTRY)/$(REPO)/hiclaw-embedded
+EMBEDDED_TAG       ?= $(EMBEDDED_IMAGE):$(VERSION)
 
 # Local image names (no registry prefix, used by tests and install script)
 LOCAL_MANAGER        = hiclaw/hiclaw-manager:$(VERSION)
@@ -100,7 +102,7 @@ LINES          ?= 50
 # ---------- Phony targets ----------
 
 .PHONY: all build build-openclaw-base build-hiclaw-controller build-embedded build-manager build-manager-copaw build-worker build-copaw-worker build-hermes-worker \
-        tag push push-openclaw-base push-hiclaw-controller push-manager push-manager-copaw push-worker push-copaw-worker push-hermes-worker \
+        tag push push-openclaw-base push-hiclaw-controller push-embedded push-manager push-manager-copaw push-worker push-copaw-worker push-hermes-worker \
         push-native push-native-manager push-native-manager-copaw push-native-worker push-native-copaw-worker push-native-hermes-worker \
         buildx-setup \
         test test-quick test-installed test-embedded \
@@ -270,6 +272,31 @@ else
 		./hiclaw-controller/
 endif
 	@rm -rf ./hiclaw-controller/agent
+
+push-embedded: push-hiclaw-controller buildx-setup ## Build + push multi-arch embedded all-in-one image (infra + controller)
+	@echo "==> Building + pushing multi-arch embedded image: $(EMBEDDED_TAG) [$(MULTIARCH_PLATFORMS)]"
+ifeq ($(IS_PODMAN),1)
+	-podman manifest rm $(EMBEDDED_TAG) 2>/dev/null
+	$(foreach plat,$(subst $(comma), ,$(MULTIARCH_PLATFORMS)), \
+		echo "  -> Building embedded for $(plat)..." && \
+		podman build --platform $(plat) \
+			$(REGISTRY_ARG) $(DOCKER_BUILD_ARGS) \
+			--build-arg HICLAW_CONTROLLER_IMAGE=$(CONTROLLER_TAG) \
+			-f hiclaw-controller/Dockerfile.embedded \
+			--manifest $(EMBEDDED_TAG) \
+			. && ) true
+	podman manifest push --all $(EMBEDDED_TAG) docker://$(EMBEDDED_TAG)
+else
+	docker buildx build \
+		--builder $(BUILDX_BUILDER) \
+		--platform $(MULTIARCH_PLATFORMS) \
+		$(REGISTRY_ARG) $(DOCKER_BUILD_ARGS) \
+		--build-arg HICLAW_CONTROLLER_IMAGE=$(CONTROLLER_TAG) \
+		-f hiclaw-controller/Dockerfile.embedded \
+		-t $(EMBEDDED_TAG) \
+		--push \
+		.
+endif
 
 push-manager: push-hiclaw-controller buildx-setup ## Build + push multi-arch Manager image (OpenClaw)
 	@echo "==> Building + pushing multi-arch Manager: $(MANAGER_TAG) [$(MULTIARCH_PLATFORMS)]"

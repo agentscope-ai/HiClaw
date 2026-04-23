@@ -10,6 +10,27 @@ import (
 	"time"
 )
 
+func TestDefaultWorkerModel(t *testing.T) {
+	t.Run("falls back to qwen3.5-plus when env var unset", func(t *testing.T) {
+		t.Setenv("HICLAW_DEFAULT_MODEL", "")
+		if got := defaultWorkerModel(); got != "qwen3.5-plus" {
+			t.Fatalf("defaultWorkerModel() = %q, want qwen3.5-plus", got)
+		}
+	})
+	t.Run("prefers HICLAW_DEFAULT_MODEL when set", func(t *testing.T) {
+		t.Setenv("HICLAW_DEFAULT_MODEL", "claude-sonnet-4-6")
+		if got := defaultWorkerModel(); got != "claude-sonnet-4-6" {
+			t.Fatalf("defaultWorkerModel() = %q, want claude-sonnet-4-6", got)
+		}
+	})
+	t.Run("trims whitespace before falling back", func(t *testing.T) {
+		t.Setenv("HICLAW_DEFAULT_MODEL", "   ")
+		if got := defaultWorkerModel(); got != "qwen3.5-plus" {
+			t.Fatalf("defaultWorkerModel() = %q, want qwen3.5-plus", got)
+		}
+	})
+}
+
 func TestWaitForWorkerReady(t *testing.T) {
 	var calls int32
 	client := &APIClient{
