@@ -307,37 +307,6 @@ python scripts/export-debug-log.py --range 1h
 
 欢迎[提交 Issue](https://github.com/alibaba/hiclaw/issues)，或在 [Discord](https://discord.gg/n6mV8xEYUF) / 钉钉群里随时提问。
 
-## Roadmap
-
-### ✅ 已发布
-
-- ~~**CoPaw** -- 轻量级 Agent 运行时~~ [已在 1.0.4 发布](blog/zh-cn/hiclaw-1.0.4-release.md)：Docker 模式内存占用约 150MB（对比 OpenClaw 的 500MB），还支持本地模式可操作浏览器、访问本地文件。
-- ~~**通用 MCP 服务支持** -- MCP 服务集成~~ [已在 1.0.6 发布](blog/zh-cn/hiclaw-1.0.6-release.md)：任意 MCP 服务可安全暴露给 Worker，Worker 仅使用 Higress 签发的 token，真实凭证零泄露。
-
-### 进行中
-
-#### 轻量级 Worker 运行时
-
-- **ZeroClaw** -- 基于 Rust 的超轻量运行时，3.4MB 二进制，冷启动 <10ms，专为边缘和资源受限环境设计。
-- **NanoClaw** -- 极简 OpenClaw 替代品，<4000 行代码，基于容器隔离，使用 Anthropic Agents SDK。
-
-目标：将单 Worker 内存占用从 ~500MB 降至 <100MB，在相同硬件上支持更多 Worker。
-
-### 计划中
-
-#### Team 管理中心
-
-开箱即用的可视化控制台，用于观察和管控整个 Agent Team：
-
-- **实时观测**：每个 Agent 的工作过程细节可视化（对话、工具调用、思考过程）
-- **主动打断**：发现问题时可随时打断指定 Agent 的工作，接管或调整方向
-- **任务时间线**：谁在什么时候做了什么，完整历史记录
-- **资源监控**：每个 Worker 的 CPU/内存使用情况
-
-目标：让 Agent Teams 像人类团队一样透明可控--没有黑盒。
-
----
-
 ## 文档
 
 | | |

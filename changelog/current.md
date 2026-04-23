@@ -7,6 +7,7 @@ Record image-affecting changes to `manager/`, `worker/`, `copaw/`, `hermes/`, `o
 **What's New**
 
 - **Kubernetes-Native Architecture** — HiClaw now runs on a Kubernetes-native control plane. The `hiclaw-controller` replaces the legacy single-container model with a proper controller-reconciler architecture: a lightweight embedded kube-apiserver + kine backs CRD storage, and the controller reconciles Worker/Team/Manager/Human CRs into containers, Matrix rooms, and gateway routes. In embedded mode (`hiclaw-controller` container + separate `hiclaw-manager` container), no external Kubernetes cluster is required. For enterprise deployments, the same controller runs inside a real Kubernetes cluster via the official Helm chart (`helm/hiclaw/`), with leader election for HA, RBAC, PVC-backed storage, and pod-template overlays for nodeSelector/tolerations/imagePullSecrets.
+- **Hermes Worker Runtime (Autonomous Coding Agent)** — HiClaw now supports `hermes-agent` as a first-class Worker runtime for autonomous coding tasks. Hermes Workers bring the full power of a self-directed coding agent: terminal sandbox execution, multi-file code generation, debugging, vision-based analysis, and native `mautrix` Matrix integration — all running inside an isolated container. Unlike the agent (Node.js) and QwenPaw (Python) runtimes that handle conversation and tool calls, Hermes operates as an **autonomous coding agent** that can independently plan, execute, and iterate on complex software tasks. The installer offers all three runtimes interactively, and workers can switch runtime in place via `hiclaw update worker --runtime hermes` (container is recreated; Matrix account, rooms, credentials, and MinIO data are preserved). Multi-agent collaboration is fully supported — Hermes Workers participate in team projects alongside agent and QwenPaw Workers, with cross-runtime `m.mentions` message delivery and autonomous YOLO mode for unattended execution.
 
 - **Enterprise-Grade Kubernetes Deployment (Helm Chart)** — First-class Helm chart for deploying HiClaw on production Kubernetes clusters. The chart provisions Tuwunel (Matrix homeserver), MinIO (object storage), Element Web (IM client), and the hiclaw-controller as separate Deployments/StatefulSets with proper Service, RBAC, and Secret resources. Key enterprise features:
   - **Leader Election**: Controller supports multi-replica HA with lease-based leader election — only one instance reconciles at a time, failover is automatic.
@@ -16,7 +17,6 @@ Record image-affecting changes to `manager/`, `worker/`, `copaw/`, `hermes/`, `o
 
 - **Pluggable Gateway & Storage Providers** — The controller now delegates gateway (Higress) and storage (MinIO/OSS) operations through provider interfaces, with a new `hiclaw-credential-provider` sidecar that handles STS token issuance, secret rotation, and per-worker access-policy enforcement. Deployments can plug in Alibaba Cloud OSS, AWS S3, or any S3-compatible backend without changing controller code.
 
-- **Hermes Worker Runtime** — Added `hermes-agent` as a third Worker runtime alongside OpenClaw (Node.js) and QwenPaw (Python). Hermes brings autonomous coding capabilities with built-in terminal sandbox, vision support, and native `mautrix` Matrix integration. The installer offers all three runtimes interactively, and workers can switch runtime in place via `hiclaw update worker --runtime hermes` (container is recreated; Matrix account, rooms, credentials, and MinIO data are preserved).
 
 - **Multi-Container Architecture** — The Manager image no longer bundles Higress, Tuwunel, MinIO, or Element Web. Infrastructure services run exclusively in the `hiclaw-embedded` image (controller container), and the Manager is a lightweight agent-only container (~1.7 GB smaller). This enables independent scaling, restart isolation, and clean separation of concerns.
 
@@ -73,6 +73,7 @@ Record image-affecting changes to `manager/`, `worker/`, `copaw/`, `hermes/`, `o
 **新增功能**
 
 - **Kubernetes 原生架构** — HiClaw 现在运行在 Kubernetes 原生控制平面之上。`hiclaw-controller` 取代了旧版单容器模式，采用标准的 Controller-Reconciler 架构：内嵌轻量级 kube-apiserver + kine 存储 CRD 数据，Controller 将 Worker/Team/Manager/Human CR 协调为容器、Matrix 房间和网关路由。在 Embedded 模式下（`hiclaw-controller` 容器 + 独立 `hiclaw-manager` 容器），无需外部 Kubernetes 集群。对于企业级部署，同一 Controller 可通过官方 Helm Chart（`helm/hiclaw/`）运行在真正的 Kubernetes 集群中，支持 Leader Election 高可用、RBAC、PVC 持久化存储以及 Pod 模板叠加。
+- **Hermes Worker 运行时（自主编程 Agent）** — HiClaw 现在支持将 `hermes-agent` 作为一等公民的 Worker 运行时，用于自主编程任务。Hermes Worker 具备完整的自主编程 Agent 能力：终端沙箱执行、多文件代码生成、调试、视觉分析以及原生 `mautrix` Matrix 集成 — 全部运行在隔离容器中。与处理对话和工具调用的 agent（Node.js）和 QwenPaw（Python）运行时不同，Hermes 是一个**自主编程 Agent**，可以独立规划、执行和迭代复杂的软件任务。安装器提供三种运行时的交互式选择，Worker 可原地切换运行时：`hiclaw update worker --runtime hermes`（容器重建，Matrix 账号、房间、凭据和 MinIO 数据保留）。同时支持多 Agent 协作 — Hermes Worker 可以与 agent 和 QwenPaw Worker 一起参与团队项目，支持跨运行时 `m.mentions` 消息投递和无人值守的 YOLO 模式自主执行。
 
 - **企业级 Kubernetes 部署（Helm Chart）** — 提供生产级 Helm Chart，用于在 Kubernetes 集群上部署 HiClaw。Chart 将 Tuwunel（Matrix 服务器）、MinIO（对象存储）、Element Web（IM 客户端）和 hiclaw-controller 部署为独立的 Deployment/StatefulSet，配备完整的 Service、RBAC 和 Secret 资源。关键企业特性：
   - **Leader Election（高可用）**：Controller 支持多副本部署，基于 Lease 的 Leader Election 确保同一时间只有一个实例执行协调，故障时自动切换。
@@ -82,7 +83,6 @@ Record image-affecting changes to `manager/`, `worker/`, `copaw/`, `hermes/`, `o
 
 - **可插拔网关与存储 Provider** — Controller 现在通过 Provider 接口委托网关（Higress）和存储（MinIO/OSS）操作，新增 `hiclaw-credential-provider` Sidecar 负责 STS Token 签发、密钥轮转和 per-worker 访问策略执行。可对接阿里云 OSS、AWS S3 或任意 S3 兼容后端，无需修改 Controller 代码。
 
-- **Hermes Worker 运行时** — 新增 `hermes-agent` 作为第三种 Worker 运行时，与 OpenClaw（Node.js）和 QwenPaw（Python）并列。Hermes 具备自主编程能力，内建终端沙箱、视觉理解和原生 `mautrix` Matrix 集成。安装器提供三种运行时的交互式选择，Worker 可原地切换运行时：`hiclaw update worker --runtime hermes`（容器重建，Matrix 账号、房间、凭据和 MinIO 数据保留）。
 
 - **多容器架构** — Manager 镜像不再打包 Higress、Tuwunel、MinIO 和 Element Web。基础设施服务专属于 `hiclaw-embedded` 镜像（Controller 容器），Manager 是轻量级的纯 Agent 容器（减小约 1.7 GB）。这实现了独立扩缩容、重启隔离和清晰的职责分离。
 
