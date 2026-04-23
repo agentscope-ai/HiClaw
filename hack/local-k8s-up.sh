@@ -85,13 +85,13 @@ if [ "$SKIP_BUILD" = "0" ]; then
     if [ "$BUILD_K8S_IMAGE" = "1" ]; then
         log "Building manager image (lightweight k8s)..."
         docker build -t "$MANAGER_IMAGE" \
-            --build-arg OPENCLAW_BASE_IMAGE=higress-registry.cn-hangzhou.cr.aliyuncs.com/higress/openclaw-base:latest \
+            --build-arg OPENCLAW_BASE_IMAGE=higress-registry.cn-hangzhou.cr.aliyuncs.com/higress/openclaw-base:20260423-8359cbc \
             --build-arg HICLAW_CONTROLLER_IMAGE="$CONTROLLER_IMAGE" \
             -f "${PROJECT_ROOT}/manager/Dockerfile.k8s" "${PROJECT_ROOT}"
     else
         log "Building manager image (all-in-one)..."
         docker build -t "$MANAGER_IMAGE" \
-            --build-arg OPENCLAW_BASE_IMAGE=higress-registry.cn-hangzhou.cr.aliyuncs.com/higress/openclaw-base:latest \
+            --build-arg OPENCLAW_BASE_IMAGE=higress-registry.cn-hangzhou.cr.aliyuncs.com/higress/openclaw-base:20260423-8359cbc \
             --build-arg HICLAW_CONTROLLER_IMAGE="$CONTROLLER_IMAGE" \
             -f "${PROJECT_ROOT}/manager/Dockerfile" "${PROJECT_ROOT}"
     fi
@@ -105,7 +105,7 @@ if [ "$SKIP_BUILD" = "0" ]; then
     # Worker images (openclaw + copaw)
     log "Building worker image (openclaw)..."
     docker build -t "$WORKER_IMAGE" \
-        --build-arg OPENCLAW_BASE_IMAGE=higress-registry.cn-hangzhou.cr.aliyuncs.com/higress/openclaw-base:latest \
+        --build-arg OPENCLAW_BASE_IMAGE=higress-registry.cn-hangzhou.cr.aliyuncs.com/higress/openclaw-base:20260423-8359cbc \
         --build-arg HICLAW_CONTROLLER_IMAGE="$CONTROLLER_IMAGE" \
         --build-context shared="${PROJECT_ROOT}/shared/lib" \
         -f "${PROJECT_ROOT}/worker/Dockerfile" "${PROJECT_ROOT}/worker"
