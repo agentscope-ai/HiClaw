@@ -20,8 +20,6 @@
 
 - 🧬 **Manager-Workers アーキテクチャ**: 個々の Worker Claw を人間が監視する必要がなくなり、Agent が Agent を管理することを実現します。
 
-- 🦞 **カスタマイズ可能な Agent**: 各 Agent は OpenClaw、Copaw、NanoClaw、ZeroClaw、企業独自の Agent など、柔軟な構成をサポートし、個別の「エビ養殖」からフルスケールの「エビ農場」運営まで対応します。
-
 - 🤝 **マルチランタイム協調**: OpenClaw、QwenPaw、Hermes の Worker が同じ IM ルーム内で共存します。決定論的な Agent（OpenClaw/QwenPaw）をリーダーとしてタスクを編成し、Hermes Worker に自律的なコード実行を担当させる — それぞれのランタイムが得意なことを担当します。
 
 - 📦 **MinIO 共有ファイルシステム**: Agent 間の情報共有のための共有ファイルシステムを導入し、マルチエージェント連携シナリオにおけるトークン消費を大幅に削減します。
