@@ -16,10 +16,10 @@
 
 HiClaw 并不和其他 xxClaw 对标，自己不实现 Agent 逻辑，而是编排和管理多个 Agent 容器（Manager 和众多 Workers）。
 - 🧑‍💻 **设计了 Manger-Workers 架构**：不用真人去管理每个干活的 Worker Claw，实现由 Agent 管理 Agents。
-- 🦞 **每个 Agent 支持自定义**：OpenClaw、Copaw、NanoClaw、ZeroClaw 以及企业自建的 Agent，从养虾到开虾场，提供 worker 和 Team 模板市场。
-- 📚 **引入 MinIO 共享文件系统**：用于 Agent 之间的信息共享，大幅降低多 Agent 协作带来的 Token 消耗。
-- ⛑️ **引入 Higress AI Gateway**：流量入口和各类凭证风险降低了，减少了用户对原生龙虾在安全上的顾虑。
-- 🎨 **使用 Element IM 客户端+Tuwunel IM 服务器（均基于 Matrix 实时通信协议）**：节省钉钉、飞书 IM 的接入和企业内的审批成本，方便用户快速体验在 IM 的交互环境中体验模型服务的"爽感"，同时支持以 OpenClaw 原生的方式接入 IM。
+- 🦞 **每个 Agent 支持自定义**：[OpenClaw](https://github.com/openclaw/openclaw)、[CoPaw](https://github.com/agentscope-ai/CoPaw)、NanoClaw、ZeroClaw 以及企业自建的 Agent，从养虾到开虾场，提供 worker 和 Team 模板市场。
+- 📚 **引入 [MinIO](https://min.io/) 共享文件系统**：用于 Agent 之间的信息共享，大幅降低多 Agent 协作带来的 Token 消耗。
+- ⛑️ **引入 [Higress AI Gateway](https://github.com/alibaba/higress)**：流量入口和各类凭证风险降低了，减少了用户对原生龙虾在安全上的顾虑。
+- 🎨 **使用 [Element](https://element.io) IM 客户端+[Tuwunel](https://github.com/matrix-construct/tuwunel) IM 服务器（均基于 [Matrix](https://matrix.org) 实时通信协议）**：节省钉钉、飞书 IM 的接入和企业内的审批成本，方便用户快速体验在 IM 的交互环境中体验模型服务的"爽感"，同时支持以 OpenClaw 原生的方式接入 IM。
 
 ![架构](https://img.alicdn.com/imgextra/i4/O1CN01c1VlDE1zYZ46EW3OA_!!6000000006726-49-tps-9895-8231.webp)
 
@@ -93,7 +93,7 @@ Set-ExecutionPolicy Bypass -Scope Process -Force; $wc=New-Object Net.WebClient; 
 
 第十一步：等待安装。安装完成。登录密码是自动生成的。
 
-若希望通过移动端来访问和使用，则需要使用美区账号下载 FluffyChat/Element Mobile。（之所以采用这两个 IM，是因为他们是支持 Matrix 协议的）下载后，连接您的 Matrix 服务器地址，就能随时随地管理您的 Agent 团队。
+若希望通过移动端来访问和使用，则需要使用美区账号下载 [FluffyChat](https://fluffychat.im/)/[Element Mobile](https://element.io/)。（之所以采用这两个 IM，是因为他们是支持 Matrix 协议的）下载后，连接您的 Matrix 服务器地址，就能随时随地管理您的 Agent 团队。
 ![测试](https://img.alicdn.com/imgextra/i3/O1CN01Tl4T8q29HIHtPVSJL_!!6000000008042-2-tps-2372-1282.png)
 
 第十二步：浏览器中，输入 http://127.0.0.1:18088/#/login，登录 Element，输入用户名和密码，就可以玩龙虾了，告诉 Manager 创建 Worker 并分配任务。
@@ -344,11 +344,11 @@ Alice：前端校验也更新了。
 
 | 组件 | 职责 |
 |------|------|
-| Higress AI 网关 | LLM 代理、MCP Server 托管、凭证集中管理 |
-| Tuwunel（Matrix） | 所有 Agent 与人类通信的 IM 服务器 |
-| Element Web | 浏览器客户端，零配置 |
-| MinIO | 集中式文件存储，Worker 无状态 |
-| OpenClaw | 带 Matrix 插件和技能系统的 Agent 运行时 |
+| [Higress AI 网关](https://github.com/alibaba/higress) | LLM 代理、MCP Server 托管、凭证集中管理 |
+| [Tuwunel](https://github.com/matrix-construct/tuwunel)（[Matrix](https://matrix.org)） | 所有 Agent 与人类通信的 IM 服务器 |
+| [Element Web](https://element.io) | 浏览器客户端，零配置 |
+| [MinIO](https://min.io/) | 集中式文件存储，Worker 无状态 |
+| [OpenClaw](https://github.com/openclaw/openclaw) | 带 Matrix 插件和技能系统的 Agent 运行时 |
 
 ## 常见问题
 
@@ -373,11 +373,11 @@ python scripts/export-debug-log.py --range 1h
 
 > "读取 debug-log/ 下的 JSONL 文件，同时分析 Matrix 消息日志和 Agent 会话日志。结合 HiClaw 代码库，定位 [描述你的 bug] 的根因。重点关注 Agent 交互流程、工具调用失败和错误模式。"
 
-将 AI 的分析结果贴到 [Bug Report](https://github.com/alibaba/hiclaw/issues/new?template=bug_report.yml) 中。
+将 AI 的分析结果贴到 [Bug Report](https://github.com/agentscope-ai/HiClaw/issues/new?template=bug_report.yml) 中。
 
 你也可以让 AI 工具直接提交 Issue 或 PR。先安装 [GitHub CLI](https://cli.github.com/)，执行 `gh auth login` 在浏览器中完成登录，然后将 [OpenClaw GitHub skill](https://github.com/openclaw/openclaw/blob/main/skills/github/SKILL.md) 配置到你的 AI 编程工具（Cursor、Claude Code 等）中。之后直接让它根据分析结果提交 Issue 或 PR 即可。
 
-欢迎[提交 Issue](https://github.com/alibaba/hiclaw/issues)，或在 [Discord](https://discord.gg/n6mV8xEYUF) / 钉钉群里随时提问。
+欢迎[提交 Issue](https://github.com/agentscope-ai/HiClaw/issues)，或在 [Discord](https://discord.com/invite/NVjNA4BAVw) / 钉钉群里随时提问。
 
 ## 文档
 

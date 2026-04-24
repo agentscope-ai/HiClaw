@@ -20,13 +20,13 @@
 
 - 🧬 **Manager-Workers アーキテクチャ**: 個々の Worker Claw を人間が監視する必要がなくなり、Agent が Agent を管理することを実現します。
 
-- 🦞 **カスタマイズ可能な Agent**: 各 Agent は OpenClaw、Copaw、NanoClaw、ZeroClaw、企業独自の Agent など、柔軟な構成をサポートし、個別の「エビ養殖」からフルスケールの「エビ農場」運営まで対応します。
+- 🦞 **カスタマイズ可能な Agent**: 各 Agent は [OpenClaw](https://github.com/openclaw/openclaw)、[CoPaw](https://github.com/agentscope-ai/CoPaw)、NanoClaw、ZeroClaw、企業独自の Agent など、柔軟な構成をサポートし、個別の「エビ養殖」からフルスケールの「エビ農場」運営まで対応します。
 
-- 📦 **MinIO 共有ファイルシステム**: Agent 間の情報共有のための共有ファイルシステムを導入し、マルチエージェント連携シナリオにおけるトークン消費を大幅に削減します。
+- 📦 **[MinIO](https://min.io/) 共有ファイルシステム**: Agent 間の情報共有のための共有ファイルシステムを導入し、マルチエージェント連携シナリオにおけるトークン消費を大幅に削減します。
 
-- 🔐 **Higress AI ゲートウェイ**: トラフィック管理を一元化し、認証情報に関連するリスクを軽減します。ネイティブの Lobster フレームワークにおけるセキュリティ上の懸念を解消します。
+- 🔐 **[Higress AI ゲートウェイ](https://github.com/alibaba/higress)**: トラフィック管理を一元化し、認証情報に関連するリスクを軽減します。ネイティブの Lobster フレームワークにおけるセキュリティ上の懸念を解消します。
 
-- ☎️ **Element IM クライアント + Tuwunel IM サーバー（共に Matrix プロトコルベース）**: DingTalk/Lark 統合の手間や企業承認ワークフローを排除します。IM 環境でモデルサービスの「快適さ」を素早く体験でき、ネイティブの OpenClaw IM 統合との互換性も維持します。
+- ☎️ **[Element](https://element.io) IM クライアント + [Tuwunel](https://github.com/matrix-construct/tuwunel) IM サーバー（共に [Matrix](https://matrix.org) プロトコルベース）**: DingTalk/Lark 統合の手間や企業承認ワークフローを排除します。IM 環境でモデルサービスの「快適さ」を素早く体験でき、ネイティブの OpenClaw IM 統合との互換性も維持します。
 
 ## ニュース
 
@@ -78,7 +78,7 @@ Set-ExecutionPolicy Bypass -Scope Process -Force; $wc=New-Object Net.WebClient; 
 
 ブラウザで http://127.0.0.1:18088 を開き、Element Web にログインしてください。Manager が挨拶し、最初の Worker の作成方法を説明してくれます。
 
-**モバイル**: 任意の Matrix クライアント（Element、FluffyChat）を使い、サーバーアドレスに接続してください。
+**モバイル**: 任意の Matrix クライアント（[Element](https://element.io)、[FluffyChat](https://fluffychat.im/)）を使い、サーバーアドレスに接続してください。
 
 **以上です。** ボットアプリケーション不要。外部サービス不要。AI チーム全体があなたのマシン上で動作します。
 
@@ -303,11 +303,11 @@ Alice: フロントエンドのバリデーションも更新しました。
 
 | コンポーネント | 役割 |
 |-----------|------|
-| Higress AI ゲートウェイ | LLM プロキシ、MCP Server ホスティング、認証情報管理 |
-| Tuwunel（Matrix） | すべての Agent + 人間のコミュニケーション用セルフホスト IM サーバー |
-| Element Web | ブラウザクライアント、ゼロ設定 |
-| MinIO | 一元化ファイルストレージ、Worker はステートレス |
-| OpenClaw | Matrix プラグインとスキルを備えた Agent ランタイム |
+| [Higress AI ゲートウェイ](https://github.com/alibaba/higress) | LLM プロキシ、MCP Server ホスティング、認証情報管理 |
+| [Tuwunel](https://github.com/matrix-construct/tuwunel)（[Matrix](https://matrix.org)） | すべての Agent + 人間のコミュニケーション用セルフホスト IM サーバー |
+| [Element Web](https://element.io) | ブラウザクライアント、ゼロ設定 |
+| [MinIO](https://min.io/) | 一元化ファイルストレージ、Worker はステートレス |
+| [OpenClaw](https://github.com/openclaw/openclaw) | Matrix プラグインとスキルを備えた Agent ランタイム |
 
 ## HiClaw vs OpenClaw ネイティブ
 
@@ -375,7 +375,7 @@ python scripts/export-debug-log.py --range 1h
 
 > "debug-log/ 内の JSONL ファイルを読み込み、Matrix メッセージログと Agent セッションログを合わせて分析してください。HiClaw のコードベースと照合し、[バグの内容を記述] の根本原因を特定してください。"
 
-AI の分析結果を [バグレポート](https://github.com/alibaba/hiclaw/issues/new?template=bug_report.yml) に含めてください。
+AI の分析結果を [バグレポート](https://github.com/agentscope-ai/HiClaw/issues/new?template=bug_report.yml) に含めてください。
 
 ## ビルド & テスト
 
@@ -396,7 +396,7 @@ make help
 ## コミュニティ
 
 - [Discord](https://discord.gg/NVjNA4BAVw)
-- [GitHub Issues](https://github.com/alibaba/hiclaw/issues)
+- [GitHub Issues](https://github.com/agentscope-ai/HiClaw/issues)
 
 ## ライセンス
 
