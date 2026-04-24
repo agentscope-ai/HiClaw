@@ -190,6 +190,29 @@ func (r *TeamReconciler) reconcileTeamNormal(ctx context.Context, t *v1beta1.Tea
 	}
 	pruneMembers(&t.Status, desiredNames)
 
+	// --- Step 3.5: Leader coordination context + SOUL.md template ---
+	// Must run before member reconciliation so that renderAndPushSoulTemplate
+	// pushes the final SOUL.md to MinIO before the leader container starts
+	// (and before DeployWorkerConfig which would otherwise overwrite it).
+	var teamAdminID string
+	if t.Spec.Admin != nil {
+		teamAdminID = t.Spec.Admin.MatrixUserID
+	}
+	if err := r.Deployer.InjectCoordinationContext(ctx, service.CoordinationDeployRequest{
+		LeaderName:        t.Spec.Leader.Name,
+		Role:              RoleTeamLeader.String(),
+		TeamName:          t.Name,
+		TeamRoomID:        rooms.TeamRoomID,
+		LeaderDMRoomID:    rooms.LeaderDMRoomID,
+		HeartbeatEvery:    leaderHeartbeatEvery(t),
+		WorkerIdleTimeout: t.Spec.Leader.WorkerIdleTimeout,
+		TeamWorkers:       workerNames,
+		TeamAdminID:       teamAdminID,
+		LeaderSoul:        t.Spec.Leader.Soul,
+	}); err != nil {
+		logger.Error(err, "leader coordination context injection failed (non-fatal)")
+	}
+
 	// --- Step 4: Reconcile each desired member (leader first) ---
 	//
 	// ms.Observed flips to true the moment ReconcileMemberInfra returns nil —
@@ -231,25 +254,7 @@ func (r *TeamReconciler) reconcileTeamNormal(ctx context.Context, t *v1beta1.Tea
 		r.reconcileLegacyMember(ctx, t, m, ms)
 	}
 
-	// --- Step 5: Leader-specific hooks (coordination, groupAllowFrom, registry) ---
-	var teamAdminID string
-	if t.Spec.Admin != nil {
-		teamAdminID = t.Spec.Admin.MatrixUserID
-	}
-	if err := r.Deployer.InjectCoordinationContext(ctx, service.CoordinationDeployRequest{
-		LeaderName:        t.Spec.Leader.Name,
-		Role:              RoleTeamLeader.String(),
-		TeamName:          t.Name,
-		TeamRoomID:        rooms.TeamRoomID,
-		LeaderDMRoomID:    rooms.LeaderDMRoomID,
-		HeartbeatEvery:    leaderHeartbeatEvery(t),
-		WorkerIdleTimeout: t.Spec.Leader.WorkerIdleTimeout,
-		TeamWorkers:       workerNames,
-		TeamAdminID:       teamAdminID,
-	}); err != nil {
-		logger.Error(err, "leader coordination context injection failed (non-fatal)")
-	}
-
+	// --- Step 5: Registry updates ---
 	if r.Legacy != nil && r.Legacy.Enabled() {
 		leaderMatrixID := r.Legacy.MatrixUserID(t.Spec.Leader.Name)
 		if err := r.Legacy.UpdateManagerGroupAllowFrom(leaderMatrixID, true); err != nil {
