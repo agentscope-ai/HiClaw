@@ -193,6 +193,27 @@ helm install hiclaw higress.io/hiclaw \
 | `credentials.llmProvider` | 可选 | LLM 服务商名，默认 `openai-compat` |
 | `credentials.defaultModel` | 可选 | 默认模型，默认 `gpt-5.4` |
 | `credentials.llmBaseUrl` | 可选 | OpenAI 兼容的 Base URL（例如 `https://api.deepseek.com/v1`）。使用官方 OpenAI API 时留空 |
+| `manager.runtime` | 可选 | Manager Agent 运行时：`openclaw`（默认）、`copaw` 或 `hermes` |
+| `worker.defaultRuntime` | 可选 | Worker 默认运行时：`openclaw`（默认）、`copaw` 或 `hermes` |
+
+<details>
+<summary>使用其他运行时（CoPaw Manager + Hermes Workers）</summary>
+
+```bash
+helm install hiclaw higress.io/hiclaw \
+  -n hiclaw-system --create-namespace --devel \
+  --set manager.runtime=copaw \
+  --set worker.defaultRuntime=hermes \
+  --set credentials.llmApiKey=<your-api-key> \
+  --set credentials.llmBaseUrl=https://your-provider.example.com/v1 \
+  --set credentials.defaultModel=your-model-name \
+  --set credentials.adminPassword=<your-admin-password> \
+  --set gateway.publicURL=http://localhost:18080
+```
+
+各组件镜像会根据运行时自动选择（Manager: `hiclaw-manager` / `hiclaw-manager-copaw`；Worker: `hiclaw-worker` / `hiclaw-copaw-worker` / `hiclaw-hermes-worker`）。
+
+</details>
 
 **多地域镜像仓库**
 
