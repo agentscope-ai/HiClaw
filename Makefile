@@ -263,41 +263,20 @@ ifeq ($(IS_PODMAN),1)
 			--manifest $(CONTROLLER_TAG) \
 			./hiclaw-controller/ && ) true
 	podman manifest push --all $(CONTROLLER_TAG) docker://$(CONTROLLER_TAG)
+	$(if $(PUSH_LATEST), \
+		podman manifest push --all $(CONTROLLER_TAG) docker://$(CONTROLLER_IMAGE):latest && \
+		echo "  -> Also pushed :latest tag")
 else
 	docker buildx build \
 		--builder $(BUILDX_BUILDER) \
 		--platform $(MULTIARCH_PLATFORMS) \
 		$(REGISTRY_ARG) $(DOCKER_BUILD_ARGS) \
 		-t $(CONTROLLER_TAG) \
+		$(if $(PUSH_LATEST),-t $(CONTROLLER_IMAGE):latest) \
 		--push \
 		./hiclaw-controller/
 endif
 	@rm -rf ./hiclaw-controller/agent
-
-push-embedded: push-hiclaw-controller buildx-setup ## Build + push multi-arch embedded all-in-one image (infra + controller)
-	@echo "==> Building + pushing multi-arch embedded image: $(EMBEDDED_TAG) [$(MULTIARCH_PLATFORMS)]"
-ifeq ($(IS_PODMAN),1)
-	-podman manifest rm $(EMBEDDED_TAG) 2>/dev/null
-	$(foreach plat,$(subst $(comma), ,$(MULTIARCH_PLATFORMS)), \
-		echo "  -> Building embedded for $(plat)..." && \
-		podman build --platform $(plat) \
-			$(REGISTRY_ARG) $(DOCKER_BUILD_ARGS) \
-			--build-arg HICLAW_CONTROLLER_IMAGE=$(CONTROLLER_TAG) \
-			-f hiclaw-controller/Dockerfile.embedded \
-			--manifest $(EMBEDDED_TAG) \
-			. && ) true
-	podman manifest push --all $(EMBEDDED_TAG) docker://$(EMBEDDED_TAG)
-else
-	docker buildx build \
-		--builder $(BUILDX_BUILDER) \
-		--platform $(MULTIARCH_PLATFORMS) \
-		$(REGISTRY_ARG) $(DOCKER_BUILD_ARGS) \
-		--build-arg HICLAW_CONTROLLER_IMAGE=$(CONTROLLER_TAG) \
-		-f hiclaw-controller/Dockerfile.embedded \
-		-t $(EMBEDDED_TAG) \
-		--push \
-		.
-endif
 
 push-embedded: push-hiclaw-controller buildx-setup ## Build + push multi-arch embedded all-in-one image
 	@echo "==> Building + pushing multi-arch hiclaw-embedded: $(EMBEDDED_TAG) [$(MULTIARCH_PLATFORMS)]"
@@ -311,6 +290,9 @@ ifeq ($(IS_PODMAN),1)
 			--manifest $(EMBEDDED_TAG) \
 			-f hiclaw-controller/Dockerfile.embedded . && ) true
 	podman manifest push --all $(EMBEDDED_TAG) docker://$(EMBEDDED_TAG)
+	$(if $(PUSH_LATEST), \
+		podman manifest push --all $(EMBEDDED_TAG) docker://$(EMBEDDED_IMAGE):latest && \
+		echo "  -> Also pushed :latest tag")
 else
 	docker buildx build \
 		--builder $(BUILDX_BUILDER) \
@@ -318,6 +300,7 @@ else
 		--build-arg HICLAW_CONTROLLER_IMAGE=$(CONTROLLER_TAG) \
 		$(REGISTRY_ARG) $(DOCKER_BUILD_ARGS) \
 		-t $(EMBEDDED_TAG) \
+		$(if $(PUSH_LATEST),-t $(EMBEDDED_IMAGE):latest) \
 		--push \
 		-f hiclaw-controller/Dockerfile.embedded .
 endif

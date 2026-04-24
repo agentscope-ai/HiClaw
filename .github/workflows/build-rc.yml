@@ -101,7 +101,6 @@ jobs:
           HERMES_WORKER_IMAGE: ${{ env.REGISTRY }}/${{ env.REPO }}/hiclaw-hermes-worker
           CONTROLLER_IMAGE: ${{ env.REGISTRY }}/${{ env.REPO }}/hiclaw-controller
           EMBEDDED_IMAGE: ${{ env.REGISTRY }}/${{ env.REPO }}/hiclaw-embedded
-          EMBEDDED_IMAGE: ${{ env.REGISTRY }}/${{ env.REPO }}/hiclaw-embedded
         run: |
           STABLE_TAG="${{ steps.meta.outputs.base_stable_tag }}"
           echo "### RC Build Summary" >> $GITHUB_STEP_SUMMARY
@@ -113,7 +112,6 @@ jobs:
           echo "- CoPaw Worker: \`${COPAW_WORKER_IMAGE}:${{ inputs.version }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- Hermes Worker: \`${HERMES_WORKER_IMAGE}:${{ inputs.version }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- Controller: \`${CONTROLLER_IMAGE}:${{ inputs.version }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- Embedded: \`${EMBEDDED_IMAGE}:${{ inputs.version }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- Embedded: \`${EMBEDDED_IMAGE}:${{ inputs.version }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- Base (RC): \`${BASE_IMAGE}:${{ inputs.version }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- Base (stable): \`${BASE_IMAGE}:${STABLE_TAG}\`" >> $GITHUB_STEP_SUMMARY

@@ -2,6 +2,16 @@ name: Build Images
 
 on:
   workflow_dispatch:
+    inputs:
+      version:
+        description: 'Image version tag (e.g. v1.1.0). Leave empty for tag-triggered runs.'
+        required: false
+        type: string
+      targets:
+        description: 'Space-separated list of push targets (default: all). Options: openclaw-base hiclaw-controller embedded manager manager-copaw worker copaw-worker hermes-worker'
+        required: false
+        type: string
+        default: 'all'
   push:
     tags:
       - 'v[0-9]+.[0-9]+.[0-9]+'
@@ -52,18 +62,69 @@ jobs:
           echo "sha_short=${SHA_SHORT}" >> $GITHUB_OUTPUT
           if [[ "${{ github.ref }}" == refs/tags/* ]]; then
             echo "version=${{ github.ref_name }}" >> $GITHUB_OUTPUT
-            echo "is_tag=true" >> $GITHUB_OUTPUT
+            echo "targets=all" >> $GITHUB_OUTPUT
           else
-            echo "version=latest" >> $GITHUB_OUTPUT
-            echo "is_tag=false" >> $GITHUB_OUTPUT
+            # workflow_dispatch: use inputs
+            VERSION="${{ inputs.version }}"
+            if [ -z "${VERSION}" ]; then
+              VERSION="latest"
+            fi
+            echo "version=${VERSION}" >> $GITHUB_OUTPUT
+            echo "targets=${{ inputs.targets }}" >> $GITHUB_OUTPUT
           fi
 
-      # Tag/manual: multi-arch build + push
-      # When VERSION is a semver tag (e.g. v0.1.0), the Makefile automatically
-      # also pushes :latest in the same buildx call, so no separate step needed.
-      - name: Build and push multi-arch images
+      - name: Build and push openclaw-base
+        if: ${{ steps.meta.outputs.targets == 'all' || contains(steps.meta.outputs.targets, 'openclaw-base') }}
         run: |
-          make push-manager push-manager-copaw push-worker push-copaw-worker push-hermes-worker push-hiclaw-controller push-embedded \
+          make push-openclaw-base \
+            VERSION=${{ steps.meta.outputs.version }} \
+            REGISTRY=${{ env.REGISTRY }} \
+            REPO=${{ env.REPO }} \
+            HIGRESS_REGISTRY=higress-registry.us-west-1.cr.aliyuncs.com
+
+      - name: Build and push hiclaw-controller
+        if: ${{ steps.meta.outputs.targets == 'all' || contains(steps.meta.outputs.targets, 'hiclaw-controller') }}
+        run: |
+          make push-hiclaw-controller \
+            VERSION=${{ steps.meta.outputs.version }} \
+            REGISTRY=${{ env.REGISTRY }} \
+            REPO=${{ env.REPO }} \
+            HIGRESS_REGISTRY=higress-registry.us-west-1.cr.aliyuncs.com \
+            DOCKER_BUILD_ARGS="--build-arg APT_MIRROR= --build-arg PIP_INDEX_URL=https://pypi.org/simple/"
+
+      - name: Build and push embedded
+        if: ${{ steps.meta.outputs.targets == 'all' || contains(steps.meta.outputs.targets, 'embedded') }}
+        run: |
+          make push-embedded \
+            VERSION=${{ steps.meta.outputs.version }} \
+            REGISTRY=${{ env.REGISTRY }} \
+            REPO=${{ env.REPO }} \
+            HIGRESS_REGISTRY=higress-registry.us-west-1.cr.aliyuncs.com \
+            DOCKER_BUILD_ARGS="--build-arg APT_MIRROR= --build-arg PIP_INDEX_URL=https://pypi.org/simple/"
+
+      - name: Build and push manager images
+        if: ${{ steps.meta.outputs.targets == 'all' || contains(steps.meta.outputs.targets, 'manager') }}
+        run: |
+          make push-manager push-manager-copaw \
+            VERSION=${{ steps.meta.outputs.version }} \
+            REGISTRY=${{ env.REGISTRY }} \
+            REPO=${{ env.REPO }} \
+            HIGRESS_REGISTRY=higress-registry.us-west-1.cr.aliyuncs.com \
+            DOCKER_BUILD_ARGS="--build-arg APT_MIRROR= --build-arg PIP_INDEX_URL=https://pypi.org/simple/"
+
+      - name: Build and push worker images
+        if: |
+          ${{ steps.meta.outputs.targets == 'all' ||
+              contains(steps.meta.outputs.targets, 'worker') ||
+              contains(steps.meta.outputs.targets, 'copaw-worker') ||
+              contains(steps.meta.outputs.targets, 'hermes-worker') }}
+        run: |
+          TARGETS="${{ steps.meta.outputs.targets }}"
+          MAKE_TARGETS=""
+          if [ "${TARGETS}" = "all" ] || echo "${TARGETS}" | grep -qw worker; then MAKE_TARGETS="${MAKE_TARGETS} push-worker"; fi
+          if [ "${TARGETS}" = "all" ] || echo "${TARGETS}" | grep -qw copaw-worker; then MAKE_TARGETS="${MAKE_TARGETS} push-copaw-worker"; fi
+          if [ "${TARGETS}" = "all" ] || echo "${TARGETS}" | grep -qw hermes-worker; then MAKE_TARGETS="${MAKE_TARGETS} push-hermes-worker"; fi
+          make ${MAKE_TARGETS} \
             VERSION=${{ steps.meta.outputs.version }} \
             REGISTRY=${{ env.REGISTRY }} \
             REPO=${{ env.REPO }} \
@@ -72,6 +133,8 @@ jobs:
 
       - name: Summary
         env:
+          VERSION: ${{ steps.meta.outputs.version }}
+          TARGETS: ${{ steps.meta.outputs.targets }}
           OPENCLAW_BASE_IMAGE: ${{ env.REGISTRY }}/${{ env.REPO }}/openclaw-base
           MANAGER_IMAGE: ${{ env.REGISTRY }}/${{ env.REPO }}/hiclaw-manager
           MANAGER_COPAW_IMAGE: ${{ env.REGISTRY }}/${{ env.REPO }}/hiclaw-manager-copaw
@@ -82,12 +145,16 @@ jobs:
           EMBEDDED_IMAGE: ${{ env.REGISTRY }}/${{ env.REPO }}/hiclaw-embedded
         run: |
           echo "### Build Summary" >> $GITHUB_STEP_SUMMARY
-          echo "- Manager: \`${MANAGER_IMAGE}:${{ steps.meta.outputs.version }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- Manager CoPaw: \`${MANAGER_COPAW_IMAGE}:${{ steps.meta.outputs.version }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- Worker: \`${WORKER_IMAGE}:${{ steps.meta.outputs.version }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- CoPaw Worker: \`${COPAW_WORKER_IMAGE}:${{ steps.meta.outputs.version }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- Hermes Worker: \`${HERMES_WORKER_IMAGE}:${{ steps.meta.outputs.version }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- Controller: \`${CONTROLLER_IMAGE}:${{ steps.meta.outputs.version }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- Embedded: \`${EMBEDDED_IMAGE}:${{ steps.meta.outputs.version }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Version:** \`${VERSION}\` | **Targets:** \`${TARGETS}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Images:**" >> $GITHUB_STEP_SUMMARY
+          echo "- Manager: \`${MANAGER_IMAGE}:${VERSION}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Manager CoPaw: \`${MANAGER_COPAW_IMAGE}:${VERSION}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Worker: \`${WORKER_IMAGE}:${VERSION}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- CoPaw Worker: \`${COPAW_WORKER_IMAGE}:${VERSION}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Hermes Worker: \`${HERMES_WORKER_IMAGE}:${VERSION}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Controller: \`${CONTROLLER_IMAGE}:${VERSION}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Embedded: \`${EMBEDDED_IMAGE}:${VERSION}\`" >> $GITHUB_STEP_SUMMARY
           echo "- Base: \`${OPENCLAW_BASE_IMAGE}:latest\` (pre-built, not rebuilt here)" >> $GITHUB_STEP_SUMMARY
           echo "- Platforms: \`linux/amd64, linux/arm64\`" >> $GITHUB_STEP_SUMMARY
