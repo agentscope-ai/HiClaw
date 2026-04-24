@@ -7,6 +7,11 @@ on:
         description: 'RC version tag (e.g. v1.0.5-rc.1)'
         required: true
         type: string
+      targets:
+        description: 'Space-separated list of push targets (default: all). Options: openclaw-base hiclaw-controller embedded manager manager-copaw worker copaw-worker hermes-worker'
+        required: false
+        type: string
+        default: 'all'
 
 env:
   REGISTRY: higress-registry.cn-hangzhou.cr.aliyuncs.com
@@ -96,6 +101,7 @@ jobs:
           HERMES_WORKER_IMAGE: ${{ env.REGISTRY }}/${{ env.REPO }}/hiclaw-hermes-worker
           CONTROLLER_IMAGE: ${{ env.REGISTRY }}/${{ env.REPO }}/hiclaw-controller
           EMBEDDED_IMAGE: ${{ env.REGISTRY }}/${{ env.REPO }}/hiclaw-embedded
+          EMBEDDED_IMAGE: ${{ env.REGISTRY }}/${{ env.REPO }}/hiclaw-embedded
         run: |
           STABLE_TAG="${{ steps.meta.outputs.base_stable_tag }}"
           echo "### RC Build Summary" >> $GITHUB_STEP_SUMMARY
@@ -107,6 +113,7 @@ jobs:
           echo "- CoPaw Worker: \`${COPAW_WORKER_IMAGE}:${{ inputs.version }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- Hermes Worker: \`${HERMES_WORKER_IMAGE}:${{ inputs.version }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- Controller: \`${CONTROLLER_IMAGE}:${{ inputs.version }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Embedded: \`${EMBEDDED_IMAGE}:${{ inputs.version }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- Embedded: \`${EMBEDDED_IMAGE}:${{ inputs.version }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- Base (RC): \`${BASE_IMAGE}:${{ inputs.version }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- Base (stable): \`${BASE_IMAGE}:${STABLE_TAG}\`" >> $GITHUB_STEP_SUMMARY
