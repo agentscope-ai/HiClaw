@@ -28,7 +28,8 @@ spec:
     - github-operations
     - git-delegation
   mcpServers:
-    - github
+    - name: github
+      url: https://gateway.example.com/mcp-servers/github/mcp
 ```
 
 ```bash

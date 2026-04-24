@@ -45,8 +45,7 @@ func (r *ManagerReconciler) reconcileManagerInfrastructure(ctx context.Context, 
 	logger.Info("provisioning manager infrastructure", "name", m.Name)
 
 	provResult, err := r.Provisioner.ProvisionManager(ctx, service.ManagerProvisionRequest{
-		Name:       m.Name,
-		McpServers: m.Spec.McpServers,
+		Name: m.Name,
 	})
 	if err != nil {
 		return reconcile.Result{}, fmt.Errorf("provision manager: %w", err)

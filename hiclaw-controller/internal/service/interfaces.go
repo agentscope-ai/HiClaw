@@ -13,7 +13,6 @@ type WorkerProvisioner interface {
 	DeprovisionWorker(ctx context.Context, req WorkerDeprovisionRequest) error
 	RefreshCredentials(ctx context.Context, workerName string) (*RefreshResult, error)
 	EnsureWorkerGatewayAuth(ctx context.Context, workerName, gatewayKey string) error
-	ReconcileMCPAuth(ctx context.Context, consumerName string, mcpServers []string) ([]string, error)
 	ReconcileExpose(ctx context.Context, workerName string, desired []v1beta1.ExposePort, current []v1beta1.ExposedPortStatus) ([]v1beta1.ExposedPortStatus, error)
 	EnsureServiceAccount(ctx context.Context, workerName string) error
 	DeleteServiceAccount(ctx context.Context, workerName string) error
@@ -59,11 +58,10 @@ type WorkerEnvBuilderI interface {
 // will unify to RefreshManagerCredentials only.
 type ManagerProvisioner interface {
 	ProvisionManager(ctx context.Context, req ManagerProvisionRequest) (*ManagerProvisionResult, error)
-	DeprovisionManager(ctx context.Context, name string, mcpServers []string) error
+	DeprovisionManager(ctx context.Context, name string) error
 	RefreshCredentials(ctx context.Context, name string) (*RefreshResult, error)
 	RefreshManagerCredentials(ctx context.Context, managerName string) (*RefreshResult, error)
 	EnsureManagerGatewayAuth(ctx context.Context, managerName, gatewayKey string) error
-	ReconcileMCPAuth(ctx context.Context, consumerName string, mcpServers []string) ([]string, error)
 	EnsureManagerServiceAccount(ctx context.Context, managerName string) error
 	DeleteManagerServiceAccount(ctx context.Context, managerName string) error
 	DeleteCredentials(ctx context.Context, name string) error

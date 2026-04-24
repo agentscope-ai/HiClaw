@@ -12,11 +12,10 @@ type MockManagerProvisioner struct {
 	mu sync.Mutex
 
 	ProvisionManagerFn            func(ctx context.Context, req service.ManagerProvisionRequest) (*service.ManagerProvisionResult, error)
-	DeprovisionManagerFn          func(ctx context.Context, name string, mcpServers []string) error
+	DeprovisionManagerFn          func(ctx context.Context, name string) error
 	RefreshCredentialsFn          func(ctx context.Context, name string) (*service.RefreshResult, error)
 	RefreshManagerCredentialsFn   func(ctx context.Context, managerName string) (*service.RefreshResult, error)
 	EnsureManagerGatewayAuthFn    func(ctx context.Context, managerName, gatewayKey string) error
-	ReconcileMCPAuthFn            func(ctx context.Context, consumerName string, mcpServers []string) ([]string, error)
 	EnsureManagerServiceAccountFn func(ctx context.Context, managerName string) error
 	DeleteManagerServiceAccountFn func(ctx context.Context, managerName string) error
 	DeleteCredentialsFn           func(ctx context.Context, name string) error
@@ -34,7 +33,6 @@ type MockManagerProvisioner struct {
 		RefreshCredentials          []string
 		RefreshManagerCredentials   []string
 		EnsureManagerGatewayAuth    []string
-		ReconcileMCPAuth            []string
 		EnsureManagerServiceAccount []string
 		DeleteManagerServiceAccount []string
 		DeleteCredentials           []string
@@ -61,7 +59,6 @@ func (m *MockManagerProvisioner) Reset() {
 	m.RefreshCredentialsFn = nil
 	m.RefreshManagerCredentialsFn = nil
 	m.EnsureManagerGatewayAuthFn = nil
-	m.ReconcileMCPAuthFn = nil
 	m.EnsureManagerServiceAccountFn = nil
 	m.DeleteManagerServiceAccountFn = nil
 	m.DeleteCredentialsFn = nil
@@ -87,7 +84,6 @@ func (m *MockManagerProvisioner) clearCallsLocked() {
 		RefreshCredentials          []string
 		RefreshManagerCredentials   []string
 		EnsureManagerGatewayAuth    []string
-		ReconcileMCPAuth            []string
 		EnsureManagerServiceAccount []string
 		DeleteManagerServiceAccount []string
 		DeleteCredentials           []string
@@ -119,13 +115,13 @@ func (m *MockManagerProvisioner) ProvisionManager(ctx context.Context, req servi
 	}, nil
 }
 
-func (m *MockManagerProvisioner) DeprovisionManager(ctx context.Context, name string, mcpServers []string) error {
+func (m *MockManagerProvisioner) DeprovisionManager(ctx context.Context, name string) error {
 	m.mu.Lock()
 	m.Calls.DeprovisionManager = append(m.Calls.DeprovisionManager, name)
 	fn := m.DeprovisionManagerFn
 	m.mu.Unlock()
 	if fn != nil {
-		return fn(ctx, name, mcpServers)
+		return fn(ctx, name)
 	}
 	return nil
 }
@@ -171,17 +167,6 @@ func (m *MockManagerProvisioner) EnsureManagerGatewayAuth(ctx context.Context, m
 		return fn(ctx, managerName, gatewayKey)
 	}
 	return nil
-}
-
-func (m *MockManagerProvisioner) ReconcileMCPAuth(ctx context.Context, consumerName string, mcpServers []string) ([]string, error) {
-	m.mu.Lock()
-	m.Calls.ReconcileMCPAuth = append(m.Calls.ReconcileMCPAuth, consumerName)
-	fn := m.ReconcileMCPAuthFn
-	m.mu.Unlock()
-	if fn != nil {
-		return fn(ctx, consumerName, mcpServers)
-	}
-	return mcpServers, nil
 }
 
 func (m *MockManagerProvisioner) EnsureManagerServiceAccount(ctx context.Context, managerName string) error {
@@ -311,13 +296,6 @@ func (m *MockManagerProvisioner) ServiceAccountCallCounts() (ensure, delete int)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return len(m.Calls.EnsureManagerServiceAccount), len(m.Calls.DeleteManagerServiceAccount)
-}
-
-// MCPAuthCallCount returns the number of ReconcileMCPAuth calls.
-func (m *MockManagerProvisioner) MCPAuthCallCount() int {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return len(m.Calls.ReconcileMCPAuth)
 }
 
 // CredentialCallCounts returns DeleteCredentials and RequestManagerSAToken counts.

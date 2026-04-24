@@ -299,92 +299,6 @@ func (c *HigressClient) modifyAIRoutes(ctx context.Context, consumerName string,
 	return firstErr
 }
 
-func (c *HigressClient) AuthorizeMCPServers(ctx context.Context, consumerName string, mcpServers []string) ([]string, error) {
-	return c.modifyMCPServers(ctx, consumerName, mcpServers, true)
-}
-
-func (c *HigressClient) DeauthorizeMCPServers(ctx context.Context, consumerName string, mcpServers []string) error {
-	_, err := c.modifyMCPServers(ctx, consumerName, mcpServers, false)
-	return err
-}
-
-func (c *HigressClient) modifyMCPServers(ctx context.Context, consumerName string, mcpServers []string, add bool) ([]string, error) {
-	allMCP, err := c.listMCPServers(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	existingNames := make(map[string]bool)
-	for _, m := range allMCP {
-		existingNames[m.Name] = true
-	}
-
-	// Determine target list
-	targets := mcpServers
-	if len(targets) == 0 && add {
-		for name := range existingNames {
-			targets = append(targets, name)
-		}
-	}
-
-	var resolved []string
-
-	for _, mcpName := range targets {
-		mcpName = strings.TrimSpace(mcpName)
-		if mcpName == "" {
-			continue
-		}
-		if !existingNames[mcpName] {
-			continue
-		}
-
-		// Re-fetch latest state to minimize race window
-		freshMCP, err := c.listMCPServers(ctx)
-		if err != nil {
-			continue
-		}
-
-		var currentConsumers []string
-		for _, m := range freshMCP {
-			if m.Name == mcpName {
-				currentConsumers = m.AllowedConsumers
-				break
-			}
-		}
-
-		var newConsumers []string
-		if add {
-			// Always include "manager", then existing (minus target), then target
-			newConsumers = []string{"manager"}
-			for _, ec := range currentConsumers {
-				if ec == "manager" || ec == consumerName {
-					continue
-				}
-				newConsumers = append(newConsumers, ec)
-			}
-			newConsumers = append(newConsumers, consumerName)
-		} else {
-			for _, ec := range currentConsumers {
-				if ec != consumerName {
-					newConsumers = append(newConsumers, ec)
-				}
-			}
-		}
-
-		body := map[string]interface{}{
-			"mcpServerName": mcpName,
-			"consumers":     newConsumers,
-		}
-		_, sc, err := c.doJSON(ctx, http.MethodPut, "/v1/mcpServer/consumers", body)
-		if err != nil || (sc != http.StatusOK && sc != http.StatusNoContent) {
-			continue
-		}
-		resolved = append(resolved, mcpName)
-	}
-
-	return resolved, nil
-}
-
 func (c *HigressClient) ExposePort(ctx context.Context, req PortExposeRequest) error {
 	svcSrc := fmt.Sprintf("worker-%s-%d", req.WorkerName, req.Port)
 	routeN := svcSrc
@@ -627,46 +541,6 @@ func (c *HigressClient) deleteServiceSource(ctx context.Context, name string) {
 
 func (c *HigressClient) deleteDomain(ctx context.Context, name string) {
 	c.doJSON(ctx, http.MethodDelete, "/v1/domains/"+name, nil)
-}
-
-func (c *HigressClient) listMCPServers(ctx context.Context) ([]MCPServerAuth, error) {
-	respBody, sc, err := c.doJSON(ctx, http.MethodGet, "/v1/mcpServer", nil)
-	if err != nil {
-		return nil, fmt.Errorf("list MCP servers: %w", err)
-	}
-	if sc != http.StatusOK {
-		return nil, fmt.Errorf("list MCP servers: HTTP %d", sc)
-	}
-
-	var listResp struct {
-		Data []json.RawMessage `json:"data"`
-	}
-	if err := json.Unmarshal(respBody, &listResp); err != nil {
-		// Might be a plain array
-		var arr []json.RawMessage
-		if err2 := json.Unmarshal(respBody, &arr); err2 != nil {
-			return nil, fmt.Errorf("decode MCP servers: %w", err)
-		}
-		listResp.Data = arr
-	}
-
-	var result []MCPServerAuth
-	for _, raw := range listResp.Data {
-		var m struct {
-			Name             string `json:"name"`
-			ConsumerAuthInfo struct {
-				AllowedConsumers []string `json:"allowedConsumers"`
-			} `json:"consumerAuthInfo"`
-		}
-		if err := json.Unmarshal(raw, &m); err != nil {
-			continue
-		}
-		result = append(result, MCPServerAuth{
-			Name:             m.Name,
-			AllowedConsumers: m.ConsumerAuthInfo.AllowedConsumers,
-		})
-	}
-	return result, nil
 }
 
 // doJSON performs an HTTP request with session cookies.

@@ -32,6 +32,8 @@ Record image-affecting changes to `manager/`, `worker/`, `copaw/`, `hermes/`, `o
 
 - **Installer Improvements** — Interactive Hermes runtime selection, masked secret input, version selection, uninstall subcommand (`hiclaw-install.sh uninstall`), and fail-fast on missing embedded image (no more silent fallback to broken legacy path).
 
+- **Structured MCP Server Declaration (breaking CRD change)** — `Worker`/`Manager`/`Team` `spec.mcpServers` switches from `[]string` (server names only) to `[]{name, url, transport}` objects. The old shape relied on the controller to resolve the endpoint URL and authorize consumers on the gateway, which was effectively dead code in both deployment modes (local Higress authorization is owned by the `mcp-server-management` skill and the CRD list was ignored; cloud AI-Gateway authorization was a no-op stub). The new shape declares everything `mcporter` needs directly — `name` keys the entry, `url` is the full gateway endpoint, and `transport` is `http` (Streamable HTTP, default) or `sse`. The controller now simply translates the slice into `mcporter-servers.json` with a `Authorization: Bearer <gatewayKey>` header (reusing the same consumer key the worker uses for LLM access), and no longer performs gateway-side MCP authorization. Gateway-side authorization is now explicitly handled out-of-band: by the `mcp-server-management` skill for local Higress, or by the cloud operator for AI Gateway. The `--mcp-servers` flag is removed from `hiclaw create/apply/update worker`; MCP servers must now be declared in YAML manifests (see `docs/declarative-resource-management.md`). Existing v1.0.9 deployments upgrade cleanly — the migrator recovers `url`/`transport` from the legacy `mcporter-servers.json`, so no manual re-configuration is needed.
+
 **Bug Fixes**
 
 - Fixed controller rotating Matrix access tokens and gateway secrets on every 5-minute reconcile, which triggered agent gateway restarts and dropped in-flight messages. Tokens are now persisted and reused across reconciles.
@@ -99,6 +101,8 @@ Record image-affecting changes to `manager/`, `worker/`, `copaw/`, `hermes/`, `o
 - **首次启动欢迎提示** — 全新安装后自动向管理员私信发送欢迎/引导提示，即使在 Embedded 模式下也能正常工作。Controller 在发送前同时验证 Matrix 房间成员身份和 LLM 认证就绪状态（端到端探测），确保 Manager 不会收到无法回复的消息。安装脚本会等待欢迎消息发送完成，提供流畅的首次使用体验。
 
 - **安装器改进** — 交互式 Hermes 运行时选择、密钥输入脱敏显示、版本选择、卸载子命令（`hiclaw-install.sh uninstall`）、embedded 镜像缺失时快速失败（不再静默回退到已失效的旧架构路径）。
+
+- **结构化 MCP Server 声明（Breaking CRD 变更）** — `Worker`/`Manager`/`Team` 的 `spec.mcpServers` 从 `[]string`（仅包含 Server 名）改为 `[]{name, url, transport}` 对象数组。旧格式依赖 Controller 在运行时解析网关端点 URL 并在网关上授权 Consumer，但在两种部署模式下实际上都是死代码（本地 Higress 模式下授权由 `mcp-server-management` 技能负责，CRD 字段被静默忽略；云 AI 网关模式下对应接口只是空实现）。新格式直接声明 `mcporter` 所需的全部信息：`name` 作为条目键、`url` 是完整网关端点、`transport` 为 `http`（Streamable HTTP，默认）或 `sse`。Controller 现在只负责把这份结构直接翻译成 `mcporter-servers.json` 并附上固定的 `Authorization: Bearer <gatewayKey>` Header（复用 Worker 访问 LLM 时使用的同一个 Consumer Key），不再执行任何网关侧的 MCP 授权。网关侧授权职责被明确剥离到带外：本地 Higress 由 `mcp-server-management` 技能负责，云 AI 网关由云端运维侧负责。`hiclaw create/apply/update worker` 的 `--mcp-servers` 参数被移除，MCP Server 必须在 YAML 清单中声明（详见 `docs/declarative-resource-management.md`）。v1.0.9 存量部署可平滑升级 — 迁移器会从旧版 `mcporter-servers.json` 恢复每个 Server 的 `url` 和 `transport`，无需人工重新配置。
 
 **Bug 修复**
 

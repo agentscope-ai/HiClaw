@@ -25,24 +25,13 @@ func (r *ManagerReconciler) reconcileManagerConfig(ctx context.Context, s *manag
 		return reconcile.Result{}, fmt.Errorf("deploy package: %w", err)
 	}
 
-	var authorizedMCPs []string
-	if isUpdate && len(m.Spec.McpServers) > 0 {
-		var err error
-		authorizedMCPs, err = r.Provisioner.ReconcileMCPAuth(ctx, "manager", m.Spec.McpServers)
-		if err != nil {
-			logger.Error(err, "MCP reauthorization failed (non-fatal)")
-		}
-	} else {
-		authorizedMCPs = s.provResult.AuthorizedMCPs
-	}
-
 	if err := r.Deployer.DeployManagerConfig(ctx, service.ManagerDeployRequest{
 		Name:           m.Name,
 		Spec:           m.Spec,
 		MatrixToken:    s.provResult.MatrixToken,
 		GatewayKey:     s.provResult.GatewayKey,
 		MatrixPassword: s.provResult.MatrixPassword,
-		AuthorizedMCPs: authorizedMCPs,
+		McpServers:     m.Spec.McpServers,
 		IsUpdate:       isUpdate,
 	}); err != nil {
 		return reconcile.Result{}, fmt.Errorf("deploy manager config: %w", err)

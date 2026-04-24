@@ -13,7 +13,7 @@ type CreateWorkerRequest struct {
 	Soul          string                     `json:"soul,omitempty"`
 	Agents        string                     `json:"agents,omitempty"`
 	Skills        []string                   `json:"skills,omitempty"`
-	McpServers    []string                   `json:"mcpServers,omitempty"`
+	McpServers    []v1beta1.MCPServer        `json:"mcpServers,omitempty"`
 	Package       string                     `json:"package,omitempty"`
 	Expose        []v1beta1.ExposePort       `json:"expose,omitempty"`
 	ChannelPolicy *v1beta1.ChannelPolicySpec `json:"channelPolicy,omitempty"`
@@ -33,7 +33,7 @@ type UpdateWorkerRequest struct {
 	Soul          string                     `json:"soul,omitempty"`
 	Agents        string                     `json:"agents,omitempty"`
 	Skills        []string                   `json:"skills,omitempty"`
-	McpServers    []string                   `json:"mcpServers,omitempty"`
+	McpServers    []v1beta1.MCPServer        `json:"mcpServers,omitempty"`
 	Package       string                     `json:"package,omitempty"`
 	Expose        []v1beta1.ExposePort       `json:"expose,omitempty"`
 	ChannelPolicy *v1beta1.ChannelPolicySpec `json:"channelPolicy,omitempty"`
@@ -105,7 +105,7 @@ type TeamWorkerRequest struct {
 	Soul          string                     `json:"soul,omitempty"`
 	Agents        string                     `json:"agents,omitempty"`
 	Skills        []string                   `json:"skills,omitempty"`
-	McpServers    []string                   `json:"mcpServers,omitempty"`
+	McpServers    []v1beta1.MCPServer        `json:"mcpServers,omitempty"`
 	Package       string                     `json:"package,omitempty"`
 	Expose        []v1beta1.ExposePort       `json:"expose,omitempty"`
 	ChannelPolicy *v1beta1.ChannelPolicySpec `json:"channelPolicy,omitempty"`
@@ -180,7 +180,7 @@ type CreateManagerRequest struct {
 	Soul       string                 `json:"soul,omitempty"`
 	Agents     string                 `json:"agents,omitempty"`
 	Skills     []string               `json:"skills,omitempty"`
-	McpServers []string               `json:"mcpServers,omitempty"`
+	McpServers []v1beta1.MCPServer    `json:"mcpServers,omitempty"`
 	Package    string                 `json:"package,omitempty"`
 	Config     *v1beta1.ManagerConfig `json:"config,omitempty"`
 	State      *string                `json:"state,omitempty"` // desired lifecycle state: Running, Sleeping, Stopped
@@ -193,7 +193,7 @@ type UpdateManagerRequest struct {
 	Soul       string                 `json:"soul,omitempty"`
 	Agents     string                 `json:"agents,omitempty"`
 	Skills     []string               `json:"skills,omitempty"`
-	McpServers []string               `json:"mcpServers,omitempty"`
+	McpServers []v1beta1.MCPServer    `json:"mcpServers,omitempty"`
 	Package    string                 `json:"package,omitempty"`
 	Config     *v1beta1.ManagerConfig `json:"config,omitempty"`
 	State      *string                `json:"state,omitempty"` // desired lifecycle state: Running, Sleeping, Stopped

@@ -27,7 +27,7 @@ func (r *ManagerReconciler) reconcileManagerDelete(ctx context.Context, s *manag
 		}
 	}
 
-	if err := r.Provisioner.DeprovisionManager(ctx, managerName, m.Spec.McpServers); err != nil {
+	if err := r.Provisioner.DeprovisionManager(ctx, managerName); err != nil {
 		logger.Error(err, "deprovision failed (non-fatal)")
 	}
 

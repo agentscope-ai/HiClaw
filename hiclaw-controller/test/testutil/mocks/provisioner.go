@@ -16,7 +16,6 @@ type MockProvisioner struct {
 	DeprovisionWorkerFn       func(ctx context.Context, req service.WorkerDeprovisionRequest) error
 	RefreshCredentialsFn      func(ctx context.Context, workerName string) (*service.RefreshResult, error)
 	EnsureWorkerGatewayAuthFn func(ctx context.Context, workerName, gatewayKey string) error
-	ReconcileMCPAuthFn        func(ctx context.Context, consumerName string, mcpServers []string) ([]string, error)
 	ReconcileExposeFn         func(ctx context.Context, workerName string, desired []v1beta1.ExposePort, current []v1beta1.ExposedPortStatus) ([]v1beta1.ExposedPortStatus, error)
 	EnsureServiceAccountFn    func(ctx context.Context, workerName string) error
 	DeleteServiceAccountFn    func(ctx context.Context, workerName string) error
@@ -34,7 +33,6 @@ type MockProvisioner struct {
 		DeprovisionWorker       []service.WorkerDeprovisionRequest
 		RefreshCredentials      []string
 		EnsureWorkerGatewayAuth []string
-		ReconcileMCPAuth        []string
 		ReconcileExpose         []string
 		EnsureServiceAccount    []string
 		DeleteServiceAccount    []string
@@ -61,7 +59,6 @@ func (m *MockProvisioner) Reset() {
 	m.DeprovisionWorkerFn = nil
 	m.RefreshCredentialsFn = nil
 	m.EnsureWorkerGatewayAuthFn = nil
-	m.ReconcileMCPAuthFn = nil
 	m.ReconcileExposeFn = nil
 	m.EnsureServiceAccountFn = nil
 	m.DeleteServiceAccountFn = nil
@@ -88,7 +85,6 @@ func (m *MockProvisioner) clearCallsLocked() {
 		DeprovisionWorker       []service.WorkerDeprovisionRequest
 		RefreshCredentials      []string
 		EnsureWorkerGatewayAuth []string
-		ReconcileMCPAuth        []string
 		ReconcileExpose         []string
 		EnsureServiceAccount    []string
 		DeleteServiceAccount    []string
@@ -158,16 +154,6 @@ func (m *MockProvisioner) EnsureWorkerGatewayAuth(ctx context.Context, workerNam
 	return nil
 }
 
-func (m *MockProvisioner) ReconcileMCPAuth(ctx context.Context, consumerName string, mcpServers []string) ([]string, error) {
-	m.mu.Lock()
-	m.Calls.ReconcileMCPAuth = append(m.Calls.ReconcileMCPAuth, consumerName)
-	fn := m.ReconcileMCPAuthFn
-	m.mu.Unlock()
-	if fn != nil {
-		return fn(ctx, consumerName, mcpServers)
-	}
-	return mcpServers, nil
-}
 
 func (m *MockProvisioner) ReconcileExpose(ctx context.Context, workerName string, desired []v1beta1.ExposePort, current []v1beta1.ExposedPortStatus) ([]v1beta1.ExposedPortStatus, error) {
 	m.mu.Lock()

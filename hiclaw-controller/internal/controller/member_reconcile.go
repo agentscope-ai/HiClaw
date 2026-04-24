@@ -176,7 +176,6 @@ func ReconcileMemberInfra(ctx context.Context, d MemberDeps, m MemberContext, st
 		Role:           m.Role.String(),
 		TeamName:       m.TeamName,
 		TeamLeaderName: m.TeamLeaderName,
-		McpServers:     m.Spec.McpServers,
 	})
 	if err != nil {
 		return reconcile.Result{}, fmt.Errorf("provision worker: %w", err)
@@ -205,24 +204,12 @@ func ReconcileMemberConfig(ctx context.Context, d MemberDeps, m MemberContext, s
 		return nil
 	}
 	logger := log.FromContext(ctx)
-	consumerName := "worker-" + m.Name
 
 	if err := d.Deployer.DeployPackage(ctx, m.Name, m.Spec.Package, m.IsUpdate); err != nil {
 		return fmt.Errorf("deploy package: %w", err)
 	}
 	if err := d.Deployer.WriteInlineConfigs(m.Name, m.Spec); err != nil {
 		return fmt.Errorf("write inline configs: %w", err)
-	}
-
-	var authorizedMCPs []string
-	if m.IsUpdate && len(m.Spec.McpServers) > 0 {
-		var err error
-		authorizedMCPs, err = d.Provisioner.ReconcileMCPAuth(ctx, consumerName, m.Spec.McpServers)
-		if err != nil {
-			logger.Error(err, "MCP reauthorization failed (non-fatal)")
-		}
-	} else {
-		authorizedMCPs = state.ProvResult.AuthorizedMCPs
 	}
 
 	if err := d.Deployer.DeployWorkerConfig(ctx, service.WorkerDeployRequest{
@@ -234,7 +221,7 @@ func ReconcileMemberConfig(ctx context.Context, d MemberDeps, m MemberContext, s
 		MatrixToken:       state.ProvResult.MatrixToken,
 		GatewayKey:        state.ProvResult.GatewayKey,
 		MatrixPassword:    state.ProvResult.MatrixPassword,
-		AuthorizedMCPs:    authorizedMCPs,
+		McpServers:        m.Spec.McpServers,
 		TeamAdminMatrixID: m.TeamAdminMatrixID,
 		IsUpdate:          m.IsUpdate,
 	}); err != nil {
@@ -442,7 +429,6 @@ func ReconcileMemberDelete(ctx context.Context, d MemberDeps, m MemberContext) e
 	if err := d.Provisioner.DeprovisionWorker(ctx, service.WorkerDeprovisionRequest{
 		Name:         m.Name,
 		IsTeamWorker: isTeamWorker,
-		McpServers:   m.Spec.McpServers,
 		ExposedPorts: m.CurrentExposedPorts,
 		ExposeSpec:   m.Spec.Expose,
 	}); err != nil {

@@ -249,18 +249,6 @@ func (a *AIGatewayClient) DeauthorizeAIRoutes(_ context.Context, consumerName st
 	return nil
 }
 
-// AuthorizeMCPServers is a no-op on AI Gateway: MCP authorization is out
-// of scope for the current cloud deployment. Returning an empty list
-// signals to the provisioner that nothing was authorized without raising
-// an error.
-func (a *AIGatewayClient) AuthorizeMCPServers(_ context.Context, _ string, _ []string) ([]string, error) {
-	return nil, nil
-}
-
-func (a *AIGatewayClient) DeauthorizeMCPServers(_ context.Context, _ string, _ []string) error {
-	return nil
-}
-
 // ExposePort / UnexposePort: cloud-platform ingress is expected to be
 // provisioned out-of-band. The hiclaw control plane does not manage APIG
 // routes, so requesting port exposure through this client is an error.

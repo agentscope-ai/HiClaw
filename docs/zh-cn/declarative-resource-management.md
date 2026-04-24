@@ -118,7 +118,9 @@ spec:
   model: claude-sonnet-4-6
   runtime: openclaw
   skills: [github-operations]
-  mcpServers: [github]
+  mcpServers:
+    - name: github
+      url: https://gateway.example.com/mcp-servers/github/mcp
   package: file://./devops-alice.zip    # 包含自定义 SOUL.md、skills、Dockerfile 等
 ```
 
@@ -179,7 +181,9 @@ spec:
     - name: alpha-dev
       model: claude-sonnet-4-6
       skills: [github-operations]
-      mcpServers: [github]
+      mcpServers:
+        - name: github
+          url: https://gateway.example.com/mcp-servers/github/mcp
       soul: |
         # Alpha Dev - 后端开发
         ## 人格
@@ -359,7 +363,8 @@ spec:
   skills:
     - worker-management
   mcpServers:
-    - github
+    - name: github
+      url: https://gateway.example.com/mcp-servers/github/mcp
   config:
     heartbeatInterval: 15m
     workerIdleTimeout: 720m
@@ -692,7 +697,9 @@ spec:
     - name: backend-dev
       model: claude-sonnet-4-6
       skills: [github-operations, git-delegation]
-      mcpServers: [github]
+      mcpServers:
+        - name: github
+          url: https://gateway.example.com/mcp-servers/github/mcp
     - name: frontend-dev
       model: claude-sonnet-4-6
       skills: [github-operations]
