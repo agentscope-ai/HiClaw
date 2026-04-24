@@ -30,6 +30,7 @@ WORKER_IMAGE         ?= $(REGISTRY)/$(REPO)/hiclaw-worker
 COPAW_WORKER_IMAGE   ?= $(REGISTRY)/$(REPO)/hiclaw-copaw-worker
 HERMES_WORKER_IMAGE  ?= $(REGISTRY)/$(REPO)/hiclaw-hermes-worker
 OPENCLAW_BASE_IMAGE  ?= $(REGISTRY)/$(REPO)/openclaw-base
+CONTROLLER_IMAGE     ?= $(REGISTRY)/$(REPO)/hiclaw-controller
 EMBEDDED_IMAGE       ?= $(REGISTRY)/$(REPO)/hiclaw-embedded
 
 MANAGER_TAG        ?= $(MANAGER_IMAGE):$(VERSION)
@@ -39,7 +40,6 @@ COPAW_WORKER_TAG   ?= $(COPAW_WORKER_IMAGE):$(VERSION)
 HERMES_WORKER_TAG  ?= $(HERMES_WORKER_IMAGE):$(VERSION)
 OPENCLAW_BASE_TAG  ?= $(OPENCLAW_BASE_IMAGE):$(VERSION)
 CONTROLLER_TAG     ?= $(CONTROLLER_IMAGE):$(VERSION)
-EMBEDDED_IMAGE     ?= $(REGISTRY)/$(REPO)/hiclaw-embedded
 EMBEDDED_TAG       ?= $(EMBEDDED_IMAGE):$(VERSION)
 
 # Local image names (no registry prefix, used by tests and install script)
