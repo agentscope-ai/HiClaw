@@ -91,6 +91,7 @@ func buildCoordinationBlock(ctx CoordinationContext) string {
 
 	case "worker":
 		fmt.Fprintf(&b, "- **Coordinator**: @%s:%s (Team Leader of %s)\n", ctx.TeamLeaderName, ctx.MatrixDomain, ctx.TeamName)
+		fmt.Fprintf(&b, "- **Team**: %s\n", ctx.TeamName)
 		if ctx.TeamAdminID != "" {
 			fmt.Fprintf(&b, "- **Team Admin**: %s (has admin authority within this team)\n", ctx.TeamAdminID)
 		}
