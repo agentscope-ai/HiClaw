@@ -17,6 +17,8 @@
 HiClaw 并不和其他 xxClaw 对标，自己不实现 Agent 逻辑，而是编排和管理多个 Agent 容器（Manager 和众多 Workers）。
 - 🧑‍💻 **设计了 Manger-Workers 架构**：不用真人去管理每个干活的 Worker Claw，实现由 Agent 管理 Agents。
 - 🦞 **每个 Agent 支持自定义**：OpenClaw、Copaw、NanoClaw、ZeroClaw 以及企业自建的 Agent，从养虾到开虾场，提供 worker 和 Team 模板市场。
+
+- 🤝 **多运行时协作**：OpenClaw、QwenPaw 和 Hermes Worker 在同一个 IM 房间中共存协作。用确定性更高的 Agent（OpenClaw/QwenPaw）做 Leader 编排任务，用 Hermes Worker 执行自主编程——各司其职。
 - 📚 **引入 MinIO 共享文件系统**：用于 Agent 之间的信息共享，大幅降低多 Agent 协作带来的 Token 消耗。
 - ⛑️ **引入 Higress AI Gateway**：流量入口和各类凭证风险降低了，减少了用户对原生龙虾在安全上的顾虑。
 - 🎨 **使用 Element IM 客户端+Tuwunel IM 服务器（均基于 Matrix 实时通信协议）**：节省钉钉、飞书 IM 的接入和企业内的审批成本，方便用户快速体验在 IM 的交互环境中体验模型服务的"爽感"，同时支持以 OpenClaw 原生的方式接入 IM。
