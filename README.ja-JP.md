@@ -116,7 +116,7 @@ Set-ExecutionPolicy Bypass -Scope Process -Force; $wc=New-Object Net.WebClient; 
 - Helm 3.7+
 - デフォルトの StorageClass（Tuwunel と MinIO の PVC 用）
 
-**インストール**
+**インストール（OpenAI / OpenAI 互換モード）**
 
 ```bash
 helm repo add higress.io https://higress.io/helm-charts
@@ -125,18 +125,69 @@ helm repo update
 helm install hiclaw higress.io/hiclaw \
   -n hiclaw-system --create-namespace \
   --render-subchart-notes \
-  --set credentials.llmApiKey=<your-llm-api-key> \
+  --set credentials.llmApiKey=<your-api-key> \
   --set credentials.adminPassword=<your-admin-password> \
   --set gateway.publicURL=http://localhost:18080
 ```
+
+OpenAI 互換 API を提供する他のプロバイダーを使用する場合は、`llmBaseUrl` も設定してください：
+
+```bash
+helm install hiclaw higress.io/hiclaw \
+  -n hiclaw-system --create-namespace \
+  --render-subchart-notes \
+  --set credentials.llmApiKey=<your-api-key> \
+  --set credentials.llmBaseUrl=https://your-provider.example.com/v1 \
+  --set credentials.defaultModel=your-model-name \
+  --set credentials.adminPassword=<your-admin-password> \
+  --set gateway.publicURL=http://localhost:18080
+```
+
+<details>
+<summary>Qwen（通義千問）を使用する場合</summary>
+
+```bash
+helm install hiclaw higress.io/hiclaw \
+  -n hiclaw-system --create-namespace \
+  --render-subchart-notes \
+  --set credentials.llmApiKey=<your-qwen-api-key> \
+  --set credentials.llmProvider=qwen \
+  --set credentials.defaultModel=qwen3.5-plus \
+  --set credentials.adminPassword=<your-admin-password> \
+  --set gateway.publicURL=http://localhost:18080
+```
+
+</details>
 
 | 値 | 必須 | 説明 |
 |---|---|---|
 | `credentials.llmApiKey` | 必須 | LLM プロバイダーの API キー |
 | `gateway.publicURL` | 必須 | ユーザーが Element Web にアクセスする公開 URL（port-forward 環境では `http://localhost:18080`、本番では `https://hiclaw.example.com` 等） |
 | `credentials.adminPassword` | 推奨 | Matrix 管理者パスワード。空のままだと自動生成（後で Secret から読み出す必要あり） |
-| `credentials.llmProvider` | 任意 | LLM プロバイダー名、デフォルトは `qwen` |
-| `credentials.defaultModel` | 任意 | デフォルトモデル、例: `qwen3.5-plus` |
+| `credentials.llmProvider` | 任意 | LLM プロバイダー名、デフォルトは `openai` |
+| `credentials.defaultModel` | 任意 | デフォルトモデル、デフォルトは `gpt-5.4` |
+| `credentials.llmBaseUrl` | 任意 | OpenAI 互換のベース URL（例: `https://api.deepseek.com/v1`）。公式 OpenAI API を使用する場合は空のまま |
+
+**マルチリージョンイメージレジストリ**
+
+デフォルトの `global.imageRegistry` は中国リージョン（`higress-registry.cn-hangzhou.cr.aliyuncs.com/higress`）を指しています。中国大陸以外にデプロイする場合は、近いリージョンに切り替えてイメージプルを高速化できます：
+
+| リージョン | レジストリ |
+|---|---|
+| 中国（デフォルト） | `higress-registry.cn-hangzhou.cr.aliyuncs.com/higress` |
+| 北米 | `higress-registry.us-west-1.cr.aliyuncs.com/higress` |
+| 東南アジア | `higress-registry.ap-southeast-7.cr.aliyuncs.com/higress` |
+
+```bash
+# 例: 北米リージョンのレジストリを使用してデプロイ
+helm install hiclaw higress.io/hiclaw \
+  -n hiclaw-system --create-namespace \
+  --render-subchart-notes \
+  --set global.imageRegistry=higress-registry.us-west-1.cr.aliyuncs.com/higress \
+  --set credentials.llmApiKey=<your-api-key> \
+  --set credentials.adminPassword=<your-admin-password> \
+  --set gateway.publicURL=http://localhost:18080
+```
 
 設定可能な全パラメータ（ゲートウェイ／ストレージの provider、イメージタグ、リソース、永続化など）は [`helm/hiclaw/values.yaml`](helm/hiclaw/values.yaml) を参照してください。
 

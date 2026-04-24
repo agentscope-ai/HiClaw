@@ -142,7 +142,7 @@ Set-ExecutionPolicy Bypass -Scope Process -Force; $wc=New-Object Net.WebClient; 
 - Helm 3.7+
 - 默认 StorageClass（用于 Tuwunel 与 MinIO 的 PVC）
 
-**安装**
+**安装（OpenAI / OpenAI 兼容模式）**
 
 ```bash
 helm repo add higress.io https://higress.io/helm-charts
@@ -151,18 +151,69 @@ helm repo update
 helm install hiclaw higress.io/hiclaw \
   -n hiclaw-system --create-namespace \
   --render-subchart-notes \
-  --set credentials.llmApiKey=<你的-LLM-API-Key> \
+  --set credentials.llmApiKey=<你的-API-Key> \
   --set credentials.adminPassword=<你的-管理员密码> \
   --set gateway.publicURL=http://localhost:18080
 ```
+
+如果使用非 OpenAI 但兼容 OpenAI API 的服务商，还需设置 `llmBaseUrl`：
+
+```bash
+helm install hiclaw higress.io/hiclaw \
+  -n hiclaw-system --create-namespace \
+  --render-subchart-notes \
+  --set credentials.llmApiKey=<你的-API-Key> \
+  --set credentials.llmBaseUrl=https://your-provider.example.com/v1 \
+  --set credentials.defaultModel=your-model-name \
+  --set credentials.adminPassword=<你的-管理员密码> \
+  --set gateway.publicURL=http://localhost:18080
+```
+
+<details>
+<summary>使用通义千问（Qwen）</summary>
+
+```bash
+helm install hiclaw higress.io/hiclaw \
+  -n hiclaw-system --create-namespace \
+  --render-subchart-notes \
+  --set credentials.llmApiKey=<你的-通义千问-API-Key> \
+  --set credentials.llmProvider=qwen \
+  --set credentials.defaultModel=qwen3.5-plus \
+  --set credentials.adminPassword=<你的-管理员密码> \
+  --set gateway.publicURL=http://localhost:18080
+```
+
+</details>
 
 | 参数 | 是否必填 | 说明 |
 |---|---|---|
 | `credentials.llmApiKey` | 必填 | LLM 服务商 API Key |
 | `gateway.publicURL` | 必填 | 用户访问 Element Web 的对外地址（端口转发场景填 `http://localhost:18080`，正式环境填 `https://hiclaw.example.com` 等） |
 | `credentials.adminPassword` | 推荐 | Matrix 管理员密码；留空时会自动生成（之后需要从 Secret 中读取） |
-| `credentials.llmProvider` | 可选 | LLM 服务商名，默认 `qwen` |
-| `credentials.defaultModel` | 可选 | 默认模型，例如 `qwen3.5-plus` |
+| `credentials.llmProvider` | 可选 | LLM 服务商名，默认 `openai` |
+| `credentials.defaultModel` | 可选 | 默认模型，默认 `gpt-5.4` |
+| `credentials.llmBaseUrl` | 可选 | OpenAI 兼容的 Base URL（例如 `https://api.deepseek.com/v1`）。使用官方 OpenAI API 时留空 |
+
+**多地域镜像仓库**
+
+默认 `global.imageRegistry` 指向中国区域（`higress-registry.cn-hangzhou.cr.aliyuncs.com/higress`）。如果在中国大陆以外部署，可切换至就近区域以加速镜像拉取：
+
+| 区域 | Registry |
+|---|---|
+| 中国（默认） | `higress-registry.cn-hangzhou.cr.aliyuncs.com/higress` |
+| 北美 | `higress-registry.us-west-1.cr.aliyuncs.com/higress` |
+| 东南亚 | `higress-registry.ap-southeast-7.cr.aliyuncs.com/higress` |
+
+```bash
+# 示例：使用北美镜像仓库部署
+helm install hiclaw higress.io/hiclaw \
+  -n hiclaw-system --create-namespace \
+  --render-subchart-notes \
+  --set global.imageRegistry=higress-registry.us-west-1.cr.aliyuncs.com/higress \
+  --set credentials.llmApiKey=<你的-API-Key> \
+  --set credentials.adminPassword=<你的-管理员密码> \
+  --set gateway.publicURL=http://localhost:18080
+```
 
 完整可配置项（网关/存储 provider、镜像 tag、资源、持久化等）请参考 [`helm/hiclaw/values.yaml`](helm/hiclaw/values.yaml)。
 
@@ -306,37 +357,6 @@ python scripts/export-debug-log.py --range 1h
 你也可以让 AI 工具直接提交 Issue 或 PR。先安装 [GitHub CLI](https://cli.github.com/)，执行 `gh auth login` 在浏览器中完成登录，然后将 [OpenClaw GitHub skill](https://github.com/openclaw/openclaw/blob/main/skills/github/SKILL.md) 配置到你的 AI 编程工具（Cursor、Claude Code 等）中。之后直接让它根据分析结果提交 Issue 或 PR 即可。
 
 欢迎[提交 Issue](https://github.com/alibaba/hiclaw/issues)，或在 [Discord](https://discord.gg/n6mV8xEYUF) / 钉钉群里随时提问。
-
-## Roadmap
-
-### ✅ 已发布
-
-- ~~**CoPaw** -- 轻量级 Agent 运行时~~ [已在 1.0.4 发布](blog/zh-cn/hiclaw-1.0.4-release.md)：Docker 模式内存占用约 150MB（对比 OpenClaw 的 500MB），还支持本地模式可操作浏览器、访问本地文件。
-- ~~**通用 MCP 服务支持** -- MCP 服务集成~~ [已在 1.0.6 发布](blog/zh-cn/hiclaw-1.0.6-release.md)：任意 MCP 服务可安全暴露给 Worker，Worker 仅使用 Higress 签发的 token，真实凭证零泄露。
-
-### 进行中
-
-#### 轻量级 Worker 运行时
-
-- **ZeroClaw** -- 基于 Rust 的超轻量运行时，3.4MB 二进制，冷启动 <10ms，专为边缘和资源受限环境设计。
-- **NanoClaw** -- 极简 OpenClaw 替代品，<4000 行代码，基于容器隔离，使用 Anthropic Agents SDK。
-
-目标：将单 Worker 内存占用从 ~500MB 降至 <100MB，在相同硬件上支持更多 Worker。
-
-### 计划中
-
-#### Team 管理中心
-
-开箱即用的可视化控制台，用于观察和管控整个 Agent Team：
-
-- **实时观测**：每个 Agent 的工作过程细节可视化（对话、工具调用、思考过程）
-- **主动打断**：发现问题时可随时打断指定 Agent 的工作，接管或调整方向
-- **任务时间线**：谁在什么时候做了什么，完整历史记录
-- **资源监控**：每个 Worker 的 CPU/内存使用情况
-
-目标：让 Agent Teams 像人类团队一样透明可控--没有黑盒。
-
----
 
 ## 文档
 
