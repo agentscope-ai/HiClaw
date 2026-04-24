@@ -356,6 +356,7 @@ type managerResp struct {
 	RoomID       string `json:"roomID,omitempty"`
 	Version      string `json:"version,omitempty"`
 	Message      string `json:"message,omitempty"`
+	WelcomeSent  bool   `json:"welcomeSent"`
 }
 
 type managerListResp struct {
@@ -426,6 +427,10 @@ func humanDetail(h humanResp) []KeyValue {
 }
 
 func managerDetail(m managerResp) []KeyValue {
+	welcome := "false"
+	if m.WelcomeSent {
+		welcome = "true"
+	}
 	return []KeyValue{
 		{"Name", m.Name},
 		{"Phase", or(m.Phase, "Pending")},
@@ -435,6 +440,7 @@ func managerDetail(m managerResp) []KeyValue {
 		{"MatrixUserID", m.MatrixUserID},
 		{"RoomID", m.RoomID},
 		{"Version", m.Version},
+		{"WelcomeSent", welcome},
 		{"Message", m.Message},
 	}
 }

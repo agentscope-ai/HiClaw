@@ -1,27 +1,19 @@
 # FAQ
 
-> **Using HiClaw v1.0.9 or earlier?** The architecture changed significantly in v1.1.0. For the legacy single-container architecture, see [FAQ (Legacy Architecture)](faq-legacy.md).
-
 - [How to check the current HiClaw version](#how-to-check-the-current-hiclaw-version)
-- [Understanding the new architecture (v1.1.0+)](#understanding-the-new-architecture-v110)
-- [How to use the hiclaw CLI to manage resources](#how-to-use-the-hiclaw-cli-to-manage-resources)
 - [How to connect Feishu/DingTalk/WeCom/Discord/Telegram](#how-to-connect-feishudingtalkwecomdiscordtelegram)
 - [Installation script exits immediately on Windows](#installation-script-exits-immediately-on-windows)
-- [Installation fails: "manifest unknown" for embedded image](#installation-fails-manifest-unknown-for-embedded-image)
 - [Manager Agent startup timeout or failure](#manager-agent-startup-timeout-or-failure)
 - [Accessing the web UI from other devices on the LAN](#accessing-the-web-ui-from-other-devices-on-the-lan)
 - [Cannot connect to Matrix server locally](#cannot-connect-to-matrix-server-locally)
 - [How to talk to a Worker directly](#how-to-talk-to-a-worker-directly)
 - [How to switch the Manager's model](#how-to-switch-the-managers-model)
 - [How to switch a Worker's model](#how-to-switch-a-workers-model)
-- [How to switch a Worker's runtime](#how-to-switch-a-workers-runtime)
-- [How to use the Worker Template Marketplace](#how-to-use-the-worker-template-marketplace)
 - [Does HiClaw support sending and receiving files](#does-hiclaw-support-sending-and-receiving-files)
 - [Why does Manager/Worker keep showing "typing"](#why-does-managerworker-keep-showing-typing)
 - [Manager/Worker not responding to messages](#managerworker-not-responding-to-messages)
 - [Manager not responding or returning error status codes](#manager-not-responding-or-returning-error-status-codes)
 - [HTTP 401: invalid access token or token expired](#http-401-invalid-access-token-or-token-expired)
-- [How to view Manager Agent logs](#how-to-view-manager-agent-logs)
 - [Session management via IM](#session-management-via-im)
 
 ---
@@ -37,165 +29,8 @@ docker exec hiclaw-manager cat /opt/hiclaw/agent/.builtin-version
 To install a specific version, use the `HICLAW_VERSION` environment variable during installation:
 
 ```bash
-HICLAW_VERSION=v1.1.0 bash <(curl -sSL https://higress.ai/hiclaw/install.sh)
+HICLAW_VERSION=v1.0.5 bash <(curl -sSL https://higress.ai/hiclaw/install.sh)
 ```
-
----
-
-## Understanding the new architecture (v1.1.0+)
-
-Starting from v1.1.0, HiClaw switched from a **single all-in-one container** to a **multi-container architecture** managed by `hiclaw-controller`:
-
-| Component | Old (≤v1.0.9) | New (v1.1.0+) |
-|-----------|---------------|---------------|
-| Infrastructure (Higress, Tuwunel, MinIO, Element Web) | Bundled inside `hiclaw-manager` | Runs in `hiclaw-controller` container (from the `hiclaw-embedded` image) |
-| Manager Agent | Inside `hiclaw-manager` | Separate `hiclaw-manager` container (lightweight, agent only) |
-| Worker management | Shell scripts (`create-worker.sh`) + `workers-registry.json` | Declarative CRDs via `hiclaw` CLI (`hiclaw create worker`, `hiclaw apply`) |
-| Worker runtimes | OpenClaw only | OpenClaw, QwenPaw, or Hermes |
-
-**Key benefits:**
-- The Manager image is ~1.7 GB smaller (no longer ships Higress binaries)
-- Workers are managed declaratively — define YAML, apply, done
-- Three worker runtime choices: OpenClaw (Node.js), QwenPaw (Python), Hermes
-- Team support with Team Leader DAG orchestration
-- Worker Template Marketplace for one-click Worker provisioning
-
-**What you'll see after installation:**
-
-```bash
-docker ps
-# hiclaw-controller    -- Controller + all infrastructure services
-# hiclaw-manager       -- Manager Agent (lightweight)
-# hiclaw-worker-alice  -- Worker containers (created on demand)
-```
-
----
-
-## How to use the hiclaw CLI to manage resources
-
-The `hiclaw` CLI is pre-installed inside the `hiclaw-controller` container. You can exec into the container to query, create, update, or delete any HiClaw resource directly — without going through the Manager Agent.
-
-**Enter the controller container:**
-
-```bash
-docker exec -it hiclaw-controller sh
-```
-
-### Query resources
-
-```bash
-# Cluster overview
-hiclaw status
-
-# List all workers (table format)
-hiclaw get workers
-
-# List workers as JSON (useful for scripting)
-hiclaw get workers -o json
-
-# Get details of a specific worker
-hiclaw get workers alice
-hiclaw get workers alice -o json
-
-# List workers in a specific team
-hiclaw get workers --team dev-team
-
-# List all teams
-hiclaw get teams
-
-# List all humans
-hiclaw get humans
-
-# List managers
-hiclaw get managers
-
-# Check controller version
-hiclaw version
-```
-
-### Create resources
-
-```bash
-# Create a worker with default model and runtime
-hiclaw create worker --name alice
-
-# Create a worker with specific model and runtime
-hiclaw create worker --name bob --model claude-sonnet-4-6 --runtime hermes
-
-# Create a worker with skills and MCP servers
-hiclaw create worker --name charlie --skills github-operations --mcp-servers github
-
-# Create a worker with a custom SOUL.md
-hiclaw create worker --name diana --soul-file /path/to/SOUL.md
-
-# Create a worker without waiting for it to be ready
-hiclaw create worker --name eve --no-wait
-
-# Create a team
-hiclaw create team --name dev-team --goal "Full-stack web development"
-
-# Create a human
-hiclaw create human --name john --level 1
-
-# Create a manager
-hiclaw create manager --name default --model qwen3.5-plus
-```
-
-### Update resources
-
-```bash
-# Switch a worker's model
-hiclaw update worker --name alice --model claude-sonnet-4-6
-
-# Switch a worker's runtime (triggers container recreation)
-hiclaw update worker --name alice --runtime hermes
-
-# Update a worker's skills
-hiclaw update worker --name alice --skills github-operations,code-review
-
-# Add MCP server access
-hiclaw update worker --name alice --mcp-servers github,sentry
-```
-
-### Apply YAML definitions
-
-```bash
-# Apply a single YAML resource
-hiclaw apply -f worker-alice.yaml
-
-# Import a worker from a zip package
-hiclaw apply worker --name alice --zip worker-package.zip
-```
-
-### Worker lifecycle
-
-```bash
-# Stop (sleep) a worker
-hiclaw worker sleep --name alice
-
-# Wake a sleeping worker
-hiclaw worker wake --name alice
-
-# Check a worker's status
-hiclaw worker status --name alice
-```
-
-### Delete resources
-
-```bash
-# Delete a worker (stops container, cleans up Matrix account and gateway consumer)
-hiclaw delete worker alice
-
-# Delete a team
-hiclaw delete team dev-team
-
-# Delete a human
-hiclaw delete human john
-```
-
-> **Tip:** Most Manager Agent operations (creating workers, switching models, assigning tasks) ultimately call the same `hiclaw` CLI under the hood. Using the CLI directly is useful for debugging, bulk operations, or automation scripts.
-
-For declarative YAML resource definitions, see [Declarative Resource Management](declarative-resource-management.md).
 
 ---
 
@@ -205,50 +40,23 @@ If the PowerShell installation script closes immediately after launching, first 
 
 ---
 
-## Installation fails: "manifest unknown" for embedded image
-
-If the installer fails with an error like:
-
-```
-ERROR: Failed to pull hiclaw-embedded image.
-Attempted: higress/hiclaw-embedded:v1.1.0 and higress/hiclaw-embedded:latest
-```
-
-This means the embedded image is not available in the registry for your requested version. Three options:
-
-1. **Pin to a version that has the embedded image**: Check the [releases page](https://github.com/higress-group/hiclaw/releases) for available versions.
-2. **Build locally from source**: Clone the repo and run `make install-embedded`.
-3. **Override the image**: Set `HICLAW_INSTALL_EMBEDDED_IMAGE` to a custom image.
-
-> If you intentionally want to use the legacy single-container architecture (v1.0.9 or earlier), set `HICLAW_FORCE_LEGACY=1`. Note this only works with images that bundle the infrastructure services.
-
----
-
 ## Manager Agent startup timeout or failure
 
-If the Manager Agent is unresponsive after installation, check the logs.
-
-**In the new architecture (v1.1.0+)**, the Manager runs as a separate container. Check logs in two places:
+If the Manager Agent is unresponsive after installation
+, or fails to start
+, check the logs inside the container:
 
 ```bash
-# Controller (infrastructure) logs
-docker logs hiclaw-controller
-
-# Manager Agent logs
-docker logs hiclaw-manager
+docker exec -it hiclaw-manager cat /var/log/hiclaw/manager-agent.log
 ```
 
-**Case 1: Controller is healthy but Manager container won't start**
+**Case 1: Log shows a process exit**
 
-The controller starts the Manager container automatically. If the Manager container is missing from `docker ps`, check the controller logs for provisioning errors.
+The Docker VM may not have enough memory. Increase it to at least 4GB: Docker Desktop → Settings → Resources → Memory. Then re-run the install command.
 
-**Case 2: Docker VM memory insufficient**
+**Case 2: No process exit in logs, but some components won't start**
 
-Increase Docker VM memory to at least 4 GB: Docker Desktop → Settings → Resources → Memory. Then re-run the install command.
-
-**Case 3: Stale config data**
-
-Re-run the install command and choose **delete and reinstall**:
+This is likely caused by stale config data. Re-run the install command from the original install directory and choose **delete and reinstall**:
 
 ```bash
 bash <(curl -sSL https://higress.ai/hiclaw/install.sh)
@@ -256,7 +64,7 @@ bash <(curl -sSL https://higress.ai/hiclaw/install.sh)
 
 When the installer detects an existing installation, it will ask how to proceed. Choosing delete will wipe the stale data and start fresh.
 
-**Case 4: Mac with Apple Silicon and outdated Docker/Podman**
+**Case 3: Mac with Apple Silicon and outdated Docker/Podman**
 
 If you're using a Mac with Apple Silicon (M1/M2/M3/M4) and Docker Desktop is older than 4.39.0, Manager Agent may fail to start properly.
 
@@ -399,68 +207,6 @@ Reference: [Higress AI Quick Start — Console Configuration](https://higress.ai
 
 ---
 
-## How to switch a Worker's runtime
-
-HiClaw v1.1.0+ supports three Worker runtimes:
-
-| Runtime | Language | Best For |
-|---------|----------|----------|
-| OpenClaw | Node.js | General-purpose, mature ecosystem |
-| QwenPaw | Python | Python-native workflows, data science |
-| Hermes | Python | Autonomous coding, development tasks |
-
-### At creation time
-
-Specify the runtime when creating a Worker:
-
-```
-hiclaw create worker --name alice --runtime hermes
-```
-
-Or via YAML:
-
-```yaml
-apiVersion: hiclaw.io/v1beta1
-kind: Worker
-metadata:
-  name: alice
-spec:
-  runtime: hermes
-  model: qwen3.5-plus
-```
-
-If no runtime is specified, the default set during installation (`HICLAW_DEFAULT_WORKER_RUNTIME`) is used, falling back to `openclaw`.
-
-### After creation
-
-Tell Manager to switch a Worker's runtime:
-> "Switch alice's runtime to hermes"
-
-Manager will use the worker-management skill to trigger a container recreation. The Worker's Matrix account, room, gateway consumer, MinIO data, and persisted credentials are preserved. Container-local ephemeral state (caches, in-flight task progress) will be lost.
-
----
-
-## How to use the Worker Template Marketplace
-
-HiClaw v1.1.0+ includes a Worker Template Marketplace backed by Nacos. Instead of configuring Workers from scratch, you can import pre-built templates:
-
-**Via Manager conversation:**
-
-Tell Manager what kind of Worker you need:
-> "I need a Worker for frontend development with React expertise"
-
-Manager will search the marketplace, recommend matching templates, and import after your confirmation.
-
-**Via CLI:**
-
-```bash
-hiclaw apply -f my-worker.yaml
-```
-
-With a `package` reference in the YAML pointing to a marketplace template.
-
----
-
 ## Does HiClaw support sending and receiving files
 
 **Receiving files from you**: Yes. You can upload a file directly in Element Web (the attachment button), and Manager or Worker will receive it as a Matrix media message and can read its content.
@@ -471,7 +217,7 @@ With a `package` reference in the YAML pointing to a marketplace template.
 
 ## Why does Manager/Worker keep showing "typing"
 
-This is normal — it means the underlying Agent engine is actively executing. HiClaw sets a 30-minute timeout per task, so an agent can stay in this state for up to 30 minutes while working.
+This is normal — it means the underlying OpenClaw agent engine is actively executing. HiClaw sets a 30-minute timeout per task, so an agent can stay in this state for up to 30 minutes while working.
 
 To see what the agent is actually doing, exec into the Manager or Worker container and check the session logs:
 
@@ -483,9 +229,7 @@ docker exec -it hiclaw-manager ls .openclaw/agents/main/sessions/
 docker exec -it <worker-name> ls .openclaw/agents/main/sessions/
 ```
 
-The `.jsonl` files in that directory are written in real time and contain the full agent execution trace — LLM calls, tool use, reasoning steps, etc.
-
-> **Note**: For Hermes-runtime Workers, session data is stored at `~/.hermes/state.db` instead.
+The `.jsonl` files in that directory are written by OpenClaw in real time and contain the full agent execution trace — LLM calls, tool use, reasoning steps, etc.
 
 ---
 
@@ -512,7 +256,7 @@ OpenClaw limits the "typing" indicator to a maximum of **2 minutes**. If the age
 
 ### 3. Check session status
 
-The session might be corrupted. Enter the Manager or Worker container and use the OpenClaw TUI to investigate:
+The OpenClaw session might be corrupted. Enter the Manager or Worker container and use the OpenClaw TUI to investigate:
 
 ```bash
 # Manager
@@ -535,23 +279,9 @@ If the session is corrupted, try sending `/new` as a standalone message in the c
 
 If Manager stops responding or you see error codes like 404 or 503, check these common causes:
 
-### 1. Check container status
+### 1. Check session status
 
-In the new architecture, verify both the controller and Manager containers are running:
-
-```bash
-docker ps | grep -E "hiclaw-controller|hiclaw-manager"
-```
-
-If `hiclaw-manager` is not running, check the controller logs:
-
-```bash
-docker logs hiclaw-controller
-```
-
-### 2. Check session status
-
-The session might be corrupted. Enter the Manager container and use the OpenClaw TUI to investigate:
+The OpenClaw session might be corrupted. Enter the Manager container and use the OpenClaw TUI to investigate:
 
 ```bash
 docker exec -it hiclaw-manager openclaw tui
@@ -564,12 +294,12 @@ In the TUI:
 
 If the session is corrupted, try sending `/new` as a standalone message in the corresponding chat in Element (or other Matrix client) to reset the session and see if that restores normal behavior.
 
-### 3. Check Higress AI Gateway log
+### 2. Check Higress AI Gateway log
 
-If resetting the session doesn't help, check the Higress AI Gateway log. In the new architecture, Higress runs inside the controller container:
+If resetting the session doesn't help, check the Higress AI Gateway log:
 
 ```bash
-docker exec -it hiclaw-controller cat /var/log/hiclaw/higress-gateway.log
+docker exec -it hiclaw-manager cat /var/log/hiclaw/higress-gateway.log
 ```
 
 Search the log for the relevant status code. Common causes:
@@ -579,7 +309,7 @@ Search the log for the relevant status code. Common causes:
 
 To determine whether the error came from the backend or from a Higress misconfiguration, check the `upstream_host` field in the log entry. If `upstream_host` has a value, the request reached the backend and the error was returned by the upstream service. If it's empty, Higress itself couldn't route the request.
 
-### 4. Check model configuration
+### 3. Check model configuration
 
 The model's context window size might be misconfigured, causing the window to fill up before compression happens. See [How to switch the Manager's model](#how-to-switch-the-managers-model) and [How to switch a Worker's model](#how-to-switch-a-workers-model) for proper configuration.
 
@@ -596,32 +326,6 @@ Bailian Coding Plan is a free trial program from Alibaba Cloud. To use it, you n
 3. Follow the instructions to activate the Coding Plan
 
 After activation, re-run the installation or restart the Manager container. The token should work immediately.
-
----
-
-## How to view Manager Agent logs
-
-In the new architecture (v1.1.0+), the Manager runs as a separate container:
-
-```bash
-# Manager Agent logs (stdout/stderr)
-docker logs hiclaw-manager
-
-# Manager Agent session logs (detailed execution trace)
-docker exec -it hiclaw-manager ls .openclaw/agents/main/sessions/
-
-# Controller / infrastructure logs
-docker logs hiclaw-controller
-
-# Higress Gateway log (inside the controller container)
-docker exec -it hiclaw-controller cat /var/log/hiclaw/higress-gateway.log
-```
-
-For OpenClaw Control UI (visual session inspection), open:
-
-```
-http://localhost:18888
-```
 
 ---
 
@@ -658,7 +362,7 @@ HiClaw uses OpenClaw with the Matrix channel (Element Web). OpenClaw supports **
 
 **In group rooms:** You can combine an @mention with a slash command in the same message, e.g. `@Worker /compact` or `@Worker /new`. The @mention ensures the command reaches the right agent, and the slash command is still processed by the Gateway as usual.
 
-The following commands apply to OpenClaw (Manager and OpenClaw Workers). QwenPaw Workers use a different command set — see [QwenPaw Commands](https://copaw.agentscope.io/docs/commands) for details.
+The following commands apply to OpenClaw (Manager and OpenClaw Workers). CoPaw Workers use a different command set — see [CoPaw Commands](https://copaw.agentscope.io/docs/commands) for details.
 
 ### Session reset and compaction
 

@@ -59,6 +59,16 @@ func (r *Resolver) ResolveForCaller(ctx context.Context, caller *auth.CallerIden
 
 	switch caller.Role {
 	case auth.RoleWorker, auth.RoleTeamLeader:
+		// Team leader always carries caller.Team (enriched via the
+		// spec.leader.name field indexer). A team worker carries it
+		// via the spec.workerNames indexer. When caller.Team is set
+		// we route to the team path so the resolver can pick up the
+		// member's AccessEntries on the Team CR and expand
+		// ${self.team}. The empty-team branch also covers standalone
+		// workers and any enricher-miss corner case.
+		if caller.Team != "" {
+			return r.resolveTeamMember(ctx, caller.Username, caller.Team)
+		}
 		return r.resolveWorker(ctx, caller.Username)
 	case auth.RoleManager:
 		return r.resolveManager(ctx, caller.Username)
@@ -88,6 +98,60 @@ func (r *Resolver) resolveWorker(ctx context.Context, name string) (string, []cr
 	return r.prefix.WorkerSessionName(name), resolved, nil
 }
 
+// resolveTeamMember handles both team leaders and team workers. It
+// fetches the Team CR, locates the matching member spec, and applies
+// DefaultEntriesForTeamMember when the member omits accessEntries.
+//
+// When the Team CR cannot be fetched (not found, CRD not installed)
+// but caller.Team is populated we still proceed with an empty
+// crEntries slice so defaults kick in. This matches the behaviour of
+// resolveWorker / resolveManager: a deleted CR shouldn't take down
+// STS issuance for a caller whose identity has already been accepted
+// by the enricher.
+func (r *Resolver) resolveTeamMember(ctx context.Context, name, teamName string) (string, []credprovider.AccessEntry, error) {
+	if name == "" {
+		return "", nil, errors.New("accessresolver: empty team member name")
+	}
+	if teamName == "" {
+		return "", nil, errors.New("accessresolver: empty team name")
+	}
+
+	var team v1beta1.Team
+	if err := r.client.Get(ctx, client.ObjectKey{Name: teamName, Namespace: r.namespace}, &team); err != nil {
+		if !apierrors.IsNotFound(err) && !meta.IsNoMatchError(err) {
+			return "", nil, fmt.Errorf("get team %q: %w", teamName, err)
+		}
+	}
+
+	var crEntries []v1beta1.AccessEntry
+	kind := "TeamWorker"
+	switch {
+	case team.Spec.Leader.Name == name && team.Spec.Leader.Name != "":
+		crEntries = team.Spec.Leader.AccessEntries
+		kind = "TeamLeader"
+	default:
+		for _, w := range team.Spec.Workers {
+			if w.Name == name {
+				crEntries = w.AccessEntries
+				break
+			}
+		}
+	}
+	if len(crEntries) == 0 {
+		crEntries = DefaultEntriesForTeamMember()
+	}
+
+	tmpl := templateCtx{kind: kind, name: name, namespace: r.namespace, team: teamName}
+	resolved, err := r.resolveEntries(crEntries, tmpl)
+	if err != nil {
+		return "", nil, fmt.Errorf("team member %q (team %q): %w", name, teamName, err)
+	}
+	// Team members — both leaders and workers — share the Worker
+	// session-name shape because their ServiceAccount name on the
+	// pod is still hiclaw-worker-<name> (see auth.ResourcePrefix.SAName).
+	return r.prefix.WorkerSessionName(name), resolved, nil
+}
+
 func (r *Resolver) resolveManager(ctx context.Context, name string) (string, []credprovider.AccessEntry, error) {
 	if name == "" {
 		name = "manager"
@@ -113,12 +177,18 @@ type templateCtx struct {
 	kind      string
 	name      string
 	namespace string
+	// team is non-empty only for team leaders and team workers; empty
+	// for standalone workers and managers. When expand encounters
+	// ${self.team} in a non-team context it will be replaced with the
+	// empty string.
+	team string
 }
 
 func (t templateCtx) expand(s string) string {
 	s = strings.ReplaceAll(s, "${self.name}", t.name)
 	s = strings.ReplaceAll(s, "${self.kind}", t.kind)
 	s = strings.ReplaceAll(s, "${self.namespace}", t.namespace)
+	s = strings.ReplaceAll(s, "${self.team}", t.team)
 	return s
 }
 

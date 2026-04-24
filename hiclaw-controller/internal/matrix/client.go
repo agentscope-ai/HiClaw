@@ -49,6 +49,14 @@ type Client interface {
 	// SendMessage sends a plain-text message to a room.
 	SendMessage(ctx context.Context, roomID, token, body string) error
 
+	// SendMessageAsAdmin sends a plain-text message to a room using the
+	// homeserver-admin user identity. Used by the controller to inject
+	// system-level prompts (e.g. the first-boot Manager onboarding
+	// welcome) into rooms where it does not own the recipient's token.
+	// Mirrors the AdminCommand pattern: ensures the admin token is
+	// cached, then delegates to SendMessage.
+	SendMessageAsAdmin(ctx context.Context, roomID, body string) error
+
 	// Login obtains an access token for an existing user.
 	Login(ctx context.Context, username, password string) (string, error)
 
@@ -464,6 +472,21 @@ func (c *TuwunelClient) ensureAdminRoomID(ctx context.Context) (string, error) {
 	}
 	c.adminRoomID.Store(resp.RoomID)
 	return resp.RoomID, nil
+}
+
+// SendMessageAsAdmin sends body to roomID using the cached admin token.
+// Errors from token acquisition and message send are wrapped to identify
+// the failing stage. Used by the controller for system-level prompts that
+// must originate from the admin identity (e.g. Manager onboarding welcome).
+func (c *TuwunelClient) SendMessageAsAdmin(ctx context.Context, roomID, body string) error {
+	token, err := c.ensureAdminToken(ctx)
+	if err != nil {
+		return fmt.Errorf("send admin message: %w", err)
+	}
+	if err := c.SendMessage(ctx, roomID, token, body); err != nil {
+		return fmt.Errorf("send admin message: %w", err)
+	}
+	return nil
 }
 
 // AdminCommand sends a command message to the Tuwunel admin bot room as

@@ -167,6 +167,7 @@ type LeaderSpec struct {
 	WorkerIdleTimeout string                   `json:"workerIdleTimeout,omitempty"`
 	ChannelPolicy     *ChannelPolicySpec       `json:"channelPolicy,omitempty"`
 	State             *string                  `json:"state,omitempty"` // desired lifecycle state: Running, Sleeping, Stopped
+	AccessEntries     []AccessEntry            `json:"accessEntries,omitempty"`
 	// Env holds user-defined environment variables injected into the
 	// leader container. See WorkerSpec.Env for the collision policy.
 	Env map[string]string `json:"env,omitempty"`
@@ -191,6 +192,7 @@ type TeamWorkerSpec struct {
 	Expose        []ExposePort       `json:"expose,omitempty"`
 	ChannelPolicy *ChannelPolicySpec `json:"channelPolicy,omitempty"`
 	State         *string            `json:"state,omitempty"` // desired lifecycle state: Running, Sleeping, Stopped
+	AccessEntries []AccessEntry      `json:"accessEntries,omitempty"`
 	// Env holds user-defined environment variables injected into this
 	// team worker's container. See WorkerSpec.Env for the collision policy.
 	Env map[string]string `json:"env,omitempty"`
@@ -382,6 +384,15 @@ type ManagerStatus struct {
 	ContainerState     string `json:"containerState,omitempty"`
 	Version            string `json:"version,omitempty"`
 	Message            string `json:"message,omitempty"`
+
+	// WelcomeSent records whether the controller has already delivered the
+	// first-boot onboarding prompt to the Admin DM room. Used as the
+	// idempotency guard for reconcileManagerWelcome — once true the
+	// controller will not re-send even if the manager container is later
+	// recreated. The Manager Agent's own `~/soul-configured` file remains
+	// the orthogonal marker that the agent has finished the resulting
+	// onboarding Q&A.
+	WelcomeSent bool `json:"welcomeSent,omitempty"`
 }
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object

@@ -6,16 +6,16 @@ import (
 	"os"
 	"sort"
 	"strings"
-	"sync"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	corev1client "k8s.io/client-go/kubernetes/typed/core/v1"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
-	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
 
 const defaultK8sNamespaceFile = "/var/run/secrets/kubernetes.io/serviceaccount/namespace"
@@ -44,24 +44,18 @@ type K8sConfig struct {
 	ResourcePrefix string
 }
 
-// ownerRefsCache memoizes the controller Pod's ownerReferences (filtered to
-// drop ReplicaSet entries). Populated lazily on the first successful Create;
-// failures are NOT cached so transient errors retry on the next Create. The
-// cache is held on the heap (pointer on K8sBackend) so that WithPrefix-derived
-// backends share the same cache and mutex.
-type ownerRefsCache struct {
-	mu     sync.Mutex
-	data   []metav1.OwnerReference
-	loaded bool
-}
-
 // K8sBackend manages worker lifecycle via Kubernetes Pods.
 type K8sBackend struct {
 	client          K8sCoreClient
 	config          K8sConfig
 	containerPrefix string
 
-	ownerRefs *ownerRefsCache
+	// scheme is used to resolve GVK for CreateRequest.Owner when stamping
+	// the child Pod's controller OwnerReference via
+	// controllerutil.SetControllerReference. A nil scheme means "callers
+	// never supply Owner" — typical for unit tests that don't exercise
+	// ownerRef behaviour.
+	scheme *runtime.Scheme
 }
 
 // K8sCoreClient is the minimal CoreV1 client surface needed by the backend.
@@ -99,7 +93,10 @@ func (w *k8sCoreClientWrapper) ConfigMaps(namespace string) K8sConfigMapClient {
 }
 
 // NewK8sBackend creates a Kubernetes backend using in-cluster config or kubeconfig.
-func NewK8sBackend(config K8sConfig, containerPrefix string) (*K8sBackend, error) {
+// scheme is used by Create to stamp CR-to-Pod controller OwnerReferences
+// (see CreateRequest.Owner); it must have all CR kinds that might appear as
+// Owner registered.
+func NewK8sBackend(config K8sConfig, containerPrefix string, scheme *runtime.Scheme) (*K8sBackend, error) {
 	restConfig, err := loadK8sRESTConfig()
 	if err != nil {
 		return nil, err
@@ -108,11 +105,12 @@ func NewK8sBackend(config K8sConfig, containerPrefix string) (*K8sBackend, error
 	if err != nil {
 		return nil, fmt.Errorf("create kubernetes client: %w", err)
 	}
-	return NewK8sBackendWithClient(&k8sCoreClientWrapper{client: clientset}, config, containerPrefix), nil
+	return NewK8sBackendWithClient(&k8sCoreClientWrapper{client: clientset}, config, containerPrefix, scheme), nil
 }
 
 // NewK8sBackendWithClient creates a Kubernetes backend with a custom client.
-func NewK8sBackendWithClient(client K8sCoreClient, config K8sConfig, containerPrefix string) *K8sBackend {
+// scheme may be nil in tests that don't set CreateRequest.Owner.
+func NewK8sBackendWithClient(client K8sCoreClient, config K8sConfig, containerPrefix string, scheme *runtime.Scheme) *K8sBackend {
 	if containerPrefix == "" {
 		containerPrefix = DefaultContainerPrefix
 	}
@@ -129,7 +127,7 @@ func NewK8sBackendWithClient(client K8sCoreClient, config K8sConfig, containerPr
 		client:          client,
 		config:          config,
 		containerPrefix: containerPrefix,
-		ownerRefs:       &ownerRefsCache{},
+		scheme:          scheme,
 	}
 }
 
@@ -282,14 +280,12 @@ func (k *K8sBackend) Create(ctx context.Context, req CreateRequest) (*WorkerResu
 	}
 
 	tmpl := LoadAgentPodTemplate(ctx, k.client, k.config.Namespace, k.config.ControllerName)
-	ownerRefs := k.controllerOwnerRefs(ctx)
 
 	pod := ApplyPodTemplate(tmpl, PodOverlay{
 		Name:               podName,
 		Namespace:          k.config.Namespace,
 		Labels:             podLabels,
 		Annotations:        map[string]string{"hiclaw.io/created-by": "controller"},
-		OwnerReferences:    ownerRefs,
 		ServiceAccountName: saName,
 		Container:          agentContainer,
 		ResourcesOverride:  resourcesOverride,
@@ -298,6 +294,15 @@ func (k *K8sBackend) Create(ctx context.Context, req CreateRequest) (*WorkerResu
 		TokenVolumeMount:   tokenVolumeMount,
 		HostAliases:        buildHostAliases(req.ExtraHosts),
 	})
+
+	if req.Owner != nil {
+		if k.scheme == nil {
+			return nil, fmt.Errorf("kubernetes backend: scheme is required when CreateRequest.Owner is set")
+		}
+		if err := controllerutil.SetControllerReference(req.Owner, pod, k.scheme); err != nil {
+			return nil, fmt.Errorf("set owner reference on pod %s: %w", podName, err)
+		}
+	}
 
 	created, err := k.client.Pods(k.config.Namespace).Create(ctx, pod, metav1.CreateOptions{})
 	if err != nil {
@@ -419,92 +424,6 @@ func (k *K8sBackend) workerNamePrefix() string {
 		return "hiclaw-worker-"
 	}
 	return k.config.ResourcePrefix + "worker-"
-}
-
-// getCurrentPod fetches the controller's own Pod using HOSTNAME + Namespace.
-// Returns (nil, nil) when HOSTNAME or Namespace is empty (typical for unit
-// tests and out-of-cluster runs), or (nil, err) when the API call fails.
-func (k *K8sBackend) getCurrentPod(ctx context.Context) (*corev1.Pod, error) {
-	hostname := strings.TrimSpace(os.Getenv("HOSTNAME"))
-	if hostname == "" || k.config.Namespace == "" {
-		return nil, nil
-	}
-	pod, err := k.client.Pods(k.config.Namespace).Get(ctx, hostname, metav1.GetOptions{})
-	if err != nil {
-		return nil, err
-	}
-	return pod, nil
-}
-
-// controllerOwnerRefs returns the ownerReferences that every child Pod should
-// inherit from the controller's own Pod (filtered to drop ReplicaSet owners,
-// which churn on Deployment rollouts and would wrongly chain child Pods to
-// ephemeral ReplicaSets). The result is memoized across Create calls so only
-// the first Create does an API round-trip.
-//
-// Failures return nil without caching: the next Create retries. This handles
-// two scenarios gracefully: (1) out-of-cluster / unit test runs where there's
-// no HOSTNAME → empty cache, no-op; (2) the controller Pod doesn't exist yet
-// in the API cache at startup → retry until it does.
-func (k *K8sBackend) controllerOwnerRefs(ctx context.Context) []metav1.OwnerReference {
-	if k.ownerRefs == nil {
-		return nil
-	}
-	k.ownerRefs.mu.Lock()
-	defer k.ownerRefs.mu.Unlock()
-	if k.ownerRefs.loaded {
-		return k.ownerRefs.data
-	}
-
-	pod, err := k.getCurrentPod(ctx)
-	if err != nil {
-		reason := classifyAPIError(err)
-		log.FromContext(ctx).WithName("k8s-backend").Info(
-			"controller Pod lookup failed; ownerReferences will be omitted for this Create (retry on next)",
-			"reason", reason, "err", err.Error())
-		return nil
-	}
-	if pod == nil {
-		return nil
-	}
-	refs := filterOutReplicaSetOwners(pod.OwnerReferences)
-	k.ownerRefs.data = refs
-	k.ownerRefs.loaded = true
-	return refs
-}
-
-// filterOutReplicaSetOwners drops OwnerReferences whose Kind is "ReplicaSet"
-// so that child Pod lifetime is not bound to an ephemeral ReplicaSet that
-// Deployment recreates on every rollout. StatefulSet / CloneSet / custom
-// workload ownerRefs are preserved verbatim.
-func filterOutReplicaSetOwners(refs []metav1.OwnerReference) []metav1.OwnerReference {
-	if len(refs) == 0 {
-		return nil
-	}
-	out := make([]metav1.OwnerReference, 0, len(refs))
-	for _, ref := range refs {
-		if ref.Kind == "ReplicaSet" {
-			continue
-		}
-		out = append(out, ref)
-	}
-	if len(out) == 0 {
-		return nil
-	}
-	return out
-}
-
-func classifyAPIError(err error) string {
-	switch {
-	case apierrors.IsNotFound(err):
-		return "not-found"
-	case apierrors.IsForbidden(err), apierrors.IsUnauthorized(err):
-		return "forbidden"
-	case apierrors.IsTimeout(err), apierrors.IsServerTimeout(err), apierrors.IsServiceUnavailable(err):
-		return "transient"
-	default:
-		return "unknown"
-	}
 }
 
 // buildDefaultResources constructs the backend-level default ResourceRequirements

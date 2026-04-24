@@ -9,6 +9,7 @@ import (
 	authpkg "github.com/hiclaw/hiclaw-controller/internal/auth"
 	"github.com/hiclaw/hiclaw-controller/internal/backend"
 	"github.com/hiclaw/hiclaw-controller/internal/service"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
@@ -83,6 +84,13 @@ type MemberContext struct {
 	// members to tag pods with "hiclaw.io/team=<teamName>" so the Team
 	// reconciler can watch member pod lifecycle events.
 	PodLabels map[string]string
+
+	// Owner is the CR that logically owns the member's Pod lifecycle. The
+	// K8s backend stamps it as the Pod's controller OwnerReference so that
+	// deleting the owning CR garbage-collects the Pod. For standalone
+	// Workers this is the Worker CR; for Team members (leader or worker)
+	// this is the Team CR.
+	Owner metav1.Object
 }
 
 // MemberState captures reconcile outputs that the caller writes back to the
@@ -136,6 +144,18 @@ func ReconcileMemberInfra(ctx context.Context, d MemberDeps, m MemberContext, st
 		if err != nil {
 			return reconcile.Result{}, fmt.Errorf("refresh credentials: %w", err)
 		}
+
+		// Defensively re-authorize the worker on AI routes. Mirrors the
+		// Manager restart path: if the Higress skeleton was ever rewritten
+		// (historically by the Initializer's EnsureAIRoute, or by a fresh
+		// Higress state after upgrade), allowedConsumers may have been
+		// reset to [] and the worker would stay locked out with 403s until
+		// the next spec-change event. Surfacing errors lets controller-
+		// runtime re-queue with backoff.
+		if err := d.Provisioner.EnsureWorkerGatewayAuth(ctx, m.Name, refreshResult.GatewayKey); err != nil {
+			return reconcile.Result{}, fmt.Errorf("restore worker gateway auth: %w", err)
+		}
+
 		state.MatrixUserID = m.ExistingMatrixUserID
 		state.RoomID = m.ExistingRoomID
 		state.ProvResult = &service.WorkerProvisionResult{
@@ -364,6 +384,7 @@ func createMemberContainer(ctx context.Context, d MemberDeps, m MemberContext, s
 		Env:                workerEnv,
 		ServiceAccountName: saName,
 		Labels:             labels,
+		Owner:              m.Owner,
 	}
 	if wb.Name() != "k8s" {
 		token, err := d.Provisioner.RequestSAToken(ctx, m.Name)
@@ -429,9 +450,21 @@ func ReconcileMemberDelete(ctx context.Context, d MemberDeps, m MemberContext) e
 		logger.Error(err, "deprovision failed (non-fatal)", "name", m.Name)
 	}
 
+	// Explicitly delete the member container as part of the finalizer.
+	//
+	// For the Kubernetes backend this is technically redundant with the
+	// controller OwnerReference stamped in K8sBackend.Create — K8s GC
+	// would eventually collect the Pod — but doing it here keeps Pod
+	// cleanup synchronous with finalizer completion, surfaces backend
+	// errors in our own logs, and still leaves OwnerReference as a
+	// safety net if an operator patches the finalizer off. For the
+	// Docker backend (embedded mode) there is no K8s garbage collector
+	// (the embedded apiserver runs without kube-controller-manager) and
+	// worker containers are Docker objects the apiserver does not know
+	// about, so this is the only reliable cleanup path.
 	if d.Backend != nil {
 		if wb := d.Backend.DetectWorkerBackend(ctx); wb != nil {
-			if err := wb.Delete(ctx, m.Name); err != nil {
+			if err := wb.Delete(ctx, m.Name); err != nil && !errors.Is(err, backend.ErrNotFound) {
 				logger.Error(err, "failed to delete member container (may already be removed)", "name", m.Name)
 			}
 		}

@@ -177,11 +177,13 @@ func TestMain(m *testing.M) {
 	)
 
 	managerReconciler := &controller.ManagerReconciler{
-		Client:      mgr.GetClient(),
-		Provisioner: mockMgrProv,
-		Deployer:    mockMgrDeploy,
-		Backend:     mgrBackendRegistry,
-		EnvBuilder:  mockMgrEnv,
+		Client:       mgr.GetClient(),
+		Provisioner:  mockMgrProv,
+		Deployer:     mockMgrDeploy,
+		Backend:      mgrBackendRegistry,
+		EnvBuilder:   mockMgrEnv,
+		UserLanguage: "en",
+		UserTimezone: "America/Los_Angeles",
 	}
 	if err := managerReconciler.SetupWithManager(mgr); err != nil {
 		panic(fmt.Sprintf("failed to setup ManagerReconciler: %v", err))

@@ -51,10 +51,16 @@ type AIProviderRequest struct {
 	Raw      map[string]interface{} // provider-specific raw config
 }
 
-// AIRouteRequest describes an AI route to create.
+// AIRouteRequest describes an AI route skeleton to create.
+//
+// It intentionally carries no authorization fields: the Initializer is the
+// sole creator of the AI route skeleton, while Manager/Worker Reconcilers are
+// the sole writers of authConfig.allowedConsumers (via AuthorizeAIRoutes /
+// DeauthorizeAIRoutes). This separation prevents the race observed on
+// controller restart where the Initializer previously reset allowedConsumers
+// to [] and transiently locked out Manager/Workers.
 type AIRouteRequest struct {
-	Name             string
-	PathPrefix       string   // e.g. "/v1"
-	Provider         string   // upstream provider name
-	AllowedConsumers []string // consumers authorized for this route
+	Name       string
+	PathPrefix string // e.g. "/v1"
+	Provider   string // upstream provider name
 }

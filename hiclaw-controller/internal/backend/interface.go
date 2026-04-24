@@ -3,6 +3,8 @@ package backend
 import (
 	"context"
 	"errors"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // Typed errors for backend operations.
@@ -143,6 +145,14 @@ type CreateRequest struct {
 	// RestartPolicy for Docker containers (e.g. "unless-stopped", "always").
 	// Empty means backend default (no restart).
 	RestartPolicy string `json:"-"`
+
+	// Owner is the Kubernetes parent object whose lifecycle the created Pod
+	// should be bound to. K8sBackend stamps it as the Pod's controller
+	// OwnerReference via controllerutil.SetControllerReference, so that
+	// deletion of the owning CR (Worker / Team / Manager) cascades to the
+	// Pod via native K8s garbage collection. Docker backend ignores this
+	// field.
+	Owner metav1.Object `json:"-"`
 }
 
 // Deployment modes returned by backends.

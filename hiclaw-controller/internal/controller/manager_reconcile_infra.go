@@ -21,8 +21,13 @@ func (r *ManagerReconciler) reconcileManagerInfrastructure(ctx context.Context, 
 			return reconcile.Result{}, fmt.Errorf("refresh credentials: %w", err)
 		}
 
+		// Gateway auth errors must propagate so controller-runtime re-queues
+		// the reconcile with backoff. Previously this was swallowed as
+		// "non-fatal", which masked real failures (e.g. Higress Console PUT
+		// returning non-200) and left the data plane stuck with an empty
+		// allowedConsumers list until a subsequent event happened to retry.
 		if err := r.Provisioner.EnsureManagerGatewayAuth(ctx, m.Name, refreshResult.GatewayKey); err != nil {
-			log.FromContext(ctx).Error(err, "gateway auth restore failed (non-fatal)")
+			return reconcile.Result{}, fmt.Errorf("restore manager gateway auth: %w", err)
 		}
 
 		s.provResult = &service.ManagerProvisionResult{

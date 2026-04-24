@@ -350,6 +350,13 @@ func (in *LeaderSpec) DeepCopyInto(out *LeaderSpec) {
 		*out = new(string)
 		**out = **in
 	}
+	if in.AccessEntries != nil {
+		in, out := &in.AccessEntries, &out.AccessEntries
+		*out = make([]AccessEntry, len(*in))
+		for i := range *in {
+			(*in)[i].DeepCopyInto(&(*out)[i])
+		}
+	}
 	if in.Env != nil {
 		in, out := &in.Env, &out.Env
 		*out = make(map[string]string, len(*in))
@@ -535,6 +542,13 @@ func (in *TeamWorkerSpec) DeepCopyInto(out *TeamWorkerSpec) {
 		in, out := &in.State, &out.State
 		*out = new(string)
 		**out = **in
+	}
+	if in.AccessEntries != nil {
+		in, out := &in.AccessEntries, &out.AccessEntries
+		*out = make([]AccessEntry, len(*in))
+		for i := range *in {
+			(*in)[i].DeepCopyInto(&(*out)[i])
+		}
 	}
 	if in.Env != nil {
 		in, out := &in.Env, &out.Env

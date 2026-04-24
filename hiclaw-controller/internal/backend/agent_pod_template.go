@@ -20,11 +20,10 @@ const AgentPodTemplateConfigMapKey = "pod-template.yaml"
 // verbatim from the PodTemplateSpec (the "user wins" side of the merge) or
 // left at the zero value.
 type PodOverlay struct {
-	Name            string
-	Namespace       string
-	Labels          map[string]string
-	Annotations     map[string]string
-	OwnerReferences []metav1.OwnerReference
+	Name        string
+	Namespace   string
+	Labels      map[string]string
+	Annotations map[string]string
 
 	ServiceAccountName string
 	// Container is the agent-container base (Name="worker", Image, Env,
@@ -106,7 +105,9 @@ func LoadAgentPodTemplate(ctx context.Context, client K8sCoreClient, namespace, 
 //
 //   - metadata.Labels: template first, overlay labels overwrite on key collision.
 //   - metadata.Annotations: template first, overlay annotations overwrite on key collision.
-//   - metadata.OwnerReferences: overlay wins (template's ownerRefs are discarded).
+//   - metadata.OwnerReferences: template's ownerRefs are discarded (the
+//     backend stamps its own controller OwnerReference on the returned Pod
+//     via controllerutil.SetControllerReference in K8sBackend.Create).
 //   - spec.Containers: template containers NOT named "worker" are preserved
 //     as sidecars. If template has a container named "worker", its fields
 //     serve as a base that overlay.Container's Name/Image/Env/WorkingDir/
@@ -134,9 +135,6 @@ func ApplyPodTemplate(tmpl corev1.PodTemplateSpec, overlay PodOverlay) *corev1.P
 			Annotations: mergeStringMaps(tmplCopy.ObjectMeta.Annotations, overlay.Annotations),
 		},
 		Spec: tmplCopy.Spec,
-	}
-	if len(overlay.OwnerReferences) > 0 {
-		pod.OwnerReferences = append([]metav1.OwnerReference(nil), overlay.OwnerReferences...)
 	}
 
 	agentContainer, sidecars := splitAgentContainer(pod.Spec.Containers, overlay.Container.Name)

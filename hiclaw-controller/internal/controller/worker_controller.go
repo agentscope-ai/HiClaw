@@ -244,6 +244,7 @@ func workerMemberContext(w *v1beta1.Worker) MemberContext {
 		ExistingMatrixUserID: w.Status.MatrixUserID,
 		ExistingRoomID:       w.Status.RoomID,
 		CurrentExposedPorts:  w.Status.ExposedPorts,
+		Owner:                w,
 	}
 }
 

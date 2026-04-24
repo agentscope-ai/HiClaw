@@ -12,37 +12,39 @@ import (
 type MockProvisioner struct {
 	mu sync.Mutex
 
-	ProvisionWorkerFn       func(ctx context.Context, req service.WorkerProvisionRequest) (*service.WorkerProvisionResult, error)
-	DeprovisionWorkerFn     func(ctx context.Context, req service.WorkerDeprovisionRequest) error
-	RefreshCredentialsFn    func(ctx context.Context, workerName string) (*service.RefreshResult, error)
-	ReconcileMCPAuthFn      func(ctx context.Context, consumerName string, mcpServers []string) ([]string, error)
-	ReconcileExposeFn       func(ctx context.Context, workerName string, desired []v1beta1.ExposePort, current []v1beta1.ExposedPortStatus) ([]v1beta1.ExposedPortStatus, error)
-	EnsureServiceAccountFn  func(ctx context.Context, workerName string) error
-	DeleteServiceAccountFn  func(ctx context.Context, workerName string) error
-	DeleteCredentialsFn     func(ctx context.Context, workerName string) error
-	RequestSATokenFn        func(ctx context.Context, workerName string) (string, error)
-	LeaveAllWorkerRoomsFn   func(ctx context.Context, workerName string) error
-	DeleteWorkerRoomFn      func(ctx context.Context, roomID string) error
-	MatrixUserIDFn          func(name string) string
-	ProvisionTeamRoomsFn    func(ctx context.Context, req service.TeamRoomRequest) (*service.TeamRoomResult, error)
-	DeleteTeamRoomAliasesFn func(ctx context.Context, teamName, leaderName string) error
-	DeleteWorkerRoomAliasFn func(ctx context.Context, workerName string) error
+	ProvisionWorkerFn         func(ctx context.Context, req service.WorkerProvisionRequest) (*service.WorkerProvisionResult, error)
+	DeprovisionWorkerFn       func(ctx context.Context, req service.WorkerDeprovisionRequest) error
+	RefreshCredentialsFn      func(ctx context.Context, workerName string) (*service.RefreshResult, error)
+	EnsureWorkerGatewayAuthFn func(ctx context.Context, workerName, gatewayKey string) error
+	ReconcileMCPAuthFn        func(ctx context.Context, consumerName string, mcpServers []string) ([]string, error)
+	ReconcileExposeFn         func(ctx context.Context, workerName string, desired []v1beta1.ExposePort, current []v1beta1.ExposedPortStatus) ([]v1beta1.ExposedPortStatus, error)
+	EnsureServiceAccountFn    func(ctx context.Context, workerName string) error
+	DeleteServiceAccountFn    func(ctx context.Context, workerName string) error
+	DeleteCredentialsFn       func(ctx context.Context, workerName string) error
+	RequestSATokenFn          func(ctx context.Context, workerName string) (string, error)
+	LeaveAllWorkerRoomsFn     func(ctx context.Context, workerName string) error
+	DeleteWorkerRoomFn        func(ctx context.Context, roomID string) error
+	MatrixUserIDFn            func(name string) string
+	ProvisionTeamRoomsFn      func(ctx context.Context, req service.TeamRoomRequest) (*service.TeamRoomResult, error)
+	DeleteTeamRoomAliasesFn   func(ctx context.Context, teamName, leaderName string) error
+	DeleteWorkerRoomAliasFn   func(ctx context.Context, workerName string) error
 
 	Calls struct {
-		ProvisionWorker       []service.WorkerProvisionRequest
-		DeprovisionWorker     []service.WorkerDeprovisionRequest
-		RefreshCredentials    []string
-		ReconcileMCPAuth      []string
-		ReconcileExpose       []string
-		EnsureServiceAccount  []string
-		DeleteServiceAccount  []string
-		DeleteCredentials     []string
-		RequestSAToken        []string
-		LeaveAllWorkerRooms   []string
-		DeleteWorkerRoom      []string
-		ProvisionTeamRooms    []service.TeamRoomRequest
-		DeleteTeamRoomAliases []string
-		DeleteWorkerRoomAlias []string
+		ProvisionWorker         []service.WorkerProvisionRequest
+		DeprovisionWorker       []service.WorkerDeprovisionRequest
+		RefreshCredentials      []string
+		EnsureWorkerGatewayAuth []string
+		ReconcileMCPAuth        []string
+		ReconcileExpose         []string
+		EnsureServiceAccount    []string
+		DeleteServiceAccount    []string
+		DeleteCredentials       []string
+		RequestSAToken          []string
+		LeaveAllWorkerRooms     []string
+		DeleteWorkerRoom        []string
+		ProvisionTeamRooms      []service.TeamRoomRequest
+		DeleteTeamRoomAliases   []string
+		DeleteWorkerRoomAlias   []string
 	}
 }
 
@@ -58,6 +60,7 @@ func (m *MockProvisioner) Reset() {
 	m.ProvisionWorkerFn = nil
 	m.DeprovisionWorkerFn = nil
 	m.RefreshCredentialsFn = nil
+	m.EnsureWorkerGatewayAuthFn = nil
 	m.ReconcileMCPAuthFn = nil
 	m.ReconcileExposeFn = nil
 	m.EnsureServiceAccountFn = nil
@@ -81,20 +84,21 @@ func (m *MockProvisioner) ClearCalls() {
 
 func (m *MockProvisioner) clearCallsLocked() {
 	m.Calls = struct {
-		ProvisionWorker       []service.WorkerProvisionRequest
-		DeprovisionWorker     []service.WorkerDeprovisionRequest
-		RefreshCredentials    []string
-		ReconcileMCPAuth      []string
-		ReconcileExpose       []string
-		EnsureServiceAccount  []string
-		DeleteServiceAccount  []string
-		DeleteCredentials     []string
-		RequestSAToken        []string
-		LeaveAllWorkerRooms   []string
-		DeleteWorkerRoom      []string
-		ProvisionTeamRooms    []service.TeamRoomRequest
-		DeleteTeamRoomAliases []string
-		DeleteWorkerRoomAlias []string
+		ProvisionWorker         []service.WorkerProvisionRequest
+		DeprovisionWorker       []service.WorkerDeprovisionRequest
+		RefreshCredentials      []string
+		EnsureWorkerGatewayAuth []string
+		ReconcileMCPAuth        []string
+		ReconcileExpose         []string
+		EnsureServiceAccount    []string
+		DeleteServiceAccount    []string
+		DeleteCredentials       []string
+		RequestSAToken          []string
+		LeaveAllWorkerRooms     []string
+		DeleteWorkerRoom        []string
+		ProvisionTeamRooms      []service.TeamRoomRequest
+		DeleteTeamRoomAliases   []string
+		DeleteWorkerRoomAlias   []string
 	}{}
 }
 
@@ -141,6 +145,17 @@ func (m *MockProvisioner) RefreshCredentials(ctx context.Context, workerName str
 		MinIOPassword:  "mock-minio-pw",
 		MatrixPassword: "mock-matrix-pw",
 	}, nil
+}
+
+func (m *MockProvisioner) EnsureWorkerGatewayAuth(ctx context.Context, workerName, gatewayKey string) error {
+	m.mu.Lock()
+	m.Calls.EnsureWorkerGatewayAuth = append(m.Calls.EnsureWorkerGatewayAuth, workerName)
+	fn := m.EnsureWorkerGatewayAuthFn
+	m.mu.Unlock()
+	if fn != nil {
+		return fn(ctx, workerName, gatewayKey)
+	}
+	return nil
 }
 
 func (m *MockProvisioner) ReconcileMCPAuth(ctx context.Context, consumerName string, mcpServers []string) ([]string, error) {
@@ -232,8 +247,11 @@ func (m *MockProvisioner) DeleteWorkerRoom(ctx context.Context, roomID string) e
 }
 
 func (m *MockProvisioner) MatrixUserID(name string) string {
-	if m.MatrixUserIDFn != nil {
-		return m.MatrixUserIDFn(name)
+	m.mu.Lock()
+	fn := m.MatrixUserIDFn
+	m.mu.Unlock()
+	if fn != nil {
+		return fn(name)
 	}
 	return "@" + name + ":localhost"
 }

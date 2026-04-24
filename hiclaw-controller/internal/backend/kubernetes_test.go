@@ -5,9 +5,11 @@ import (
 	"strings"
 	"testing"
 
+	v1beta1 "github.com/hiclaw/hiclaw-controller/api/v1beta1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 )
 
@@ -167,7 +169,7 @@ func newTestK8sBackendWithFake(extra K8sConfig, objects ...*corev1.Pod) (*K8sBac
 		WorkerMemory:     "2Gi",
 		ControllerName:   extra.ControllerName,
 	}
-	return NewK8sBackendWithClient(client, cfg, "hiclaw-worker-"), client
+	return NewK8sBackendWithClient(client, cfg, "hiclaw-worker-", nil), client
 }
 
 func TestK8sCreate(t *testing.T) {
@@ -500,7 +502,7 @@ func TestK8sCreateRuntimeWorkingDir(t *testing.T) {
 				HermesWorkerImage: "hiclaw/hermes-worker:latest",
 				WorkerCPU:         "1000m",
 				WorkerMemory:      "2Gi",
-			}, "hiclaw-worker-")
+			}, "hiclaw-worker-", nil)
 
 			if _, err := b.Create(context.Background(), CreateRequest{
 				Name:    "x",
@@ -559,7 +561,7 @@ func TestK8sCreateResolvesImageFromRuntime(t *testing.T) {
 				HermesWorkerImage: "hiclaw/hermes-worker:latest",
 				WorkerCPU:         "1000m",
 				WorkerMemory:      "2Gi",
-			}, "hiclaw-worker-")
+			}, "hiclaw-worker-", nil)
 
 			if _, err := b.Create(context.Background(), CreateRequest{
 				Name:            "x",
@@ -713,23 +715,34 @@ func TestK8sCreate_TemplateMalformed(t *testing.T) {
 	}
 }
 
-// K5: OwnerReferences inheritance — controller Pod exists with StatefulSet +
-// ReplicaSet owners; child Pod inherits only the StatefulSet owner.
-func TestK8sCreate_OwnerRefsInheritsFromControllerPod(t *testing.T) {
-	t.Setenv("HOSTNAME", "hiclaw-controller-abc123")
-	controllerPod := &corev1.Pod{
+// K5: CreateRequest.Owner — the backend stamps a single controller
+// OwnerReference on the created Pod, pointing at the CR supplied by the
+// reconciler. This is the Kubernetes-native GC path that replaces the old
+// "inherit from controller Pod" logic.
+func TestK8sCreate_SetsControllerReferenceFromOwner(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := v1beta1.AddToScheme(scheme); err != nil {
+		t.Fatalf("AddToScheme: %v", err)
+	}
+
+	client := newFakeK8sCoreClient()
+	b := NewK8sBackendWithClient(client, K8sConfig{
+		Namespace:   "hiclaw",
+		WorkerImage: "hiclaw/worker-agent:latest",
+	}, "hiclaw-worker-", scheme)
+
+	owner := &v1beta1.Worker{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "hiclaw-controller-abc123",
+			Name:      "eve",
 			Namespace: "hiclaw",
-			OwnerReferences: []metav1.OwnerReference{
-				{APIVersion: "apps/v1", Kind: "StatefulSet", Name: "hiclaw-ctl", UID: "sts-uid"},
-				{APIVersion: "apps/v1", Kind: "ReplicaSet", Name: "hiclaw-ctl-rs", UID: "rs-uid"},
-			},
+			UID:       "worker-uid-123",
 		},
 	}
-	b, _ := newTestK8sBackendWithFake(K8sConfig{}, controllerPod)
 
-	if _, err := b.Create(context.Background(), CreateRequest{Name: "eve"}); err != nil {
+	if _, err := b.Create(context.Background(), CreateRequest{
+		Name:  "eve",
+		Owner: owner,
+	}); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 	pod, err := b.client.Pods("hiclaw").Get(context.Background(), "hiclaw-worker-eve", metav1.GetOptions{})
@@ -737,88 +750,38 @@ func TestK8sCreate_OwnerRefsInheritsFromControllerPod(t *testing.T) {
 		t.Fatalf("Get: %v", err)
 	}
 	if len(pod.OwnerReferences) != 1 {
-		t.Fatalf("expected 1 ownerRef (ReplicaSet filtered), got %+v", pod.OwnerReferences)
+		t.Fatalf("expected exactly one ownerRef, got %+v", pod.OwnerReferences)
 	}
-	if pod.OwnerReferences[0].UID != "sts-uid" {
-		t.Fatalf("wrong owner: %+v", pod.OwnerReferences[0])
+	ref := pod.OwnerReferences[0]
+	if ref.UID != owner.UID {
+		t.Fatalf("ownerRef UID = %q, want %q", ref.UID, owner.UID)
 	}
-}
-
-// K6: ownerRefs cache — the controller Pod is fetched exactly once across
-// multiple Create calls.
-func TestK8sCreate_OwnerRefsCachedAcrossCreates(t *testing.T) {
-	t.Setenv("HOSTNAME", "hiclaw-controller-abc123")
-	controllerPod := &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "hiclaw-controller-abc123",
-			Namespace: "hiclaw",
-			OwnerReferences: []metav1.OwnerReference{
-				{APIVersion: "apps/v1", Kind: "StatefulSet", Name: "ctl", UID: "u"},
-			},
-		},
+	if ref.Kind != "Worker" {
+		t.Fatalf("ownerRef Kind = %q, want Worker", ref.Kind)
 	}
-	b, fake := newTestK8sBackendWithFake(K8sConfig{}, controllerPod)
-
-	for _, name := range []string{"w1", "w2", "w3"} {
-		if _, err := b.Create(context.Background(), CreateRequest{Name: name}); err != nil {
-			t.Fatalf("Create %s: %v", name, err)
-		}
+	if ref.Name != owner.Name {
+		t.Fatalf("ownerRef Name = %q, want %q", ref.Name, owner.Name)
 	}
-	if c := fake.getCount("hiclaw", "hiclaw-controller-abc123"); c != 1 {
-		t.Fatalf("controller Pod Get should be cached, got %d calls", c)
+	if ref.Controller == nil || !*ref.Controller {
+		t.Fatalf("ownerRef Controller must be true, got %+v", ref.Controller)
+	}
+	if ref.BlockOwnerDeletion == nil || !*ref.BlockOwnerDeletion {
+		t.Fatalf("ownerRef BlockOwnerDeletion must be true, got %+v", ref.BlockOwnerDeletion)
 	}
 }
 
-// K7: ownerRefs retry — first Create finds no controller Pod (lookup fails,
-// not cached) → no ownerRefs. Pod gets injected later, next Create fetches
-// successfully and caches.
-func TestK8sCreate_OwnerRefsRetriesWhenLookupFails(t *testing.T) {
-	t.Setenv("HOSTNAME", "hiclaw-controller-abc123")
-	b, fake := newTestK8sBackendWithFake(K8sConfig{})
+// TestK8sCreate_OwnerRequiresScheme asserts Create fails fast when a reconciler
+// provides Owner but the backend was built without a scheme — a programmer
+// error we want to catch loudly rather than silently drop the ownerRef.
+func TestK8sCreate_OwnerRequiresScheme(t *testing.T) {
+	client := newFakeK8sCoreClient()
+	b := NewK8sBackendWithClient(client, K8sConfig{Namespace: "hiclaw", WorkerImage: "img"}, "hiclaw-worker-", nil)
 
-	// First Create: controller Pod doesn't exist yet.
-	if _, err := b.Create(context.Background(), CreateRequest{Name: "w1"}); err != nil {
-		t.Fatalf("Create w1: %v", err)
+	owner := &v1beta1.Worker{
+		ObjectMeta: metav1.ObjectMeta{Name: "a", Namespace: "hiclaw", UID: "u"},
 	}
-	pod, _ := b.client.Pods("hiclaw").Get(context.Background(), "hiclaw-worker-w1", metav1.GetOptions{})
-	if len(pod.OwnerReferences) != 0 {
-		t.Fatalf("expected no ownerRefs on first create, got %+v", pod.OwnerReferences)
-	}
-
-	// Inject controller Pod and retry.
-	fake.injectPod(&corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "hiclaw-controller-abc123",
-			Namespace: "hiclaw",
-			OwnerReferences: []metav1.OwnerReference{
-				{APIVersion: "apps/v1", Kind: "StatefulSet", Name: "ctl", UID: "u"},
-			},
-		},
-	})
-
-	if _, err := b.Create(context.Background(), CreateRequest{Name: "w2"}); err != nil {
-		t.Fatalf("Create w2: %v", err)
-	}
-	pod2, _ := b.client.Pods("hiclaw").Get(context.Background(), "hiclaw-worker-w2", metav1.GetOptions{})
-	if len(pod2.OwnerReferences) != 1 || pod2.OwnerReferences[0].UID != "u" {
-		t.Fatalf("expected ownerRef after retry, got %+v", pod2.OwnerReferences)
-	}
-}
-
-// TestFilterOutReplicaSetOwners exercises the filter helper directly.
-func TestFilterOutReplicaSetOwners(t *testing.T) {
-	refs := filterOutReplicaSetOwners([]metav1.OwnerReference{
-		{Kind: "StatefulSet", Name: "a", UID: "1"},
-		{Kind: "ReplicaSet", Name: "b", UID: "2"},
-		{Kind: "Deployment", Name: "c", UID: "3"},
-	})
-	if len(refs) != 2 {
-		t.Fatalf("expected 2, got %+v", refs)
-	}
-	for _, r := range refs {
-		if r.Kind == "ReplicaSet" {
-			t.Fatalf("ReplicaSet should be filtered: %+v", r)
-		}
+	if _, err := b.Create(context.Background(), CreateRequest{Name: "a", Owner: owner}); err == nil {
+		t.Fatal("expected Create to fail when Owner is set but scheme is nil")
 	}
 }
 
@@ -920,27 +883,6 @@ func TestBuildDefaultResources_EmptyFallback(t *testing.T) {
 	}
 }
 
-// TestClassifyAPIError covers each classification branch.
-func TestClassifyAPIError(t *testing.T) {
-	cases := []struct {
-		name string
-		err  error
-		want string
-	}{
-		{"not-found", apierrors.NewNotFound(schema.GroupResource{Resource: "pods"}, "x"), "not-found"},
-		{"forbidden", apierrors.NewForbidden(schema.GroupResource{Resource: "pods"}, "x", nil), "forbidden"},
-		{"unauthorized", apierrors.NewUnauthorized("no"), "forbidden"},
-		{"timeout", apierrors.NewServerTimeout(schema.GroupResource{Resource: "pods"}, "get", 1), "transient"},
-		{"unavailable", apierrors.NewServiceUnavailable("down"), "transient"},
-		{"other", apierrors.NewBadRequest("bad"), "unknown"},
-	}
-	for _, tc := range cases {
-		if got := classifyAPIError(tc.err); got != tc.want {
-			t.Fatalf("%s: got %q, want %q", tc.name, got, tc.want)
-		}
-	}
-}
-
 // TestK8sCreate_CustomResourcePrefix verifies that the worker pod's "app"
 // label and the default SA-name fallback derive from K8sConfig.ResourcePrefix
 // — critical for multi-tenant deployments sharing a namespace where the
@@ -955,7 +897,7 @@ func TestK8sCreate_CustomResourcePrefix(t *testing.T) {
 		WorkerMemory:   "2Gi",
 		ResourcePrefix: "teamB-",
 	}
-	b := NewK8sBackendWithClient(client, cfg, "teamB-worker-")
+	b := NewK8sBackendWithClient(client, cfg, "teamB-worker-", nil)
 
 	if _, err := b.Create(context.Background(), CreateRequest{
 		Name:               "alice",
@@ -1002,7 +944,7 @@ func TestK8sCreate_DefaultSAFallback(t *testing.T) {
 		WorkerImage:    "hiclaw/worker-agent:latest",
 		ResourcePrefix: "acme-",
 	}
-	b := NewK8sBackendWithClient(client, cfg, "acme-worker-")
+	b := NewK8sBackendWithClient(client, cfg, "acme-worker-", nil)
 
 	if _, err := b.Create(context.Background(), CreateRequest{Name: "bob"}); err != nil {
 		t.Fatalf("Create: %v", err)

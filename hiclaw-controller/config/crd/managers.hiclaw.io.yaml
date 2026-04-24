@@ -126,6 +126,13 @@ spec:
                   type: string
                 message:
                   type: string
+                welcomeSent:
+                  type: boolean
+                  description: >
+                    True after the controller has delivered the first-boot
+                    onboarding prompt to the Admin DM room. Used as the
+                    idempotency guard for the welcome-message reconcile step;
+                    set once on first successful send and never cleared.
       subresources:
         status: {}
       additionalPrinterColumns:

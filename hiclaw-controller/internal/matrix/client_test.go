@@ -690,6 +690,55 @@ func TestAdminCommand(t *testing.T) {
 	}
 }
 
+func TestSendMessageAsAdmin(t *testing.T) {
+	var (
+		gotAuthHeader string
+		gotPath       string
+		gotBody       string
+	)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/_matrix/client/v3/login":
+			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode(map[string]string{"access_token": "admin-token"})
+		case r.Method == http.MethodPut &&
+			len(r.URL.Path) > len("/_matrix/client/v3/rooms/") &&
+			r.URL.Path[:len("/_matrix/client/v3/rooms/")] == "/_matrix/client/v3/rooms/":
+			gotAuthHeader = r.Header.Get("Authorization")
+			gotPath = r.URL.Path
+			var body map[string]string
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			gotBody = body["body"]
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{"event_id":"$evt"}`))
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	c := NewTuwunelClient(Config{
+		ServerURL:     server.URL,
+		Domain:        "test.domain",
+		AdminUser:     "admin",
+		AdminPassword: "adminpw",
+	}, server.Client())
+
+	if err := c.SendMessageAsAdmin(context.Background(), "!dm:test.domain", "hello world"); err != nil {
+		t.Fatalf("SendMessageAsAdmin: %v", err)
+	}
+	if gotAuthHeader != "Bearer admin-token" {
+		t.Errorf("Authorization = %q, want Bearer admin-token", gotAuthHeader)
+	}
+	if gotBody != "hello world" {
+		t.Errorf("body = %q, want hello world", gotBody)
+	}
+	if gotPath == "" || gotPath[:len("/_matrix/client/v3/rooms/")] != "/_matrix/client/v3/rooms/" {
+		t.Errorf("path = %q, want /_matrix/client/v3/rooms/...", gotPath)
+	}
+}
+
 func TestListJoinedRooms(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/_matrix/client/v3/joined_rooms" {
