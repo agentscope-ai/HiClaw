@@ -30,6 +30,7 @@
 
 ## ニュース
 
+- **2026-04-24**: [English](blog/hiclaw-1.1.0-release.md) | [中文](blog/zh-cn/hiclaw-1.1.0-release.md) — HiClaw v1.1.0：Kubernetes ネイティブコントロールプレーン、Hermes 自律コーディング Agent ランタイム、1.7 GB イメージ縮小、hiclaw CLI がシェルスクリプトに代わる。
 - **2026-04-14**: [English](blog/hiclaw-k8s-native-multi-agent-collaboration.md) | [中文](blog/zh-cn/hiclaw-k8s-native-multi-agent-collaboration.zh-CN.md) — Kubernetes ネイティブなマルチ Agent 協調オーケストレーションとしての HiClaw の解説。
 - **2026-04-03**: [English](docs/declarative-resource-management.md) | [中文](docs/zh-cn/declarative-resource-management.md) — HiClaw 1.0.9：宣言型リソース管理、Worker テンプレートマーケット、Manager CoPaw、Nacos Skills 登録センターなど。
 - **2026-03-14**: [English](blog/hiclaw-1.0.6-release.md) | [中文](blog/zh-cn/hiclaw-1.0.6-release.md) — HiClaw 1.0.6：エンタープライズ MCP Server 管理、認証情報ゼロ露出。
@@ -286,118 +287,46 @@ Alice: フロントエンドのバリデーションも更新しました。
 
 隠れた Agent 間通信はありません。すべてが可視化され、介入可能です。
 
+## マルチランタイム協調
+
+HiClaw は 3 つの Worker ランタイムをサポートし、**同じ IM ルーム内で共存・協調**できます：
+
+- **OpenClaw**（Node.js）— 豊富なスキルエコシステムを持つ汎用 Agent、タスクオーケストレーションやツール呼び出しに最適
+- **QwenPaw**（Python）— 軽量ランタイム（約 150MB）、ブラウザ自動化やクイックタスクに適している
+- **Hermes**（[hermes-agent](https://github.com/NousResearch/hermes-agent)）— ターミナルサンドボックス、自己改善スキル、永続メモリを備えた自律コーディング Agent
+
+各ランタイムは異なるタスクに優れています。推奨パターン：決定論的な Agent（OpenClaw/QwenPaw）をリーダーとしてタスク分解と割り当てを行い、Hermes Worker に自律的なコード実行を担当させる。すべてのランタイムは同じルーム内で Matrix `m.mentions` を介して通信し、完全に可視で、いつでも介入可能です。
+
+```bash
+# 任意の Worker のランタイムをその場で切り替え
+hiclaw update worker --runtime hermes
+```
+
 ## アーキテクチャ
 
 ```
-┌─────────────────────────────────────────────┐
-│         hiclaw-manager-agent                │
-│  Higress │ Tuwunel │ MinIO │ Element Web    │
-│  Manager Agent (OpenClaw)                   │
-└──────────────────┬──────────────────────────┘
+┌───────────────────────────────────────────────┐
+│            hiclaw-controller                  │
+│  Higress │ Tuwunel │ MinIO │ Element Web      │
+└──────────────────┬────────────────────────────┘
                    │ Matrix + HTTP Files
-┌──────────────────┴──────┐  ┌────────────────┐
-│  hiclaw-worker-agent    │  │  hiclaw-worker │
-│  Worker Alice (OpenClaw)│  │  Worker Bob    │
-└─────────────────────────┘  └────────────────┘
+┌──────────────────┴──────────┐
+│     hiclaw-manager-agent     │
+│     Manager (OpenClaw)       │
+└──────────────────┬──────────┘
+                   │
+┌──────────────────┼────────────────────────────┐
+│                  │                            │
+▼                  ▼                            ▼
+Worker Alice    Worker Bob              Worker Charlie
+(OpenClaw)      (QwenPaw)               (Hermes)
 ```
 
 | コンポーネント | 役割 |
 |-----------|------|
+| hiclaw-controller | Kubernetes ネイティブコントロールプレーン、Worker/Team/Manager CR を調整 |
 | Higress AI ゲートウェイ | LLM プロキシ、MCP Server ホスティング、認証情報管理 |
 | Tuwunel（Matrix） | すべての Agent + 人間のコミュニケーション用セルフホスト IM サーバー |
 | Element Web | ブラウザクライアント、ゼロ設定 |
 | MinIO | 一元化ファイルストレージ、Worker はステートレス |
-| OpenClaw | Matrix プラグインとスキルを備えた Agent ランタイム |
 
-## HiClaw vs OpenClaw ネイティブ
-
-| | OpenClaw ネイティブ | HiClaw |
-|---|---|---|
-| デプロイ | 単一プロセス | 分散コンテナ |
-| Agent 作成 | 手動設定 + 再起動 | 対話形式 |
-| 認証情報 | 各 Agent が実際のキーを保持 | Worker はコンシューマートークンのみ保持 |
-| 人間の可視性 | オプション | 組み込み（Matrix ルーム） |
-| モバイルアクセス | チャネル設定に依存 | 任意の Matrix クライアント、ゼロ設定 |
-| 監視 | なし | Manager ハートビート、ルーム内で確認可能 |
-
-## ロードマップ
-
-### ✅ リリース済み
-
-- ~~**CoPaw** — 軽量 Agent ランタイム~~ [1.0.4 でリリース](blog/hiclaw-1.0.4-release.md): メモリ使用量約 150MB（OpenClaw の約 500MB に対して）、さらにブラウザ自動操作用のローカルホストモードに対応。
-- ~~**ユニバーサル MCP サービスサポート** — MCP サーバー統合~~ [1.0.6 でリリース](blog/hiclaw-1.0.6-release.md): 任意の MCP サーバーをゲートウェイ経由で安全に Worker に公開可能。Worker は Higress 発行のトークンのみを使用し、実際の認証情報はゲートウェイの外に出ません。
-
-### 進行中
-
-#### 軽量 Worker ランタイム
-
-- **ZeroClaw** — Rust ベースの超軽量ランタイム。3.4MB バイナリ、コールドスタート 10ms 未満。
-- **NanoClaw** — 最小限の OpenClaw 代替。4000 行未満のコード、コンテナベースの分離。
-
-目標: Worker あたりのメモリ使用量を約 500MB から 100MB 未満に削減。
-
-### 計画中
-
-#### チーム管理センター
-
-Agent チームを観察・制御するための組み込みダッシュボード — リアルタイム観察、能動的な中断、タスクタイムライン、リソース監視。
-
----
-
-## ドキュメント
-
-| | |
-|---|---|
-| [docs/quickstart.md](docs/quickstart.md) | ステップバイステップガイド |
-| [docs/architecture.md](docs/architecture.md) | システムアーキテクチャの詳細 |
-| [docs/manager-guide.md](docs/manager-guide.md) | Manager の設定 |
-| [docs/worker-guide.md](docs/worker-guide.md) | Worker のデプロイ |
-| [docs/development.md](docs/development.md) | コントリビュートとローカル開発 |
-
-## トラブルシューティング
-
-```bash
-docker exec -it hiclaw-manager cat /var/log/hiclaw/manager-agent.log
-```
-
-よくある問題については [docs/zh-cn/faq.md](docs/zh-cn/faq.md) を参照してください。
-
-### バグ報告
-
-Issue を提出する前に、Matrix メッセージログをエクスポートし、AI ツールでコードベースと照合して分析することをお勧めします。これによりバグの修正が大幅に速くなります。
-
-```bash
-# デバッグログのエクスポート（Matrix メッセージ + Agent セッション、PII は自動マスク）
-python scripts/export-debug-log.py --range 1h
-```
-
-次に、Cursor、Claude Code などの AI ツールで HiClaw リポジトリを開き、以下のように質問してください：
-
-> "debug-log/ 内の JSONL ファイルを読み込み、Matrix メッセージログと Agent セッションログを合わせて分析してください。HiClaw のコードベースと照合し、[バグの内容を記述] の根本原因を特定してください。"
-
-AI の分析結果を [バグレポート](https://github.com/alibaba/hiclaw/issues/new?template=bug_report.yml) に含めてください。
-
-## ビルド & テスト
-
-```bash
-make build          # 全イメージをビルド
-make test           # ビルド + 全統合テストを実行
-make test-quick     # スモークテストのみ
-```
-
-## その他のコマンド
-
-```bash
-make replay TASK="alice という名前のフロントエンド開発用 Worker を作成して"
-make uninstall
-make help
-```
-
-## コミュニティ
-
-- [Discord](https://discord.gg/NVjNA4BAVw)
-- [GitHub Issues](https://github.com/alibaba/hiclaw/issues)
-
-## ライセンス
-
-Apache License 2.0
