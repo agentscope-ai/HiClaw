@@ -47,11 +47,30 @@ app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 {{- end }}
 
 {{/*
+Global image tag: uses explicit global.imageTag if set, otherwise derives from Chart.AppVersion.
+Usage: include "hiclaw.globalImageTag" .
+*/}}
+{{- define "hiclaw.globalImageTag" -}}
+{{- if .Values.global.imageTag }}
+{{-   .Values.global.imageTag }}
+{{- else }}
+{{-   printf "v%s" .Chart.AppVersion }}
+{{- end }}
+{{- end }}
+
+{{/*
 Image tag: defaults to global.imageTag.
-Usage: include "hiclaw.imageTag" (dict "tag" .Values.foo.image.tag "global" .Values.global)
+Usage: include "hiclaw.imageTag" (dict "tag" .Values.foo.image.tag "global" .Values.global "root" $)
 */}}
 {{- define "hiclaw.imageTag" -}}
-{{- default .global.imageTag .tag }}
+{{- $tag := .tag }}
+{{- if not $tag }}
+{{-   $tag = .global.imageTag }}
+{{- end }}
+{{- if not $tag }}
+{{-   $tag = printf "v%s" .root.Chart.AppVersion }}
+{{- end }}
+{{- $tag }}
 {{- end }}
 
 {{/*
@@ -148,23 +167,23 @@ app.kubernetes.io/component: {{ .component }}
 {{/* ── Manager image helper (used by controller to create Manager CR) ──── */}}
 
 {{- define "hiclaw.manager.image" -}}
-{{- $tag := default .Values.global.imageTag .Values.manager.image.tag }}
+{{- $tag := default (include "hiclaw.globalImageTag" .) .Values.manager.image.tag }}
 {{- printf "%s:%s" .Values.manager.image.repository $tag }}
 {{- end }}
 
 {{/* ── Worker image helpers ────────────────────────────────────────────── */}}
 
 {{- define "hiclaw.worker.openclawImage" -}}
-{{- $tag := default .Values.global.imageTag .Values.worker.defaultImage.openclaw.tag }}
+{{- $tag := default (include "hiclaw.globalImageTag" .) .Values.worker.defaultImage.openclaw.tag }}
 {{- printf "%s:%s" .Values.worker.defaultImage.openclaw.repository $tag }}
 {{- end }}
 
 {{- define "hiclaw.worker.copawImage" -}}
-{{- $tag := default .Values.global.imageTag .Values.worker.defaultImage.copaw.tag }}
+{{- $tag := default (include "hiclaw.globalImageTag" .) .Values.worker.defaultImage.copaw.tag }}
 {{- printf "%s:%s" .Values.worker.defaultImage.copaw.repository $tag }}
 {{- end }}
 
 {{- define "hiclaw.worker.hermesImage" -}}
-{{- $tag := default .Values.global.imageTag .Values.worker.defaultImage.hermes.tag }}
+{{- $tag := default (include "hiclaw.globalImageTag" .) .Values.worker.defaultImage.hermes.tag }}
 {{- printf "%s:%s" .Values.worker.defaultImage.hermes.repository $tag }}
 {{- end }}

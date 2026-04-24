@@ -8,7 +8,7 @@
 global:
   namespace: ""  # defaults to .Release.Namespace
   imageRegistry: higress-registry.cn-hangzhou.cr.aliyuncs.com/higress
-  imageTag: "v1.0.9"
+  imageTag: ""
 
 imagePullSecrets: []
 
