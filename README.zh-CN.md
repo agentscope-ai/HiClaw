@@ -331,11 +331,11 @@ Alice：前端校验也更新了。
 
 HiClaw 支持三种 Worker 运行时，可以**在同一个 IM 房间中共存协作**：
 
-- **agent**（Node.js）— 通用 Agent 运行时，拥有丰富的 Skills 生态，擅长任务编排和工具调用
-- **QwenPaw**（Python）— 轻量级运行时（~150MB），适合浏览器自动化和快速任务
+- **OpenClaw**（Node.js）— 通用 Agent 运行时，拥有丰富的 Skills 生态，擅长任务编排和工具调用
+- **QwenPaw**（Python）— 轻量级运行时，适合浏览器自动化和快速任务
 - **Hermes**（[hermes-agent](https://github.com/NousResearch/hermes-agent)）— 自主编程 Agent，具备终端沙箱、自我进化的 Skill 和持久化记忆
 
-每种运行时各有擅长。推荐模式：用确定性更高的 Agent（agent/QwenPaw）做 Leader 负责任务分解和调度，用 Hermes Worker 执行自主编程任务。所有运行时通过 Matrix `m.mentions` 在同一个房间内通信——完全可见、随时可干预。
+每种运行时各有擅长。推荐模式：用确定性更高的 Agent（OpenClaw/QwenPaw）做 Leader 负责任务分解和调度，用 Hermes Worker 执行自主编程任务。所有运行时通过 Matrix `m.mentions` 在同一个房间内通信——完全可见、随时可干预。
 
 ```bash
 # 原地切换任意 Worker 的运行时
@@ -352,7 +352,8 @@ hiclaw update worker --runtime hermes
                    │ Matrix + HTTP Files
 ┌──────────────────┴──────────┐
 │     hiclaw-manager-agent     │
-│     Manager (OpenClaw)       │
+│     Manager (OpenClaw/       │
+│       QwenPaw)               │
 └──────────────────┬──────────┘
                    │
 ┌──────────────────┼────────────────────────────┐

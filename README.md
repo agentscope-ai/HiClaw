@@ -287,96 +287,47 @@ Alice: Frontend validation updated too.
 
 No hidden agent-to-agent calls. Everything is visible and intervenable.
 
+## Multi-Runtime Collaboration
+
+HiClaw supports three Worker runtimes that can **coexist in the same IM room**, collaborating on tasks together:
+
+- **OpenClaw** (Node.js) — General-purpose agent with rich skills ecosystem, ideal for task orchestration and tool calling
+- **QwenPaw** (Python) — Lightweight runtime, suited for browser automation and quick tasks
+- **Hermes** ([hermes-agent](https://github.com/NousResearch/hermes-agent)) — Autonomous coding agent with terminal sandbox, self-improving skills, and persistent memory
+
+Each runtime excels at different tasks. A common pattern: use deterministic agents (OpenClaw/QwenPaw) as Leaders to decompose and assign work, and Hermes Workers for autonomous code execution. All runtimes communicate via Matrix `m.mentions` in the same room — fully visible, fully intervenable.
+
+```bash
+# Switch any worker's runtime in place
+hiclaw update worker --runtime hermes
+```
+
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────┐
-│         hiclaw-manager-agent                │
-│  Higress │ Tuwunel │ MinIO │ Element Web    │
-│  Manager Agent (OpenClaw)                   │
-└──────────────────┬──────────────────────────┘
+┌───────────────────────────────────────────────┐
+│            hiclaw-controller                  │
+│  Higress │ Tuwunel │ MinIO │ Element Web      │
+└──────────────────┬────────────────────────────┘
                    │ Matrix + HTTP Files
-┌──────────────────┴──────┐  ┌────────────────┐
-│  hiclaw-worker-agent    │  │  hiclaw-worker │
-│  Worker Alice (OpenClaw)│  │  Worker Bob    │
-└─────────────────────────┘  └────────────────┘
+┌──────────────────┴──────────┐
+│     hiclaw-manager-agent     │
+│     Manager (OpenClaw/       │
+│       QwenPaw)               │
+└──────────────────┬──────────┘
+                   │
+┌──────────────────┼────────────────────────────┐
+│                  │                            │
+▼                  ▼                            ▼
+Worker Alice    Worker Bob              Worker Charlie
+(OpenClaw)      (QwenPaw)               (Hermes)
 ```
 
 | Component | Role |
 |-----------|------|
+| hiclaw-controller | Kubernetes-native control plane, reconciles Worker/Team/Manager CRs |
 | Higress AI Gateway | LLM proxy, MCP Server hosting, credential management |
 | Tuwunel (Matrix) | Self-hosted IM server for all Agent + Human communication |
 | Element Web | Browser client, zero setup |
 | MinIO | Centralized file storage, Workers are stateless |
-| OpenClaw | Agent runtime with Matrix plugin and skills |
 
-## HiClaw vs OpenClaw Native
-
-| | OpenClaw Native | HiClaw |
-|---|---|---|
-| Deployment | Single process | Distributed containers |
-| Agent creation | Manual config + restart | Conversational |
-| Credentials | Each agent holds real keys | Workers only hold consumer tokens |
-| Human visibility | Optional | Built-in (Matrix Rooms) |
-| Mobile access | Depends on channel setup | Any Matrix client, zero config |
-| Monitoring | None | Manager heartbeat, visible in Room |
-
-## Documentation
-
-| | |
-|---|---|
-| [docs/quickstart.md](docs/quickstart.md) | Step-by-step guide |
-| [docs/architecture.md](docs/architecture.md) | System architecture deep dive |
-| [docs/manager-guide.md](docs/manager-guide.md) | Manager configuration |
-| [docs/worker-guide.md](docs/worker-guide.md) | Worker deployment |
-| [docs/development.md](docs/development.md) | Contributing and local dev |
-
-## Troubleshooting
-
-```bash
-docker exec -it hiclaw-manager cat /var/log/hiclaw/manager-agent.log
-```
-
-See [docs/zh-cn/faq.md](docs/zh-cn/faq.md) for common issues.
-
-### Reporting Bugs
-
-Export your Matrix message logs and let an AI tool analyze them against the codebase before filing an issue — this helps us fix bugs much faster.
-
-```bash
-# Export debug logs (Matrix messages + agent sessions, PII auto-redacted)
-python scripts/export-debug-log.py --range 1h
-```
-
-Then open the HiClaw repo in Cursor, Claude Code, or similar AI tool and ask:
-
-> "Read the JSONL files in debug-log/. Analyze the Matrix message logs and agent session logs together. Cross-reference with the HiClaw codebase to identify the root cause of [describe your bug]."
-
-Include the AI's analysis in your [bug report](https://github.com/alibaba/hiclaw/issues/new?template=bug_report.yml).
-
-You can also let the AI tool submit the issue or PR directly. Install [GitHub CLI](https://cli.github.com/), run `gh auth login` to authenticate in your browser, then add the [OpenClaw GitHub skill](https://github.com/openclaw/openclaw/blob/main/skills/github/SKILL.md) to your AI coding tool (Cursor, Claude Code, etc.). After that, just ask it to file the issue or open a PR based on its analysis.
-
-## Build & Test
-
-```bash
-make build          # Build all images
-make test           # Build + run all integration tests
-make test-quick     # Smoke test only
-```
-
-## Other Commands
-
-```bash
-make replay TASK="Create a Worker named alice for frontend development"
-make uninstall
-make help
-```
-
-## Community
-
-- [Discord](https://discord.gg/NVjNA4BAVw)
-- [GitHub Issues](https://github.com/alibaba/hiclaw/issues)
-
-## License
-
-Apache License 2.0
