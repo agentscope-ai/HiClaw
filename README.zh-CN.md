@@ -327,29 +327,48 @@ Alice：前端校验也更新了。
 | 移动端访问 | 取决于渠道配置 | 任意 Matrix 客户端，零配置 |
 | 监控 | 无 | Manager 心跳，房间内可见 |
 
+## 多运行时协作
+
+HiClaw 支持三种 Worker 运行时，可以**在同一个 IM 房间中共存协作**：
+
+- **agent**（Node.js）— 通用 Agent 运行时，拥有丰富的 Skills 生态，擅长任务编排和工具调用
+- **QwenPaw**（Python）— 轻量级运行时（~150MB），适合浏览器自动化和快速任务
+- **Hermes**（[hermes-agent](https://github.com/NousResearch/hermes-agent)）— 自主编程 Agent，具备终端沙箱、自我进化的 Skill 和持久化记忆
+
+每种运行时各有擅长。推荐模式：用确定性更高的 Agent（agent/QwenPaw）做 Leader 负责任务分解和调度，用 Hermes Worker 执行自主编程任务。所有运行时通过 Matrix `m.mentions` 在同一个房间内通信——完全可见、随时可干预。
+
+```bash
+# 原地切换任意 Worker 的运行时
+hiclaw update worker --runtime hermes
+```
+
 ## 架构
 
 ```
-┌─────────────────────────────────────────────┐
-│         hiclaw-manager-agent                │
-│  Higress │ Tuwunel │ MinIO │ Element Web    │
-│  Manager Agent (OpenClaw)                   │
-└──────────────────┬──────────────────────────┘
+┌───────────────────────────────────────────────┐
+│            hiclaw-controller                  │
+│  Higress │ Tuwunel │ MinIO │ Element Web      │
+└──────────────────┬────────────────────────────┘
                    │ Matrix + HTTP Files
-┌──────────────────┴──────┐  ┌────────────────┐
-│  hiclaw-worker-agent    │  │  hiclaw-worker │
-│  Worker Alice (OpenClaw)│  │  Worker Bob    │
-└─────────────────────────┘  └────────────────┘
+┌──────────────────┴──────────┐
+│     hiclaw-manager-agent     │
+│     Manager (OpenClaw)       │
+└──────────────────┬──────────┘
+                   │
+┌──────────────────┼────────────────────────────┐
+│                  │                            │
+▼                  ▼                            ▼
+Worker Alice    Worker Bob              Worker Charlie
+(OpenClaw)      (QwenPaw)               (Hermes)
 ```
 
 | 组件 | 职责 |
 |------|------|
-| Higress AI 网关 | LLM 代理、MCP Server 托管、凭证集中管理 |
-| Tuwunel（Matrix） | 所有 Agent 与人类通信的 IM 服务器 |
+| hiclaw-controller | Kubernetes 原生控制平面，协调 Worker/Team/Manager CR |
+| Higress AI 网关 | LLM 代理、MCP Server 托管、凭证管理 |
+| Tuwunel (Matrix) | 自建 IM 服务器，承载所有 Agent + 人类通信 |
 | Element Web | 浏览器客户端，零配置 |
 | MinIO | 集中式文件存储，Worker 无状态 |
-| OpenClaw | 带 Matrix 插件和技能系统的 Agent 运行时 |
-
 ## 常见问题
 
 如果 Manager 容器启动失败，执行以下命令查看具体原因：
