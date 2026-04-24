@@ -164,7 +164,7 @@ helm install hiclaw higress.io/hiclaw \
 | `credentials.llmApiKey` | yes | API key for your LLM provider |
 | `gateway.publicURL` | yes | Public URL where users will reach Element Web (e.g. `http://localhost:18080` for port-forward, or `https://hiclaw.example.com` for an Ingress) |
 | `credentials.adminPassword` | recommended | Matrix admin password; auto-generated if left empty (you'll have to read it back from the Secret) |
-| `credentials.llmProvider` | no | LLM provider name, defaults to `openai` |
+| `credentials.llmProvider` | no | LLM provider name, defaults to `openai-compat` |
 | `credentials.defaultModel` | no | Default model, defaults to `gpt-5.4` |
 | `credentials.llmBaseUrl` | no | OpenAI-compatible base URL (e.g. `https://api.deepseek.com/v1`). Leave empty for official OpenAI API |
 

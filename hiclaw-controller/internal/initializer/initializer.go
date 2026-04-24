@@ -283,7 +283,18 @@ func (i *Initializer) initGatewayRoutes(ctx context.Context) error {
 
 		case "openai-compat":
 			if cfg.OpenAIBaseURL == "" {
-				logger.Info("HICLAW_OPENAI_BASE_URL not set, skipping openai-compat provider setup")
+				// No custom base URL — fall back to official OpenAI endpoint
+				logger.Info("HICLAW_OPENAI_BASE_URL not set, using official OpenAI endpoint")
+				raw := map[string]interface{}{"hiclawMode": true}
+				if err := i.Gateway.EnsureAIProvider(ctx, gateway.AIProviderRequest{
+					Name:     "openai-compat",
+					Type:     "openai",
+					Tokens:   []string{cfg.LLMAPIKey},
+					Protocol: "openai/v1",
+					Raw:      raw,
+				}); err != nil {
+					logger.Error(err, "failed to create LLM provider (non-fatal)")
+				}
 			} else {
 				// Parse URL to create DNS service source
 				host, port, err := parseHostPort(cfg.OpenAIBaseURL)
