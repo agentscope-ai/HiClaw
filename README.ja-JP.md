@@ -164,9 +164,30 @@ helm install hiclaw higress.io/hiclaw \
 | `credentials.llmApiKey` | 必須 | LLM プロバイダーの API キー |
 | `gateway.publicURL` | 必須 | ユーザーが Element Web にアクセスする公開 URL（port-forward 環境では `http://localhost:18080`、本番では `https://hiclaw.example.com` 等） |
 | `credentials.adminPassword` | 推奨 | Matrix 管理者パスワード。空のままだと自動生成（後で Secret から読み出す必要あり） |
-| `credentials.llmProvider` | 任意 | LLM プロバイダー名、デフォルトは `openai` |
+| `credentials.llmProvider` | 任意 | LLM プロバイダー名、デフォルトは `openai-compat` |
 | `credentials.defaultModel` | 任意 | デフォルトモデル、デフォルトは `gpt-5.4` |
 | `credentials.llmBaseUrl` | 任意 | OpenAI 互換のベース URL（例: `https://api.deepseek.com/v1`）。公式 OpenAI API を使用する場合は空のまま |
+| `manager.runtime` | 任意 | Manager エージェントランタイム: `openclaw`（デフォルト）、`copaw`、または `hermes` |
+| `worker.defaultRuntime` | 任意 | Worker デフォルトランタイム: `openclaw`（デフォルト）、`copaw`、または `hermes` |
+
+<details>
+<summary>代替ランタイムの使用（CoPaw Manager + Hermes Workers）</summary>
+
+```bash
+helm install hiclaw higress.io/hiclaw \
+  -n hiclaw-system --create-namespace --devel \
+  --set manager.runtime=copaw \
+  --set worker.defaultRuntime=hermes \
+  --set credentials.llmApiKey=<your-api-key> \
+  --set credentials.llmBaseUrl=https://your-provider.example.com/v1 \
+  --set credentials.defaultModel=your-model-name \
+  --set credentials.adminPassword=<your-admin-password> \
+  --set gateway.publicURL=http://localhost:18080
+```
+
+各コンポーネントのイメージはランタイムに基づいて自動的に選択されます（Manager: `hiclaw-manager` / `hiclaw-manager-copaw`、Worker: `hiclaw-worker` / `hiclaw-copaw-worker` / `hiclaw-hermes-worker`）。
+
+</details>
 
 **マルチリージョンイメージレジストリ**
 

@@ -1,5 +1,5 @@
 {{- $comp := dict "root" . "component" "controller" }}
-{{- $tag := include "hiclaw.imageTag" (dict "tag" .Values.controller.image.tag "global" .Values.global) }}
+{{- $tag := include "hiclaw.imageTag" (dict "tag" .Values.controller.image.tag "global" .Values.global "root" $) }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -191,7 +191,7 @@ spec:
             periodSeconds: 20
             failureThreshold: 3
         {{- if .Values.credentialProvider.enabled }}
-        {{- $cpTag := include "hiclaw.imageTag" (dict "tag" .Values.credentialProvider.image.tag "global" .Values.global) }}
+        {{- $cpTag := include "hiclaw.imageTag" (dict "tag" .Values.credentialProvider.image.tag "global" .Values.global "root" $) }}
         - name: credential-provider
           image: "{{ required "credentialProvider.image.repository is required" .Values.credentialProvider.image.repository }}:{{ $cpTag }}"
           imagePullPolicy: {{ .Values.credentialProvider.image.pullPolicy | default "IfNotPresent" }}

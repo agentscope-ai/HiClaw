@@ -28,12 +28,6 @@ rules:
   - apiGroups: [""]
     resources: ["events"]
     verbs: ["create", "patch"]
-  - apiGroups: ["hiclaw.io"]
-    resources: ["workers", "teams", "humans", "managers"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  - apiGroups: ["hiclaw.io"]
-    resources: ["workers/status", "teams/status", "humans/status", "managers/status"]
-    verbs: ["get", "update", "patch"]
   - apiGroups: ["coordination.k8s.io"]
     resources: ["leases"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
@@ -66,6 +60,20 @@ rules:
     verbs: ["create"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "hiclaw.controller.fullname" . }}-crd
+  labels:
+    {{- include "hiclaw.component.labels" (dict "root" . "component" "controller") | nindent 4 }}
+rules:
+  - apiGroups: ["hiclaw.io"]
+    resources: ["workers", "teams", "humans", "managers"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["hiclaw.io"]
+    resources: ["workers/status", "teams/status", "humans/status", "managers/status"]
+    verbs: ["get", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
   name: {{ include "hiclaw.controller.fullname" . }}-tokenreview
@@ -75,6 +83,21 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
   name: {{ include "hiclaw.controller.fullname" . }}-tokenreview
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "hiclaw.controller.serviceAccountName" . }}
+    namespace: {{ include "hiclaw.namespace" . }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "hiclaw.controller.fullname" . }}-crd
+  labels:
+    {{- include "hiclaw.component.labels" (dict "root" . "component" "controller") | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "hiclaw.controller.fullname" . }}-crd
 subjects:
   - kind: ServiceAccount
     name: {{ include "hiclaw.controller.serviceAccountName" . }}

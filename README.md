@@ -164,9 +164,30 @@ helm install hiclaw higress.io/hiclaw \
 | `credentials.llmApiKey` | yes | API key for your LLM provider |
 | `gateway.publicURL` | yes | Public URL where users will reach Element Web (e.g. `http://localhost:18080` for port-forward, or `https://hiclaw.example.com` for an Ingress) |
 | `credentials.adminPassword` | recommended | Matrix admin password; auto-generated if left empty (you'll have to read it back from the Secret) |
-| `credentials.llmProvider` | no | LLM provider name, defaults to `openai` |
+| `credentials.llmProvider` | no | LLM provider name, defaults to `openai-compat` |
 | `credentials.defaultModel` | no | Default model, defaults to `gpt-5.4` |
 | `credentials.llmBaseUrl` | no | OpenAI-compatible base URL (e.g. `https://api.deepseek.com/v1`). Leave empty for official OpenAI API |
+| `manager.runtime` | no | Manager agent runtime: `openclaw` (default), `copaw`, or `hermes` |
+| `worker.defaultRuntime` | no | Default Worker runtime: `openclaw` (default), `copaw`, or `hermes` |
+
+<details>
+<summary>Using alternative runtimes (CoPaw Manager + Hermes Workers)</summary>
+
+```bash
+helm install hiclaw higress.io/hiclaw \
+  -n hiclaw-system --create-namespace --devel \
+  --set manager.runtime=copaw \
+  --set worker.defaultRuntime=hermes \
+  --set credentials.llmApiKey=<your-api-key> \
+  --set credentials.llmBaseUrl=https://your-provider.example.com/v1 \
+  --set credentials.defaultModel=your-model-name \
+  --set credentials.adminPassword=<your-admin-password> \
+  --set gateway.publicURL=http://localhost:18080
+```
+
+The image for each component is automatically selected based on the runtime (`hiclaw-manager` / `hiclaw-manager-copaw` for Manager; `hiclaw-worker` / `hiclaw-copaw-worker` / `hiclaw-hermes-worker` for Workers).
+
+</details>
 
 **Multi-Region Image Registry**
 

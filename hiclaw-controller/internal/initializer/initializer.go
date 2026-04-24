@@ -283,7 +283,18 @@ func (i *Initializer) initGatewayRoutes(ctx context.Context) error {
 
 		case "openai-compat":
 			if cfg.OpenAIBaseURL == "" {
-				logger.Info("HICLAW_OPENAI_BASE_URL not set, skipping openai-compat provider setup")
+				// No custom base URL — fall back to official OpenAI endpoint
+				logger.Info("HICLAW_OPENAI_BASE_URL not set, using official OpenAI endpoint")
+				raw := map[string]interface{}{"hiclawMode": true}
+				if err := i.Gateway.EnsureAIProvider(ctx, gateway.AIProviderRequest{
+					Name:     "openai-compat",
+					Type:     "openai",
+					Tokens:   []string{cfg.LLMAPIKey},
+					Protocol: "openai/v1",
+					Raw:      raw,
+				}); err != nil {
+					logger.Error(err, "failed to create LLM provider (non-fatal)")
+				}
 			} else {
 				// Parse URL to create DNS service source
 				host, port, err := parseHostPort(cfg.OpenAIBaseURL)
@@ -318,15 +329,48 @@ func (i *Initializer) initGatewayRoutes(ctx context.Context) error {
 			}
 
 		default:
-			raw := map[string]interface{}{"hiclawMode": true}
-			if err := i.Gateway.EnsureAIProvider(ctx, gateway.AIProviderRequest{
-				Name:     provider,
-				Type:     "openai",
-				Tokens:   []string{cfg.LLMAPIKey},
-				Protocol: "openai/v1",
-				Raw:      raw,
-			}); err != nil {
-				logger.Error(err, "failed to create LLM provider (non-fatal)")
+			if cfg.OpenAIBaseURL != "" {
+				// Provider name is unrecognized but a custom base URL is provided —
+				// set up an openai-compatible provider with the custom endpoint.
+				host, port, err := parseHostPort(cfg.OpenAIBaseURL)
+				if err != nil {
+					logger.Error(err, "failed to parse HICLAW_OPENAI_BASE_URL (non-fatal)")
+				} else {
+					proto := "https"
+					if strings.HasPrefix(cfg.OpenAIBaseURL, "http://") {
+						proto = "http"
+					}
+					if err := i.Gateway.EnsureServiceSource(ctx, provider, host, port, proto); err != nil {
+						logger.Error(err, "failed to register service source for provider (non-fatal)")
+					}
+					time.Sleep(2 * time.Second)
+					raw := map[string]interface{}{
+						"hiclawMode":              true,
+						"openaiCustomUrl":         cfg.OpenAIBaseURL,
+						"openaiCustomServiceName": provider + ".dns",
+						"openaiCustomServicePort": port,
+					}
+					if err := i.Gateway.EnsureAIProvider(ctx, gateway.AIProviderRequest{
+						Name:     provider,
+						Type:     "openai",
+						Tokens:   []string{cfg.LLMAPIKey},
+						Protocol: "openai/v1",
+						Raw:      raw,
+					}); err != nil {
+						logger.Error(err, "failed to create LLM provider (non-fatal)")
+					}
+				}
+			} else {
+				raw := map[string]interface{}{"hiclawMode": true}
+				if err := i.Gateway.EnsureAIProvider(ctx, gateway.AIProviderRequest{
+					Name:     provider,
+					Type:     "openai",
+					Tokens:   []string{cfg.LLMAPIKey},
+					Protocol: "openai/v1",
+					Raw:      raw,
+				}); err != nil {
+					logger.Error(err, "failed to create LLM provider (non-fatal)")
+				}
 			}
 		}
 
