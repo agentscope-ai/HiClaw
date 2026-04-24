@@ -20,8 +20,6 @@ HiClaw does not compete with other xxClaw projects. Instead of implementing Agen
 
 - 🧬 **Manager-Workers Architecture**: Eliminates the need for human oversight of individual Worker Claws by enabling Agents to manage other Agents.
 
-- 🦞 **Customizable Agents**: Each Agent supports flexible configurations including OpenClaw, Copaw, NanoClaw, ZeroClaw, and enterprise-built Agents—scaling from individual "shrimp farming" to full-scale "shrimp farm" operations.HiClaw Provides Worker and Team template marketplaces.
-
 - 🤝 **Multi-Runtime Collaboration**: OpenClaw, QwenPaw, and Hermes Workers coexist in the same IM room. Use deterministic agents (OpenClaw/QwenPaw) as Leaders to orchestrate tasks, and Hermes Workers for autonomous code execution — each runtime does what it's best at.
 
 - 📦 **MinIO Shared File System**: Introduces a shared file system for inter-Agent information exchange, significantly reducing token consumption in multi-Agent collaboration scenarios.
