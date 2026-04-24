@@ -859,6 +859,7 @@ func managerToResponse(m *v1beta1.Manager) ManagerResponse {
 		RoomID:       m.Status.RoomID,
 		Version:      m.Status.Version,
 		Message:      m.Status.Message,
+		WelcomeSent:  m.Status.WelcomeSent,
 	}
 	if resp.Phase == "" {
 		resp.Phase = "Pending"

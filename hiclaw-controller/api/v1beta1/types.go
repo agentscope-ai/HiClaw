@@ -171,6 +171,12 @@ type LeaderSpec struct {
 	ChannelPolicy     *ChannelPolicySpec       `json:"channelPolicy,omitempty"`
 	State             *string                  `json:"state,omitempty"` // desired lifecycle state: Running, Sleeping, Stopped
 
+	// AccessEntries declares the cloud permissions this leader should be
+	// granted via hiclaw-credential-provider. See AccessEntry for semantics.
+	// When empty the controller applies team-member defaults (agents/<name>/*
+	// + shared/* + teams/<team>/* on the configured bucket).
+	AccessEntries []AccessEntry `json:"accessEntries,omitempty"`
+
 	// Labels are user-defined Pod labels stamped onto the leader Pod.
 	// Merged on top of Team.metadata.labels and below controller system
 	// labels (see WorkerSpec.Labels godoc). omitempty preserves
@@ -198,6 +204,12 @@ type TeamWorkerSpec struct {
 	Expose        []ExposePort       `json:"expose,omitempty"`
 	ChannelPolicy *ChannelPolicySpec `json:"channelPolicy,omitempty"`
 	State         *string            `json:"state,omitempty"` // desired lifecycle state: Running, Sleeping, Stopped
+
+	// AccessEntries declares the cloud permissions this team worker should be
+	// granted via hiclaw-credential-provider. See AccessEntry for semantics.
+	// When empty the controller applies team-member defaults (agents/<name>/*
+	// + shared/* + teams/<team>/* on the configured bucket).
+	AccessEntries []AccessEntry `json:"accessEntries,omitempty"`
 
 	// Labels are user-defined Pod labels stamped onto this team worker's
 	// Pod. Merged on top of Team.metadata.labels and below controller
@@ -394,6 +406,15 @@ type ManagerStatus struct {
 	ContainerState     string `json:"containerState,omitempty"`
 	Version            string `json:"version,omitempty"`
 	Message            string `json:"message,omitempty"`
+
+	// WelcomeSent records whether the controller has already delivered the
+	// first-boot onboarding prompt to the Admin DM room. Used as the
+	// idempotency guard for reconcileManagerWelcome — once true the
+	// controller will not re-send even if the manager container is later
+	// recreated. The Manager Agent's own `~/soul-configured` file remains
+	// the orthogonal marker that the agent has finished the resulting
+	// onboarding Q&A.
+	WelcomeSent bool `json:"welcomeSent,omitempty"`
 }
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object

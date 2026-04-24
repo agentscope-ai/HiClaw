@@ -172,6 +172,7 @@ func (r *ManagerReconciler) createManagerContainer(ctx context.Context, s *manag
 				v1beta1.LabelController: r.ControllerName,
 			},
 		),
+		Owner: m,
 	}
 	if wb.Name() != "k8s" {
 		token, err := r.Provisioner.RequestManagerSAToken(ctx, m.Name)

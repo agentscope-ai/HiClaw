@@ -345,20 +345,6 @@ func TestApplyPodTemplate_SidecarContainersPreserved(t *testing.T) {
 	}
 }
 
-func TestApplyPodTemplate_OwnerReferencesFromOverlay(t *testing.T) {
-	ov := baseOverlay()
-	ov.OwnerReferences = []metav1.OwnerReference{{
-		APIVersion: "apps/v1",
-		Kind:       "StatefulSet",
-		Name:       "ctl",
-		UID:        "u1",
-	}}
-	pod := ApplyPodTemplate(corev1.PodTemplateSpec{}, ov)
-	if len(pod.OwnerReferences) != 1 || pod.OwnerReferences[0].UID != "u1" {
-		t.Fatalf("ownerRefs: %+v", pod.OwnerReferences)
-	}
-}
-
 func TestApplyPodTemplate_RestartPolicyDefault(t *testing.T) {
 	pod := ApplyPodTemplate(corev1.PodTemplateSpec{}, baseOverlay())
 	if pod.Spec.RestartPolicy != corev1.RestartPolicyAlways {

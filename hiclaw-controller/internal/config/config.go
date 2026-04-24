@@ -139,6 +139,15 @@ type Config struct {
 	// Element Web URL (for Gateway route initialization)
 	ElementWebURL string
 
+	// Locale used to render the first-boot Manager onboarding prompt
+	// (welcome message). Sourced from the install-time HICLAW_LANGUAGE
+	// (zh / en) and TZ env vars that the install script forwards into
+	// the controller container. Both are advisory hints — the controller
+	// only embeds them as plain text in the welcome prompt; the agent
+	// itself decides how to interpret them when greeting the admin.
+	UserLanguage string
+	UserTimezone string
+
 	// CMS observability
 	CMSTracesEnabled  bool
 	CMSMetricsEnabled bool
@@ -232,8 +241,8 @@ func LoadConfig() *Config {
 		HigressBaseURL:    envOrDefault("HICLAW_AI_GATEWAY_ADMIN_URL", "http://127.0.0.1:8001"),
 		HigressCookieFile: os.Getenv("HIGRESS_COOKIE_FILE"),
 		// Higress and Matrix share the same admin credentials.
-		HigressAdminUser:     envOrDefault("HICLAW_ADMIN_USER", "admin"),
-		HigressAdminPassword: envOrDefault("HICLAW_ADMIN_PASSWORD", "admin"),
+		HigressAdminUser:     os.Getenv("HICLAW_ADMIN_USER"),
+		HigressAdminPassword: os.Getenv("HICLAW_ADMIN_PASSWORD"),
 
 		WorkerBackend: firstNonEmpty(
 			os.Getenv("HICLAW_WORKER_BACKEND"),
@@ -274,8 +283,8 @@ func LoadConfig() *Config {
 		MatrixServerURL:         envOrDefault("HICLAW_MATRIX_URL", "http://matrix-local.hiclaw.io:8080"),
 		MatrixDomain:            envOrDefault("HICLAW_MATRIX_DOMAIN", "matrix-local.hiclaw.io:8080"),
 		MatrixRegistrationToken: envOrDefault("HICLAW_MATRIX_REGISTRATION_TOKEN", os.Getenv("HICLAW_REGISTRATION_TOKEN")),
-		MatrixAdminUser:         envOrDefault("HICLAW_ADMIN_USER", "admin"),
-		MatrixAdminPassword:     envOrDefault("HICLAW_ADMIN_PASSWORD", "admin"),
+		MatrixAdminUser:         os.Getenv("HICLAW_ADMIN_USER"),
+		MatrixAdminPassword:     os.Getenv("HICLAW_ADMIN_PASSWORD"),
 		MatrixE2EE:              os.Getenv("HICLAW_MATRIX_E2EE") == "1" || os.Getenv("HICLAW_MATRIX_E2EE") == "true",
 
 		OSSStoragePrefix: envOrDefault("HICLAW_STORAGE_PREFIX", "hiclaw/hiclaw-storage"),
@@ -290,6 +299,9 @@ func LoadConfig() *Config {
 		LLMAPIKey:     os.Getenv("HICLAW_LLM_API_KEY"),
 		OpenAIBaseURL: os.Getenv("HICLAW_OPENAI_BASE_URL"),
 		ElementWebURL: os.Getenv("HICLAW_ELEMENT_WEB_URL"),
+
+		UserLanguage: envOrDefault("HICLAW_LANGUAGE", "zh"),
+		UserTimezone: envOrDefault("TZ", "Asia/Shanghai"),
 
 		CMSTracesEnabled:  envBool("HICLAW_CMS_TRACES_ENABLED"),
 		CMSMetricsEnabled: envBool("HICLAW_CMS_METRICS_ENABLED"),
@@ -307,7 +319,7 @@ func LoadConfig() *Config {
 			ControllerURL: os.Getenv("HICLAW_CONTROLLER_URL"),
 			AIGatewayURL:  envOrDefault("HICLAW_AI_GATEWAY_URL", "http://aigw-local.hiclaw.io:8080"),
 			MatrixURL:     envOrDefault("HICLAW_MATRIX_URL", "http://matrix-local.hiclaw.io:8080"),
-			AdminUser:     envOrDefault("HICLAW_ADMIN_USER", "admin"),
+			AdminUser:     os.Getenv("HICLAW_ADMIN_USER"),
 			YoloMode:      envBool("HICLAW_YOLO"),
 			MatrixDebug:   envBool("HICLAW_MATRIX_DEBUG"),
 

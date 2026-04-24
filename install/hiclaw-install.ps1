@@ -510,6 +510,12 @@ $script:Messages = @{
     "install.welcome_msg.sending" = @{ zh = "正在向 Manager 发送欢迎消息..."; en = "Sending welcome message to Manager..." }
     "install.welcome_msg.send_failed" = @{ zh = "警告: 发送欢迎消息失败"; en = "WARNING: Failed to send welcome message" }
     "install.welcome_msg.sent" = @{ zh = "欢迎消息已发送给 Manager"; en = "Welcome message sent to Manager" }
+    "install.welcome_msg.waiting" = @{ zh = "等待 Manager 发送欢迎消息（Higress 路由授权 + LLM 探活，约 45-90s）..."; en = "Waiting for Manager to send the welcome message (Higress route auth + LLM probe, ~45-90s)..." }
+    "install.welcome_msg.confirmed" = @{ zh = "Manager 已确认发送欢迎消息（status.welcomeSent=true，用时 {0}s）"; en = "Manager confirmed welcome message sent (status.welcomeSent=true, {0}s elapsed)" }
+    "install.welcome_msg.timeout" = @{ zh = "警告: 在 {0}s 内未观察到 Manager 发送欢迎消息（status.welcomeSent=true）。安装仍然成功，所有服务已就绪——可继续按下方提示登录 Element Web。"; en = "WARNING: Did not observe the Manager sending its welcome message (status.welcomeSent=true) within {0}s. Installation is still successful, all services are up — continue with the Element Web instructions below." }
+    "install.welcome_msg.timeout_hint" = @{ zh = "手动触发 onboarding: 登录 Element Web → 打开与 Manager 的 DM 房间 → 发送任意一句话（例如 `"hi`"），Manager 会接管对话并开始引导。"; en = "Manual onboarding: log in to Element Web -> open the DM with the Manager -> send any message (e.g. `"hi`") and the Manager will take over and start the guided setup." }
+    "install.welcome_msg.timeout_inspect" = @{ zh = "排查命令: docker exec hiclaw-controller hiclaw get managers default"; en = "Inspect status: docker exec hiclaw-controller hiclaw get managers default" }
+    "install.welcome_msg.poll_unavailable" = @{ zh = "提示: hiclaw-manager 内未找到 hiclaw CLI，跳过 welcome 等待（旧镜像？）"; en = "Note: hiclaw CLI not found inside hiclaw-manager; skipping welcome wait (old image?)" }
 
     # --- Final output panel ---
     "success.title" = @{ zh = "=== HiClaw Manager 已启动！==="; en = "=== HiClaw Manager Started! ===" }
@@ -587,6 +593,7 @@ $script:Messages = @{
     "uninstall.removing_volume" = @{ zh = "正在移除 Docker 卷: hiclaw-data"; en = "Removing Docker volume: hiclaw-data" }
     "uninstall.removing_env" = @{ zh = "正在移除 env 文件: {0}"; en = "Removing env file: {0}" }
     "uninstall.removing_proxy" = @{ zh = "正在停止并移除 Docker API 代理容器: hiclaw-docker-proxy"; en = "Stopping and removing Docker API proxy container: hiclaw-docker-proxy" }
+    "uninstall.stopping_controller" = @{ zh = "正在停止并移除 hiclaw-controller (内嵌 Tuwunel/MinIO/Higress)..."; en = "Stopping and removing hiclaw-controller (embedded Tuwunel/MinIO/Higress)..." }
     "uninstall.removing_network" = @{ zh = "正在移除 Docker 网络: hiclaw-net"; en = "Removing Docker network: hiclaw-net" }
     "uninstall.removing_workspace" = @{ zh = "正在移除工作空间目录: {0}"; en = "Removing workspace directory: {0}" }
     "uninstall.removing_log" = @{ zh = "正在移除日志文件: {0}"; en = "Removing log file: {0}" }
@@ -2654,6 +2661,60 @@ function Install-Manager {
         # the controller (the manager only exposes the agent runtime).
         Wait-ManagerReady -Container "hiclaw-manager"
         Wait-MatrixReady -Container "hiclaw-controller"
+
+        # Wait for the controller to actually deliver the first-boot welcome
+        # message. Gated by the controller on (a) Manager joining the DM room
+        # and (b) Higress WASM key-auth propagating to /v1/chat/completions for
+        # the Manager's gateway key — typically ~45-90s on a fresh install.
+        # We poll Manager CR status.welcomeSent via the in-container hiclaw
+        # CLI, exec'd inside hiclaw-controller (the source-of-truth container
+        # — its bundled CLI binary is always in lockstep with the controller
+        # binary serving the HTTP API, since they're the same `go build`
+        # output. The hiclaw-manager container's CLI may lag the controller
+        # across image upgrades and silently drop the welcomeSent field,
+        # leaving this loop hung). The controller mints a long-lived admin
+        # SA token at startup and writes it to
+        # HICLAW_AUTH_TOKEN_FILE=/var/run/hiclaw/cli-token (set as a Dockerfile
+        # ENV default), so a bare `docker exec hiclaw-controller hiclaw …`
+        # auto-discovers both the endpoint and the token. The brief window
+        # after container start before bootstrapAdminCLIToken completes is
+        # absorbed by the loop's silent retry.
+        $hasHiclawCli = $false
+        try {
+            docker exec hiclaw-controller sh -c 'command -v hiclaw' *> $null
+            if ($LASTEXITCODE -eq 0) { $hasHiclawCli = $true }
+        } catch {}
+
+        if ($hasHiclawCli) {
+            Write-Log (Get-Msg "install.welcome_msg.waiting")
+            $welcomeMax = if ($env:HICLAW_WELCOME_TIMEOUT) { [int]$env:HICLAW_WELCOME_TIMEOUT } else { 300 }
+            $welcomeWait = 0
+            $welcomeDone = $false
+            while ($welcomeWait -lt $welcomeMax) {
+                $wjson = ""
+                try {
+                    $wjson = docker exec hiclaw-controller `
+                        hiclaw get managers default -o json 2>$null
+                } catch {}
+                if ($wjson -and ($wjson -replace '\s', '') -match '"welcomeSent":true') {
+                    Write-Log (Get-Msg "install.welcome_msg.confirmed" $welcomeWait)
+                    $welcomeDone = $true
+                    break
+                }
+                Start-Sleep -Seconds 3
+                $welcomeWait += 3
+            }
+            if (-not $welcomeDone) {
+                # Non-fatal: install is still good. Keep going to the success
+                # banner so the admin can use Element Web to nudge Manager into
+                # onboarding manually (one DM message is enough).
+                Write-Log (Get-Msg "install.welcome_msg.timeout" $welcomeMax)
+                Write-Log (Get-Msg "install.welcome_msg.timeout_hint")
+                Write-Log (Get-Msg "install.welcome_msg.timeout_inspect")
+            }
+        } else {
+            Write-Log (Get-Msg "install.welcome_msg.poll_unavailable")
+        }
     } else {
         # Run container (legacy path)
         Write-Log (Get-Msg "install.starting_manager")
@@ -2864,12 +2925,27 @@ function Uninstall-HiClaw {
         }
     }
 
-    # Stop and remove docker-proxy
+    # Stop and remove docker-proxy (legacy <= v1.0.x; current arch uses
+    # hiclaw-controller for the same role)
     $proxy = docker ps -a --format "{{.Names}}" 2>$null | Select-String "^hiclaw-docker-proxy$"
     if ($proxy) {
         Write-Log (Get-Msg "uninstall.removing_proxy")
         docker stop hiclaw-docker-proxy *>$null
         docker rm hiclaw-docker-proxy *>$null
+    }
+
+    # Stop and remove the embedded controller container. MUST happen
+    # before the `docker volume rm hiclaw-data` step below -- in embedded
+    # mode hiclaw-controller mounts hiclaw-data at /data (Tuwunel DB,
+    # MinIO state, Higress state, all the room messages), and `volume rm`
+    # against an in-use volume fails silently. Skipping this used to
+    # leave room/message history behind across "uninstall + reinstall"
+    # cycles. See PR #692.
+    $controller = docker ps -a --format "{{.Names}}" 2>$null | Select-String "^hiclaw-controller$"
+    if ($controller) {
+        Write-Log (Get-Msg "uninstall.stopping_controller")
+        docker stop hiclaw-controller *>$null
+        docker rm hiclaw-controller *>$null
     }
 
     # Remove Docker volume (read custom name from env file if available)

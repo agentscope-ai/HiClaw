@@ -185,6 +185,8 @@ func TestMain(m *testing.M) {
 		Backend:        mgrBackendRegistry,
 		EnvBuilder:     mockMgrEnv,
 		ControllerName: "test-ctl",
+		UserLanguage:   "en",
+		UserTimezone:   "America/Los_Angeles",
 	}
 	if err := managerReconciler.SetupWithManager(mgr); err != nil {
 		panic(fmt.Sprintf("failed to setup ManagerReconciler: %v", err))

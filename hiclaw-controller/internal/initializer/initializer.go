@@ -300,10 +300,10 @@ func (i *Initializer) initGatewayRoutes(ctx context.Context) error {
 					// Wait for DNS service source to propagate before creating provider
 					time.Sleep(2 * time.Second)
 					raw := map[string]interface{}{
-						"hiclawMode":               true,
-						"openaiCustomUrl":           cfg.OpenAIBaseURL,
-						"openaiCustomServiceName":   "openai-compat.dns",
-						"openaiCustomServicePort":   port,
+						"hiclawMode":              true,
+						"openaiCustomUrl":         cfg.OpenAIBaseURL,
+						"openaiCustomServiceName": "openai-compat.dns",
+						"openaiCustomServicePort": port,
 					}
 					if err := i.Gateway.EnsureAIProvider(ctx, gateway.AIProviderRequest{
 						Name:     "openai-compat",
@@ -330,15 +330,17 @@ func (i *Initializer) initGatewayRoutes(ctx context.Context) error {
 			}
 		}
 
-		// 4. AI Route — auth framework enabled with empty consumer list.
-		// ManagerReconciler/WorkerReconciler will bind consumers via
-		// AuthorizeAIRoutes after creating them, triggering Higress to
-		// sync credentials into the WASM key-auth config.
+		// 4. AI Route skeleton — only creates the route if it does not yet
+		// exist. We intentionally do NOT pass any authorization data here:
+		// authConfig.allowedConsumers is owned exclusively by Manager/Worker
+		// Reconcilers (via AuthorizeAIRoutes). This separation of ownership
+		// avoids the restart-time race where the Initializer would otherwise
+		// re-declare an empty allowedConsumers list and transiently lock out
+		// the Manager/Workers.
 		if err := i.Gateway.EnsureAIRoute(ctx, gateway.AIRouteRequest{
-			Name:             "default-ai-route",
-			PathPrefix:       "/v1",
-			Provider:         provider,
-			AllowedConsumers: []string{},
+			Name:       "default-ai-route",
+			PathPrefix: "/v1",
+			Provider:   provider,
 		}); err != nil {
 			logger.Error(err, "failed to create AI route (non-fatal)")
 		}

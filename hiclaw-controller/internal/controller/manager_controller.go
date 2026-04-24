@@ -50,6 +50,15 @@ type ManagerReconciler struct {
 	// Manager Pod via hiclaw.io/controller so multi-instance deployments
 	// sharing a namespace do not cross-watch each other's resources.
 	ControllerName string
+
+	// UserLanguage / UserTimezone are install-time hints (HICLAW_LANGUAGE /
+	// TZ) used only to render the first-boot Manager onboarding prompt
+	// in reconcileManagerWelcome. Empty strings fall back to the same
+	// defaults the legacy `start-manager-agent.sh` welcome heredoc used
+	// (zh / Asia/Shanghai), which keeps observable behavior identical
+	// when an admin upgrades from the legacy single-container manager.
+	UserLanguage string
+	UserTimezone string
 }
 
 // managerContainerName returns the container/pod name for a Manager CR.
@@ -127,6 +136,15 @@ func (r *ManagerReconciler) reconcileManagerNormal(ctx context.Context, s *manag
 		return res, err
 	}
 	if res, err := r.reconcileManagerContainer(ctx, s); err != nil || res.RequeueAfter > 0 {
+		return res, err
+	}
+	// Welcome message must run AFTER the container is up: the Manager's
+	// matrix user only joins the Admin DM room once OpenClaw inside the
+	// container has performed its first /sync. Sending earlier means the
+	// message lands as historical timeline that the agent may skip on
+	// startup. reconcileManagerWelcome itself short-circuits when the
+	// container isn't Running yet and requeues until membership lands.
+	if res, err := r.reconcileManagerWelcome(ctx, s); err != nil || res.RequeueAfter > 0 {
 		return res, err
 	}
 

@@ -5,6 +5,7 @@ package controller_test
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -851,6 +852,226 @@ func TestManagerUpdate_MCPServersChange_TriggersReauth(t *testing.T) {
 	mcpCount := mockMgrProv.MCPAuthCallCount()
 	if mcpCount == 0 {
 		t.Error("ReconcileMCPAuth should have been called after McpServers change")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Manager Welcome (first-boot onboarding) tests
+// ---------------------------------------------------------------------------
+
+// TestManagerWelcome_HappyPath_SendsOnce verifies that once the manager
+// container reports Running, the controller calls SendManagerWelcome
+// exactly once and persists Status.WelcomeSent=true. Forwarded
+// language/timezone must reflect the values wired from controller config
+// (see suite_test.go: en / America/Los_Angeles).
+func TestManagerWelcome_HappyPath_SendsOnce(t *testing.T) {
+	resetManagerMocks()
+
+	mgrName := fixtures.UniqueName("test-mgr-welcome-happy")
+	mgr := fixtures.NewTestManager(mgrName)
+
+	if err := k8sClient.Create(ctx, mgr); err != nil {
+		t.Fatalf("failed to create Manager CR: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = k8sClient.Delete(ctx, mgr)
+	})
+
+	waitForManagerRunning(t, mgr)
+
+	assertEventually(t, func() error {
+		var m v1beta1.Manager
+		if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(mgr), &m); err != nil {
+			return err
+		}
+		if !m.Status.WelcomeSent {
+			return fmt.Errorf("Status.WelcomeSent=false, want true after Running")
+		}
+		return nil
+	})
+
+	calls := mockMgrProv.WelcomeCallsSnapshot()
+	if len(calls) != 1 {
+		t.Fatalf("SendManagerWelcome called %d times, want exactly 1", len(calls))
+	}
+	got := calls[0]
+	if got.Language != "en" {
+		t.Errorf("welcome request Language=%q, want %q (forwarded from controller config)", got.Language, "en")
+	}
+	if got.Timezone != "America/Los_Angeles" {
+		t.Errorf("welcome request Timezone=%q, want %q (forwarded from controller config)", got.Timezone, "America/Los_Angeles")
+	}
+	if got.RoomID == "" {
+		t.Error("welcome request RoomID is empty, want the provisioned admin DM room")
+	}
+}
+
+// TestManagerWelcome_Idempotent_NoResendOnReconcile verifies the
+// WelcomeSent guard: after the first send, subsequent reconciles must
+// NOT call SendManagerWelcome again — even if the manager container
+// restarts or a spec change re-triggers the loop.
+func TestManagerWelcome_Idempotent_NoResendOnReconcile(t *testing.T) {
+	resetManagerMocks()
+
+	mgrName := fixtures.UniqueName("test-mgr-welcome-idemp")
+	mgr := fixtures.NewTestManager(mgrName)
+
+	if err := k8sClient.Create(ctx, mgr); err != nil {
+		t.Fatalf("failed to create Manager CR: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = k8sClient.Delete(ctx, mgr)
+	})
+
+	waitForManagerRunning(t, mgr)
+	assertEventually(t, func() error {
+		var m v1beta1.Manager
+		if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(mgr), &m); err != nil {
+			return err
+		}
+		if !m.Status.WelcomeSent {
+			return fmt.Errorf("WelcomeSent not yet true")
+		}
+		return nil
+	})
+
+	mockMgrProv.ClearWelcomeCalls()
+
+	triggerManagerReconcile(t, mgr)
+
+	// Wait for at least one full reconcile to happen by observing
+	// RefreshManagerCredentials being called (it runs on every Running
+	// reconcile path).
+	assertEventually(t, func() error {
+		_, _, refreshCount, _ := mockMgrProv.CallCounts()
+		if refreshCount == 0 {
+			return fmt.Errorf("no reconcile observed yet")
+		}
+		return nil
+	})
+
+	if resends := mockMgrProv.WelcomeCallCount(); resends != 0 {
+		t.Errorf("SendManagerWelcome called %d times after WelcomeSent=true, want 0 (must be idempotent)", resends)
+	}
+}
+
+// TestManagerWelcome_NotJoinedYet_RequeuesUntilJoined exercises the
+// pre-claim membership-poll branch: IsManagerJoinedDM reports false on
+// the first two attempts (manager hasn't auto-joined the DM room yet),
+// then true. SendManagerWelcomeMessage must not be called until the
+// membership check passes, Status.WelcomeSent must only flip on the
+// successful path, and the controller must NOT touch status while
+// waiting (no claim/rollback churn).
+func TestManagerWelcome_NotJoinedYet_RequeuesUntilJoined(t *testing.T) {
+	resetManagerMocks()
+
+	var joinChecks atomic.Int32
+	mockMgrProv.IsManagerJoinedDMFn = func(_ context.Context, _ string) (bool, error) {
+		n := joinChecks.Add(1)
+		return n >= 3, nil
+	}
+
+	mgrName := fixtures.UniqueName("test-mgr-welcome-wait")
+	mgr := fixtures.NewTestManager(mgrName)
+
+	if err := k8sClient.Create(ctx, mgr); err != nil {
+		t.Fatalf("failed to create Manager CR: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = k8sClient.Delete(ctx, mgr)
+	})
+
+	waitForManagerRunning(t, mgr)
+
+	assertEventually(t, func() error {
+		var m v1beta1.Manager
+		if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(mgr), &m); err != nil {
+			return err
+		}
+		if !m.Status.WelcomeSent {
+			return fmt.Errorf("WelcomeSent=false, joinChecks=%d sends=%d (want true after the membership poll passes)",
+				joinChecks.Load(), mockMgrProv.WelcomeCallCount())
+		}
+		return nil
+	})
+
+	if got := joinChecks.Load(); got < 3 {
+		t.Errorf("IsManagerJoinedDM called %d times, want >=3 (waited at least 2 polls before membership landed)", got)
+	}
+	if sends := mockMgrProv.WelcomeCallCount(); sends != 1 {
+		t.Errorf("SendManagerWelcomeMessage called %d times, want exactly 1 (membership-poll branch must not pre-emptively send)", sends)
+	}
+
+	// Status must remain Running — the requeue path is non-fatal.
+	var m v1beta1.Manager
+	if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(mgr), &m); err != nil {
+		t.Fatalf("failed to get Manager: %v", err)
+	}
+	if m.Status.Phase != "Running" {
+		t.Errorf("Phase=%q, want Running (welcome requeue must not flip to Failed)", m.Status.Phase)
+	}
+}
+
+// TestManagerWelcome_LLMAuthNotReady_RequeuesUntilPropagated exercises
+// the second readiness gate: even when the manager has joined the DM
+// room, the controller must hold off on SendManagerWelcomeMessage until
+// IsManagerLLMAuthReady reports true. This guards against the
+// well-known Higress WASM key-auth propagation lag (~40-45s on first
+// install) — sending the welcome too early lands a prompt the manager
+// receives but cannot reply to (its first /v1/chat/completions call
+// 401s against the gateway).
+//
+// The mock keeps IsManagerJoinedDM=true throughout so the test isolates
+// the auth-readiness branch; IsManagerLLMAuthReady starts returning
+// false and flips to true after a few polls. The controller must
+// requeue (no claim, no send) until the auth signal flips, then send
+// exactly once.
+func TestManagerWelcome_LLMAuthNotReady_RequeuesUntilPropagated(t *testing.T) {
+	resetManagerMocks()
+
+	var authChecks atomic.Int32
+	mockMgrProv.IsManagerLLMAuthReadyFn = func(_ context.Context, _ string) (bool, error) {
+		n := authChecks.Add(1)
+		return n >= 3, nil
+	}
+
+	mgrName := fixtures.UniqueName("test-mgr-welcome-auth")
+	mgr := fixtures.NewTestManager(mgrName)
+
+	if err := k8sClient.Create(ctx, mgr); err != nil {
+		t.Fatalf("failed to create Manager CR: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = k8sClient.Delete(ctx, mgr)
+	})
+
+	waitForManagerRunning(t, mgr)
+
+	assertEventually(t, func() error {
+		var m v1beta1.Manager
+		if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(mgr), &m); err != nil {
+			return err
+		}
+		if !m.Status.WelcomeSent {
+			return fmt.Errorf("WelcomeSent=false, authChecks=%d sends=%d (want true after auth propagates)",
+				authChecks.Load(), mockMgrProv.WelcomeCallCount())
+		}
+		return nil
+	})
+
+	if got := authChecks.Load(); got < 3 {
+		t.Errorf("IsManagerLLMAuthReady called %d times, want >=3 (waited at least 2 polls before auth propagated)", got)
+	}
+	if sends := mockMgrProv.WelcomeCallCount(); sends != 1 {
+		t.Errorf("SendManagerWelcomeMessage called %d times, want exactly 1 (auth-readiness gate must not pre-emptively send)", sends)
+	}
+
+	var m v1beta1.Manager
+	if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(mgr), &m); err != nil {
+		t.Fatalf("failed to get Manager: %v", err)
+	}
+	if m.Status.Phase != "Running" {
+		t.Errorf("Phase=%q, want Running (welcome requeue must not flip to Failed)", m.Status.Phase)
 	}
 }
 

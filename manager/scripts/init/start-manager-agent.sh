@@ -465,11 +465,19 @@ fi
 
 # ============================================================
 # Create admin DM room, persist to state.json, send welcome message
-# K8s mode: skip — controller ProvisionManager already creates the Admin DM room
+# K8s mode: skip — controller ProvisionManager creates the Admin DM
+# room (Step 4 in service/provisioner.go) AND reconcileManagerWelcome
+# delivers the first-boot onboarding prompt once OpenClaw inside this
+# container has joined the room. In k8s mode the manager intentionally
+# does NOT have the admin password (only HICLAW_ADMIN_USER), so it
+# could not log in as admin to send the welcome itself anyway. The
+# Manager Agent discovers its admin DM room on first heartbeat via
+# state.json / `manage-state.sh --action set-admin-dm` (see HEARTBEAT.md
+# Step 1) — it does not need it to be pre-injected by this script.
 # Runs in both local and cloud modes (idempotent)
 # ============================================================
 if [ "${HICLAW_RUNTIME}" = "k8s" ]; then
-    log "K8s mode: skipping admin DM room creation (handled by controller)"
+    log "K8s mode: skipping admin DM room creation and welcome message (both handled by hiclaw-controller)"
 else
 MANAGER_FULL_ID="@manager:${MATRIX_DOMAIN}"
 ADMIN_FULL_ID="@${HICLAW_ADMIN_USER}:${MATRIX_DOMAIN}"

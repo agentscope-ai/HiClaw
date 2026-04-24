@@ -692,6 +692,7 @@ func buildDesiredMembers(t *v1beta1.Team, controllerName string) []MemberContext
 		TeamLeaderName:    "",
 		TeamAdminMatrixID: teamAdminMatrixID(t),
 		PodLabels:         memberLabels(RoleTeamLeader, t.Spec.Leader.Labels),
+		Owner:             t,
 	})
 
 	for _, w := range t.Spec.Workers {
@@ -709,6 +710,7 @@ func buildDesiredMembers(t *v1beta1.Team, controllerName string) []MemberContext
 			TeamLeaderName:    t.Spec.Leader.Name,
 			TeamAdminMatrixID: teamAdminMatrixID(t),
 			PodLabels:         memberLabels(RoleTeamWorker, w.Labels),
+			Owner:             t,
 		})
 	}
 	return members
