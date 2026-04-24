@@ -1,195 +1,195 @@
-# HiClaw v1.1.0：从个人工具到企业级多 Agent 平台
+# HiClaw v1.1.0: From Personal Tool to Enterprise-Grade Multi-Agent Platform
 
-> 发布日期：2026年4月24日
-
----
-
-v1.1.0 是 HiClaw 自开源以来变化最大的一个版本。我们重写了整个控制平面，引入了第三种 Agent 运行时，全面升级了底层引擎，并确保从 v1.0.9 的升级路径平滑无感。这篇文章聊聊背后的思考和一些关键变化。
+> Release Date: April 24, 2026
 
 ---
 
-## Agent 大升级：三种运行时，全面验证
+v1.1.0 is the biggest release since HiClaw was open-sourced. We rewrote the entire control plane, introduced a third agent runtime, upgraded all underlying engines, and ensured a smooth upgrade path from v1.0.9. This post covers the thinking behind these changes and what they mean for you.
 
-HiClaw 从第一天起就支持多种 Agent 运行时——不同的任务适合不同的 Agent，这是多 Agent 协作的基本前提。在 v1.1.0 中，我们对三种运行时都做了重要升级。
+---
 
-### 全新 Hermes 运行时：引入自我进化的自主编程 Agent
+## Agent Upgrades: Three Runtimes, Fully Verified
 
-我们引入了 **Hermes**（[hermes-agent](https://github.com/NousResearch/hermes-agent)，由 Nous Research 开发）作为第三种 Worker 运行时。
+HiClaw has supported multiple agent runtimes from day one — different tasks suit different agents, and that's the basic premise of multi-agent collaboration. In v1.1.0, all three runtimes received significant upgrades.
 
-Hermes 不是另一个聊天机器人。它是一个**自主编程 Agent**——可以在隔离容器中独立规划、执行和迭代复杂的软件任务。更关键的是，Hermes 具备**自我进化能力**：它会在任务完成后自动创建可复用的 Skill，Skill 在使用过程中自我改进，跨会话的 FTS5 记忆检索让 Agent 随着使用越来越了解你的项目。用 Nous Research 的话说，它是"the agent that grows with you"。
+### New Hermes Runtime: A Self-Improving Autonomous Coding Agent
 
-### Leader + Worker：确定性 Agent 指挥自主 Agent
+We introduced **Hermes** ([hermes-agent](https://github.com/NousResearch/hermes-agent), developed by Nous Research) as a third Worker runtime.
 
-引入 Hermes 后，一个很有意思的架构模式浮现出来：**用确定性更高的 Agent 做 Leader，指挥 Hermes 做重活**。
+Hermes is not another chatbot. It's an **autonomous coding agent** that can independently plan, execute, and iterate on complex software tasks inside an isolated container. More importantly, Hermes has a **self-improvement loop**: after completing tasks, it automatically creates reusable Skills; Skills improve themselves during use; cross-session FTS5 memory retrieval lets the agent know your project better the longer you use it. In Nous Research's words, it's "the agent that grows with you."
 
-这不是我们发明的——社区里已经有不少讨论和实践。Dev.to 上有一篇被广泛引用的文章，作者花了两个月时间探索自主编程 Agent 的编排问题，最终得出的结论是：**"Deterministic orchestration, where LLMs do creative work and YAML workflows handle the plumbing"**——让 LLM 做创造性工作，用确定性流程做管道。AWS 在介绍多 Agent 系统时也专门讨论了 [Agents as Tools 模式](https://dev.to/aws/build-multi-agent-systems-using-the-agents-as-tools-pattern-jce)——将分层委派（hierarchical delegation）引入多 Agent 编排。学术圈也在研究类似方向，[EvoAgent](https://arxiv.org/html/2604.20133) 提出了三层委派路由机制，让 Agent 在开放环境中自主获取和持续优化技能。
+### Leader + Worker: Deterministic Agents Direct Autonomous Agents
 
-在 HiClaw 中，这个模式天然落地：
+With Hermes on board, an interesting architectural pattern emerged: **use more deterministic agents as Leaders to direct Hermes for heavy lifting**.
 
-- **Manager（agent/QwenPaw 运行时）** 作为 Leader，负责任务分解、Worker 调度、进度监控——这些需要**确定性**和**可预测性**
-- **Hermes Worker** 作为执行者，负责实际的代码编写、调试、项目级任务——这些需要**自主性**和**创造力**
-- Manager 不会替 Hermes 写代码，Hermes 也不需要理解整个团队的调度逻辑——各司其职
+We didn't invent this — the community has been discussing and practicing it. A widely cited [Dev.to article](https://dev.to/ggondim/how-i-built-a-deterministic-multi-agent-dev-pipeline-inside-openclaw-and-contributed-a-missing-4ool) documented two months of exploring autonomous coding agent orchestration, concluding with: **"Deterministic orchestration, where LLMs do creative work and YAML workflows handle the plumbing."** AWS discussed the [Agents as Tools pattern](https://dev.to/aws/build-multi-agent-systems-using-the-agents-as-tools-pattern-jce) — bringing hierarchical delegation into multi-agent orchestration. In academia, [EvoAgent](https://arxiv.org/html/2604.20133) proposed a three-layer delegation routing mechanism enabling agents to autonomously acquire and continuously optimize skills.
 
-Worker 可以随时切换运行时：
+This pattern lands naturally in HiClaw:
+
+- **Manager (agent/QwenPaw runtime)** acts as the Leader — responsible for task decomposition, worker scheduling, progress monitoring — tasks requiring **determinism** and **predictability**
+- **Hermes Worker** acts as the executor — handling actual code writing, debugging, project-level tasks — tasks requiring **autonomy** and **creativity**
+- The Manager doesn't write code for Hermes, and Hermes doesn't need to understand the team's scheduling logic — each does what it's best at
+
+Workers can switch runtimes at any time:
 
 ```bash
-hiclaw update worker --runtime hermes  # 容器重建，Matrix 账号、房间和数据保留
+hiclaw update worker --runtime hermes  # Container recreated; Matrix account, rooms, and data preserved
 ```
 
-多 Agent 协作完全打通——Hermes Worker 可以和 agent、QwenPaw Worker 一起参与团队项目，支持跨运行时 `m.mentions` 消息投递和无人值守的 YOLO 模式自主执行。
+Multi-agent collaboration is fully supported — Hermes Workers participate in team projects alongside agent and QwenPaw Workers, with cross-runtime `m.mentions` message delivery and autonomous YOLO mode for unattended execution.
 
-### OpenClaw 与 QwenPaw 同步升级
+### OpenClaw and QwenPaw Upgrades
 
-底层引擎也做了大版本升级：
+The underlying engines also received major upgrades:
 
-- **OpenClaw** 升级到 `hiclaw-2026.4.14`，带来了 Matrix 私有网络安全修复、结构化调试日志（`HICLAW_MATRIX_DEBUG=1`）、网关 Control UI 端口统一等一系列改进
-- **openclaw-base 基础镜像**从 `higress/all-in-one`（~1.79 GB）重置为 `higress/ubuntu:24.04`（~103 MB），**所有下游镜像瘦身约 1.7 GB**
+- **OpenClaw** upgraded to `2026.4.14`, bringing Matrix private-network SSRF fixes, structured debug logging (`HICLAW_MATRIX_DEBUG=1`), and gateway Control UI port unification
+- **openclaw-base image** rebased from `higress/all-in-one` (~1.79 GB) to `higress/ubuntu:24.04` (~103 MB), **shrinking all downstream images by ~1.7 GB**
 
-这些升级听起来是"基础设施层面的事"，但实际上直接影响了 Agent 的稳定性——Matrix 连接竞态、房间加入失败、Control UI 不可访问等一系列 v1.0.x 中的偶发问题，在这次升级中一并解决了。
+These may sound like "infrastructure changes," but they directly impact agent stability — Matrix connection races, room join failures, Control UI inaccessibility, and other intermittent issues from v1.0.x are all resolved in this upgrade.
 
-### E2E 集成测试全覆盖
+### Full E2E Integration Test Coverage
 
-很重要的一点：**以上所有升级都经过了 HiClaw 的多 Agent 端到端集成测试验证**。我们不是简单升级依赖版本然后祈祷没问题——每一种运行时的 Worker 创建、团队协作、消息投递、YOLO 模式、跨运行时通信，都有自动化测试覆盖。升级是放心的。
+Importantly: **all of the above upgrades passed HiClaw's multi-agent end-to-end integration tests.** We didn't just bump dependency versions and hope for the best — Worker creation, team collaboration, message delivery, YOLO mode, and cross-runtime communication all have automated test coverage for each runtime. The upgrade is safe.
 
 ---
 
-## 从个人到企业：Kubernetes 原生架构
+## From Personal to Enterprise: Kubernetes-Native Architecture
 
-v1.1.0 最核心的架构变化是引入了 **hiclaw-controller**，一个 Kubernetes 原生的控制平面。
+The most fundamental architectural change in v1.1.0 is the introduction of **hiclaw-controller**, a Kubernetes-native control plane.
 
-### 为什么重构控制平面？
+### Why Rewrite the Control Plane?
 
-v1.0.x 的架构是一个 "all-in-one" 容器——Manager、Higress 网关、Matrix 服务器、MinIO、Element Web 全部塞在一个镜像里。个人用用没问题，但：
+v1.0.x used an "all-in-one" container — Manager, Higress gateway, Matrix server, MinIO, Element Web all bundled in one image. Fine for personal use, but:
 
-- **重启隔离差**：任何一个组件出问题，整个容器重启，所有 Agent 中断
-- **无法水平扩展**：Manager 只能跑一个实例
-- **资源浪费**：一个只需要跑 Agent 的容器却要背着 1.7GB 的基础设施
-- **多租户不支持**：无法做租户隔离和资源配额
+- **Poor restart isolation**: Any component issue restarts the entire container, interrupting all agents
+- **No horizontal scaling**: Manager can only run one instance
+- **Resource waste**: An agent-only container carries 1.7GB of infrastructure baggage
+- **No multi-tenancy**: No tenant isolation or resource quotas
 
-### 两种部署模式，一套代码
+### Two Deployment Modes, One Codebase
 
-v1.1.0 同时支持两种部署模式，共享同一套 Controller 代码：
+v1.1.0 supports two deployment modes sharing the same Controller code:
 
-**Embedded 模式（个人开发者）**
+**Embedded Mode (Individual Developers)**
 
 ```bash
-# 一行命令安装，无需 Kubernetes 集群
+# One command install, no Kubernetes cluster needed
 bash -c "$(curl -fsSL https://get.hiclaw.ai)"
 ```
 
-底层是一个轻量级的 embedded kube-apiserver + kine，对外表现就是一个 `hiclaw-controller` 容器 + 一个 `hiclaw-manager` 容器。不依赖任何外部 Kubernetes 集群，部署体验和 v1.0.x 一样简单。
+Under the hood, a lightweight embedded kube-apiserver + kine presents as a `hiclaw-controller` container + a `hiclaw-manager` container. No external Kubernetes cluster required — the deployment experience is as simple as v1.0.x.
 
-**Helm Chart 模式（企业生产）**
+**Helm Chart Mode (Enterprise Production)**
 
 ```bash
 helm install hiclaw ./helm/hiclaw -n hiclaw
 ```
 
-同一个 Controller 跑在真正的 Kubernetes 集群中，提供：
-- **Leader Election 高可用**：多副本部署，基于 Lease 的自动故障切换
-- **Agent Pod Template**：通过 ConfigMap 叠加注入 nodeSelector、tolerations、imagePullSecrets，无需修改 Controller 代码
-- **多租户隔离**：可插拔凭证提供者 Sidecar（`hiclaw-credential-provider`），per-worker `accessEntries` 限定对象存储路径
-- **CRD 化管理**：`kubectl get workers` 可以直接用，`hiclaw` CLI 和 `kubectl` 完全可互换
+The same Controller runs in a real Kubernetes cluster, providing:
+- **Leader Election HA**: Multi-replica deployment with lease-based automatic failover
+- **Agent Pod Template**: Inject nodeSelectors, tolerations, imagePullSecrets via ConfigMap overlay — no Controller code changes needed
+- **Multi-Tenant Isolation**: Pluggable credential provider sidecar (`hiclaw-credential-provider`) with per-worker `accessEntries` scoping object storage paths
+- **CRD-Based Management**: `kubectl get workers` works natively; `hiclaw` CLI and `kubectl` are fully interchangeable
 
-### 声明式协调，稳定性的基石
+### Declarative Reconciliation: The Foundation of Stability
 
-无论哪种模式，核心都是**声明式配置协调**（Controller-Reconciler 模式）：
+Regardless of mode, the core is **declarative configuration reconciliation** (Controller-Reconciler pattern):
 
 ```
-Worker CR (期望状态)  →  Controller 观测差异  →  协调到一致
-Team CR              →  Matrix 房间、网关路由  →  协调到一致
-Manager CR           →  容器、配置文件         →  协调到一致
+Worker CR (desired state)  →  Controller observes diff  →  Reconciles to match
+Team CR                    →  Matrix rooms, gateway routes  →  Reconciles to match
+Manager CR                 →  Containers, config files  →  Reconciles to match
 ```
 
-这意味着：
-- **任何组件异常都会自动恢复**——Controller 每 5 分钟协调一次，配置漂移会被自动纠正
-- **Token 不再轮转**——之前每次协调都重新生成 Matrix access token 和网关密钥，导致 Agent 频繁重启、消息丢失。v1.1.0 中 Token 持久化复用
-- **配置文件不再被覆盖**——`AGENTS.md`、`SOUL.md`、`HEARTBEAT.md` 等文件由各自的权威写入者管理，不会被协调过程中的 mirror 覆盖
+This means:
+- **Any component failure auto-recovers** — Controller reconciles every 5 minutes, correcting configuration drift
+- **Tokens no longer rotate** — Previously, every reconcile regenerated Matrix access tokens and gateway secrets, causing frequent agent restarts and message loss. In v1.1.0, tokens are persisted and reused
+- **Config files no longer overwritten** — `AGENTS.md`, `SOUL.md`, `HEARTBEAT.md` are managed by their respective authoritative writers, not overwritten by the reconciliation mirror
 
-这些看起来是细节，但稳定性就是由这些细节构成的。个人用户和企业用户都受益于同一套协调机制。
+These may seem like details, but stability is built from details. Both personal and enterprise users benefit from the same reconciliation mechanism.
 
-### 从 v1.0.9 自动迁移
+### Auto-Migration from v1.0.9
 
-升级非常简单：`hiclaw-controller` 在首次启动时检测到 v1.0.9 的 `workers-registry.json`，自动将 Worker 信息迁移为 CRD 资源。运行时、模型、技能、MCP Server、团队成员关系——全部保留，零配置。
+Upgrading is straightforward: `hiclaw-controller` detects v1.0.9's `workers-registry.json` on first boot and automatically migrates Worker data to CRD resources. Runtime, model, skills, MCP servers, team membership — all preserved, zero configuration.
 
 ---
 
-## hiclaw CLI：用 Go 替代 Shell 脚本
+## hiclaw CLI: Replacing Shell Scripts with Go
 
-如果你看一下 HiClaw 仓库的语言占比，会发现一个有意思的趋势：
+If you look at HiClaw's language breakdown, you'll notice an interesting trend:
 
-> **Go（38%）> Shell（35%）> Python（13%）**
+> **Go (38%) > Shell (35%) > Python (13%)**
 
-在 v1.0.x 时代，Shell 是占比最大的语言。大量的 `setup-*.sh`、`create-*.sh`、`entrypoint-*.sh` 脚本构成了 HiClaw 的操作层。这在早期够用，但问题越来越多：
+In the v1.0.x era, Shell was the largest language. Dozens of `setup-*.sh`, `create-*.sh`, `entrypoint-*.sh` scripts formed HiClaw's operation layer. This worked early on, but the problems grew:
 
-### 脚本的痛点
+### Script Pain Points
 
-**1. Agent 会"读"脚本，浪费 Token**
+**1. Agents "read" scripts, wasting tokens**
 
-这是很多人没想到的成本来源。当 Agent 需要创建一个 Worker 时，它可能会先 `cat create-worker.sh` 看看脚本里有什么参数，然后试着跑一下发现参数不对，再读一遍……一个简单的"创建 Worker"操作，Agent 可能消耗 **20+ 轮 LLM 调用**，其中一半在探索脚本接口。
+This is a cost source many overlook. When an agent needs to create a Worker, it might `cat create-worker.sh` to check parameters, try running it, find wrong parameters, read it again... A simple "create Worker" operation could consume **20+ LLM calls**, half spent exploring the script interface.
 
-**2. 测试不健全**
+**2. Inadequate testing**
 
-Shell 脚本很难写单元测试。脚本改了一行，没人知道会不会影响其他路径。v1.0.x 的一些"默认值不生效"、"参数被忽略"的 bug 就是这么来的。
+Shell scripts are hard to unit test. Change one line, and nobody knows what other paths are affected. Some v1.0.x bugs — "defaults not taking effect", "parameters ignored" — originated here.
 
-**3. 输出格式不稳定**
+**3. Unstable output formats**
 
-同一个脚本在不同情况下可能输出完全不同的格式。Agent 解析输出失败，重试，又浪费 Token。
+The same script might produce completely different output formats in different situations. Agent fails to parse, retries, wastes more tokens.
 
-### hiclaw CLI 的改进
+### hiclaw CLI Improvements
 
-`hiclaw` CLI 用 Go 重写后解决了这些问题：
+The `hiclaw` CLI, rewritten in Go, solves these problems:
 
 ```bash
-# 创建 Worker
+# Create a worker
 hiclaw create worker --name alice --model qwen-max
 
-# 查看 Worker 列表
+# List workers
 hiclaw get workers
 
-# Worker 生命周期管理
-hiclaw worker sleep alice   # 优雅停止
-hiclaw worker wake alice    # 按需唤醒
+# Worker lifecycle management
+hiclaw worker sleep alice   # Graceful stop
+hiclaw worker wake alice    # On-demand wake
 
-# 声明式配置
+# Declarative configuration
 hiclaw apply worker -f alice.yaml
 ```
 
-- **结构化输出**：支持 JSON / YAML / 表格格式，Agent 解析零失败
-- **参数明确**：`--help` 一目了然，Agent 不需要再读源码猜参数
-- **完善的测试体系**：Go 的单元测试 + 集成测试，每个命令都有覆盖
-- **Controller 内置**：`hiclaw` CLI 预装在 Controller 容器中，管理员可以直接 `docker exec` 操作
+- **Structured output**: JSON / YAML / table formats — zero parse failures for agents
+- **Clear parameters**: `--help` is self-documenting — no need for agents to read source code
+- **Comprehensive testing**: Go unit tests + integration tests covering every command
+- **Built into Controller**: `hiclaw` CLI is pre-installed in the Controller container; admins can `docker exec` directly
 
-从实际效果看，使用 `hiclaw` CLI 创建一个 Worker 的 LLM 轮次从 **22 轮降到了 10 轮以内**——Token 成本直接减半。
-
----
-
-## 更多改进
-
-### 镜像瘦身 1.7 GB
-
-Manager 镜像不再打包 Higress、Matrix、MinIO、Element Web，只保留纯 Agent 运行时。基础设施服务跑在独立的 `hiclaw-embedded` 镜像中。从 1.79 GB 到 103 MB。
-
-### 首次启动体验
-
-全新安装后自动发送欢迎/引导消息到管理员私信，安装器会等待欢迎消息发送完成。第一次交互就是顺畅的。
-
-### 可插拔网关与存储
-
-Controller 通过 Provider 接口委托网关和存储操作。阿里云 OSS、AWS S3、MinIO——后端可以随时切换，不改一行 Controller 代码。
+In practice, creating a Worker with `hiclaw` CLI dropped from **22 LLM rounds to under 10** — token costs halved.
 
 ---
 
-## 升级指南
+## More Improvements
 
-从 v1.0.9 升级只需重新运行安装脚本：
+### 1.7 GB Image Shrink
+
+The Manager image no longer bundles Higress, Matrix, MinIO, or Element Web — only the pure agent runtime. Infrastructure services run in the separate `hiclaw-embedded` image. From 1.79 GB to 103 MB.
+
+### First-Boot Experience
+
+Fresh installs automatically deliver a welcome/onboarding message to the admin DM. The installer waits until delivery completes. Your first interaction is smooth.
+
+### Pluggable Gateway & Storage
+
+Controller delegates gateway and storage operations through provider interfaces. Alibaba Cloud OSS, AWS S3, MinIO — switch backends anytime without changing Controller code.
+
+---
+
+## Upgrade Guide
+
+Upgrading from v1.0.9 is as simple as re-running the installer:
 
 ```bash
 bash -c "$(curl -fsSL https://get.hiclaw.ai)"
 ```
 
-安装器会自动检测 v1.0.9 状态、迁移数据到 CRD、拉取新镜像。所有 Worker 配置自动保留。
+The installer automatically detects v1.0.9 state, migrates data to CRDs, and pulls new images. All Worker configurations are preserved.
 
 ---
 
-*HiClaw 是一个开源的多 Agent 协作平台，基于 Higress、Matrix 和 OpenClaw 构建。欢迎在 [GitHub](https://github.com/agentscope-ai/HiClaw) 上关注我们，加入 [Discord](https://discord.gg/n6mV8xEYUF) 社区讨论。*
+*HiClaw is an open-source multi-agent collaboration platform under the [AgentScope](https://github.com/agentscope-ai) project, built on Higress, Matrix, and OpenClaw. Star us on [GitHub](https://github.com/agentscope-ai/HiClaw) and join the [Discord](https://discord.gg/n6mV8xEYUF) community.*
