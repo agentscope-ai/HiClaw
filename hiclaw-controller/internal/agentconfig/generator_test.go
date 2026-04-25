@@ -38,6 +38,12 @@ func TestGenerateOpenClawConfig_Basic(t *testing.T) {
 	if matrixCfg["accessToken"] != "tok-matrix-alice" {
 		t.Errorf("accessToken = %v", matrixCfg["accessToken"])
 	}
+	if matrixCfg["streaming"] != "partial" {
+		t.Errorf("streaming = %v, want partial", matrixCfg["streaming"])
+	}
+	if matrixCfg["blockStreaming"] != true {
+		t.Errorf("blockStreaming = %v, want true", matrixCfg["blockStreaming"])
+	}
 
 	// Verify default allowFrom includes manager and admin
 	groupAllow := toStringSlice(matrixCfg["groupAllowFrom"])
