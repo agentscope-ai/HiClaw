@@ -38,11 +38,12 @@ hiclaw update worker --runtime hermes  # Container recreated; Matrix account, ro
 
 Multi-agent collaboration is fully supported — Hermes Workers participate in team projects alongside agent and QwenPaw Workers, with cross-runtime `m.mentions` message delivery and autonomous YOLO mode for unattended execution.
 
-### OpenClaw and QwenPaw Upgrades
+### openclaw and QwenPaw Upgrades
 
 The underlying engines also received major upgrades:
 
-- **OpenClaw** upgraded to `2026.4.14`, bringing Matrix private-network SSRF fixes, structured debug logging (`HICLAW_MATRIX_DEBUG=1`), and gateway Control UI port unification
+- **openclaw** upgraded to `2026.4.14`, bringing Matrix private-network SSRF fixes, structured debug logging (`HICLAW_MATRIX_DEBUG=1`), and gateway Control UI port unification
+- **QwenPaw** upgraded to `1.0.2`
 - **openclaw-base image** rebased from `higress/all-in-one` (~1.79 GB) to `higress/ubuntu:24.04` (~103 MB), **shrinking all downstream images by ~1.7 GB**
 
 These may sound like "infrastructure changes," but they directly impact agent stability — Matrix connection races, room join failures, Control UI inaccessibility, and other intermittent issues from v1.0.x are all resolved in this upgrade.
