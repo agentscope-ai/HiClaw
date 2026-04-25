@@ -6,7 +6,10 @@
 #   Only plugins and channels are merged (Worker may add its own).
 #   Everything else (models, agents.defaults, etc.) uses remote as-is.
 #   Merge rules:
-#     - plugins: deep merge entries, union load.paths
+#     - plugins.entries: deep merge — remote provides base/defaults, local wins
+#       on shared keys so user customizations (e.g. memory-core dreaming schedule)
+#       survive periodic syncs
+#     - plugins.load.paths: union of both sides
 #     - channels: deep merge (remote wins shared types, local-only types preserved)
 #     - channels.matrix.accessToken: local wins (Worker re-login)
 #
@@ -36,8 +39,11 @@ merge_openclaw_config() {
     merged=$(jq -n --argfile remote "${remote_path}" --argfile local "${local_path}" '
         $remote
         # ── plugins: only touch fields that exist in at least one side ──
+        # For entries: remote provides base structure + new managed entries,
+        # local overrides shared keys (preserves user customizations like
+        # memory-core dreaming config).
         | if ($remote.plugins.entries // null) != null or ($local.plugins.entries // null) != null then
-            .plugins.entries = (($local.plugins.entries // {}) * (.plugins.entries // {}))
+            .plugins.entries = ((.plugins.entries // {}) * ($local.plugins.entries // {}))
           else . end
         | if ($remote.plugins.load.paths // null) != null or ($local.plugins.load.paths // null) != null then
             .plugins.load.paths = ([(.plugins.load.paths // [])[], ($local.plugins.load.paths // [])[]] | unique)

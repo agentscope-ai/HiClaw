@@ -157,6 +157,14 @@ func (g *Generator) GenerateOpenClawConfig(req WorkerConfigRequest) ([]byte, err
 			},
 			"entries": map[string]interface{}{
 				"matrix": map[string]interface{}{"enabled": true},
+				"memory-core": map[string]interface{}{
+					"enabled": true,
+					"config": map[string]interface{}{
+						"dreaming": map[string]interface{}{
+							"enabled": true,
+						},
+					},
+				},
 			},
 		},
 	}

@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -177,6 +178,21 @@ func (d *Deployer) DeployWorkerConfig(ctx context.Context, req WorkerDeployReque
 	if err != nil {
 		return fmt.Errorf("config generation failed: %w", err)
 	}
+
+	// On update, preserve user-customized plugin entries (e.g. memory-core
+	// dreaming schedule) from the existing openclaw.json in storage. The
+	// generated config provides defaults for any new entries; existing
+	// user-modified entries override the generated values.
+	if req.IsUpdate {
+		if existingJSON, err := d.oss.GetObject(ctx, agentPrefix+"/openclaw.json"); err == nil && len(existingJSON) > 0 {
+			if merged, mergeErr := mergeUserPluginConfig(configJSON, existingJSON); mergeErr != nil {
+				logger.Error(mergeErr, "plugin config merge failed, using generated config")
+			} else {
+				configJSON = merged
+			}
+		}
+	}
+
 	if err := d.oss.PutObject(ctx, agentPrefix+"/openclaw.json", configJSON); err != nil {
 		return fmt.Errorf("config push to storage failed: %w", err)
 	}
@@ -528,4 +544,127 @@ func (d *Deployer) builtinAgentDir(role, runtime string) string {
 		}
 		return d.workerAgentDir
 	}
+}
+
+// mergeUserPluginConfig preserves user-customized plugin entries from an
+// existing openclaw.json when regenerating config on update. The generated
+// config provides defaults for any new entries; existing user-modified
+// entries override generated values so that customizations (e.g. memory-core
+// dreaming schedule) survive controller reconciles.
+func mergeUserPluginConfig(generatedJSON, existingJSON []byte) ([]byte, error) {
+	var generated, existing map[string]interface{}
+	if err := json.Unmarshal(generatedJSON, &generated); err != nil {
+		return generatedJSON, err
+	}
+	if err := json.Unmarshal(existingJSON, &existing); err != nil {
+		return generatedJSON, err
+	}
+
+	genPlugins, _ := generated["plugins"].(map[string]interface{})
+	existPlugins, _ := existing["plugins"].(map[string]interface{})
+	if genPlugins == nil || existPlugins == nil {
+		return generatedJSON, nil
+	}
+
+	// Merge plugin entries: generated provides base/defaults, existing
+	// user-modified values override. This preserves user customizations
+	// of memory-core, diagnostics-otel, etc. while letting the controller
+	// inject new default entries on upgrade.
+	genEntries, _ := genPlugins["entries"].(map[string]interface{})
+	existEntries, _ := existPlugins["entries"].(map[string]interface{})
+	if existEntries != nil && genEntries != nil {
+		merged := make(map[string]interface{})
+		for k, v := range genEntries {
+			merged[k] = v
+		}
+		for k, v := range existEntries {
+			if genV, has := merged[k]; has {
+				merged[k] = deepMergeMap(toMap(genV), toMap(v))
+			} else {
+				merged[k] = v
+			}
+		}
+		genPlugins["entries"] = merged
+	}
+
+	// Union plugin load paths so user-added extension directories survive.
+	genLoad, _ := genPlugins["load"].(map[string]interface{})
+	existLoad, _ := existPlugins["load"].(map[string]interface{})
+	if genLoad != nil && existLoad != nil {
+		genPaths := toStringSliceCompat(genLoad["paths"])
+		existPaths := toStringSliceCompat(existLoad["paths"])
+		seen := make(map[string]bool, len(genPaths)+len(existPaths))
+		var unionPaths []string
+		for _, p := range genPaths {
+			if !seen[p] {
+				seen[p] = true
+				unionPaths = append(unionPaths, p)
+			}
+		}
+		for _, p := range existPaths {
+			if !seen[p] {
+				seen[p] = true
+				unionPaths = append(unionPaths, p)
+			}
+		}
+		genLoad["paths"] = unionPaths
+	}
+
+	return json.MarshalIndent(generated, "", "  ")
+}
+
+func toMap(v interface{}) map[string]interface{} {
+	if m, ok := v.(map[string]interface{}); ok {
+		return m
+	}
+	return nil
+}
+
+// deepMergeMap recursively merges override into base; override wins on
+// leaf-level conflicts. Both inputs must be non-nil (caller guards).
+func deepMergeMap(base, override map[string]interface{}) map[string]interface{} {
+	if base == nil {
+		return override
+	}
+	if override == nil {
+		return base
+	}
+	result := make(map[string]interface{}, len(base)+len(override))
+	for k, v := range base {
+		result[k] = v
+	}
+	for k, ov := range override {
+		bv, exists := result[k]
+		if !exists {
+			result[k] = ov
+			continue
+		}
+		bMap, bIsMap := bv.(map[string]interface{})
+		oMap, oIsMap := ov.(map[string]interface{})
+		if bIsMap && oIsMap {
+			result[k] = deepMergeMap(bMap, oMap)
+		} else {
+			result[k] = ov
+		}
+	}
+	return result
+}
+
+func toStringSliceCompat(v interface{}) []string {
+	if v == nil {
+		return nil
+	}
+	switch arr := v.(type) {
+	case []interface{}:
+		var result []string
+		for _, item := range arr {
+			if s, ok := item.(string); ok {
+				result = append(result, s)
+			}
+		}
+		return result
+	case []string:
+		return arr
+	}
+	return nil
 }
