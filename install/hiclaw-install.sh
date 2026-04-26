@@ -14,7 +14,7 @@
 # Environment variables (for automation):
 #   HICLAW_NON_INTERACTIVE    Skip all prompts, use defaults  (default: 0)
 #   HICLAW_LLM_PROVIDER      LLM provider       (default: alibaba-cloud)
-#   HICLAW_DEFAULT_MODEL      Default model       (default: qwen3.5-plus)
+#   HICLAW_DEFAULT_MODEL      Default model       (default: qwen3.6-plus for alibaba-cloud; qwen3.5-plus for qwen)
 #   HICLAW_LLM_API_KEY        LLM API key         (required)
 #   HICLAW_ADMIN_USER         Admin username       (default: admin)
 #   HICLAW_ADMIN_PASSWORD     Admin password       (auto-generated if not set, min 8 chars)
@@ -209,14 +209,14 @@ msg() {
         "install.mode.title.en") text="--- Onboarding Mode ---" ;;
         "install.mode.choose.zh") text="选择安装模式:" ;;
         "install.mode.choose.en") text="Choose your installation mode:" ;;
-        "install.mode.quickstart.zh") text="  1) 快速开始  - 使用阿里云百炼快速安装（推荐）" ;;
-        "install.mode.quickstart.en") text="  1) Quick Start  - Fast installation with Alibaba Cloud CodingPlan (recommended)" ;;
+        "install.mode.quickstart.zh") text="  1) 快速开始  - 使用阿里云通义 Token 套餐快速安装（推荐）" ;;
+        "install.mode.quickstart.en") text="  1) Quick Start  - Fast installation with Qwen Cloud (recommended)" ;;
         "install.mode.manual.zh") text="  2) 手动配置  - 选择 LLM 提供商并自定义选项" ;;
         "install.mode.manual.en") text="  2) Manual       - Choose LLM provider and customize options" ;;
         "install.mode.prompt.zh") text="请选择 [1/2]" ;;
         "install.mode.prompt.en") text="Enter choice [1/2]" ;;
-        "install.mode.quickstart_selected.zh") text="已选择快速开始模式 - 使用阿里云百炼" ;;
-        "install.mode.quickstart_selected.en") text="Quick Start mode selected - using Alibaba Cloud CodingPlan" ;;
+        "install.mode.quickstart_selected.zh") text="已选择快速开始模式 - 使用阿里云通义 Token 套餐" ;;
+        "install.mode.quickstart_selected.en") text="Quick Start mode selected - using Qwen Cloud" ;;
         "install.mode.manual_selected.zh") text="已选择手动配置模式 - 您将选择 LLM 提供商并自定义选项" ;;
         "install.mode.manual_selected.en") text="Manual mode selected - you will choose LLM provider and customize options" ;;
         "install.mode.invalid.zh") text="无效选择，默认使用快速开始模式" ;;
@@ -361,32 +361,40 @@ msg() {
         "llm.provider.qwen_default.en") text="  Provider: %s (default)" ;;
         "llm.model.default.zh") text="  模型: %s（默认）" ;;
         "llm.model.default.en") text="  Model: %s (default)" ;;
-        "llm.apikey_hint.zh") text="  💡 获取阿里云百炼 API Key:" ;;
-        "llm.apikey_hint.en") text="  💡 Get your Alibaba Cloud CodingPlan API Key from:" ;;
-        "llm.apikey_url.zh") text="     https://www.aliyun.com/product/bailian" ;;
-        "llm.apikey_url.en") text="     https://www.alibabacloud.com/en/campaign/ai-scene-coding" ;;
+        "llm.apikey_hint_bailian.zh") text="  💡 获取阿里云百炼（DashScope）API Key:" ;;
+        "llm.apikey_hint_bailian.en") text="  💡 Get your Alibaba Cloud Bailian (DashScope) API Key:" ;;
+        "llm.apikey_url_bailian.zh") text="     https://www.aliyun.com/product/bailian" ;;
+        "llm.apikey_url_bailian.en") text="     https://www.aliyun.com/product/bailian" ;;
+        "llm.apikey_hint_qwencloud.zh") text="  💡 从 Qwen Cloud（国际站）获取 DASHSCOPE_API_KEY:" ;;
+        "llm.apikey_hint_qwencloud.en") text="  💡 Get your DASHSCOPE_API_KEY for Qwen Cloud (international) from:" ;;
+        "llm.apikey_url_qwencloud.zh") text="     https://home.qwencloud.com/api-keys  （文档: https://docs.qwencloud.com/）" ;;
+        "llm.apikey_url_qwencloud.en") text="     https://home.qwencloud.com/api-keys  |  Docs: https://docs.qwencloud.com/" ;;
+        "llm.apikey_hint_tokenplan.zh") text="  💡 获取 DashScope API Key 或开通通义 Token 套餐，请参考:" ;;
+        "llm.apikey_hint_tokenplan.en") text="  💡 Get your DashScope or Token Plan API key (Alibaba Model Studio):" ;;
+        "llm.apikey_url_tokenplan.zh") text="     https://help.aliyun.com/zh/model-studio/token-plan-quickstart" ;;
+        "llm.apikey_url_tokenplan.en") text="     https://common-buy.aliyun.com/token-plan/  |  https://help.aliyun.com/zh/model-studio/token-plan-quickstart" ;;
         "llm.apikey_prompt.zh") text="LLM API Key" ;;
         "llm.apikey_prompt.en") text="LLM API Key" ;;
         "llm.providers_title.zh") text="可用 LLM 提供商:" ;;
         "llm.providers_title.en") text="Available LLM Providers:" ;;
-        "llm.provider.alibaba.zh") text="  1) 阿里云百炼  - 推荐中国用户使用" ;;
-        "llm.provider.alibaba.en") text="  1) Alibaba Cloud CodingPlan  - Optimized for coding tasks (recommended)" ;;
+        "llm.provider.alibaba.zh") text="  1) 阿里云通义 Token 套餐  - 推荐中国用户使用" ;;
+        "llm.provider.alibaba.en") text="  1) Qwen Cloud  - International (OpenAI-compatible API, recommended)" ;;
         "llm.provider.openai_compat.zh") text="  2) OpenAI 兼容 API  - 自定义 Base URL（OpenAI、DeepSeek 等）" ;;
         "llm.provider.openai_compat.en") text="  2) OpenAI-compatible API  - Custom Base URL (OpenAI, DeepSeek, etc.)" ;;
         "llm.provider.select.zh") text="选择提供商 [1/2]" ;;
         "llm.provider.select.en") text="Select provider [1/2]" ;;
         "llm.alibaba.models_title.zh") text="选择百炼模型系列:" ;;
         "llm.alibaba.models_title.en") text="Select Bailian model series:" ;;
-        "llm.alibaba.model.codingplan.zh") text="  1) CodingPlan  - 专为编程任务优化（推荐）" ;;
-        "llm.alibaba.model.codingplan.en") text="  1) CodingPlan  - Optimized for coding tasks (recommended)" ;;
+        "llm.alibaba.model.codingplan.zh") text="  1) Token 套餐  - 多模型调用，替代已下线的 Coding 套餐（推荐）" ;;
+        "llm.alibaba.model.codingplan.en") text="  1) Alibaba Cloud Token Plan  - Multi-model access (replaces deprecated Coding plan)" ;;
         "llm.alibaba.model.qwen.zh") text="  2) 百炼通用接口" ;;
         "llm.alibaba.model.qwen.en") text="  2) qwen general  - General purpose LLM" ;;
         "llm.alibaba.model.select.zh") text="选择模型系列 [1/2]" ;;
         "llm.alibaba.model.select.en") text="Select model series [1/2]" ;;
-        "llm.codingplan.models_title.zh") text="选择 CodingPlan 默认模型:" ;;
-        "llm.codingplan.models_title.en") text="Select CodingPlan default model:" ;;
-        "llm.codingplan.model.qwen35plus.zh") text="  1) qwen3.5-plus  - 千问 3.5（速度最快）" ;;
-        "llm.codingplan.model.qwen35plus.en") text="  1) qwen3.5-plus  - Qwen 3.5 (fastest)" ;;
+        "llm.codingplan.models_title.zh") text="选择通义 Token 套餐默认模型:" ;;
+        "llm.codingplan.models_title.en") text="Select Qwen Cloud default model:" ;;
+        "llm.codingplan.model.qwen36plus.zh") text="  1) qwen3.6-plus  - 千问 3.6（推荐）" ;;
+        "llm.codingplan.model.qwen36plus.en") text="  1) qwen3.6-plus  - Qwen 3.6 (recommended)" ;;
         "llm.codingplan.model.glm5.zh") text="  2) glm-5  - 智谱 GLM-5（编程推荐）" ;;
         "llm.codingplan.model.glm5.en") text="  2) glm-5  - Zhipu GLM-5 (recommended for coding)" ;;
         "llm.codingplan.model.kimi.zh") text="  3) kimi-k2.5  - Moonshot Kimi K2.5" ;;
@@ -395,8 +403,8 @@ msg() {
         "llm.codingplan.model.minimax.en") text="  4) MiniMax-M2.5  - MiniMax M2.5" ;;
         "llm.codingplan.model.select.zh") text="选择模型 [1/2/3/4]" ;;
         "llm.codingplan.model.select.en") text="Select model [1/2/3/4]" ;;
-        "llm.provider.selected_codingplan.zh") text="  提供商: 阿里云百炼 CodingPlan" ;;
-        "llm.provider.selected_codingplan.en") text="  Provider: Alibaba Cloud CodingPlan" ;;
+        "llm.provider.selected_codingplan.zh") text="  提供商: 阿里云通义 Token 套餐（alibaba-cloud）" ;;
+        "llm.provider.selected_codingplan.en") text="  Provider: Qwen Cloud (international) (alibaba-cloud)" ;;
         "llm.provider.selected_qwen.zh") text="  提供商: 阿里云百炼" ;;
         "llm.provider.selected_qwen.en") text="  Provider: Alibaba Cloud Bailian" ;;
         "llm.provider.selected_openai.zh") text="  提供商: %s（OpenAI 兼容）" ;;
@@ -656,8 +664,8 @@ msg() {
         "llm.openai.test.ok.en") text="✅ API connectivity test passed" ;;
         "llm.openai.test.fail.zh") text="⚠️  API 联通性测试失败（HTTP %s）。响应内容:\n%s\n请根据以上错误信息联系您的模型服务商解决。" ;;
         "llm.openai.test.fail.en") text="⚠️  API connectivity test failed (HTTP %s). Response body:\n%s\nPlease contact your model provider to resolve the issue." ;;
-        "llm.openai.test.fail.codingplan.zh") text="⚠️  提示: 请确认您的 API Key 已开通阿里云百炼 CodingPlan 服务。开通地址: https://www.aliyun.com/benefit/scene/codingplan" ;;
-        "llm.openai.test.fail.codingplan.en") text="⚠️  Hint: Please verify that your API Key has CodingPlan service enabled. Enable at: https://www.alibabacloud.com/en/campaign/ai-scene-coding" ;;
+        "llm.openai.test.fail.codingplan.zh") text="⚠️  提示: 请确认 API Key 有效且已开通通义 Token 套餐。文档: https://help.aliyun.com/zh/model-studio/token-plan-quickstart" ;;
+        "llm.openai.test.fail.codingplan.en") text="⚠️  Hint: Verify your DASHSCOPE_API_KEY for Qwen Cloud. API keys: https://home.qwencloud.com/api-keys  Docs: https://docs.qwencloud.com/" ;;
         "llm.openai.test.no_curl.zh") text="⚠️  未找到 curl，跳过 API 联通性测试" ;;
         "llm.openai.test.no_curl.en") text="⚠️  curl not found, skipping API connectivity test" ;;
         "llm.openai.test.confirm.zh") text="是否仍要继续安装？[y/N/b] " ;;
@@ -1008,7 +1016,7 @@ resolve_embedded_image() {
 # ============================================================
 # Known models list — used to detect custom models during install
 # ============================================================
-KNOWN_MODELS="gpt-5.4 gpt-5.3-codex gpt-5-mini gpt-5-nano claude-opus-4-6 claude-sonnet-4-6 claude-haiku-4-5 qwen3.5-plus deepseek-chat deepseek-reasoner kimi-k2.5 glm-5 MiniMax-M2.7 MiniMax-M2.7-highspeed MiniMax-M2.5"
+KNOWN_MODELS="gpt-5.4 gpt-5.3-codex gpt-5-mini gpt-5-nano claude-opus-4-6 claude-sonnet-4-6 claude-haiku-4-5 qwen3.6-plus qwen3.5-plus deepseek-chat deepseek-reasoner kimi-k2.5 glm-5 MiniMax-M2.7 MiniMax-M2.7-highspeed MiniMax-M2.5"
 
 is_known_model() {
     local model="$1"
@@ -1731,11 +1739,11 @@ step_llm() {
         1|alibaba-cloud)
             if [ "${HICLAW_LANGUAGE}" = "en" ]; then
                 HICLAW_LLM_PROVIDER="openai-compat"
-                HICLAW_OPENAI_BASE_URL="https://coding-intl.dashscope.aliyuncs.com/v1"
-                ALIBABA_MODEL_CHOICE="codingplan"
+                HICLAW_OPENAI_BASE_URL="https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+                ALIBABA_MODEL_CHOICE="tokenplan"
                 echo ""
                 echo "$(msg llm.codingplan.models_title)"
-                echo "$(msg llm.codingplan.model.qwen35plus)"
+                echo "$(msg llm.codingplan.model.qwen36plus)"
                 echo "$(msg llm.codingplan.model.glm5)"
                 echo "$(msg llm.codingplan.model.kimi)"
                 echo "$(msg llm.codingplan.model.minimax)"
@@ -1750,11 +1758,11 @@ step_llm() {
                 fi
                 if [ "${CODINGPLAN_MODEL_CHOICE}" = "b" ]; then STEP_RESULT="back"; return 0; fi
                 case "${CODINGPLAN_MODEL_CHOICE}" in
-                    1|qwen3.5-plus) HICLAW_DEFAULT_MODEL="qwen3.5-plus" ;;
+                    1|qwen3.6-plus) HICLAW_DEFAULT_MODEL="qwen3.6-plus" ;;
                     2|glm-5)        HICLAW_DEFAULT_MODEL="glm-5" ;;
                     3|kimi-k2.5)    HICLAW_DEFAULT_MODEL="kimi-k2.5" ;;
                     4|MiniMax-M2.5) HICLAW_DEFAULT_MODEL="MiniMax-M2.5" ;;
-                    *)              HICLAW_DEFAULT_MODEL="qwen3.5-plus" ;;
+                    *)              HICLAW_DEFAULT_MODEL="qwen3.6-plus" ;;
                 esac
                 log "$(msg llm.provider.selected_codingplan)"
                 log "$(msg llm.model.label "${HICLAW_DEFAULT_MODEL}")"
@@ -1786,10 +1794,10 @@ step_llm() {
                         ;;
                     *)
                         HICLAW_LLM_PROVIDER="openai-compat"
-                        HICLAW_OPENAI_BASE_URL="https://coding.dashscope.aliyuncs.com/v1"
+                        HICLAW_OPENAI_BASE_URL="https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1"
                         echo ""
                         echo "$(msg llm.codingplan.models_title)"
-                        echo "$(msg llm.codingplan.model.qwen35plus)"
+                        echo "$(msg llm.codingplan.model.qwen36plus)"
                         echo "$(msg llm.codingplan.model.glm5)"
                         echo "$(msg llm.codingplan.model.kimi)"
                         echo "$(msg llm.codingplan.model.minimax)"
@@ -1804,20 +1812,27 @@ step_llm() {
                         fi
                         if [ "${CODINGPLAN_MODEL_CHOICE}" = "b" ]; then STEP_RESULT="back"; return 0; fi
                         case "${CODINGPLAN_MODEL_CHOICE}" in
-                            1|qwen3.5-plus) HICLAW_DEFAULT_MODEL="qwen3.5-plus" ;;
+                            1|qwen3.6-plus) HICLAW_DEFAULT_MODEL="qwen3.6-plus" ;;
                             2|glm-5)        HICLAW_DEFAULT_MODEL="glm-5" ;;
                             3|kimi-k2.5)    HICLAW_DEFAULT_MODEL="kimi-k2.5" ;;
                             4|MiniMax-M2.5) HICLAW_DEFAULT_MODEL="MiniMax-M2.5" ;;
-                            *)              HICLAW_DEFAULT_MODEL="qwen3.5-plus" ;;
+                            *)              HICLAW_DEFAULT_MODEL="qwen3.6-plus" ;;
                         esac
                         log "$(msg llm.provider.selected_codingplan)"
                         log "$(msg llm.model.label "${HICLAW_DEFAULT_MODEL}")"
                         ;;
                 esac
             fi
-            log ""
-            log "$(msg llm.apikey_hint)"
-            log "$(msg llm.apikey_url)"
+            if [ "${ALIBABA_MODEL_CHOICE}" = "2" ] || [ "${ALIBABA_MODEL_CHOICE}" = "qwen" ]; then
+                log "$(msg llm.apikey_hint_bailian)"
+                log "$(msg llm.apikey_url_bailian)"
+            elif [ "${HICLAW_LANGUAGE}" = "en" ]; then
+                log "$(msg llm.apikey_hint_qwencloud)"
+                log "$(msg llm.apikey_url_qwencloud)"
+            else
+                log "$(msg llm.apikey_hint_tokenplan)"
+                log "$(msg llm.apikey_url_tokenplan)"
+            fi
             log ""
             prompt HICLAW_LLM_API_KEY "$(msg llm.apikey_prompt)" "" "true" || return 0
             if [ "${ALIBABA_MODEL_CHOICE}" = "2" ] || [ "${ALIBABA_MODEL_CHOICE}" = "qwen" ]; then

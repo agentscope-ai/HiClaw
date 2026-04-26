@@ -14,7 +14,7 @@
 # Environment variables (for automation):
 #   HICLAW_NON_INTERACTIVE    Skip all prompts, use defaults  (default: 0)
 #   HICLAW_LLM_PROVIDER       LLM provider       (default: qwen)
-#   HICLAW_DEFAULT_MODEL      Default model      (default: qwen3.5-plus)
+#   HICLAW_DEFAULT_MODEL      Default model      (default: qwen3.6-plus for alibaba-cloud; qwen3.5-plus for qwen)
 #   HICLAW_LLM_API_KEY        LLM API key        (required)
 #   HICLAW_ADMIN_USER         Admin username     (default: admin)
 #   HICLAW_ADMIN_PASSWORD     Admin password     (auto-generated if not set, min 8 chars)
@@ -220,10 +220,10 @@ $script:Messages = @{
     # --- Onboarding mode ---
     "install.mode.title" = @{ zh = "--- Onboarding 模式 ---"; en = "--- Onboarding Mode ---" }
     "install.mode.choose" = @{ zh = "选择安装模式:"; en = "Choose your installation mode:" }
-    "install.mode.quickstart" = @{ zh = "  1) 快速开始  - 使用阿里云百炼快速安装（推荐）"; en = "  1) Quick Start  - Fast installation with Alibaba Cloud CodingPlan (recommended)" }
+    "install.mode.quickstart" = @{ zh = "  1) 快速开始  - 使用阿里云通义 Token 套餐快速安装（推荐）"; en = "  1) Quick Start  - Fast installation with Qwen Cloud (recommended)" }
     "install.mode.manual" = @{ zh = "  2) 手动配置  - 选择 LLM 提供商并自定义选项"; en = "  2) Manual       - Choose LLM provider and customize options" }
     "install.mode.prompt" = @{ zh = "请选择 [1/2]"; en = "Enter choice [1/2]" }
-    "install.mode.quickstart_selected" = @{ zh = "已选择快速开始模式 - 使用阿里云百炼"; en = "Quick Start mode selected - using Alibaba Cloud CodingPlan" }
+    "install.mode.quickstart_selected" = @{ zh = "已选择快速开始模式 - 使用阿里云通义 Token 套餐"; en = "Quick Start mode selected - using Qwen Cloud" }
     "install.mode.manual_selected" = @{ zh = "已选择手动配置模式 - 您将选择 LLM 提供商并自定义选项"; en = "Manual mode selected - you will choose LLM provider and customize options" }
     "install.mode.invalid" = @{ zh = "无效选择，默认使用快速开始模式"; en = "Invalid choice, defaulting to Quick Start mode" }
 
@@ -290,24 +290,28 @@ $script:Messages = @{
     "llm.provider.qwen" = @{ zh = "  提供商: qwen（阿里云百炼）"; en = "  Provider: qwen (Alibaba Cloud Bailian)" }
     "llm.provider.qwen_default" = @{ zh = "  提供商: {0}（默认）"; en = "  Provider: {0} (default)" }
     "llm.model.default" = @{ zh = "  模型: {0}（默认）"; en = "  Model: {0} (default)" }
-    "llm.apikey_hint" = @{ zh = "  提示: 获取阿里云百炼 API Key:"; en = "  Hint: Get your Alibaba Cloud CodingPlan API Key from:" }
-    "llm.apikey_url" = @{ zh = "     https://www.aliyun.com/product/bailian"; en = "     https://www.alibabacloud.com/en/campaign/ai-scene-coding" }
+    "llm.apikey_hint_bailian" = @{ zh = "  提示: 获取阿里云百炼（DashScope）API Key:"; en = "  Hint: Get your Alibaba Cloud Bailian (DashScope) API Key:" }
+    "llm.apikey_url_bailian" = @{ zh = "     https://www.aliyun.com/product/bailian"; en = "     https://www.aliyun.com/product/bailian" }
+    "llm.apikey_hint_qwencloud" = @{ zh = "  提示: 从 Qwen Cloud（国际站）获取 DASHSCOPE_API_KEY:"; en = "  Hint: Get your DASHSCOPE_API_KEY for Qwen Cloud (international) from:" }
+    "llm.apikey_url_qwencloud" = @{ zh = "     https://home.qwencloud.com/api-keys  （文档: https://docs.qwencloud.com/）"; en = "     https://home.qwencloud.com/api-keys  |  Docs: https://docs.qwencloud.com/" }
+    "llm.apikey_hint_tokenplan" = @{ zh = "  提示: 获取 DashScope API Key 或开通通义 Token 套餐，请参考:"; en = "  Hint: Get your DashScope or Token Plan API key (Alibaba Model Studio):" }
+    "llm.apikey_url_tokenplan" = @{ zh = "     https://help.aliyun.com/zh/model-studio/token-plan-quickstart"; en = "     https://common-buy.aliyun.com/token-plan/  |  https://help.aliyun.com/zh/model-studio/token-plan-quickstart" }
     "llm.apikey_prompt" = @{ zh = "LLM API Key"; en = "LLM API Key" }
     "llm.providers_title" = @{ zh = "可用 LLM 提供商:"; en = "Available LLM Providers:" }
-    "llm.provider.alibaba" = @{ zh = "  1) 阿里云百炼  - 推荐中国用户使用"; en = "  1) Alibaba Cloud CodingPlan  - Optimized for coding tasks (recommended)" }
+    "llm.provider.alibaba" = @{ zh = "  1) 阿里云通义 Token 套餐  - 推荐中国用户使用"; en = "  1) Qwen Cloud  - International (OpenAI-compatible API, recommended)" }
     "llm.provider.openai_compat" = @{ zh = "  2) OpenAI 兼容 API  - 自定义 Base URL（OpenAI、DeepSeek 等）"; en = "  2) OpenAI-compatible API  - Custom Base URL (OpenAI, DeepSeek, etc.)" }
     "llm.provider.select" = @{ zh = "选择提供商 [1/2]"; en = "Select provider [1/2]" }
     "llm.alibaba.models_title" = @{ zh = "选择百炼模型系列:"; en = "Select Bailian model series:" }
-    "llm.alibaba.model.codingplan" = @{ zh = "  1) CodingPlan  - 专为编程任务优化（推荐）"; en = "  1) CodingPlan  - Optimized for coding tasks (recommended)" }
+    "llm.alibaba.model.codingplan" = @{ zh = "  1) Token 套餐  - 多模型调用，替代已下线的 Coding 套餐（推荐）"; en = "  1) Alibaba Cloud Token Plan  - Multi-model access (replaces deprecated Coding plan)" }
     "llm.alibaba.model.qwen" = @{ zh = "  2) 百炼通用接口"; en = "  2) qwen general  - General purpose LLM" }
     "llm.alibaba.model.select" = @{ zh = "选择模型系列 [1/2]"; en = "Select model series [1/2]" }
-    "llm.codingplan.models_title" = @{ zh = "选择 CodingPlan 默认模型:"; en = "Select CodingPlan default model:" }
-    "llm.codingplan.model.qwen35plus" = @{ zh = "  1) qwen3.5-plus  - 千问 3.5（速度最快）"; en = "  1) qwen3.5-plus  - Qwen 3.5 (fastest)" }
+    "llm.codingplan.models_title" = @{ zh = "选择通义 Token 套餐默认模型:"; en = "Select Qwen Cloud default model:" }
+    "llm.codingplan.model.qwen36plus" = @{ zh = "  1) qwen3.6-plus  - 千问 3.6（推荐）"; en = "  1) qwen3.6-plus  - Qwen 3.6 (recommended)" }
     "llm.codingplan.model.glm5" = @{ zh = "  2) glm-5  - 智谱 GLM-5（编程推荐）"; en = "  2) glm-5  - Zhipu GLM-5 (recommended for coding)" }
     "llm.codingplan.model.kimi" = @{ zh = "  3) kimi-k2.5  - Moonshot Kimi K2.5"; en = "  3) kimi-k2.5  - Moonshot Kimi K2.5" }
     "llm.codingplan.model.minimax" = @{ zh = "  4) MiniMax-M2.5  - MiniMax M2.5"; en = "  4) MiniMax-M2.5  - MiniMax M2.5" }
     "llm.codingplan.model.select" = @{ zh = "选择模型 [1/2/3/4]"; en = "Select model [1/2/3/4]" }
-    "llm.provider.selected_codingplan" = @{ zh = "  提供商: 阿里云百炼 CodingPlan"; en = "  Provider: Alibaba Cloud CodingPlan" }
+    "llm.provider.selected_codingplan" = @{ zh = "  提供商: 阿里云通义 Token 套餐（alibaba-cloud）"; en = "  Provider: Qwen Cloud (international) (alibaba-cloud)" }
     "llm.provider.selected_qwen" = @{ zh = "  提供商: 阿里云百炼"; en = "  Provider: Alibaba Cloud Bailian" }
     "llm.provider.selected_openai" = @{ zh = "  提供商: {0}（OpenAI 兼容）"; en = "  Provider: {0} (OpenAI-compatible)" }
     "llm.provider.invalid" = @{ zh = "无效选择: {0}（请输入 1 或 2）"; en = "Invalid choice: {0} (please enter 1 or 2)" }
@@ -473,7 +477,7 @@ $script:Messages = @{
     "llm.openai.test.testing" = @{ zh = "正在测试 API 联通性..."; en = "Testing API connectivity..." }
     "llm.openai.test.ok" = @{ zh = "API 联通性测试通过"; en = "API connectivity test passed" }
     "llm.openai.test.fail" = @{ zh = "API 联通性测试失败（HTTP {0}）。响应内容:`n{1}`n请根据以上错误信息联系您的模型服务商解决。"; en = "API connectivity test failed (HTTP {0}). Response body:`n{1}`nPlease contact your model provider to resolve the issue." }
-    "llm.openai.test.fail.codingplan" = @{ zh = "提示: 请确认您的 API Key 已开通阿里云百炼 CodingPlan 服务。开通地址: https://www.aliyun.com/benefit/scene/codingplan"; en = "Hint: Please verify that your API Key has CodingPlan service enabled. Enable at: https://www.alibabacloud.com/en/campaign/ai-scene-coding" }
+    "llm.openai.test.fail.codingplan" = @{ zh = "提示: 请确认 API Key 有效且已开通通义 Token 套餐。文档: https://help.aliyun.com/zh/model-studio/token-plan-quickstart"; en = "Hint: Verify your DASHSCOPE_API_KEY for Qwen Cloud. API keys: https://home.qwencloud.com/api-keys  Docs: https://docs.qwencloud.com/" }
     "llm.openai.test.confirm" = @{ zh = "是否仍要继续安装？[y/N/b]"; en = "Continue with installation anyway? [y/N/b]" }
     "llm.openai.test.aborted" = @{ zh = "安装已中止。"; en = "Installation aborted." }
     "llm.embedding.title" = @{ zh = "📦 记忆搜索配置"; en = "📦 Memory Search Configuration" }
@@ -655,7 +659,7 @@ function Get-LanIP {
 $script:KnownModels = @(
     "gpt-5.4", "gpt-5.3-codex", "gpt-5-mini", "gpt-5-nano",
     "claude-opus-4-6", "claude-sonnet-4-6", "claude-haiku-4-5",
-    "qwen3.5-plus", "deepseek-chat", "deepseek-reasoner",
+    "qwen3.6-plus", "qwen3.5-plus", "deepseek-chat", "deepseek-reasoner",
     "kimi-k2.5", "glm-5", "MiniMax-M2.7", "MiniMax-M2.7-highspeed", "MiniMax-M2.5"
 )
 
@@ -1672,11 +1676,11 @@ function Step-Llm {
         "^(1|alibaba-cloud)$" {
             if ($script:HICLAW_LANGUAGE -eq "en") {
                 $script:config.LLM_PROVIDER = "openai-compat"
-                $script:config.OPENAI_BASE_URL = "https://coding-intl.dashscope.aliyuncs.com/v1"
-                $modelChoice = "codingplan"
+                $script:config.OPENAI_BASE_URL = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+                $modelChoice = "tokenplan"
                 Write-Host ""
                 Write-Host (Get-Msg "llm.codingplan.models_title")
-                Write-Host (Get-Msg "llm.codingplan.model.qwen35plus")
+                Write-Host (Get-Msg "llm.codingplan.model.qwen36plus")
                 Write-Host (Get-Msg "llm.codingplan.model.glm5")
                 Write-Host (Get-Msg "llm.codingplan.model.kimi")
                 Write-Host (Get-Msg "llm.codingplan.model.minimax")
@@ -1689,11 +1693,11 @@ function Step-Llm {
                 $codingPlanModelChoice = if ($codingPlanModelChoice) { $codingPlanModelChoice } else { "1" }
                 if ($codingPlanModelChoice -eq "b") { $script:StepResult = "back"; return }
                 switch -Regex ($codingPlanModelChoice) {
-                    "^(1|qwen3\.5-plus)$"  { $script:config.DEFAULT_MODEL = "qwen3.5-plus" }
+                    "^(1|qwen3\.6-plus)$"  { $script:config.DEFAULT_MODEL = "qwen3.6-plus" }
                     "^(2|glm-5)$"          { $script:config.DEFAULT_MODEL = "glm-5" }
                     "^(3|kimi-k2\.5)$"     { $script:config.DEFAULT_MODEL = "kimi-k2.5" }
                     "^(4|MiniMax-M2\.5)$"  { $script:config.DEFAULT_MODEL = "MiniMax-M2.5" }
-                    default                { $script:config.DEFAULT_MODEL = "qwen3.5-plus" }
+                    default                { $script:config.DEFAULT_MODEL = "qwen3.6-plus" }
                 }
                 Write-Log (Get-Msg "llm.provider.selected_codingplan")
             } else {
@@ -1722,10 +1726,10 @@ function Step-Llm {
                     if ($script:StepResult -eq "back") { return }
                 } else {
                     $script:config.LLM_PROVIDER = "openai-compat"
-                    $script:config.OPENAI_BASE_URL = "https://coding.dashscope.aliyuncs.com/v1"
+                    $script:config.OPENAI_BASE_URL = "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1"
                     Write-Host ""
                     Write-Host (Get-Msg "llm.codingplan.models_title")
-                    Write-Host (Get-Msg "llm.codingplan.model.qwen35plus")
+                    Write-Host (Get-Msg "llm.codingplan.model.qwen36plus")
                     Write-Host (Get-Msg "llm.codingplan.model.glm5")
                     Write-Host (Get-Msg "llm.codingplan.model.kimi")
                     Write-Host (Get-Msg "llm.codingplan.model.minimax")
@@ -1738,11 +1742,11 @@ function Step-Llm {
                     $codingPlanModelChoice = if ($codingPlanModelChoice) { $codingPlanModelChoice } else { "1" }
                     if ($codingPlanModelChoice -eq "b") { $script:StepResult = "back"; return }
                     switch -Regex ($codingPlanModelChoice) {
-                        "^(1|qwen3\.5-plus)$"  { $script:config.DEFAULT_MODEL = "qwen3.5-plus" }
+                        "^(1|qwen3\.6-plus)$"  { $script:config.DEFAULT_MODEL = "qwen3.6-plus" }
                         "^(2|glm-5)$"          { $script:config.DEFAULT_MODEL = "glm-5" }
                         "^(3|kimi-k2\.5)$"     { $script:config.DEFAULT_MODEL = "kimi-k2.5" }
                         "^(4|MiniMax-M2\.5)$"  { $script:config.DEFAULT_MODEL = "MiniMax-M2.5" }
-                        default                { $script:config.DEFAULT_MODEL = "qwen3.5-plus" }
+                        default                { $script:config.DEFAULT_MODEL = "qwen3.6-plus" }
                     }
                     Write-Log (Get-Msg "llm.provider.selected_codingplan")
                 }
@@ -1750,8 +1754,16 @@ function Step-Llm {
 
             Write-Log (Get-Msg "llm.model.label" -f $script:config.DEFAULT_MODEL)
             Write-Log ""
-            Write-Log (Get-Msg "llm.apikey_hint")
-            Write-Log (Get-Msg "llm.apikey_url")
+            if ($modelChoice -match "^(2|qwen)$") {
+                Write-Log (Get-Msg "llm.apikey_hint_bailian")
+                Write-Log (Get-Msg "llm.apikey_url_bailian")
+            } elseif ($script:HICLAW_LANGUAGE -eq "en") {
+                Write-Log (Get-Msg "llm.apikey_hint_qwencloud")
+                Write-Log (Get-Msg "llm.apikey_url_qwencloud")
+            } else {
+                Write-Log (Get-Msg "llm.apikey_hint_tokenplan")
+                Write-Log (Get-Msg "llm.apikey_url_tokenplan")
+            }
             Write-Log ""
             $script:config.LLM_API_KEY = Read-Prompt -VarName "HICLAW_LLM_API_KEY" -PromptText (Get-Msg "llm.apikey_prompt") -Secret
             if ($script:StepResult -eq "back") { return }
