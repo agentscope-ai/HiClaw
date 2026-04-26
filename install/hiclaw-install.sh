@@ -2262,6 +2262,7 @@ install_manager() {
         "${_step_fn}"
         if [ "${STEP_RESULT}" = "back" ]; then
             if [ "${#_STEP_HISTORY[@]}" -gt 0 ]; then
+                clear_step_vars "${_step_fn}"
                 local _last=$(( ${#_STEP_HISTORY[@]} - 1 ))
                 _step_idx="${_STEP_HISTORY[$_last]}"
                 _STEP_HISTORY=("${_STEP_HISTORY[@]:0:${_last}}")
