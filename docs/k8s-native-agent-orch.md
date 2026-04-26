@@ -76,6 +76,8 @@ apiVersion: hiclaw.io/v1beta1
 
 #### Worker — execution unit
 
+**Naming:** The Python Worker runtime is **CoPaw** (image `hiclaw-copaw-worker`). Older materials sometimes used **QwenPaw** for the same runtime.
+
 ```yaml
 apiVersion: hiclaw.io/v1beta1
 kind: Worker
@@ -83,7 +85,7 @@ metadata:
   name: alice
 spec:
   model: claude-sonnet-4-6           # required: LLM model
-  runtime: copaw                     # openclaw | copaw (default openclaw)
+  runtime: copaw                     # openclaw | copaw | hermes (default from install / CR)
   skills: [github-operations]        # platform built-in skills
   mcpServers: [github]               # MCP servers authorized via Gateway
   package: file://./alice-pkg.zip    # optional: file/http(s)/nacos/packages/…
@@ -97,7 +99,7 @@ spec:
   #   groupAllowExtra: ["@human:domain"]
 ```
 
-Each Worker maps to: a Docker container (or K8s Pod) + Matrix account + MinIO namespace + Gateway Consumer token. If `spec.image` is omitted, defaults come from `HICLAW_WORKER_IMAGE` / `HICLAW_COPAW_WORKER_IMAGE`.
+Each Worker maps to: a Docker container (or K8s Pod) + Matrix account + MinIO namespace + Gateway Consumer token. If `spec.image` is omitted, defaults come from `HICLAW_WORKER_IMAGE` / `HICLAW_COPAW_WORKER_IMAGE` / `HICLAW_HERMES_WORKER_IMAGE` (or chart defaults).
 
 #### Team — collaboration unit
 
@@ -224,6 +226,11 @@ Deployment modes:
 |------|-------------|----------------|-------------|
 | Embedded | kine + SQLite | Docker containers | Dev / small teams |
 | Incluster | K8s etcd | Pods | Enterprise / cloud |
+
+**Embedded vs Helm (packaging):**
+
+- **Embedded** — `install/hiclaw-install.sh` starts **`hiclaw-controller`** (image bundles Higress, Tuwunel, MinIO, Element Web, and the controller binary). The controller then creates **`hiclaw-manager`** and each **Worker** as separate containers on the same Docker/Podman host.
+- **Helm / in-cluster** — Chart [`helm/hiclaw`](../helm/hiclaw) deploys the same logical components as Kubernetes workloads (gateway, homeserver, storage, controller Deployment, and Manager/Worker Pods from CRs). CRD semantics match embedded; only the backend driver differs.
 
 Both modes share reconcilers; backends mirror how Kubernetes abstracts CRI/CSI/CNI.
 
@@ -427,7 +434,7 @@ Human tiers in the same rooms
 | Teams / Humans | None | Team + Human CRDs |
 | Declarative | Single-Agent blueprint | Worker/Team/Human/Manager |
 | K8s-native deploy | No | Incluster + Helm |
-| Runtimes | OpenClaw, Hermes, … | OpenClaw, CoPaw, ZeroClaw*, NanoClaw* |
+| Runtimes | OpenClaw, Hermes, … | OpenClaw, CoPaw, Hermes, ZeroClaw*, NanoClaw* |
 
 \* Roadmap / lightweight options (see project README).
 
@@ -476,22 +483,24 @@ The Worker backend could one day plug NemoClaw under each Worker—HiClaw orches
 
 ## 8. Deployment modes
 
+See **section 3.3** for how the controller reconciles; this section is only *how you install*.
+
 ### 8.1 Embedded (dev / small teams)
 
 ```bash
 bash <(curl -sSL https://higress.ai/hiclaw/install.sh)
 ```
 
-Rough minimum: 2 CPU, 4 GB RAM, Docker/Podman—all components in local containers.
+Rough minimum: 2 CPU, 4 GB RAM, Docker/Podman. You get **`hiclaw-controller`** (infra + controller) plus a separate **`hiclaw-manager`** container; Workers appear as additional containers when created.
 
-### 8.2 Incluster (enterprise / cloud)
+### 8.2 In-cluster / Helm (enterprise / cloud)
 
 ```bash
 # From repository root (chart lives under helm/hiclaw)
 helm install hiclaw ./helm/hiclaw
 ```
 
-You can also install from a published Helm chart once the repo is added. `hiclaw-controller` runs as its own Deployment; Workers as Pods; Tuwunel, MinIO, Higress, etc. follow Chart values and can scale horizontally.
+You can also install from a published Helm chart once the repo is added. The chart wires **`hiclaw-controller`**, gateway, homeserver, and storage per `values.yaml`; Manager and Worker Pods follow the same CRD API as embedded installs.
 
 ## 9. Status and roadmap
 
