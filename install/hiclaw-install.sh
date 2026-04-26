@@ -467,6 +467,12 @@ msg() {
         "port.local_only.https_hint.en") text="⚠️  It is recommended to configure TLS certificates and enable HTTPS in the Higress Console to avoid plaintext transmission." ;;
         "port.local_only.https_docs.zh") text="" ;;
         "port.local_only.https_docs.en") text="" ;;
+        "port.local_only.title_short.zh") text="网络访问模式" ;;
+        "port.local_only.title_short.en") text="Network Access Mode" ;;
+        "port.local_only.val_local.zh") text="仅本机" ;;
+        "port.local_only.val_local.en") text="Local only" ;;
+        "port.local_only.val_external.zh") text="允许外部访问" ;;
+        "port.local_only.val_external.en") text="External access" ;;
         # --- Domain Configuration ---
         "domain.title.zh") text="--- 域名配置（按回车使用默认值）---" ;;
         "domain.title.en") text="--- Domain Configuration (press Enter for defaults) ---" ;;
@@ -495,6 +501,8 @@ msg() {
         # --- Data Persistence ---
         "data.title.zh") text="--- 数据持久化 ---" ;;
         "data.title.en") text="--- Data Persistence ---" ;;
+        "data.title_short.zh") text="数据持久化" ;;
+        "data.title_short.en") text="Data Persistence" ;;
         "data.volume_prompt.zh") text="Docker 卷名称 [hiclaw-data]" ;;
         "data.volume_prompt.en") text="Docker volume name for persistent data [hiclaw-data]" ;;
         "data.volume_using.zh") text="  使用 Docker 卷: %s" ;;
@@ -502,6 +510,8 @@ msg() {
         # --- Manager Workspace ---
         "workspace.title.zh") text="--- Manager 工作空间 ---" ;;
         "workspace.title.en") text="--- Manager Workspace ---" ;;
+        "workspace.title_short.zh") text="Manager 工作空间" ;;
+        "workspace.title_short.en") text="Manager Workspace" ;;
         "workspace.dir_prompt.zh") text="Manager 工作空间目录 [%s]" ;;
         "workspace.dir_prompt.en") text="Manager workspace directory [%s]" ;;
         "workspace.dir_label.zh") text="  Manager 工作空间: %s" ;;
@@ -1865,14 +1875,10 @@ step_llm() {
 step_admin() {
     log "$(msg admin.title)"
     prompt HICLAW_ADMIN_USER "$(msg admin.username_prompt)" "admin" || return 0
+    prompt_optional HICLAW_ADMIN_PASSWORD "$(msg admin.password_prompt)" "true" || return 0
     if [ -z "${HICLAW_ADMIN_PASSWORD}" ]; then
-        prompt_optional HICLAW_ADMIN_PASSWORD "$(msg admin.password_prompt)" "true" || return 0
-        if [ -z "${HICLAW_ADMIN_PASSWORD}" ]; then
-            HICLAW_ADMIN_PASSWORD="admin$(openssl rand -hex 6)"
-            log "$(msg admin.password_generated)"
-        fi
-    else
-        log "  $(msg prompt.preset "$(msg admin.password_prompt)")"
+        HICLAW_ADMIN_PASSWORD="admin$(openssl rand -hex 6)"
+        log "$(msg admin.password_generated)"
     fi
     if [ ${#HICLAW_ADMIN_PASSWORD} -lt 8 ]; then
         error "$(msg admin.password_too_short "${#HICLAW_ADMIN_PASSWORD}")"
@@ -1888,6 +1894,18 @@ step_network() {
     echo ""
     if [ "${HICLAW_NON_INTERACTIVE}" = "1" ]; then
         HICLAW_LOCAL_ONLY="${HICLAW_LOCAL_ONLY:-1}"
+    elif [ "${HICLAW_UPGRADE}" = "1" ] && [ -n "${HICLAW_LOCAL_ONLY}" ]; then
+        local _local_display; if [ "${HICLAW_LOCAL_ONLY}" = "1" ]; then _local_display="$(msg port.local_only.val_local)"; else _local_display="$(msg port.local_only.val_external)"; fi
+        log "$(msg prompt.upgrade_keep "$(msg port.local_only.title_short)" "${_local_display}")"
+        local _local_choice
+        read -e -p "$(msg port.local_only.choice): " _local_choice
+        if [ "${_local_choice}" = "b" ]; then STEP_RESULT="back"; return 0; fi
+        if [ -n "${_local_choice}" ]; then
+            case "${_local_choice}" in
+                2|n|N|no|NO) HICLAW_LOCAL_ONLY="0" ;;
+                *)            HICLAW_LOCAL_ONLY="1" ;;
+            esac
+        fi
     elif [ -z "${HICLAW_LOCAL_ONLY+x}" ]; then
         local _local_choice
         read -e -p "$(msg port.local_only.choice): " _local_choice
@@ -1944,28 +1962,40 @@ step_skills() {
 
 step_volume() {
     log "$(msg data.title)"
-    if [ -z "${HICLAW_DATA_DIR+x}" ]; then
+    if [ "${HICLAW_UPGRADE}" = "1" ] && [ -n "${HICLAW_DATA_DIR}" ]; then
+        log "$(msg prompt.upgrade_keep "$(msg data.title_short)" "${HICLAW_DATA_DIR}")"
+        local _input
+        read -e -p "$(msg data.volume_prompt): " _input
+        if [ "${_input}" = "b" ]; then STEP_RESULT="back"; return 0; fi
+        [ -n "${_input}" ] && HICLAW_DATA_DIR="${_input}"
+    elif [ -z "${HICLAW_DATA_DIR+x}" ]; then
         local _input
         read -e -p "$(msg data.volume_prompt): " _input
         if [ "${_input}" = "b" ]; then STEP_RESULT="back"; return 0; fi
         HICLAW_DATA_DIR="${_input:-hiclaw-data}"
-        export HICLAW_DATA_DIR
     fi
     HICLAW_DATA_DIR="${HICLAW_DATA_DIR:-hiclaw-data}"
+    export HICLAW_DATA_DIR
     log "$(msg data.volume_using "${HICLAW_DATA_DIR}")"
 }
 
 step_workspace() {
     log "$(msg workspace.title)"
-    if [ -z "${HICLAW_WORKSPACE_DIR+x}" ]; then
+    if [ "${HICLAW_UPGRADE}" = "1" ] && [ -n "${HICLAW_WORKSPACE_DIR}" ]; then
+        log "$(msg prompt.upgrade_keep "$(msg workspace.title_short)" "${HICLAW_WORKSPACE_DIR}")"
+        local _input
+        read -e -p "$(msg workspace.dir_prompt "${HOME}/hiclaw-manager"): " _input
+        if [ "${_input}" = "b" ]; then STEP_RESULT="back"; return 0; fi
+        [ -n "${_input}" ] && HICLAW_WORKSPACE_DIR="${_input}"
+    elif [ -z "${HICLAW_WORKSPACE_DIR+x}" ]; then
         local _input
         read -e -p "$(msg workspace.dir_prompt "${HOME}/hiclaw-manager"): " _input
         if [ "${_input}" = "b" ]; then STEP_RESULT="back"; return 0; fi
         HICLAW_WORKSPACE_DIR="${_input:-${HOME}/hiclaw-manager}"
-        export HICLAW_WORKSPACE_DIR
     fi
     HICLAW_WORKSPACE_DIR="$(cd "${HICLAW_WORKSPACE_DIR}" 2>/dev/null && pwd || echo "${HICLAW_WORKSPACE_DIR}")"
     mkdir -p "${HICLAW_WORKSPACE_DIR}"
+    export HICLAW_WORKSPACE_DIR
     log "$(msg workspace.dir_label "${HICLAW_WORKSPACE_DIR}")"
 }
 
