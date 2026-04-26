@@ -1,5 +1,8 @@
 # FAQ
 
+> **Legacy only — HiClaw v1.0.9 and older single-container architecture**  
+> If you are on **v1.1.0 or newer**, use **[faq.md](faq.md)** (multi-container `hiclaw-controller` + `hiclaw-manager`). This page is kept for upgrades and historical installs still on the all-in-one **`hiclaw-manager`** image.
+
 - [How to check the current HiClaw version](#how-to-check-the-current-hiclaw-version)
 - [How to connect Feishu/DingTalk/WeCom/Discord/Telegram](#how-to-connect-feishudingtalkwecomdiscordtelegram)
 - [Installation script exits immediately on Windows](#installation-script-exits-immediately-on-windows)
