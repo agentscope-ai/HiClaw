@@ -292,7 +292,7 @@ func (h *ResourceHandler) UpdateWorker(w http.ResponseWriter, r *http.Request) {
 
 		if err := h.client.Update(ctx, &worker); err != nil {
 			if apierrors.IsConflict(err) && attempt+1 < k8sUpdateMaxRetries {
-				time.Sleep(100 * time.Millisecond)
+				time.Sleep(time.Duration(attempt+1) * 100 * time.Millisecond)
 				continue
 			}
 			writeK8sError(w, "update worker", err)
@@ -516,7 +516,7 @@ func (h *ResourceHandler) UpdateTeam(w http.ResponseWriter, r *http.Request) {
 
 		if err := h.client.Update(ctx, &team); err != nil {
 			if apierrors.IsConflict(err) && attempt+1 < k8sUpdateMaxRetries {
-				time.Sleep(100 * time.Millisecond)
+				time.Sleep(time.Duration(attempt+1) * 100 * time.Millisecond)
 				continue
 			}
 			writeK8sError(w, "update team", err)
@@ -766,7 +766,7 @@ func (h *ResourceHandler) UpdateManager(w http.ResponseWriter, r *http.Request) 
 
 		if err := h.client.Update(ctx, &mgr); err != nil {
 			if apierrors.IsConflict(err) && attempt+1 < k8sUpdateMaxRetries {
-				time.Sleep(100 * time.Millisecond)
+				time.Sleep(time.Duration(attempt+1) * 100 * time.Millisecond)
 				continue
 			}
 			writeK8sError(w, "update manager", err)
