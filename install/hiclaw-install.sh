@@ -2425,7 +2425,9 @@ EOF
     # Detect container runtime socket
     SOCKET_MOUNT_ARGS=""
     if [ "${HICLAW_MOUNT_SOCKET}" = "1" ]; then
-        CONTAINER_SOCK=$(detect_socket)
+        if [ -z "${CONTAINER_SOCK}" ]; then
+            CONTAINER_SOCK=$(detect_socket)
+        fi
         if [ -n "${CONTAINER_SOCK}" ]; then
             log "$(msg install.socket_detected "${CONTAINER_SOCK}")"
             SOCKET_MOUNT_ARGS="-v ${CONTAINER_SOCK}:/var/run/docker.sock --security-opt label=disable"
