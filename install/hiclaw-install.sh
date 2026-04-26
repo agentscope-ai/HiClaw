@@ -393,8 +393,10 @@ msg() {
         "llm.codingplan.model.kimi.en") text="  3) kimi-k2.5  - Moonshot Kimi K2.5" ;;
         "llm.codingplan.model.minimax.zh") text="  4) MiniMax-M2.5  - MiniMax M2.5" ;;
         "llm.codingplan.model.minimax.en") text="  4) MiniMax-M2.5  - MiniMax M2.5" ;;
-        "llm.codingplan.model.select.zh") text="选择模型 [1/2/3/4]" ;;
-        "llm.codingplan.model.select.en") text="Select model [1/2/3/4]" ;;
+        "llm.codingplan.model.qwen36plus.zh") text="  5) qwen3.6-plus  - 千问 3.6（100万上下文，适合长文档）" ;;
+        "llm.codingplan.model.qwen36plus.en") text="  5) qwen3.6-plus  - Qwen 3.6 (1M context, ideal for long documents)" ;;
+        "llm.codingplan.model.select.zh") text="选择模型 [1/2/3/4/5]" ;;
+        "llm.codingplan.model.select.en") text="Select model [1/2/3/4/5]" ;;
         "llm.provider.selected_codingplan.zh") text="  提供商: 阿里云百炼 CodingPlan" ;;
         "llm.provider.selected_codingplan.en") text="  Provider: Alibaba Cloud CodingPlan" ;;
         "llm.provider.selected_qwen.zh") text="  提供商: 阿里云百炼" ;;
@@ -1008,7 +1010,7 @@ resolve_embedded_image() {
 # ============================================================
 # Known models list — used to detect custom models during install
 # ============================================================
-KNOWN_MODELS="gpt-5.4 gpt-5.3-codex gpt-5-mini gpt-5-nano claude-opus-4-6 claude-sonnet-4-6 claude-haiku-4-5 qwen3.5-plus deepseek-chat deepseek-reasoner kimi-k2.5 glm-5 MiniMax-M2.7 MiniMax-M2.7-highspeed MiniMax-M2.5"
+KNOWN_MODELS="gpt-5.4 gpt-5.3-codex gpt-5-mini gpt-5-nano claude-opus-4-6 claude-sonnet-4-6 claude-haiku-4-5 qwen3.5-plus qwen3.6-plus deepseek-chat deepseek-reasoner kimi-k2.5 glm-5 MiniMax-M2.7 MiniMax-M2.7-highspeed MiniMax-M2.5"
 
 is_known_model() {
     local model="$1"
@@ -1718,6 +1720,7 @@ step_llm() {
                     2|glm-5)        HICLAW_DEFAULT_MODEL="glm-5" ;;
                     3|kimi-k2.5)    HICLAW_DEFAULT_MODEL="kimi-k2.5" ;;
                     4|MiniMax-M2.5) HICLAW_DEFAULT_MODEL="MiniMax-M2.5" ;;
+                    5|qwen3.6-plus) HICLAW_DEFAULT_MODEL="qwen3.6-plus" ;;
                     *)              HICLAW_DEFAULT_MODEL="qwen3.5-plus" ;;
                 esac
                 log "$(msg llm.provider.selected_codingplan)"
@@ -1772,6 +1775,7 @@ step_llm() {
                             2|glm-5)        HICLAW_DEFAULT_MODEL="glm-5" ;;
                             3|kimi-k2.5)    HICLAW_DEFAULT_MODEL="kimi-k2.5" ;;
                             4|MiniMax-M2.5) HICLAW_DEFAULT_MODEL="MiniMax-M2.5" ;;
+                            5|qwen3.6-plus) HICLAW_DEFAULT_MODEL="qwen3.6-plus" ;;
                             *)              HICLAW_DEFAULT_MODEL="qwen3.5-plus" ;;
                         esac
                         log "$(msg llm.provider.selected_codingplan)"

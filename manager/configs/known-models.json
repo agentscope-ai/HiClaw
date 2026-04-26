@@ -7,11 +7,12 @@
   { "id": "claude-sonnet-4-6", "name": "claude-sonnet-4-6", "reasoning": true,  "contextWindow": 1000000, "maxTokens": 64000,  "input": ["text", "image"] },
   { "id": "claude-haiku-4-5",  "name": "claude-haiku-4-5",  "reasoning": true,  "contextWindow": 200000,  "maxTokens": 64000,  "input": ["text", "image"] },
   { "id": "qwen3.5-plus",      "name": "qwen3.5-plus",      "reasoning": true,  "contextWindow": 200000,  "maxTokens": 64000,  "input": ["text", "image"] },
+  { "id": "qwen3.6-plus",      "name": "qwen3.6-plus",      "reasoning": true,  "contextWindow": 1000000, "maxTokens": 128000, "input": ["text"] },
   { "id": "deepseek-chat",     "name": "deepseek-chat",     "reasoning": true,  "contextWindow": 256000,  "maxTokens": 128000, "input": ["text"] },
-  { "id": "deepseek-reasoner", "name": "deepseek-reasoner", "reasoning": true,  "contextWindow": 256000,  "maxTokens": 128000, "input": ["text"] },
+  { "id": "deepseek-reasoner", "name": "deepseek-reasoner", "reasoning": true,  "contextWindow": 256000, "maxTokens": 128000, "input": ["text"] },
   { "id": "kimi-k2.5",         "name": "kimi-k2.5",         "reasoning": true,  "contextWindow": 256000,  "maxTokens": 128000, "input": ["text", "image"] },
   { "id": "glm-5",             "name": "glm-5",             "reasoning": true,  "contextWindow": 200000,  "maxTokens": 128000, "input": ["text"] },
   { "id": "MiniMax-M2.7",      "name": "MiniMax-M2.7",      "reasoning": true,  "contextWindow": 200000,  "maxTokens": 128000, "input": ["text"] },
-  { "id": "MiniMax-M2.7-highspeed", "name": "MiniMax-M2.7-highspeed", "reasoning": true, "contextWindow": 200000, "maxTokens": 128000, "input": ["text"] },
+  { "id": "MiniMax-M2.7-highspeed", "name": "MiniMax-M2.7-highspeed", "reasoning": true,  "contextWindow": 200000, "maxTokens": 128000, "input": ["text"] },
   { "id": "MiniMax-M2.5",      "name": "MiniMax-M2.5",      "reasoning": true,  "contextWindow": 200000,  "maxTokens": 128000, "input": ["text"] }
 ]
