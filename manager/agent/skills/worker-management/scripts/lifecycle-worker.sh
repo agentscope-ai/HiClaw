@@ -409,7 +409,7 @@ action_start() {
             --arg controller_url "${HICLAW_CONTROLLER_URL:-}" \
             '{
                 "HICLAW_WORKER_NAME": $name,
-                "HICLAW_FS_ENDPOINT": (if $fs_endpoint != "" then $fs_endpoint else ("http://" + ($fs_domain | split(":")[0]) + ":8080") end),
+                "HICLAW_FS_ENDPOINT": (if $fs_endpoint != "" then $fs_endpoint else ("http://" + ($fs_domain | split(":")[0]) + ":9000") end),
                 "HICLAW_FS_ACCESS_KEY": $fak,
                 "HICLAW_FS_SECRET_KEY": $fsk
             }

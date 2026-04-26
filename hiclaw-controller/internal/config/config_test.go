@@ -1,6 +1,25 @@
 package config
 
-import "testing"
+import (
+	"testing"
+)
+
+func TestNormalizeMinIOS3Endpoint(t *testing.T) {
+	tests := []struct {
+		in, want string
+	}{
+		{"", ""},
+		{"http://fs-local.hiclaw.io:9000", "http://fs-local.hiclaw.io:9000"},
+		{"http://fs-local.hiclaw.io:8080", "http://fs-local.hiclaw.io:9000"},
+		{"http://hiclaw-controller:8080", "http://hiclaw-controller:9000"},
+		{"http://example:18080", "http://example:18080"},
+	}
+	for _, tc := range tests {
+		if got := normalizeMinIOS3Endpoint(tc.in); got != tc.want {
+			t.Errorf("normalizeMinIOS3Endpoint(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
 
 func TestLoadConfigAppliesManagerSpec(t *testing.T) {
 	t.Setenv("HICLAW_MANAGER_SPEC", `{

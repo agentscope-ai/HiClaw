@@ -1024,7 +1024,7 @@ if container_api_available; then
                         --arg controller_url "${HICLAW_CONTROLLER_URL:-}" \
                         '{
                             "HICLAW_WORKER_NAME": $name,
-                            "HICLAW_FS_ENDPOINT": ("http://" + ($fs_domain | split(":")[0]) + ":8080"),
+                            "HICLAW_FS_ENDPOINT": ("http://" + ($fs_domain | split(":")[0]) + ":9000"),
                             "HICLAW_FS_ACCESS_KEY": $fak,
                             "HICLAW_FS_SECRET_KEY": $fsk
                         }

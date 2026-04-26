@@ -25,13 +25,32 @@
 # ────────────────────────────────────────────────────────────────────────────
 
 source /opt/hiclaw/scripts/lib/hiclaw-env.sh
-waitForService "MinIO" "127.0.0.1" 9000
 
-# Configure mc alias (local access, not through Higress)
-mc alias set hiclaw http://127.0.0.1:9000 "${HICLAW_MINIO_USER:-${HICLAW_ADMIN_USER:-admin}}" "${HICLAW_MINIO_PASSWORD:-${HICLAW_ADMIN_PASSWORD:-admin}}"
+# MinIO S3: use explicit URL, or cluster FS endpoint, or in-process minio (embedded controller)
+# (Port 8080 is Higress, not the S3 API; never use it for mc.)
+MINIO_S3_URL="${HICLAW_MINIO_S3_URL:-${HICLAW_FS_ENDPOINT:-${HICLAW_MINIO_ENDPOINT:-http://127.0.0.1:9000}}}"
+MINIO_S3_URL="${MINIO_S3_URL//:8080/:9000}"
+_HP="${MINIO_S3_URL#*://}"
+_HP="${_HP%%/*}"
+_MINIO_HOST="${_HP%%:*}"
+_MINIO_PORT="${_HP##*:}"
+if [ "${_MINIO_PORT}" = "${_HP}" ] || [ -z "${_MINIO_PORT}" ]; then
+    _MINIO_PORT=9000
+fi
+waitForService "MinIO" "${_MINIO_HOST}" "${_MINIO_PORT}"
+
+# Configure mc alias (direct S3, not Higress HTTP)
+mc alias set hiclaw "${MINIO_S3_URL}" \
+    "${HICLAW_MINIO_USER:-${HICLAW_ADMIN_USER:-admin}}" \
+    "${HICLAW_MINIO_PASSWORD:-${HICLAW_ADMIN_PASSWORD:-admin}}"
 
 # Create default bucket
 mc mb "${HICLAW_STORAGE_PREFIX}" --ignore-existing
+
+if ! mc ls "${HICLAW_STORAGE_PREFIX}/" > /dev/null 2>&1; then
+    log "ERROR: MinIO S3 is not usable at ${MINIO_S3_URL} (HICLAW_MINIO_S3_URL / HICLAW_FS_ENDPOINT must be the S3 port, e.g. :9000, not the Higress gateway 8080)."
+    exit 1
+fi
 
 # Initialize placeholder directories for shared data and worker artifacts
 for dir in shared/knowledge shared/tasks workers; do

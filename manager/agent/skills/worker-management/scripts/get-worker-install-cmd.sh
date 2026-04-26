@@ -55,7 +55,7 @@ source "${CREDS_FILE}"
 FS_DOMAIN="${HICLAW_FS_DOMAIN:-fs-local.hiclaw.io}"
 FS_EXTERNAL_PORT="${HICLAW_PORT_GATEWAY:-18080}"
 FS_EXTERNAL_ENDPOINT="http://${FS_DOMAIN}:${FS_EXTERNAL_PORT}"
-FS_INTERNAL_ENDPOINT="http://${FS_DOMAIN}:8080"
+FS_INTERNAL_ENDPOINT="http://${FS_DOMAIN%%:*}:9000"
 
 if [ "${RUNTIME}" = "copaw" ]; then
     INSTALL_CMD="pip install -i https://mirrors.aliyun.com/pypi/simple/ copaw-worker && copaw-worker --name ${WORKER_NAME} --fs ${FS_EXTERNAL_ENDPOINT} --fs-key ${WORKER_NAME} --fs-secret ${WORKER_MINIO_PASSWORD} --console-port 8088"
