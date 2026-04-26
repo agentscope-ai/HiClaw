@@ -89,6 +89,13 @@ HICLAW_CMS_ENDPOINT=https://proj-xtrace-xxx.cn-hangzhou.log.aliyuncs.com/apm/tra
 
 After configuration, restart the container: `docker restart hiclaw-manager`
 
+### v1.1.0+ multi-container / Helm placement
+
+| Where | What to configure |
+|-------|-------------------|
+| **Embedded Docker** | Put all `HICLAW_CMS_*` variables on **`hiclaw-manager`** (or `hiclaw-manager-copaw` if you use CoPaw Manager). They are loaded from your `hiclaw-manager.env` at container start. **`hiclaw-controller`** does not need CMS env for normal agent tracing. |
+| **Helm / Kubernetes** | Set the same keys on the **Manager** Deployment (see `helm/hiclaw/values.yaml` → manager env). Optionally seed worker defaults there so every Worker Pod receives CMS settings even if Manager was configured late. |
+
 ## Step 3: Configure HiClaw Workers
 
 Manager will automatically propagate CMS configuration to newly created Workers. Ensure you configure Manager before creating Workers.
