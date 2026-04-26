@@ -848,6 +848,122 @@ function Wait-MatrixReady {
     Write-Error (Get-Msg "install.wait_matrix.timeout" -f $Timeout, $Container)
 }
 
+# Read KEY=value from /data/hiclaw-secrets.env on a Docker volume (manager container not required).
+# Requires $script:EMBEDDED_IMAGE (set by Resolve-EmbeddedImage before Install-Manager uses this).
+function Read-HiclawSecretFromDataVolume {
+    param(
+        [string]$VolumeName,
+        [string]$Key
+    )
+    if ([string]::IsNullOrEmpty($VolumeName) -or [string]::IsNullOrEmpty($Key) -or [string]::IsNullOrEmpty($script:EMBEDDED_IMAGE)) {
+        return ""
+    }
+    $grepKey = [regex]::Escape($Key)
+    $shCmd = "grep ""^${grepKey}="" /data/hiclaw-secrets.env 2>/dev/null | cut -d= -f2- | head -1 | tr -d '\r'"
+    $out = docker run --rm --entrypoint sh -v "${VolumeName}:/data:ro" $script:EMBEDDED_IMAGE -c $shCmd 2>$null
+    if ($null -eq $out) { return "" }
+    return ($out | Out-String).Trim()
+}
+
+# Read KEY=value from /data/worker-creds/<worker>.env on a Docker volume.
+function Read-HiclawWorkerCredsFromVolume {
+    param(
+        [string]$VolumeName,
+        [string]$WorkerName,
+        [string]$Key
+    )
+    if ([string]::IsNullOrEmpty($VolumeName) -or [string]::IsNullOrEmpty($WorkerName) -or [string]::IsNullOrEmpty($Key) -or [string]::IsNullOrEmpty($script:EMBEDDED_IMAGE)) {
+        return ""
+    }
+    $grepKey = [regex]::Escape($Key)
+    $path = "/data/worker-creds/${WorkerName}.env"
+    $shCmd = "grep ""^${grepKey}="" ""${path}"" 2>/dev/null | cut -d= -f2- | head -1 | tr -d '\r'"
+    $out = docker run --rm --entrypoint sh -v "${VolumeName}:/data:ro" $script:EMBEDDED_IMAGE -c $shCmd 2>$null
+    if ($null -eq $out) { return "" }
+    return ($out | Out-String).Trim()
+}
+
+# Read admin_dm_room_id from host workspace state.json (fallback when Matrix API is unavailable).
+function Read-HiclawAdminDmRoomFromWorkspace {
+    param([string]$WorkspaceDir)
+    if ([string]::IsNullOrEmpty($WorkspaceDir)) { return "" }
+    $statePath = Join-Path $WorkspaceDir "state.json"
+    if (-not (Test-Path $statePath)) { return "" }
+    try {
+        $j = Get-Content $statePath -Raw -ErrorAction Stop | ConvertFrom-Json
+        $rid = $j.admin_dm_room_id
+        if ($null -eq $rid) { return "" }
+        $s = [string]$rid
+        if ($s -eq "" -or $s -eq "null") { return "" }
+        return $s.Trim()
+    } catch {
+        return ""
+    }
+}
+
+function Get-HiclawRandomHex {
+    param([int]$ByteCount)
+    $bytes = New-Object byte[] $ByteCount
+    $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+    $rng.GetBytes($bytes)
+    return ([BitConverter]::ToString($bytes)).Replace("-", "").ToLower()
+}
+
+# Resolve admin DM room with @manager (small room) via Matrix Client API inside hiclaw-manager.
+function Get-HiclawAdminDmRoomViaMatrix {
+    param(
+        [string]$AdminUser,
+        [string]$AdminPassword
+    )
+    $running = docker ps --format "{{.Names}}" 2>$null | Select-String "^hiclaw-manager$"
+    if (-not $running) { return "" }
+    if ([string]::IsNullOrEmpty($AdminPassword)) { return "" }
+
+    $loginObj = @{
+        type         = "m.login.password"
+        identifier   = @{ type = "m.id.user"; user = $AdminUser }
+        password     = $AdminPassword
+    }
+    $loginJson = $loginObj | ConvertTo-Json -Compress -Depth 5
+    try {
+        $loginRaw = $loginJson | docker exec -i hiclaw-manager sh -c "curl -sf -X POST http://127.0.0.1:6167/_matrix/client/v3/login -H 'Content-Type: application/json' -d @-" 2>$null
+        if (-not $loginRaw) { return "" }
+        $loginResp = $loginRaw | ConvertFrom-Json
+        $token = [string]$loginResp.access_token
+        if ([string]::IsNullOrEmpty($token)) { return "" }
+
+        $roomsRaw = docker exec hiclaw-manager curl -sf -X GET -H "Authorization: Bearer $token" `
+            "http://127.0.0.1:6167/_matrix/client/v3/joined_rooms" 2>$null
+        if (-not $roomsRaw) { return "" }
+        $roomsObj = $roomsRaw | ConvertFrom-Json
+        $roomList = @($roomsObj.joined_rooms)
+        foreach ($roomId in $roomList) {
+            if ([string]::IsNullOrEmpty($roomId)) { continue }
+            $enc = $roomId.Replace("!", "%21")
+            $memRaw = docker exec hiclaw-manager curl -sf -X GET -H "Authorization: Bearer $token" `
+                "http://127.0.0.1:6167/_matrix/client/v3/rooms/${enc}/members" 2>$null
+            if (-not $memRaw) { continue }
+            $memObj = $memRaw | ConvertFrom-Json
+            $chunk = @($memObj.chunk)
+            $memberIds = @($chunk | ForEach-Object { $_.state_key })
+            $match = $false
+            foreach ($m in $memberIds) {
+                $beforeColon = ($m -split ":")[0]
+                if ($m -like "*manager*" -and $beforeColon -notlike "*admin*") {
+                    $match = $true
+                    break
+                }
+            }
+            if ($match -and $memberIds.Count -le 3) {
+                return $roomId
+            }
+        }
+    } catch {
+        return ""
+    }
+    return ""
+}
+
 function New-EnvFile {
     param([hashtable]$Config, [string]$Path)
 
@@ -2455,6 +2571,146 @@ function Install-Manager {
         }
     }
 
+    # --- Pre-upgrade: extract Matrix passwords from old containers (old-arch -> embedded) ---
+    $credsTmp = $null
+    if ($script:HICLAW_UPGRADE -and $script:HICLAW_USE_EMBEDDED -eq "1") {
+        $controllerNameHit = docker ps -a --format "{{.Names}}" 2>$null | Select-String "^hiclaw-controller$"
+        $isOldArch = $false
+        if (-not $controllerNameHit) {
+            $isOldArch = $true
+        } else {
+            $ctrlImgLine = docker ps -a --format "{{.Names}} {{.Image}}" 2>$null | Where-Object { $_ -match '^hiclaw-controller ' } | Select-Object -First 1
+            if ($ctrlImgLine -and ($ctrlImgLine -notmatch 'embedded')) {
+                $isOldArch = $true
+            }
+        }
+
+        if ($isOldArch) {
+            $credsTmp = Join-Path ([System.IO.Path]::GetTempPath()) ("hiclaw-upgrade-creds-" + [Guid]::NewGuid().ToString("n"))
+            New-Item -ItemType Directory -Path $credsTmp -Force | Out-Null
+            $utf8NoBom = New-Object System.Text.UTF8Encoding $false
+
+            $mgrCredsTempStart = $false
+            $mgrExists = docker ps -a --format "{{.Names}}" 2>$null | Select-String "^hiclaw-manager$"
+            $mgrRunning = docker ps --format "{{.Names}}" 2>$null | Select-String "^hiclaw-manager$"
+            if ($mgrExists -and -not $mgrRunning) {
+                Write-Log "hiclaw-manager is stopped; starting it temporarily to extract Matrix credentials for upgrade..."
+                docker start hiclaw-manager 2>$null | Out-Null
+                Wait-MatrixReady -Container "hiclaw-manager"
+                $mgrCredsTempStart = $true
+            }
+
+            $inspectLines = docker inspect hiclaw-manager --format "{{range .Config.Env}}{{println .}}{{end}}" 2>$null
+            $mgrPw = ""
+            if ($inspectLines) {
+                $envLine = $inspectLines -split "`n" | Where-Object { $_ -match '^HICLAW_MANAGER_PASSWORD=' } | Select-Object -First 1
+                if ($envLine) {
+                    $mgrPw = ($envLine -replace '^HICLAW_MANAGER_PASSWORD=', "").Trim()
+                }
+            }
+            $mgrRunningNow = docker ps --format "{{.Names}}" 2>$null | Select-String "^hiclaw-manager$"
+            if ([string]::IsNullOrEmpty($mgrPw) -and $mgrRunningNow) {
+                $mgrPw = docker exec hiclaw-manager bash -c 'source /data/hiclaw-secrets.env 2>/dev/null && echo "${HICLAW_MANAGER_PASSWORD}"' 2>$null
+                if ($mgrPw) { $mgrPw = $mgrPw.Trim() }
+            }
+            $dataVolPresent = docker volume ls -q 2>$null | Where-Object { $_ -eq $config.DATA_DIR }
+            if ([string]::IsNullOrEmpty($mgrPw) -and $dataVolPresent) {
+                $mgrPw = Read-HiclawSecretFromDataVolume -VolumeName $config.DATA_DIR -Key "HICLAW_MANAGER_PASSWORD"
+            }
+
+            $envFilePath = $script:HICLAW_ENV_FILE
+            $mgrRoom = ""
+            if (-not [string]::IsNullOrEmpty($mgrPw)) {
+                $adminPw = ""
+                $adminUser = "admin"
+                if (Test-Path $envFilePath) {
+                    $adminLine = Get-Content $envFilePath | Where-Object { $_ -match '^HICLAW_ADMIN_PASSWORD=' } | Select-Object -First 1
+                    if ($adminLine) { $adminPw = ($adminLine -replace '^HICLAW_ADMIN_PASSWORD=', "").Trim() }
+                    $userLine = Get-Content $envFilePath | Where-Object { $_ -match '^HICLAW_ADMIN_USER=' } | Select-Object -First 1
+                    if ($userLine) {
+                        $adminUser = ($userLine -replace '^HICLAW_ADMIN_USER=', "").Trim()
+                        if ([string]::IsNullOrEmpty($adminUser)) { $adminUser = "admin" }
+                    }
+                }
+
+                if (-not [string]::IsNullOrEmpty($adminPw) -and $mgrRunningNow) {
+                    $mgrRoom = Get-HiclawAdminDmRoomViaMatrix -AdminUser $adminUser -AdminPassword $adminPw
+                }
+                if ([string]::IsNullOrEmpty($mgrRoom)) {
+                    $mgrRoom = Read-HiclawAdminDmRoomFromWorkspace -WorkspaceDir $config.WORKSPACE_DIR
+                }
+
+                $gwKeyLine = if (Test-Path $envFilePath) {
+                    Get-Content $envFilePath | Where-Object { $_ -match '^HICLAW_MANAGER_GATEWAY_KEY=' } | Select-Object -First 1
+                } else { $null }
+                $gwKeyForDefault = if ($gwKeyLine) { ($gwKeyLine -replace '^HICLAW_MANAGER_GATEWAY_KEY=', "").Trim() } else { $config.MANAGER_GATEWAY_KEY }
+
+                $defaultEnvPath = Join-Path $credsTmp "default.env"
+                [System.IO.File]::WriteAllLines($defaultEnvPath, @(
+                    "WORKER_PASSWORD=$mgrPw"
+                    "WORKER_MINIO_PASSWORD=$(Get-HiclawRandomHex 24)"
+                    "WORKER_GATEWAY_KEY=$gwKeyForDefault"
+                    "WORKER_ROOM_ID=$mgrRoom"
+                ), $utf8NoBom)
+                if ($mgrRoom) {
+                    Write-Log "Extracted Manager Matrix password and room ID"
+                } else {
+                    Write-Log "Extracted Manager Matrix password"
+                }
+            }
+
+            $registryPath = Join-Path $config.WORKSPACE_DIR "workers-registry.json"
+            if (Test-Path $registryPath) {
+                try {
+                    $wreg = Get-Content $registryPath -Raw | ConvertFrom-Json
+                    $workerNames = @()
+                    if ($null -ne $wreg.workers) {
+                        $wreg.workers.PSObject.Properties | ForEach-Object { $workerNames += $_.Name }
+                    }
+                    foreach ($wname in $workerNames) {
+                        $wpw = ""
+                        if ($mgrRunningNow) {
+                            $wpw = docker exec hiclaw-manager cat "/root/hiclaw-fs/agents/${wname}/credentials/matrix/password" 2>$null
+                            if ($wpw) { $wpw = $wpw.Trim() }
+                        }
+                        if ([string]::IsNullOrEmpty($wpw) -and $dataVolPresent) {
+                            $wpw = Read-HiclawWorkerCredsFromVolume -VolumeName $config.DATA_DIR -WorkerName $wname -Key "WORKER_PASSWORD"
+                        }
+                        $wroom = ""
+                        $wEntry = $wreg.workers.$wname
+                        if ($wEntry -and $wEntry.room_id) {
+                            $wroom = [string]$wEntry.room_id
+                        }
+                        if ([string]::IsNullOrEmpty($wroom) -and $dataVolPresent) {
+                            $wroom = Read-HiclawWorkerCredsFromVolume -VolumeName $config.DATA_DIR -WorkerName $wname -Key "WORKER_ROOM_ID"
+                        }
+                        if (-not [string]::IsNullOrEmpty($wpw)) {
+                            $wEnvPath = Join-Path $credsTmp "${wname}.env"
+                            [System.IO.File]::WriteAllLines($wEnvPath, @(
+                                "WORKER_PASSWORD=$wpw"
+                                "WORKER_MINIO_PASSWORD=$(Get-HiclawRandomHex 24)"
+                                "WORKER_GATEWAY_KEY=$(Get-HiclawRandomHex 32)"
+                                "WORKER_ROOM_ID=$wroom"
+                            ), $utf8NoBom)
+                            if ($wroom) {
+                                Write-Log "Extracted ${wname} Matrix password and room ID"
+                            } else {
+                                Write-Log "Extracted ${wname} Matrix password"
+                            }
+                        }
+                    }
+                } catch {
+                    Write-Log "Warning: could not read workers-registry.json for credential extraction"
+                }
+            }
+
+            if ($mgrCredsTempStart) {
+                Write-Log "Stopping hiclaw-manager after credential extraction (upgrade will recreate containers)..."
+                docker stop hiclaw-manager 2>$null | Out-Null
+            }
+        }
+    }
+
     # Stop and remove existing containers (deferred until after all
     # configuration is collected and images are pulled successfully)
     $existingProxy = docker ps -a --format "{{.Names}}" 2>$null | Select-String "^hiclaw-controller$"
@@ -2487,6 +2743,28 @@ function Install-Manager {
         Write-Log "Removing legacy container: $($legacy.Line)"
         docker stop $legacy.Line *>$null
         docker rm -f $legacy.Line *>$null
+    }
+
+    # --- Upgrade: inject extracted credentials into data volume (old-arch -> embedded) ---
+    if ($credsTmp -and (Test-Path $credsTmp)) {
+        $credsFiles = Get-ChildItem -Path $credsTmp -Filter "*.env" -ErrorAction SilentlyContinue
+        if ($credsFiles -and $credsFiles.Count -gt 0) {
+            $cleanupCtr = "hiclaw-upgrade-cleanup"
+            docker rm -f $cleanupCtr 2>$null | Out-Null
+            $credsDockerPath = ConvertTo-DockerPath -Path $credsTmp
+            $injectShell = "rm -rf /data/worker-creds && mkdir -p /data/worker-creds && cp /creds/*.env /data/worker-creds/ 2>/dev/null || true && chmod 600 /data/worker-creds/*.env 2>/dev/null || true"
+            docker run --rm --name $cleanupCtr --entrypoint sh `
+                -v "$($config.DATA_DIR):/data" `
+                -v "${credsDockerPath}:/creds:ro" `
+                $script:EMBEDDED_IMAGE `
+                -c $injectShell 2>$null | Out-Null
+            if ($LASTEXITCODE -eq 0) {
+                Write-Log "Injected credentials for upgrade"
+            } else {
+                Write-Log "Warning: credential injection failed, continuing"
+            }
+        }
+        Remove-Item -Path $credsTmp -Recurse -Force -ErrorAction SilentlyContinue
     }
 
     if ($script:HICLAW_USE_EMBEDDED -eq "1") {
