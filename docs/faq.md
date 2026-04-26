@@ -51,12 +51,12 @@ Starting from v1.1.0, HiClaw switched from a **single all-in-one container** to 
 | Infrastructure (Higress, Tuwunel, MinIO, Element Web) | Bundled inside `hiclaw-manager` | Runs in `hiclaw-controller` container (from the `hiclaw-embedded` image) |
 | Manager Agent | Inside `hiclaw-manager` | Separate `hiclaw-manager` container (lightweight, agent only) |
 | Worker management | Shell scripts (`create-worker.sh`) + `workers-registry.json` | Declarative CRDs via `hiclaw` CLI (`hiclaw create worker`, `hiclaw apply`) |
-| Worker runtimes | OpenClaw only | OpenClaw, QwenPaw, or Hermes |
+| Worker runtimes | OpenClaw only | OpenClaw, **CoPaw** (Python), or Hermes |
 
 **Key benefits:**
 - The Manager image is ~1.7 GB smaller (no longer ships Higress binaries)
 - Workers are managed declaratively — define YAML, apply, done
-- Three worker runtime choices: OpenClaw (Node.js), QwenPaw (Python), Hermes
+- Three worker runtime choices: OpenClaw (Node.js), CoPaw (Python; older docs may say **QwenPaw**), Hermes
 - Team support with Team Leader DAG orchestration
 - Worker Template Marketplace for one-click Worker provisioning
 
@@ -73,9 +73,9 @@ docker ps
 
 ## How to use the hiclaw CLI to manage resources
 
-The `hiclaw` CLI is pre-installed inside the `hiclaw-controller` container. You can exec into the container to query, create, update, or delete any HiClaw resource directly — without going through the Manager Agent.
+The `hiclaw` CLI ships in **`hiclaw-controller`**, **`hiclaw-manager`**, and Worker images (same binary, talks to the controller REST API). **`install/hiclaw-apply.sh`** runs `hiclaw apply` **inside `hiclaw-manager`** because it copies YAML into that container. For ad-hoc operator commands, `docker exec hiclaw-controller hiclaw …` is often convenient.
 
-**Enter the controller container:**
+**Enter the controller container (one option):**
 
 ```bash
 docker exec -it hiclaw-controller sh
@@ -406,7 +406,7 @@ HiClaw v1.1.0+ supports three Worker runtimes:
 | Runtime | Language | Best For |
 |---------|----------|----------|
 | OpenClaw | Node.js | General-purpose, mature ecosystem |
-| QwenPaw | Python | Python-native workflows, data science |
+| CoPaw | Python | Python-native workflows, data science (legacy name **QwenPaw**) |
 | Hermes | Python | Autonomous coding, development tasks |
 
 ### At creation time
@@ -615,6 +615,9 @@ docker logs hiclaw-controller
 
 # Higress Gateway log (inside the controller container)
 docker exec -it hiclaw-controller cat /var/log/hiclaw/higress-gateway.log
+
+# Higress Console API / UI backend log (v1.1.0+ embedded — also on the controller)
+docker exec -it hiclaw-controller cat /var/log/hiclaw/higress-console.log
 ```
 
 For OpenClaw Control UI (visual session inspection), open:
@@ -658,7 +661,7 @@ HiClaw uses OpenClaw with the Matrix channel (Element Web). OpenClaw supports **
 
 **In group rooms:** You can combine an @mention with a slash command in the same message, e.g. `@Worker /compact` or `@Worker /new`. The @mention ensures the command reaches the right agent, and the slash command is still processed by the Gateway as usual.
 
-The following commands apply to OpenClaw (Manager and OpenClaw Workers). QwenPaw Workers use a different command set — see [QwenPaw Commands](https://copaw.agentscope.io/docs/commands) for details.
+The following commands apply to OpenClaw (Manager and OpenClaw Workers). **CoPaw** Workers use a different command set — see [CoPaw Commands](https://copaw.agentscope.io/docs/commands) for details.
 
 ### Session reset and compaction
 
