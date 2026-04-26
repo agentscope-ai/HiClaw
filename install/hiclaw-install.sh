@@ -1113,6 +1113,42 @@ wait_matrix_ready() {
     error "$(msg install.wait_matrix.timeout "${timeout}" "${container}")"
 }
 
+# Read KEY=value from /data/hiclaw-secrets.env on a Docker volume (manager container not required).
+# Requires EMBEDDED_IMAGE (resolved earlier in install_manager). Uses ${DOCKER_CMD}.
+hiclaw_read_secret_from_data_volume() {
+    local _vol="$1" _key="$2"
+    if [ -z "${_vol}" ] || [ -z "${_key}" ] || [ -z "${EMBEDDED_IMAGE:-}" ]; then
+        echo ""
+        return 0
+    fi
+    ${DOCKER_CMD} run --rm --entrypoint sh \
+        -v "${_vol}:/data:ro" \
+        "${EMBEDDED_IMAGE}" -c "grep \"^${_key}=\" /data/hiclaw-secrets.env 2>/dev/null | cut -d= -f2- | head -1 | tr -d '\r'" 2>/dev/null
+}
+
+# Read KEY=value from /data/worker-creds/<worker>.env on a Docker volume.
+hiclaw_read_worker_creds_value_from_volume() {
+    local _vol="$1" _worker="$2" _key="$3"
+    if [ -z "${_vol}" ] || [ -z "${_worker}" ] || [ -z "${_key}" ] || [ -z "${EMBEDDED_IMAGE:-}" ]; then
+        echo ""
+        return 0
+    fi
+    ${DOCKER_CMD} run --rm --entrypoint sh \
+        -v "${_vol}:/data:ro" \
+        "${EMBEDDED_IMAGE}" -c "grep \"^${_key}=\" \"/data/worker-creds/${_worker}.env\" 2>/dev/null | cut -d= -f2- | head -1 | tr -d \"\\r\"" 2>/dev/null
+}
+
+# Read admin_dm_room_id from host workspace state.json (fallback when Matrix API is unavailable).
+hiclaw_read_admin_dm_room_from_workspace() {
+    local _ws="$1"
+    local _f="${_ws}/state.json"
+    if [ ! -f "${_f}" ] || ! command -v jq >/dev/null 2>&1; then
+        echo ""
+        return 0
+    fi
+    jq -r '.admin_dm_room_id // empty | select(. != "null")' "${_f}" 2>/dev/null
+}
+
 # Read secret input with masked echo (shows * per keystroke, supports backspace)
 # Usage: read_secret "prompt text: "; value="${_RS_RESULT}"
 read_secret() {
@@ -2541,8 +2577,26 @@ EOF
         if [ "${_is_old_arch}" = "1" ]; then
         _creds_tmp=$(mktemp -d)
 
-        # Manager password (stored in container env as HICLAW_MANAGER_PASSWORD)
+        # docker exec for Matrix/minio paths only works while hiclaw-manager is running.
+        _mgr_creds_tempstart=0
+        if ${DOCKER_CMD} ps -a --format '{{.Names}}' 2>/dev/null | grep -q '^hiclaw-manager$'; then
+            if ! ${DOCKER_CMD} ps --format '{{.Names}}' 2>/dev/null | grep -q '^hiclaw-manager$'; then
+                log "hiclaw-manager is stopped; starting it temporarily to extract Matrix credentials for upgrade..."
+                ${DOCKER_CMD} start hiclaw-manager 2>/dev/null || true
+                wait_matrix_ready "hiclaw-manager"
+                _mgr_creds_tempstart=1
+            fi
+        fi
+
+        # Manager password (container Config.Env, then secrets file inside running manager, then data volume)
         _mgr_pw=$(${DOCKER_CMD} inspect hiclaw-manager --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null | grep '^HICLAW_MANAGER_PASSWORD=' | cut -d= -f2-)
+        if [ -z "${_mgr_pw}" ] && ${DOCKER_CMD} ps --format '{{.Names}}' 2>/dev/null | grep -q '^hiclaw-manager$'; then
+            _mgr_pw=$(${DOCKER_CMD} exec hiclaw-manager bash -c 'source /data/hiclaw-secrets.env 2>/dev/null && echo "${HICLAW_MANAGER_PASSWORD}"' 2>/dev/null)
+        fi
+        if [ -z "${_mgr_pw}" ] && ${DOCKER_CMD} volume ls -q 2>/dev/null | grep -q "^${HICLAW_DATA_DIR}$"; then
+            _mgr_pw=$(hiclaw_read_secret_from_data_volume "${HICLAW_DATA_DIR}" HICLAW_MANAGER_PASSWORD)
+        fi
+
         # Manager admin DM room ID: login as admin, find DM room with @manager
         _mgr_room=""
         if [ -n "${_mgr_pw}" ]; then
@@ -2550,7 +2604,7 @@ EOF
             _admin_user=$(grep HICLAW_ADMIN_USER "${HICLAW_ENV_FILE:-${HOME}/hiclaw-manager.env}" 2>/dev/null | cut -d= -f2-)
             _admin_user="${_admin_user:-admin}"
             _matrix_domain=$(grep HICLAW_MATRIX_DOMAIN "${HICLAW_ENV_FILE:-${HOME}/hiclaw-manager.env}" 2>/dev/null | cut -d= -f2-)
-            if [ -n "${_admin_pw}" ]; then
+            if [ -n "${_admin_pw}" ] && ${DOCKER_CMD} ps --format '{{.Names}}' 2>/dev/null | grep -q '^hiclaw-manager$'; then
                 _admin_token=$(${DOCKER_CMD} exec hiclaw-manager curl -sf -X POST http://127.0.0.1:6167/_matrix/client/v3/login \
                     -H "Content-Type: application/json" \
                     -d '{"type":"m.login.password","identifier":{"type":"m.id.user","user":"'"${_admin_user}"'"},"password":"'"${_admin_pw}"'"}' 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin).get('access_token',''))" 2>/dev/null || true)
@@ -2575,6 +2629,9 @@ for room_id in rooms:
 " 2>/dev/null || true)
                 fi
             fi
+            if [ -z "${_mgr_room}" ]; then
+                _mgr_room=$(hiclaw_read_admin_dm_room_from_workspace "${HICLAW_WORKSPACE_DIR}")
+            fi
             cat > "${_creds_tmp}/default.env" <<CREDEOF
 WORKER_PASSWORD="${_mgr_pw}"
 WORKER_MINIO_PASSWORD="$(openssl rand -hex 24)"
@@ -2588,8 +2645,17 @@ CREDEOF
         if [ -f "${HICLAW_WORKSPACE_DIR}/workers-registry.json" ]; then
             _worker_names=$(python3 -c "import json; d=json.load(open('${HICLAW_WORKSPACE_DIR}/workers-registry.json')); print(' '.join(d.get('workers',{}).keys()))" 2>/dev/null || true)
             for _wname in ${_worker_names}; do
-                _wpw=$(${DOCKER_CMD} exec hiclaw-manager cat "/root/hiclaw-fs/agents/${_wname}/credentials/matrix/password" 2>/dev/null || true)
+                _wpw=""
+                if ${DOCKER_CMD} ps --format '{{.Names}}' 2>/dev/null | grep -q '^hiclaw-manager$'; then
+                    _wpw=$(${DOCKER_CMD} exec hiclaw-manager cat "/root/hiclaw-fs/agents/${_wname}/credentials/matrix/password" 2>/dev/null || true)
+                fi
+                if [ -z "${_wpw}" ] && ${DOCKER_CMD} volume ls -q 2>/dev/null | grep -q "^${HICLAW_DATA_DIR}$"; then
+                    _wpw=$(hiclaw_read_worker_creds_value_from_volume "${HICLAW_DATA_DIR}" "${_wname}" WORKER_PASSWORD)
+                fi
                 _wroom=$(python3 -c "import json; d=json.load(open('${HICLAW_WORKSPACE_DIR}/workers-registry.json')); print(d.get('workers',{}).get('${_wname}',{}).get('room_id',''))" 2>/dev/null || true)
+                if [ -z "${_wroom}" ] && ${DOCKER_CMD} volume ls -q 2>/dev/null | grep -q "^${HICLAW_DATA_DIR}$"; then
+                    _wroom=$(hiclaw_read_worker_creds_value_from_volume "${HICLAW_DATA_DIR}" "${_wname}" WORKER_ROOM_ID)
+                fi
                 if [ -n "${_wpw}" ]; then
                     cat > "${_creds_tmp}/${_wname}.env" <<CREDEOF
 WORKER_PASSWORD="${_wpw}"
@@ -2600,6 +2666,11 @@ CREDEOF
                     log "Extracted ${_wname} Matrix password${_wroom:+ and room ID}"
                 fi
             done
+        fi
+
+        if [ "${_mgr_creds_tempstart}" = "1" ]; then
+            log "Stopping hiclaw-manager after credential extraction (upgrade will recreate containers)..."
+            ${DOCKER_CMD} stop hiclaw-manager 2>/dev/null || true
         fi
         fi  # _is_old_arch
     fi
