@@ -26,17 +26,9 @@ The `active_tasks` field in state.json contains all in-progress tasks (both fini
    ```
    If the output shows `"channel": "none"`, the admin DM room discovery above may have failed — retry or log a warning.
 
-### 1b. Manager runtime (Matrix Worker / Leader sends)
+### 1b. Sending to Matrix group rooms (Worker / Leader / project)
 
-Steps 2, 2b, 3, 4, and 6 send into Matrix **group** rooms (Worker room, Leader room, or project room). Resolve runtime once per heartbeat (controller source of truth):
-
-```bash
-hiclaw get managers -o json | jq -r '.managers[0].runtime'
-```
-
-- **`openclaw`:** use the **message** tool with `channel=matrix`, `target=room:<room_id>`, and the message body below each step (include @mentions in the body as shown).
-
-- **`copaw`:** use the shell to run **`copaw channels send`** with `--agent-id default`, `--channel matrix`, `--target-session` set to the literal Matrix room id (no `room:` prefix), `--target-user` set to the full Matrix id of the Worker or Team Leader you are addressing, and `--text` set to the same body (single-quote ` --text '...' ` so @mentions survive the shell).
+Steps 2, 2b, 3, 4, and 6 send into Matrix **group** rooms. For each send, use the **message** tool with `channel=matrix`, `target=room:<room_id>`, and the message body shown in that step (include @mentions in the body as required). Take `room_id` from the `state.json` entry, project `meta.json`, or `hiclaw get workers -o json` as each step describes.
 
 ---
 
@@ -57,7 +49,7 @@ Iterate over entries in `active_tasks` with `"type": "finite"`:
   - `recreated` — container was missing and has been recreated; **wait 60 seconds** before sending the follow-up message, and flag this anomaly for the admin report (Step 7)
   - `remote` — Worker is remotely deployed, assumed reachable
   - `failed` — could not start/recreate the container; **skip the follow-up message**, flag the anomaly for the admin report (Step 7), and suggest the admin intervene
-- **Send** the follow-up using **Step 1b** (runtime → `message` tool vs `copaw channels send`; target room = the `room_id` / `project_room_id` you chose, `--target-user` / body @mention = `@{worker}:${HICLAW_MATRIX_DOMAIN}`):
+- **Send** the follow-up using the **message** tool with `channel=matrix`, `target=room:<room_id>` (the `room_id` or `project_room_id` you chose), and body @mention `@{worker}:${HICLAW_MATRIX_DOMAIN}`:
   ```
   @{worker}:{domain} How is your current task {task-id} going? Are you blocked on anything?
   ```
@@ -81,7 +73,7 @@ Iterate over entries in `active_tasks` that have a `delegated_to_team` field:
   bash /opt/hiclaw/agent/skills/worker-management/scripts/lifecycle-worker.sh \
     --action ensure-ready --worker {leader}
   ```
-- **Send** using **Step 1b** (target room = Leader `room_id`, `--target-user` / body @mention = `@{leader}:${HICLAW_MATRIX_DOMAIN}`):
+- **Send** using the **message** tool with `channel=matrix`, `target=room:<room_id>` (Leader `room_id`), and body @mention `@{leader}:${HICLAW_MATRIX_DOMAIN}`:
   ```
   @{leader}:{domain} How is task {task-id} progressing? Any blockers from your team?
   ```
@@ -113,7 +105,7 @@ If conditions are met:
    ```
    If `status` is `failed`, skip the trigger and flag the anomaly for the admin report (Step 7). If `started` or `recreated`, wait for the Worker to initialize (30s / 60s respectively).
 
-2. Read `room_id` from the entry and **send** using **Step 1b** (Worker room + `@{worker}:${HICLAW_MATRIX_DOMAIN}`) with this body:
+2. Read `room_id` from the entry and **send** using the **message** tool with `channel=matrix`, `target=room:<room_id>` (Worker room) and body @mention `@{worker}:${HICLAW_MATRIX_DOMAIN}`:
 ```
 @{worker}:{domain} It's time to run your scheduled task {task-id} "{task-title}". Please execute it now and report back with the keyword "executed".
 ```
@@ -140,7 +132,7 @@ done
 
 - Filter projects with `"status": "active"`
 - For each active project, read `project_room_id` from meta.json, then read plan.md and find tasks marked as `[~]` (in progress)
-- If the responsible Worker has had no activity during this heartbeat cycle, **ensure the Worker's container is running first** (`lifecycle-worker.sh --action ensure-ready --worker {worker}`), then **send** using **Step 1b** (project `project_room_id`, `--target-user` / body = `@{worker}:${HICLAW_MATRIX_DOMAIN}`):
+- If the responsible Worker has had no activity during this heartbeat cycle, **ensure the Worker's container is running first** (`lifecycle-worker.sh --action ensure-ready --worker {worker}`), then **send** using the **message** tool with `channel=matrix`, `target=room:<project_room_id>`, and body @mention `@{worker}:${HICLAW_MATRIX_DOMAIN}`:
   ```
   @{worker}:{domain} Any progress on your current task {task-id} "{title}"? Please let us know if you're blocked.
   ```
@@ -175,7 +167,7 @@ If the output is `available`, proceed with the following steps:
    ```bash
    bash /opt/hiclaw/agent/skills/worker-management/scripts/lifecycle-worker.sh --action check-idle
    ```
-   For each Worker that was auto-stopped, look up the Worker's `room_id` and Matrix id from `workers-registry.json` and **send** using **Step 1b** (`--target-user` = that Worker's `@user:domain` if listed; otherwise derive from Worker name and `${HICLAW_MATRIX_DOMAIN}`):
+   For each Worker that was auto-stopped, look up the Worker's `room_id` and Matrix id from `workers-registry.json` and **send** using the **message** tool with `channel=matrix`, `target=room:<room_id>`, and body (no @mention required unless you need to address someone specific):
    ```
    Worker <name> container has been automatically paused due to idle timeout. It will be automatically resumed when a task is assigned.
    ```
@@ -184,7 +176,7 @@ If the output is `available`, proceed with the following steps:
 
 ### 7. Report to Admin
 
-**All heartbeat findings MUST reach the admin on the resolved notification channel** (not as a stray reply in the wrong Matrix room). Use runtime from **Step 1b**:
+**All heartbeat findings MUST reach the admin on the resolved notification channel** (not as a stray reply in the wrong Matrix room).
 
 - If all Workers are healthy and there are no pending items: HEARTBEAT_OK (no message needed)
 - Otherwise, **read SOUL.md first** — use the identity, personality, and **user's preferred language** defined there when composing the report. Report in that language and tone.
@@ -192,10 +184,7 @@ If the output is `available`, proceed with the following steps:
   ```bash
   bash /opt/hiclaw/agent/skills/task-management/scripts/resolve-notify-channel.sh
   ```
-  The script outputs JSON with `channel`, `target`, and `via` fields.
-
-  - **`openclaw`:** use the **message** tool with those `channel` and `target` values.
-  - **`copaw`:** use **`copaw channels send`** with the resolved `channel` and appropriate target flags (Matrix: `--target-session` is the room id from `target` after stripping a leading `room:` prefix; `--target-user` is the admin's full Matrix id). If the resolved channel is not Matrix, follow channel-management / primary-channel references for that channel.
+  The script outputs JSON with `channel`, `target`, and `via` fields. Use the **message** tool with those `channel` and `target` values.
 
   Then:
   - If `channel` is not `"none"`: send `[Heartbeat Report] <summarize findings and recommended actions, in SOUL.md persona and language>`.
