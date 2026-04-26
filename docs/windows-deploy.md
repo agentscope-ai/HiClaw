@@ -47,7 +47,7 @@ This guide explains how to deploy HiClaw multi-agent collaboration platform on W
 | Memory | 4 GB | 8 GB or more |
 | Disk | 10 GB free space | 20 GB or more |
 
-> **Note**: If you plan to deploy multiple Worker Agents for more powerful Agent Teams capabilities, we recommend 4 cores and 8 GB RAM or higher. The OpenClaw runtime uses approximately 500MB memory per Worker, while CoPaw uses only about 150MB.
+> **Note**: If you plan to deploy multiple Worker Agents for more powerful Agent Teams capabilities, we recommend 4 cores and 8 GB RAM or higher. The OpenClaw runtime uses approximately 500MB memory per Worker, CoPaw about 150MB, and Hermes is typically between the two depending on workload.
 
 ### Software Dependencies
 
@@ -291,18 +291,20 @@ The following configurations can be skipped by pressing Enter to use default val
 ```
 --- Default Worker Runtime ---
 
-  1) OpenClaw (Node.js container, ~500MB memory)
-  2) CoPaw (Python container, ~150MB memory, console disabled by default, can be enabled via Manager chat)
+  1) OpenClaw (Node.js, ~500MB memory typical)
+  2) CoPaw (Python, ~150MB typical; legacy docs may say "QwenPaw")
+  3) Hermes (Python Hermes worker runtime)
 
-Enter choice [1/2]:
+Enter choice [1/2/3]:
 ```
 
-| Runtime | Memory Usage | Features |
-|---------|--------------|----------|
+| Runtime | Memory (typical) | Features |
+|---------|------------------|----------|
 | OpenClaw | ~500MB | Feature-rich, built-in Web console |
-| CoPaw | ~150MB | More lightweight, suitable for resource-limited environments |
+| CoPaw | ~150MB | Lightweight Python runtime |
+| Hermes | Varies | Hermes policy tree under `.hermes/` in the worker workspace |
 
-Choose based on your machine configuration. If memory is ample, select `1`; if you want to save resources, select `2`.
+Choose based on your machine configuration and the kind of tasks you expect Workers to run.
 
 ---
 
@@ -311,17 +313,19 @@ Choose based on your machine configuration. If memory is ample, select `1`; if y
 After making your selections, the script will automatically:
 
 1. Generate configuration files and keys
-2. Pull Manager and Worker Docker images (first-time installation downloads about 2-3 GB, depending on network speed)
-3. Create and start the Manager container
-4. Wait for Manager Agent to be ready
-5. Wait for Matrix service to be ready
-6. Send initialization message
+2. Pull the **embedded controller**, **Manager**, and default **Worker** images (first-time install is typically a few GB depending on network speed)
+3. Create and start **`hiclaw-controller`** (infrastructure + controller)
+4. Wait for the controller to create **`hiclaw-manager`**
+5. Wait for Manager Agent to be ready
+6. Wait for Matrix service to be ready
+7. Send initialization message
 
 ```
-[HiClaw] Pulling Manager image: higress-registry.cn-hangzhou.cr.aliyuncs.com/higress/hiclaw-manager:latest
-[HiClaw] Pulling Worker image: higress-registry.cn-hangzhou.cr.aliyuncs.com/higress/hiclaw-worker:latest
-[HiClaw] Starting Manager container...
-[HiClaw] Waiting for Manager Agent ready (timeout: 300s)...
+[HiClaw] Pulling embedded controller image: .../hiclaw-embedded:...
+[HiClaw] Pulling Manager image: .../hiclaw-manager:latest
+[HiClaw] Pulling Worker image: .../hiclaw-worker:latest
+[HiClaw] Starting controller container...
+[HiClaw] Waiting for Manager Agent container...
 [HiClaw] Manager Agent is ready!
 [HiClaw] Waiting for Matrix service ready (timeout: 300s)...
 [HiClaw] Matrix service is ready!
@@ -400,7 +404,7 @@ When the installation script detects an existing installation, it will prompt yo
 - **In-place upgrade** (Recommended): Preserves all data, configuration, and workspaces, only updates container images
 - **Clean reinstall**: Deletes all data and starts fresh
 
-> During upgrade, both Manager and Worker containers will be recreated. Workers are stateless - data stored in MinIO will not be lost.
+> During upgrade, **`hiclaw-controller`**, **`hiclaw-manager`**, and Worker containers may be recreated. Workers are stateless — data in MinIO / the Docker volume is preserved according to your upgrade choices.
 
 To upgrade to a specific version:
 
@@ -418,7 +422,9 @@ Run the following command in PowerShell to stop and remove all HiClaw containers
 Set-ExecutionPolicy Bypass -Scope Process -Force; Invoke-Expression "& { $(Invoke-WebRequest -Uri 'https://higress.ai/hiclaw/install.ps1' -UseBasicParsing).Content } uninstall"
 ```
 
-> **Note**: Uninstallation preserves the Manager workspace directory (`%USERPROFILE%\hiclaw-manager`). Delete it manually if you want a complete cleanup.
+This mirrors `install/hiclaw-install.sh uninstall`: **`hiclaw-controller`**, **`hiclaw-manager`**, Worker containers, optional **`hiclaw-docker-proxy`**, the data volume, env file, network, etc.
+
+> **Note**: Uninstallation may preserve the Manager workspace directory (`%USERPROFILE%\hiclaw-manager`) depending on script version — delete it manually if you want every host-side file removed.
 
 ---
 
@@ -464,11 +470,15 @@ Set-ExecutionPolicy Bypass -Scope Process -Force; Invoke-Expression "& { $(Invok
 
 **Troubleshooting Steps**:
 1. Check if WSL 2 has insufficient available memory. New Docker Desktop versions use the WSL 2 backend with memory managed by Windows. Run `wsl --status` in PowerShell to check configuration. To increase, edit `%USERPROFILE%\.wslconfig`, set `memory=8GB`, save and restart Docker Desktop
-2. View Manager container logs:
+2. View **controller** logs (provisions Manager in v1.1+):
+   ```powershell
+   docker logs hiclaw-controller
+   ```
+3. View Manager container logs:
    ```powershell
    docker logs hiclaw-manager
    ```
-3. View detailed Agent logs:
+4. View detailed Agent logs:
    ```powershell
    docker exec hiclaw-manager cat /var/log/hiclaw/manager-agent.log
    ```

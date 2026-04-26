@@ -47,7 +47,7 @@
 | 内存 | 4 GB | 8 GB 及以上 |
 | 磁盘 | 10 GB 可用空间 | 20 GB 及以上 |
 
-> **说明**：如果你计划部署多个 Worker Agent 来体验更强大的 Agent Teams 能力，建议使用 4C8GB 以上配置。OpenClaw 运行时单个 Worker 约占用 500MB 内存，CoPaw 运行时仅约 150MB。
+> **说明**：如果你计划部署多个 Worker Agent 来体验更强大的 Agent Teams 能力，建议使用 4C8GB 以上配置。OpenClaw 单个 Worker 约 500MB 内存量级，CoPaw 约 150MB，Hermes 随负载介于两者之间。
 
 ### 软件依赖
 
@@ -297,18 +297,20 @@ LLM API Key: ****
 ```
 --- 默认 Worker 运行时 ---
 
-  1) OpenClaw（Node.js 容器，~500MB 内存）
-  2) CoPaw（Python 容器，~150MB 内存，默认关闭控制台，可跟 Manager 对话按需开启）
+  1) OpenClaw（Node.js，约 500MB 内存量级）
+  2) CoPaw（Python，约 150MB；旧文档或称「QwenPaw」）
+  3) Hermes（Python Hermes Worker 运行时）
 
-请选择 [1/2]:
+请选择 [1/2/3]:
 ```
 
-| 运行时 | 内存占用 | 特点 |
-|--------|---------|------|
+| 运行时 | 内存（量级） | 特点 |
+|--------|-------------|------|
 | OpenClaw | ~500MB | 功能丰富，内置 Web 控制台 |
-| CoPaw | ~150MB | 更轻量，适合资源有限的环境 |
+| CoPaw | ~150MB | 轻量 Python 运行时 |
+| Hermes | 视负载 | 工作区内 `.hermes/` 策略与状态 |
 
-根据你的机器配置选择。如内存充裕选 `1`，如希望节省资源选 `2`。
+请按机器配置与任务类型选择。
 
 ---
 
@@ -317,17 +319,19 @@ LLM API Key: ****
 选择完成后，脚本将自动执行以下操作：
 
 1. 生成配置文件和密钥
-2. 拉取 Manager 和 Worker 的 Docker 镜像（首次安装需要下载约 2-3 GB，取决于网络速度）
-3. 创建并启动 Manager 容器
-4. 等待 Manager Agent 就绪
-5. 等待 Matrix 服务就绪
-6. 发送初始化消息
+2. 拉取 **嵌入式 controller**、**Manager** 与默认 **Worker** 镜像（首次安装体积取决于网络，通常为数 GB 级）
+3. 创建并启动 **`hiclaw-controller`**（基础设施 + controller）
+4. 等待 controller 创建 **`hiclaw-manager`**
+5. 等待 Manager Agent 就绪
+6. 等待 Matrix 服务就绪
+7. 发送初始化消息
 
 ```
-[HiClaw] 正在拉取 Manager 镜像: higress-registry.cn-hangzhou.cr.aliyuncs.com/higress/hiclaw-manager:latest
-[HiClaw] 正在拉取 Worker 镜像: higress-registry.cn-hangzhou.cr.aliyuncs.com/higress/hiclaw-worker:latest
-[HiClaw] 正在启动 Manager 容器...
-[HiClaw] 等待 Manager Agent 就绪（超时: 300s）...
+[HiClaw] 正在拉取嵌入式 controller 镜像: .../hiclaw-embedded:...
+[HiClaw] 正在拉取 Manager 镜像: .../hiclaw-manager:latest
+[HiClaw] 正在拉取 Worker 镜像: .../hiclaw-worker:latest
+[HiClaw] 正在启动 controller 容器...
+[HiClaw] 等待 Manager Agent 容器...
 [HiClaw] Manager Agent 已就绪！
 [HiClaw] 等待 Matrix 服务就绪（超时: 300s）...
 [HiClaw] Matrix 服务已就绪！
@@ -406,7 +410,7 @@ Set-ExecutionPolicy Bypass -Scope Process -Force; $wc=New-Object Net.WebClient; 
 - **就地升级**（推荐）：保留所有数据、配置和工作空间，仅更新容器镜像
 - **全新重装**：删除所有数据，从零开始
 
-> 升级过程中，Manager 容器和 Worker 容器都会被重新创建。Worker 是无状态的，数据存储在 MinIO 中不会丢失。
+> 升级过程中，**`hiclaw-controller`**、**`hiclaw-manager`** 与 Worker 容器可能被重新创建。Worker 无状态，MinIO / Docker 卷中的数据是否保留取决于你选择的升级选项。
 
 如需升级到指定版本：
 
@@ -424,7 +428,9 @@ $env:HICLAW_VERSION="v1.0.5"; Set-ExecutionPolicy Bypass -Scope Process -Force; 
 Set-ExecutionPolicy Bypass -Scope Process -Force; Invoke-Expression "& { $(Invoke-WebRequest -Uri 'https://higress.ai/hiclaw/install.ps1' -UseBasicParsing).Content } uninstall"
 ```
 
-> **说明**：卸载操作会保留 Manager 工作空间目录（`%USERPROFILE%\hiclaw-manager`），如需彻底清理请手动删除。
+> 与 `install/hiclaw-install.sh uninstall` 一致：会移除 **`hiclaw-controller`**、**`hiclaw-manager`**、Worker 容器、可选 **`hiclaw-docker-proxy`**、数据卷、env、网络等。
+>
+> **说明**：部分版本卸载会保留 Manager 工作空间目录（`%USERPROFILE%\hiclaw-manager`），如需彻底清理请手动删除。
 
 ---
 
@@ -470,11 +476,15 @@ Set-ExecutionPolicy Bypass -Scope Process -Force; Invoke-Expression "& { $(Invok
 
 **排查步骤**：
 1. 检查 WSL 2 可用内存是否不足。新版 Docker Desktop 使用 WSL 2 后端，内存由 Windows 管理。在 PowerShell 中执行 `wsl --status` 查看配置。如需调大，编辑 `%USERPROFILE%\.wslconfig`，设置 `memory=8GB`，保存后重启 Docker Desktop
-2. 查看 Manager 容器日志：
+2. 查看 **controller** 日志（v1.1+ 由 controller 拉起 Manager）：
+   ```powershell
+   docker logs hiclaw-controller
+   ```
+3. 查看 Manager 容器日志：
    ```powershell
    docker logs hiclaw-manager
    ```
-3. 查看 Agent 详细日志：
+4. 查看 Agent 详细日志：
    ```powershell
    docker exec hiclaw-manager cat /var/log/hiclaw/manager-agent.log
    ```
