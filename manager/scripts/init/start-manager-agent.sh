@@ -685,8 +685,6 @@ if [ -f /root/manager-workspace/openclaw.json ]; then
        --arg emb_model "${HICLAW_EMBEDDING_MODEL}" \
        --arg aigw_domain "${AI_GATEWAY_DOMAIN}" \
        --arg matrix_user_id "@manager:${MATRIX_DOMAIN}" \
-       --arg admin_user "${HICLAW_ADMIN_USER:-admin}" \
-       --arg matrix_domain "${MATRIX_DOMAIN}" \
        --argjson e2ee "${MATRIX_E2EE_ENABLED}" \
        --argjson known_models "${KNOWN_MODELS}" \
        --argjson ctx "${MODEL_CONTEXT_WINDOW}" \
@@ -721,7 +719,7 @@ if [ -f /root/manager-workspace/openclaw.json ]; then
         | .tools.exec = ((.tools.exec // {}) + {"host":"gateway","security":"full","ask":"off"})
         | .tools.elevated = (.tools.elevated // {})
         | .tools.elevated.enabled = true
-        | .tools.elevated.allowFrom |= ((. // {}) | .matrix = ["@\($admin_user):\($matrix_domain)"])
+        | .tools.elevated.allowFrom |= ((. // {}) | .matrix = ["*"])
         | .agents.defaults.elevatedDefault = "full"
         # Ensure memorySearch config exists (embedding model for memory) — skip if embedding model is empty
         | if $emb_model != "" then .agents.defaults.memorySearch //= {"provider":"openai","model":$emb_model,"remote":{"baseUrl":("http://" + $aigw_domain + ":8080/v1"),"apiKey":$key}} else . end
@@ -944,9 +942,7 @@ if [ -f "${REGISTRY_FILE}" ]; then
                 # Idempotent merge: add missing known models, rebuild aliases, set e2ee.
                 # Always runs — jq deduplicates by model id, so re-runs are safe.
                 jq --argjson known_models "${_KNOWN_MODELS}" \
-                   --argjson e2ee "${MATRIX_E2EE_ENABLED}" \
-                   --arg manager_mxid "@manager:${MATRIX_DOMAIN}" \
-                   --arg admin_mxid "@${HICLAW_ADMIN_USER:-admin}:${MATRIX_DOMAIN}" '
+                   --argjson e2ee "${MATRIX_E2EE_ENABLED}" '
                     .models.providers["hiclaw-gateway"].models as $existing
                     | ($existing | map(.id)) as $existing_ids
                     | ($known_models | map(select(.id as $id | $existing_ids | index($id) | not))) as $new
@@ -959,7 +955,7 @@ if [ -f "${REGISTRY_FILE}" ]; then
                     | .tools.exec = ((.tools.exec // {}) + {"host":"gateway","security":"full","ask":"off"})
                     | .tools.elevated = (.tools.elevated // {})
                     | .tools.elevated.enabled = true
-                    | .tools.elevated.allowFrom |= ((. // {}) | .matrix = [$manager_mxid, $admin_mxid])
+                    | .tools.elevated.allowFrom |= ((. // {}) | .matrix = ["*"])
                     | .agents.defaults.elevatedDefault = "full"
                 ' "${_tmp_in}" > "${_tmp_out}" 2>/dev/null
                 if ! diff -q "${_tmp_in}" "${_tmp_out}" > /dev/null 2>&1; then
