@@ -91,6 +91,24 @@
       "maxConcurrent": 4,
       "subagents": {
         "maxConcurrent": 8
+      },
+      "elevatedDefault": "full"
+    }
+  },
+
+  "tools": {
+    "exec": {
+      "host": "gateway",
+      "security": "full",
+      "ask": "off"
+    },
+    "elevated": {
+      "enabled": true,
+      "allowFrom": {
+        "matrix": [
+          "@manager:${HICLAW_MATRIX_DOMAIN}",
+          "@${HICLAW_ADMIN_USER}:${HICLAW_MATRIX_DOMAIN}"
+        ]
       }
     }
   },
