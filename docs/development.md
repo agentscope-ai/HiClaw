@@ -27,6 +27,15 @@ make build-manager
 # Build only Worker
 make build-worker
 
+# Controller + embedded all-in-one (infra + controller binary, no Manager agent)
+make build-hiclaw-controller
+make build-embedded
+
+# Alternate Manager / Worker runtimes
+make build-manager-copaw
+make build-copaw-worker
+make build-hermes-worker
+
 # Build with a specific version tag
 make build VERSION=0.1.0
 
@@ -35,6 +44,16 @@ make build DOCKER_PLATFORM=linux/amd64
 ```
 
 See all available targets with `make help`.
+
+### Helm chart (`helm/hiclaw`)
+
+The production Kubernetes install is defined under **`helm/hiclaw/`** (subcharts for gateway, homeserver, storage, etc.). Useful Makefile targets:
+
+```bash
+make helm-lint      # helm dependency build + helm lint
+make helm-template  # render templates locally (validation)
+make sync-crds      # copy CRD YAML from hiclaw-controller/config/crd/ into the chart
+```
 
 ### Push Images (Multi-Architecture by Default)
 
@@ -104,7 +123,7 @@ make install
 ### Uninstall
 
 ```bash
-make uninstall   # Stops Manager, removes all Worker containers, volume, and env file
+make uninstall   # Runs install/hiclaw-install.sh uninstall (v1.1+: controller + manager + workers + volume + env)
 ```
 
 ### Replay (Send Task to Manager)
@@ -201,7 +220,7 @@ Each component has its own startup script in `manager/scripts/init/`:
 
 ### Modifying Higress Configuration
 
-Route, consumer, and MCP server initialization is in `manager/scripts/init/setup-higress.sh`. This runs once during Manager startup.
+Route, consumer, and MCP server bootstrap for **embedded** stacks is owned by the **controller** image (`hiclaw-controller` / `Dockerfile.embedded` wiring). The legacy **`manager/scripts/init/setup-higress.sh`** path still applies to **older single-container** Manager images (≤v1.0.9) and to Manager-side behaviors where applicable — check your install mode before editing.
 
 ### Adding a New MCP Server
 
@@ -396,15 +415,17 @@ Without `gateway.mode=local`, OpenClaw refuses to start. Without `gateway.auth.t
 
 Container name is `hiclaw-manager` (via `make install`) or `hiclaw-manager-test` (via `make test`).
 
-```bash
-# Component logs are split by service
-docker exec hiclaw-manager cat /var/log/hiclaw/manager-agent.log     # startup + setup-higress
-docker exec hiclaw-manager cat /var/log/hiclaw/manager-agent-error.log  # OpenClaw gateway stderr
-docker exec hiclaw-manager cat /var/log/hiclaw/higress-console.log
-docker exec hiclaw-manager cat /var/log/hiclaw/tuwunel.log
+**v1.1.0+ embedded install:** infrastructure logs are on **`hiclaw-controller`**, not the Manager container.
 
-# OpenClaw runtime log (agent events, tool calls, LLM interactions)
+```bash
+# Manager Agent
+docker exec hiclaw-manager cat /var/log/hiclaw/manager-agent.log
+docker exec hiclaw-manager cat /var/log/hiclaw/manager-agent-error.log  # OpenClaw gateway stderr (OpenClaw Manager)
 docker exec hiclaw-manager bash -c 'cat /tmp/openclaw/openclaw-*.log' | jq .
+
+# Higress / homeserver (embedded controller)
+docker exec hiclaw-controller cat /var/log/hiclaw/higress-console.log
+docker exec hiclaw-controller cat /var/log/hiclaw/tuwunel.log
 ```
 
 ### View Replay Conversation Logs

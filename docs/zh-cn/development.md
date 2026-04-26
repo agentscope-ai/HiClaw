@@ -27,6 +27,15 @@ make build-manager
 # 仅构建 Worker
 make build-worker
 
+# Controller + 嵌入式一体化镜像（基础设施 + controller，不含 Manager Agent）
+make build-hiclaw-controller
+make build-embedded
+
+# 其他 Manager / Worker 运行时
+make build-manager-copaw
+make build-copaw-worker
+make build-hermes-worker
+
 # 使用指定版本标签构建
 make build VERSION=0.1.0
 
@@ -35,6 +44,16 @@ make build DOCKER_PLATFORM=linux/amd64
 ```
 
 运行 `make help` 查看所有可用目标。
+
+### Helm Chart（`helm/hiclaw`）
+
+生产环境 Kubernetes 安装定义在 **`helm/hiclaw/`**（网关、Homeserver、存储等子 Chart）。常用 Makefile 目标：
+
+```bash
+make helm-lint      # helm dependency build + helm lint
+make helm-template  # 本地渲染模板（校验）
+make sync-crds      # 将 hiclaw-controller/config/crd/ 同步到 Chart 的 crds/
+```
 
 ### 推送镜像（默认多架构）
 
@@ -104,7 +123,7 @@ make install
 ### 卸载
 
 ```bash
-make uninstall   # 停止 Manager，删除所有 Worker 容器、数据卷和 env 文件
+make uninstall   # 调用 install/hiclaw-install.sh uninstall（v1.1+：controller、manager、workers、数据卷、env 等）
 ```
 
 ### Replay（向 Manager 发送任务）
@@ -201,7 +220,7 @@ Agent 行为由 Markdown 文件定义，而非代码：
 
 ### 修改 Higress 配置
 
-路由、Consumer 和 MCP Server 的初始化在 `manager/scripts/init/setup-higress.sh` 中。该脚本在 Manager 首次启动时运行一次（通过 `/data/.higress-setup-done` 标记文件防止重复执行）。
+**嵌入式**栈的网关路由、Consumer 与 MCP 引导由 **controller 镜像**（`hiclaw-controller` / `Dockerfile.embedded` 编排）负责。传统的 **`manager/scripts/init/setup-higress.sh`** 仍适用于 **≤v1.0.9 的单容器 Manager** 镜像，以及仍由 Manager 侧执行的逻辑——修改前请先确认你的安装形态。
 
 ### 添加新的 MCP Server
 
@@ -396,15 +415,17 @@ description: 该技能的用途和使用时机
 
 容器名称为 `hiclaw-manager`（通过 `make install`）或 `hiclaw-manager-test`（通过 `make test`）。
 
-```bash
-# 各组件日志按服务分开存储
-docker exec hiclaw-manager cat /var/log/hiclaw/manager-agent.log     # 启动 + setup-higress
-docker exec hiclaw-manager cat /var/log/hiclaw/manager-agent-error.log  # OpenClaw 网关 stderr
-docker exec hiclaw-manager cat /var/log/hiclaw/higress-console.log
-docker exec hiclaw-manager cat /var/log/hiclaw/tuwunel.log
+**v1.1.0+ 嵌入式安装：** 基础设施日志在 **`hiclaw-controller`**，不在 Manager 容器内。
 
-# OpenClaw 运行时日志（Agent 事件、工具调用、LLM 交互）
+```bash
+# Manager Agent
+docker exec hiclaw-manager cat /var/log/hiclaw/manager-agent.log
+docker exec hiclaw-manager cat /var/log/hiclaw/manager-agent-error.log  # OpenClaw 网关 stderr（OpenClaw Manager）
 docker exec hiclaw-manager bash -c 'cat /tmp/openclaw/openclaw-*.log' | jq .
+
+# Higress / Homeserver（嵌入式 controller）
+docker exec hiclaw-controller cat /var/log/hiclaw/higress-console.log
+docker exec hiclaw-controller cat /var/log/hiclaw/tuwunel.log
 ```
 
 ### 查看 Replay 对话日志
