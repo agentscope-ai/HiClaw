@@ -48,39 +48,51 @@ def _deep_merge(base: dict, override: dict) -> dict:
 
 
 def _merge_openclaw_config(remote_text: str, local_text: str) -> str:
-    """Merge remote and local openclaw.json, preserving Worker additions.
+    """Merge remote and local openclaw.json (local-first, same as merge-openclaw-config.sh).
 
     Rules:
-      - plugins: deep merge entries (remote wins shared), union load.paths
-      - channels: deep merge (remote wins shared types, local-only preserved)
-      - channels.matrix.accessToken: local wins (Worker re-login after restart)
-      - Everything else: remote as-is
+      - Base: local; tools, agents, mcp, and other keys not listed below stay local.
+      - models, gateway: replaced from remote when present.
+      - channels: deep merge with remote winning leaf conflicts; local-only keys kept.
+      - channels.matrix.accessToken: local wins (Worker re-login after restart).
+      - plugins.entries: deep merge with local winning on shared keys; load.paths union.
     """
     remote = json.loads(remote_text)
     local = json.loads(local_text)
-    merged = dict(remote)
+    merged: dict[str, Any] = dict(local)
 
-    r_plugins = remote.get("plugins", {})
-    l_plugins = local.get("plugins", {})
-    if r_plugins or l_plugins:
-        m_plugins = _deep_merge(l_plugins, r_plugins)
-        r_paths = r_plugins.get("load", {}).get("paths")
-        l_paths = l_plugins.get("load", {}).get("paths")
-        if r_paths is not None or l_paths is not None:
-            m_plugins.setdefault("load", {})["paths"] = sorted(
-                set((r_paths or []) + (l_paths or []))
-            )
-        merged["plugins"] = m_plugins
+    if remote.get("models") is not None:
+        merged["models"] = remote["models"]
+    if remote.get("gateway") is not None:
+        merged["gateway"] = remote["gateway"]
 
-    r_channels = remote.get("channels", {})
-    l_channels = local.get("channels", {})
+    r_channels = remote.get("channels") or {}
+    l_channels = local.get("channels") or {}
     if r_channels or l_channels:
-        merged["channels"] = _deep_merge(l_channels, r_channels)
+        merged["channels"] = _deep_merge(dict(l_channels), dict(r_channels))
         l_token = local.get("channels", {}).get("matrix", {}).get("accessToken")
         if l_token:
             merged.setdefault("channels", {}).setdefault("matrix", {})[
                 "accessToken"
             ] = l_token
+
+    r_plugins = remote.get("plugins")
+    l_plugins = local.get("plugins")
+    if r_plugins or l_plugins:
+        r_plugins = dict(r_plugins or {})
+        l_plugins = dict(l_plugins or {})
+        out_plugins: dict[str, Any] = dict(l_plugins)
+        r_entries = r_plugins.get("entries") or {}
+        l_entries = l_plugins.get("entries") or {}
+        if r_entries or l_entries:
+            out_plugins["entries"] = _deep_merge(dict(r_entries), dict(l_entries))
+        r_paths = r_plugins.get("load", {}).get("paths")
+        l_paths = l_plugins.get("load", {}).get("paths")
+        if r_paths is not None or l_paths is not None:
+            out_load = dict(l_plugins.get("load") or {})
+            out_load["paths"] = sorted(set((r_paths or []) + (l_paths or [])))
+            out_plugins["load"] = out_load
+        merged["plugins"] = out_plugins
 
     return json.dumps(merged, indent=2)
 
@@ -338,8 +350,8 @@ class FileSync:
         overwrite).
 
         For openclaw.json, performs a field-level merge instead of blind
-        overwrite: remote (MinIO/Manager) is authoritative base, but Worker's
-        own plugins, channels, and accessToken are preserved.
+        overwrite: local (Worker) is the base; MinIO overlays models, gateway,
+        and channels (plus the plugin merge rules in merge-openclaw-config.sh).
         """
         changed: list[str] = []
         files: dict[str, list[str]] = {

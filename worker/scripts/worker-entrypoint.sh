@@ -152,7 +152,7 @@ log "HOME set to ${HOME} (workspace files will be synced to MinIO)"
 #   Local -> Remote: change-triggered push of Worker-managed content
 #     - Uses find to detect files modified after the last pull; only runs mc mirror when needed
 #     - Avoids mc mirror --watch TOCTOU bug (crashes on atomic ops like npm install)
-#     - The bulk mirror excludes openclaw.json (has its own merge protocol),
+#     - The bulk mirror excludes openclaw.json (local-first field merge; see merge-openclaw-config.sh),
 #       SOUL.md/AGENTS.md/HEARTBEAT.md (handled by the per-file loop below
 #       with an mtime guard), and various caches.
 #     - The per-file `mc cp`-if-newer loop pushes SOUL.md/AGENTS.md/HEARTBEAT.md
@@ -203,6 +203,8 @@ log "Local->Remote change-triggered sync started (PID: $!)"
 
 # Remote -> Local: fallback pull of Manager-managed files (safety net, every 5m)
 # Normal operation relies on on-demand pulls via file-sync skill when Manager @mentions.
+# openclaw.json uses local-first merge (see merge-openclaw-config.sh): existing
+# workspace config is the base; MinIO only overlays models, gateway, channels, plugins rules.
 (
     while true; do
         sleep 300

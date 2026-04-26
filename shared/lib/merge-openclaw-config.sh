@@ -1,16 +1,18 @@
 #!/bin/bash
 # merge-openclaw-config.sh - Merge remote (MinIO) and local (Worker) openclaw.json
 #
-# Design principle:
-#   Remote (MinIO/Manager) is the authoritative base.
-#   Only plugins and channels are merged (Worker may add its own).
-#   Everything else (models, agents.defaults, etc.) uses remote as-is.
+# Design principle (local-first):
+#   Local (Worker disk) is the authoritative base. Periodic pulls from MinIO only
+#   overlay Manager-managed slices so the Worker keeps its own customizations.
+#   Remote (MinIO/Manager) overwrites only: models, gateway, and channels (deep
+#   merge where remote wins on conflicting keys).
+#   All other top-level fields (tools, agents, mcp, etc.) stay from local.
 #   Merge rules:
 #     - plugins.entries: deep merge — remote provides base/defaults, local wins
 #       on shared keys so user customizations (e.g. memory-core dreaming schedule)
 #       survive periodic syncs
 #     - plugins.load.paths: union of both sides
-#     - channels: deep merge (remote wins shared types, local-only types preserved)
+#     - channels: deep merge (remote wins shared keys, local-only keys preserved)
 #     - channels.matrix.accessToken: local wins (Worker re-login)
 #
 # Usage (as sourced function):
@@ -37,30 +39,32 @@ merge_openclaw_config() {
 
     local merged
     merged=$(jq -n --argfile remote "${remote_path}" --argfile local "${local_path}" '
-        $remote
-        # ── plugins: only touch fields that exist in at least one side ──
-        # For entries: remote provides base structure + new managed entries,
-        # local overrides shared keys (preserves user customizations like
-        # memory-core dreaming config).
-        | if ($remote.plugins.entries // null) != null or ($local.plugins.entries // null) != null then
-            .plugins.entries = ((.plugins.entries // {}) * ($local.plugins.entries // {}))
-          else . end
-        | if ($remote.plugins.load.paths // null) != null or ($local.plugins.load.paths // null) != null then
-            .plugins.load.paths = ([(.plugins.load.paths // [])[], ($local.plugins.load.paths // [])[]] | unique)
-          else . end
-        # ── channels: deep merge only when present ──
+        $local
+        | if ($remote.models // null) != null then .models = $remote.models else . end
+        | if ($remote.gateway // null) != null then .gateway = $remote.gateway else . end
         | if ($remote.channels // null) != null or ($local.channels // null) != null then
-            .channels = (($local.channels // {}) * (.channels // {}))
+            .channels = (($local.channels // {}) * ($remote.channels // {}))
           else . end
         | if ($local.channels.matrix.accessToken // null) != null then
             .channels.matrix.accessToken = $local.channels.matrix.accessToken
+          else . end
+        | if ($remote.plugins // null) != null or ($local.plugins // null) != null then
+            .plugins = (
+              ($local.plugins // {})
+              | if ($remote.plugins.entries // null) != null or ($local.plugins.entries // null) != null then
+                  .entries = (($remote.plugins.entries // {}) * ($local.plugins.entries // {}))
+                else . end
+              | if ($remote.plugins.load.paths // null) != null or ($local.plugins.load.paths // null) != null then
+                  .load = ((.load // {}) | .paths = ([($remote.plugins.load.paths // [])[], ($local.plugins.load.paths // [])[]] | unique))
+                else . end
+            )
           else . end
     ' 2>/dev/null)
 
     if [ $? -eq 0 ] && [ -n "${merged}" ]; then
         echo "${merged}" > "${output_path}"
     else
-        # jq merge failed, fall back to remote version
-        mv "${remote_path}" "${output_path}"
+        # jq merge failed — keep local (do not replace with remote)
+        :
     fi
 }

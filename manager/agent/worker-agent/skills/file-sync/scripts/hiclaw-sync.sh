@@ -13,7 +13,7 @@ else
     HICLAW_STORAGE_PREFIX="${HICLAW_STORAGE_PREFIX:-hiclaw/${HICLAW_FS_BUCKET}}"
 fi
 
-# Merge helper for openclaw.json (remote base + local Worker additions)
+# Merge helper for openclaw.json (local-first: MinIO overlays models/gateway/channels + plugins rules)
 . /opt/hiclaw/scripts/lib/merge-openclaw-config.sh
 
 WORKER_NAME="${HICLAW_WORKER_NAME:?HICLAW_WORKER_NAME is required}"
@@ -36,9 +36,9 @@ mc mirror "${HICLAW_STORAGE_PREFIX}/shared/" "${HICLAW_ROOT}/shared/" --overwrit
 # Update pull marker so the local→remote sync loop doesn't push back freshly-pulled files
 touch "${WORKSPACE}/.last-pull"
 
-# Merge openclaw.json: remote (MinIO, now in workspace) as base + local Worker additions
+# Merge openclaw.json: local-first (pre-mirror copy) with MinIO overlay (arg1=remote, arg2=local, arg3=out)
 if [ -f "${SAVED_LOCAL}" ] && [ -f "${LOCAL_OPENCLAW}" ]; then
-    merge_openclaw_config "${LOCAL_OPENCLAW}" "${SAVED_LOCAL}"
+    merge_openclaw_config "${LOCAL_OPENCLAW}" "${SAVED_LOCAL}" "${LOCAL_OPENCLAW}"
     rm -f "${SAVED_LOCAL}"
 fi
 
