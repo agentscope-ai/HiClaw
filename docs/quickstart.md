@@ -39,6 +39,26 @@ This builds images locally, mounts the container runtime socket (for direct Work
 
 Both methods support environment variable overrides for all settings. See `install/hiclaw-install.sh` header for the full list.
 
+### 1.1a Multi-container layout (v1.1.0+ embedded install)
+
+The default **embedded** install starts two main containers (see [architecture.md](architecture.md)):
+
+| Container | Role |
+|-----------|------|
+| **`hiclaw-controller`** | Bundles Higress, Tuwunel, MinIO, Element Web, and the Go controller (REST API on port **8090** inside the Docker network). |
+| **`hiclaw-manager`** | Lightweight Manager Agent only (OpenClaw **or** CoPaw when `HICLAW_MANAGER_RUNTIME=copaw`). |
+
+Worker containers (`hiclaw-worker-*`, `hiclaw-copaw-worker-*`, `hiclaw-hermes-worker-*`) are created when you add Workers.
+
+**Declarative CLI (no chat required):** The `hiclaw` binary is available **inside** `hiclaw-controller` and `hiclaw-manager`. For quick checks and provisioning from the host:
+
+```bash
+docker exec hiclaw-controller hiclaw create worker --name alice --model qwen3.5-plus
+docker exec hiclaw-controller hiclaw get workers
+```
+
+For YAML-driven workflows, use `install/hiclaw-apply.sh` (copies files into `hiclaw-manager` and runs `hiclaw apply -f`). Details: [Declarative Resource Management](declarative-resource-management.md).
+
 ### 1.2 Login to Element Web
 
 Open http://127.0.0.1:18088 in your browser (direct access port). Alternatively, access via the gateway at http://matrix-client-local.hiclaw.io:18080 if you've added the domain to your `/etc/hosts`.
@@ -47,11 +67,13 @@ Login with your admin credentials.
 
 ### Verification Checklist
 
-- [ ] Manager container is running: `docker ps | grep hiclaw-manager`
+- [ ] **`hiclaw-controller`** is running (embedded stack): `docker ps | grep hiclaw-controller`
+- [ ] **`hiclaw-manager`** is running: `docker ps | grep hiclaw-manager`
 - [ ] Element Web loads in browser at http://127.0.0.1:18088
 - [ ] Login with admin credentials succeeds
-- [ ] Higress Console accessible at http://localhost:18001
-- [ ] MinIO Console accessible at http://localhost:18080 (via gateway) or http://localhost:9001 (direct, if port is exposed)
+- [ ] Higress Console at http://localhost:18001 (gateway **host** port defaults to **18080**; Matrix/Element use that gateway for `*-local.hiclaw.io` hostnames)
+- [ ] MinIO is reachable **inside** the controller container (embedded install does **not** publish MinIO console on the host by default): `docker exec hiclaw-controller curl -sf http://127.0.0.1:9000/minio/health/live`
+- [ ] (OpenClaw Manager only) OpenClaw control UI at http://127.0.0.1:18888
 
 ---
 
@@ -330,4 +352,4 @@ To completely remove HiClaw and all its data:
 bash <(curl -fsSL https://raw.githubusercontent.com/higress-group/hiclaw/main/install/hiclaw-install.sh) uninstall
 ```
 
-This removes all containers (Manager, Workers, docker-proxy), Docker volume, network, env file, workspace directory, and install log.
+This matches `install/hiclaw-install.sh uninstall`: it stops and removes **`hiclaw-manager`**, all **`hiclaw-worker-*`** (and other worker) containers, **`hiclaw-controller`** (embedded Higress / Tuwunel / MinIO / Element Web), optional **`hiclaw-docker-proxy`**, the **`hiclaw-data`** Docker volume, your **`hiclaw-manager.env`** file, the workspace directory, the **`hiclaw-net`** network, and the install log.

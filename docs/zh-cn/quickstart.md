@@ -37,6 +37,26 @@ HICLAW_LLM_API_KEY="sk-xxx" make install
 
 两种方式均支持通过环境变量覆盖所有配置项，完整列表见 `install/hiclaw-install.sh` 文件头部注释。
 
+### 1.1a 多容器架构（v1.1.0+ 嵌入式安装）
+
+默认**嵌入式**安装会启动两个主容器（详见 [architecture.md](../architecture.md)）：
+
+| 容器 | 职责 |
+|------|------|
+| **`hiclaw-controller`** | 内嵌 Higress、Tuwunel、MinIO、Element Web 与 Go controller（REST API 在容器网络内 **8090** 端口）。 |
+| **`hiclaw-manager`** | 仅运行 Manager Agent（默认 OpenClaw；若安装时选择 `HICLAW_MANAGER_RUNTIME=copaw` 则为 CoPaw Manager 镜像）。 |
+
+创建 Worker 后会出现 `hiclaw-worker-*`、`hiclaw-copaw-worker-*`、`hiclaw-hermes-worker-*` 等容器。
+
+**声明式 CLI（无需在 IM 里打字）：** `hiclaw` 在 **`hiclaw-controller`** 与 **`hiclaw-manager`** 内均可用。宿主机上快速示例：
+
+```bash
+docker exec hiclaw-controller hiclaw create worker --name alice --model qwen3.5-plus
+docker exec hiclaw-controller hiclaw get workers
+```
+
+YAML 批量管理请使用 `install/hiclaw-apply.sh`（将文件拷入 `hiclaw-manager` 后执行 `hiclaw apply -f`）。详见 [Declarative Resource Management](../declarative-resource-management.md)。
+
 ### 1.2 登录 Element Web
 
 在浏览器中打开 http://127.0.0.1:18088（直接访问端口）。如果已将域名添加到 `/etc/hosts`，也可通过网关访问 http://matrix-client-local.hiclaw.io:18080。
@@ -45,11 +65,13 @@ HICLAW_LLM_API_KEY="sk-xxx" make install
 
 ### 验证清单
 
-- [ ] Manager 容器正在运行：`docker ps | grep hiclaw-manager`
+- [ ] **`hiclaw-controller`** 正在运行：`docker ps | grep hiclaw-controller`
+- [ ] **`hiclaw-manager`** 正在运行：`docker ps | grep hiclaw-manager`
 - [ ] 浏览器可访问 Element Web：http://127.0.0.1:18088
 - [ ] 使用管理员凭据登录成功
-- [ ] Higress 控制台可访问：http://localhost:18001
-- [ ] MinIO 控制台可访问：http://localhost:18080（通过网关）或 http://localhost:9001（直接端口，如已暴露）
+- [ ] Higress 控制台：http://localhost:18001（网关默认映射到宿主机 **18080**；Matrix / Element 的 `*-local.hiclaw.io` 经该网关访问）
+- [ ] MinIO 在 **controller 容器内**可访问（嵌入式安装默认**不**把 MinIO 控制台端口发布到宿主机）：`docker exec hiclaw-controller curl -sf http://127.0.0.1:9000/minio/health/live`
+- [ ] （仅 OpenClaw Manager）OpenClaw 控制 UI：http://127.0.0.1:18888
 
 ---
 
@@ -301,3 +323,15 @@ Alice 使用 `mcporter` 调用 Higress 托管的 GitHub MCP Server。MCP Server 
 - 集中式凭据管理
 - 基于 MCP 的外部工具集成
 - 动态权限控制
+
+---
+
+## 卸载
+
+彻底移除 HiClaw 及其数据：
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/higress-group/hiclaw/main/install/hiclaw-install.sh) uninstall
+```
+
+与 `install/hiclaw-install.sh uninstall` 行为一致：停止并删除 **`hiclaw-manager`**、所有 **`hiclaw-worker-*`**（及其他 Worker）容器、**`hiclaw-controller`**（内嵌 Higress / Tuwunel / MinIO / Element Web）、可选 **`hiclaw-docker-proxy`**、**`hiclaw-data`** 数据卷、**`hiclaw-manager.env`**、工作空间目录、**`hiclaw-net`** 网络及安装日志。
