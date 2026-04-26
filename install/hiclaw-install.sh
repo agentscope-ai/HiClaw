@@ -3341,7 +3341,39 @@ check_container_runtime() {
         DOCKER_CMD="podman"
     else
         echo -e "\033[31m[HiClaw ERROR]\033[0m $(msg error.docker_not_found)" >&2
-        exit 1
+        
+        # Offer to install Docker using Alibaba Cloud script
+        if [ "${HICLAW_NON_INTERACTIVE}" != "1" ]; then
+            echo -e "\033[36m[HiClaw]\033[0m 尝试使用阿里云 Docker 一键安装脚本..."
+            
+            # Alibaba Cloud Docker installation script
+            if (curl -fsSL https://get.docker.com | bash -s docker --mirror Aliyun >> "${HICLAW_LOG_FILE}" 2>&1); then
+                echo -e "\033[36m[HiClaw]\033[0m Docker 安装成功！正在启动 Docker 服务..."
+                
+                # Start Docker service (different commands for different systems)
+                if command -v systemctl >/dev/null 2>&1; then
+                    sudo systemctl start docker >> "${HICLAW_LOG_FILE}" 2>&1
+                    sudo systemctl enable docker >> "${HICLAW_LOG_FILE}" 2>&1
+                elif command -v service >/dev/null 2>&1; then
+                    sudo service docker start >> "${HICLAW_LOG_FILE}" 2>&1
+                fi
+                
+                # Verify installation
+                if command -v docker >/dev/null 2>&1; then
+                    DOCKER_CMD="docker"
+                    echo -e "\033[36m[HiClaw]\033[0m Docker 服务已启动，继续安装..."
+                else
+                    echo -e "\033[31m[HiClaw ERROR]\033[0m Docker 安装失败，请手动安装。"
+                    exit 1
+                fi
+            else
+                echo -e "\033[31m[HiClaw ERROR]\033[0m Docker 安装失败，请手动安装。"
+                exit 1
+            fi
+        else
+            # Non-interactive mode, just exit
+            exit 1
+        fi
     fi
 
     # Command exists — check if daemon is running
