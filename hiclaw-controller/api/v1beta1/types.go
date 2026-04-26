@@ -40,6 +40,7 @@ type AccessEntry struct {
 }
 
 // +genclient
+// +kubebuilder:subresource:status
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 
 // Worker represents an AI agent worker in HiClaw.
@@ -135,6 +136,7 @@ type WorkerList struct {
 }
 
 // +genclient
+// +kubebuilder:subresource:status
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 
 // Team represents a group of workers led by a Team Leader.
@@ -306,6 +308,7 @@ type TeamList struct {
 }
 
 // +genclient
+// +kubebuilder:subresource:status
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 
 // Human represents a real human user with configurable access permissions.
@@ -343,6 +346,7 @@ type HumanList struct {
 }
 
 // +genclient
+// +kubebuilder:subresource:status
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 
 // Manager represents the HiClaw Manager Agent — the coordinator that receives

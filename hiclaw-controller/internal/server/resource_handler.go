@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"time"
 
 	v1beta1 "github.com/hiclaw/hiclaw-controller/api/v1beta1"
 	authpkg "github.com/hiclaw/hiclaw-controller/internal/auth"
@@ -13,6 +14,10 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
+
+// k8sUpdateMaxRetries is the max attempts for Get→patch spec→Update against
+// optimistic locking conflicts when the controller updates status between Get and Update.
+const k8sUpdateMaxRetries = 3
 
 // ResourceHandler handles declarative CRUD operations on CRs.
 //
@@ -240,55 +245,63 @@ func (h *ResourceHandler) UpdateWorker(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var worker v1beta1.Worker
-	if err := h.client.Get(r.Context(), client.ObjectKey{Name: name, Namespace: h.namespace}, &worker); err != nil {
-		writeK8sError(w, "get worker for update", err)
+	ctx := r.Context()
+	for attempt := 0; attempt < k8sUpdateMaxRetries; attempt++ {
+		var worker v1beta1.Worker
+		if err := h.client.Get(ctx, client.ObjectKey{Name: name, Namespace: h.namespace}, &worker); err != nil {
+			writeK8sError(w, "get worker for update", err)
+			return
+		}
+
+		if req.Model != "" {
+			worker.Spec.Model = req.Model
+		}
+		if req.Runtime != "" {
+			worker.Spec.Runtime = req.Runtime
+		}
+		if req.Image != "" {
+			worker.Spec.Image = req.Image
+		}
+		if req.Identity != "" {
+			worker.Spec.Identity = req.Identity
+		}
+		if req.Soul != "" {
+			worker.Spec.Soul = req.Soul
+		}
+		if req.Agents != "" {
+			worker.Spec.Agents = req.Agents
+		}
+		if req.Skills != nil {
+			worker.Spec.Skills = req.Skills
+		}
+		if req.McpServers != nil {
+			worker.Spec.McpServers = req.McpServers
+		}
+		if req.Package != "" {
+			worker.Spec.Package = req.Package
+		}
+		if req.Expose != nil {
+			worker.Spec.Expose = req.Expose
+		}
+		if req.ChannelPolicy != nil {
+			worker.Spec.ChannelPolicy = req.ChannelPolicy
+		}
+		if req.State != nil {
+			worker.Spec.State = req.State
+		}
+
+		if err := h.client.Update(ctx, &worker); err != nil {
+			if apierrors.IsConflict(err) && attempt+1 < k8sUpdateMaxRetries {
+				time.Sleep(time.Duration(attempt+1) * 100 * time.Millisecond)
+				continue
+			}
+			writeK8sError(w, "update worker", err)
+			return
+		}
+
+		httputil.WriteJSON(w, http.StatusOK, workerToResponse(&worker))
 		return
 	}
-
-	if req.Model != "" {
-		worker.Spec.Model = req.Model
-	}
-	if req.Runtime != "" {
-		worker.Spec.Runtime = req.Runtime
-	}
-	if req.Image != "" {
-		worker.Spec.Image = req.Image
-	}
-	if req.Identity != "" {
-		worker.Spec.Identity = req.Identity
-	}
-	if req.Soul != "" {
-		worker.Spec.Soul = req.Soul
-	}
-	if req.Agents != "" {
-		worker.Spec.Agents = req.Agents
-	}
-	if req.Skills != nil {
-		worker.Spec.Skills = req.Skills
-	}
-	if req.McpServers != nil {
-		worker.Spec.McpServers = req.McpServers
-	}
-	if req.Package != "" {
-		worker.Spec.Package = req.Package
-	}
-	if req.Expose != nil {
-		worker.Spec.Expose = req.Expose
-	}
-	if req.ChannelPolicy != nil {
-		worker.Spec.ChannelPolicy = req.ChannelPolicy
-	}
-	if req.State != nil {
-		worker.Spec.State = req.State
-	}
-
-	if err := h.client.Update(r.Context(), &worker); err != nil {
-		writeK8sError(w, "update worker", err)
-		return
-	}
-
-	httputil.WriteJSON(w, http.StatusOK, workerToResponse(&worker))
 }
 
 func (h *ResourceHandler) DeleteWorker(w http.ResponseWriter, r *http.Request) {
@@ -432,79 +445,87 @@ func (h *ResourceHandler) UpdateTeam(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var team v1beta1.Team
-	if err := h.client.Get(r.Context(), client.ObjectKey{Name: name, Namespace: h.namespace}, &team); err != nil {
-		writeK8sError(w, "get team for update", err)
+	ctx := r.Context()
+	for attempt := 0; attempt < k8sUpdateMaxRetries; attempt++ {
+		var team v1beta1.Team
+		if err := h.client.Get(ctx, client.ObjectKey{Name: name, Namespace: h.namespace}, &team); err != nil {
+			writeK8sError(w, "get team for update", err)
+			return
+		}
+
+		if req.Description != "" {
+			team.Spec.Description = req.Description
+		}
+		if req.Admin != nil {
+			team.Spec.Admin = req.Admin
+		}
+		if req.PeerMentions != nil {
+			team.Spec.PeerMentions = req.PeerMentions
+		}
+		if req.ChannelPolicy != nil {
+			team.Spec.ChannelPolicy = req.ChannelPolicy
+		}
+		if req.Leader != nil {
+			if req.Leader.Model != "" {
+				team.Spec.Leader.Model = req.Leader.Model
+			}
+			if req.Leader.Identity != "" {
+				team.Spec.Leader.Identity = req.Leader.Identity
+			}
+			if req.Leader.Soul != "" {
+				team.Spec.Leader.Soul = req.Leader.Soul
+			}
+			if req.Leader.Agents != "" {
+				team.Spec.Leader.Agents = req.Leader.Agents
+			}
+			if req.Leader.Package != "" {
+				team.Spec.Leader.Package = req.Leader.Package
+			}
+			if req.Leader.Heartbeat != nil {
+				team.Spec.Leader.Heartbeat = toHeartbeatSpec(req.Leader.Heartbeat)
+			}
+			if req.Leader.WorkerIdleTimeout != "" {
+				team.Spec.Leader.WorkerIdleTimeout = req.Leader.WorkerIdleTimeout
+			}
+			if req.Leader.ChannelPolicy != nil {
+				team.Spec.Leader.ChannelPolicy = req.Leader.ChannelPolicy
+			}
+			if req.Leader.State != nil {
+				team.Spec.Leader.State = req.Leader.State
+			}
+		}
+		if req.Workers != nil {
+			team.Spec.Workers = nil
+			for _, tw := range req.Workers {
+				team.Spec.Workers = append(team.Spec.Workers, v1beta1.TeamWorkerSpec{
+					Name:          tw.Name,
+					Model:         tw.Model,
+					Runtime:       tw.Runtime,
+					Image:         tw.Image,
+					Identity:      tw.Identity,
+					Soul:          tw.Soul,
+					Agents:        tw.Agents,
+					Skills:        tw.Skills,
+					McpServers:    tw.McpServers,
+					Package:       tw.Package,
+					Expose:        tw.Expose,
+					ChannelPolicy: tw.ChannelPolicy,
+				})
+			}
+		}
+
+		if err := h.client.Update(ctx, &team); err != nil {
+			if apierrors.IsConflict(err) && attempt+1 < k8sUpdateMaxRetries {
+				time.Sleep(time.Duration(attempt+1) * 100 * time.Millisecond)
+				continue
+			}
+			writeK8sError(w, "update team", err)
+			return
+		}
+
+		httputil.WriteJSON(w, http.StatusOK, teamToResponse(&team))
 		return
 	}
-
-	if req.Description != "" {
-		team.Spec.Description = req.Description
-	}
-	if req.Admin != nil {
-		team.Spec.Admin = req.Admin
-	}
-	if req.PeerMentions != nil {
-		team.Spec.PeerMentions = req.PeerMentions
-	}
-	if req.ChannelPolicy != nil {
-		team.Spec.ChannelPolicy = req.ChannelPolicy
-	}
-	if req.Leader != nil {
-		if req.Leader.Model != "" {
-			team.Spec.Leader.Model = req.Leader.Model
-		}
-		if req.Leader.Identity != "" {
-			team.Spec.Leader.Identity = req.Leader.Identity
-		}
-		if req.Leader.Soul != "" {
-			team.Spec.Leader.Soul = req.Leader.Soul
-		}
-		if req.Leader.Agents != "" {
-			team.Spec.Leader.Agents = req.Leader.Agents
-		}
-		if req.Leader.Package != "" {
-			team.Spec.Leader.Package = req.Leader.Package
-		}
-		if req.Leader.Heartbeat != nil {
-			team.Spec.Leader.Heartbeat = toHeartbeatSpec(req.Leader.Heartbeat)
-		}
-		if req.Leader.WorkerIdleTimeout != "" {
-			team.Spec.Leader.WorkerIdleTimeout = req.Leader.WorkerIdleTimeout
-		}
-		if req.Leader.ChannelPolicy != nil {
-			team.Spec.Leader.ChannelPolicy = req.Leader.ChannelPolicy
-		}
-		if req.Leader.State != nil {
-			team.Spec.Leader.State = req.Leader.State
-		}
-	}
-	if req.Workers != nil {
-		team.Spec.Workers = nil
-		for _, tw := range req.Workers {
-			team.Spec.Workers = append(team.Spec.Workers, v1beta1.TeamWorkerSpec{
-				Name:          tw.Name,
-				Model:         tw.Model,
-				Runtime:       tw.Runtime,
-				Image:         tw.Image,
-				Identity:      tw.Identity,
-				Soul:          tw.Soul,
-				Agents:        tw.Agents,
-				Skills:        tw.Skills,
-				McpServers:    tw.McpServers,
-				Package:       tw.Package,
-				Expose:        tw.Expose,
-				ChannelPolicy: tw.ChannelPolicy,
-			})
-		}
-	}
-
-	if err := h.client.Update(r.Context(), &team); err != nil {
-		writeK8sError(w, "update team", err)
-		return
-	}
-
-	httputil.WriteJSON(w, http.StatusOK, teamToResponse(&team))
 }
 
 func (h *ResourceHandler) DeleteTeam(w http.ResponseWriter, r *http.Request) {
@@ -704,49 +725,57 @@ func (h *ResourceHandler) UpdateManager(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	var mgr v1beta1.Manager
-	if err := h.client.Get(r.Context(), client.ObjectKey{Name: name, Namespace: h.namespace}, &mgr); err != nil {
-		writeK8sError(w, "get manager for update", err)
+	ctx := r.Context()
+	for attempt := 0; attempt < k8sUpdateMaxRetries; attempt++ {
+		var mgr v1beta1.Manager
+		if err := h.client.Get(ctx, client.ObjectKey{Name: name, Namespace: h.namespace}, &mgr); err != nil {
+			writeK8sError(w, "get manager for update", err)
+			return
+		}
+
+		if req.Model != "" {
+			mgr.Spec.Model = req.Model
+		}
+		if req.Runtime != "" {
+			mgr.Spec.Runtime = req.Runtime
+		}
+		if req.Image != "" {
+			mgr.Spec.Image = req.Image
+		}
+		if req.Soul != "" {
+			mgr.Spec.Soul = req.Soul
+		}
+		if req.Agents != "" {
+			mgr.Spec.Agents = req.Agents
+		}
+		if req.Skills != nil {
+			mgr.Spec.Skills = req.Skills
+		}
+		if req.McpServers != nil {
+			mgr.Spec.McpServers = req.McpServers
+		}
+		if req.Package != "" {
+			mgr.Spec.Package = req.Package
+		}
+		if req.Config != nil {
+			mgr.Spec.Config = *req.Config
+		}
+		if req.State != nil {
+			mgr.Spec.State = req.State
+		}
+
+		if err := h.client.Update(ctx, &mgr); err != nil {
+			if apierrors.IsConflict(err) && attempt+1 < k8sUpdateMaxRetries {
+				time.Sleep(time.Duration(attempt+1) * 100 * time.Millisecond)
+				continue
+			}
+			writeK8sError(w, "update manager", err)
+			return
+		}
+
+		httputil.WriteJSON(w, http.StatusOK, managerToResponse(&mgr))
 		return
 	}
-
-	if req.Model != "" {
-		mgr.Spec.Model = req.Model
-	}
-	if req.Runtime != "" {
-		mgr.Spec.Runtime = req.Runtime
-	}
-	if req.Image != "" {
-		mgr.Spec.Image = req.Image
-	}
-	if req.Soul != "" {
-		mgr.Spec.Soul = req.Soul
-	}
-	if req.Agents != "" {
-		mgr.Spec.Agents = req.Agents
-	}
-	if req.Skills != nil {
-		mgr.Spec.Skills = req.Skills
-	}
-	if req.McpServers != nil {
-		mgr.Spec.McpServers = req.McpServers
-	}
-	if req.Package != "" {
-		mgr.Spec.Package = req.Package
-	}
-	if req.Config != nil {
-		mgr.Spec.Config = *req.Config
-	}
-	if req.State != nil {
-		mgr.Spec.State = req.State
-	}
-
-	if err := h.client.Update(r.Context(), &mgr); err != nil {
-		writeK8sError(w, "update manager", err)
-		return
-	}
-
-	httputil.WriteJSON(w, http.StatusOK, managerToResponse(&mgr))
 }
 
 func (h *ResourceHandler) DeleteManager(w http.ResponseWriter, r *http.Request) {
@@ -990,6 +1019,8 @@ func writeK8sError(w http.ResponseWriter, op string, err error) {
 		httputil.WriteError(w, http.StatusNotFound, op+": not found")
 	case apierrors.IsAlreadyExists(err):
 		httputil.WriteError(w, http.StatusConflict, op+": already exists")
+	case apierrors.IsConflict(err):
+		httputil.WriteError(w, http.StatusConflict, op+": conflict (object modified, retry)")
 	default:
 		httputil.WriteError(w, http.StatusInternalServerError, op+": "+err.Error())
 	}

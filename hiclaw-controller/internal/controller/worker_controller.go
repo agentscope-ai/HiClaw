@@ -93,8 +93,9 @@ func (r *WorkerReconciler) Reconcile(ctx context.Context, req reconcile.Request)
 	}
 
 	if !controllerutil.ContainsFinalizer(&worker, finalizerName) {
+		base := worker.DeepCopy()
 		controllerutil.AddFinalizer(&worker, finalizerName)
-		if err := r.Update(ctx, &worker); err != nil {
+		if err := r.Patch(ctx, &worker, client.MergeFrom(base)); err != nil {
 			return reconcile.Result{}, err
 		}
 	}
@@ -180,8 +181,9 @@ func (r *WorkerReconciler) reconcileDelete(ctx context.Context, w *v1beta1.Worke
 		}
 	}
 
+	base := w.DeepCopy()
 	controllerutil.RemoveFinalizer(w, finalizerName)
-	if err := r.Update(ctx, w); err != nil {
+	if err := r.Patch(ctx, w, client.MergeFrom(base)); err != nil {
 		return reconcile.Result{}, err
 	}
 
