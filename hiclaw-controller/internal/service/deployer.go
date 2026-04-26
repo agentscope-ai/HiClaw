@@ -50,6 +50,7 @@ type CoordinationDeployRequest struct {
 	WorkerIdleTimeout string
 	TeamWorkers       []string
 	TeamAdminID       string
+	LeaderSoul        string // from CR spec.leader.soul; used as seed if non-empty
 }
 
 // --- Deployer ---
@@ -197,23 +198,32 @@ func (d *Deployer) DeployWorkerConfig(ctx context.Context, req WorkerDeployReque
 		return fmt.Errorf("config push to storage failed: %w", err)
 	}
 
-	// --- SOUL.md ---
-	// Priority: inline spec (user intent) > local file (from package) > generated default.
-	// Inline spec is read directly from memory to avoid local file race with background mc mirror.
-	soulPath := filepath.Join(localAgentDir, "SOUL.md")
-	if req.Spec.Soul != "" {
-		if err := d.oss.PutObject(ctx, agentPrefix+"/SOUL.md", []byte(req.Spec.Soul)); err != nil {
-			logger.Error(err, "SOUL.md push failed (non-fatal)")
-		}
-	} else if soulData, err := os.ReadFile(soulPath); err == nil {
-		if err := d.oss.PutObject(ctx, agentPrefix+"/SOUL.md", soulData); err != nil {
-			logger.Error(err, "SOUL.md push failed (non-fatal)")
-		}
-	} else if !req.IsUpdate && req.Role != "team_leader" {
-		// Team leaders get SOUL.md from template rendering in InjectCoordinationContext.
-		soulContent := fmt.Sprintf("# %s\n\nYou are %s, an AI worker agent.\n", req.Name, req.Name)
-		if err := d.oss.PutObject(ctx, agentPrefix+"/SOUL.md", []byte(soulContent)); err != nil {
-			logger.Error(err, "SOUL.md push failed (non-fatal)")
+	// --- SOUL.md (seed-only) ---
+	// Written once on first deploy; never overwritten so the agent owns it
+	// after startup. Team leaders are handled by renderAndPushSoulTemplate
+	// in InjectCoordinationContext, so skip here.
+	if req.Role != "team_leader" {
+		soulKey := agentPrefix + "/SOUL.md"
+		_, err := d.oss.GetObject(ctx, soulKey)
+		if err == nil {
+			logger.Info("SOUL.md: seed-only, keeping existing version", "worker", req.Name)
+		} else if !os.IsNotExist(err) {
+			logger.Error(err, "SOUL.md: check existing failed, skipping seed", "worker", req.Name)
+		} else {
+			soulPath := filepath.Join(localAgentDir, "SOUL.md")
+			var soulContent []byte
+			if req.Spec.Soul != "" {
+				soulContent = []byte(req.Spec.Soul)
+			} else if data, err := os.ReadFile(soulPath); err == nil {
+				soulContent = data
+			} else if !req.IsUpdate {
+				soulContent = []byte(fmt.Sprintf("# %s\n\nYou are %s, an AI worker agent.\n", req.Name, req.Name))
+			}
+			if len(soulContent) > 0 {
+				if err := d.oss.PutObject(ctx, soulKey, soulContent); err != nil {
+					logger.Error(err, "SOUL.md push failed (non-fatal)")
+				}
+			}
 		}
 	}
 
@@ -290,9 +300,27 @@ func (d *Deployer) InjectCoordinationContext(ctx context.Context, req Coordinati
 	return nil
 }
 
-// renderAndPushSoulTemplate reads SOUL.md.tmpl from the builtin team-leader-agent
-// directory, substitutes ${VAR} placeholders, and pushes the result as SOUL.md.
+// renderAndPushSoulTemplate seeds the team leader's SOUL.md into OSS.
+// Seed-only: if OSS already has SOUL.md, it is never overwritten — the agent
+// owns it after first startup. Priority: CR spec.leader.soul > template.
 func (d *Deployer) renderAndPushSoulTemplate(ctx context.Context, agentPrefix string, req CoordinationDeployRequest) error {
+	soulKey := agentPrefix + "/SOUL.md"
+	_, err := d.oss.GetObject(ctx, soulKey)
+	if err == nil {
+		log.FromContext(ctx).Info("SOUL.md: seed-only, keeping existing version", "leader", req.LeaderName)
+		return nil
+	}
+	if !os.IsNotExist(err) {
+		log.FromContext(ctx).Error(err, "SOUL.md: check existing failed, skipping seed", "leader", req.LeaderName)
+		return nil
+	}
+
+	// CR soul takes priority
+	if req.LeaderSoul != "" {
+		return d.oss.PutObject(ctx, soulKey, []byte(req.LeaderSoul))
+	}
+
+	// Fall back to template
 	tmplPath := filepath.Join(d.builtinAgentDir("team_leader", ""), "SOUL.md.tmpl")
 	tmplData, err := os.ReadFile(tmplPath)
 	if err != nil {
@@ -312,7 +340,7 @@ func (d *Deployer) renderAndPushSoulTemplate(ctx context.Context, agentPrefix st
 	result = strings.ReplaceAll(result, "${TEAM_NAME}", req.TeamName)
 	result = strings.ReplaceAll(result, "${TEAM_WORKERS}", strings.Join(workerNames, ", "))
 
-	return d.oss.PutObject(ctx, agentPrefix+"/SOUL.md", []byte(result))
+	return d.oss.PutObject(ctx, soulKey, []byte(result))
 }
 
 // PushOnDemandSkills runs the push-worker-skills.sh script for on-demand skills.
