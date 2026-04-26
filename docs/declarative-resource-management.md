@@ -80,8 +80,8 @@ spec:
 |-------|------|----------|---------|-------------|
 | `metadata.name` | string | Yes | — | Worker name, globally unique |
 | `spec.model` | string | Yes | — | LLM model ID, e.g. `claude-sonnet-4-6`, `qwen3.5-plus` |
-| `spec.runtime` | string | No | `openclaw` | Agent runtime: `openclaw` or `copaw` |
-| `spec.image` | string | No | — | Custom Docker image; if empty, the controller uses `HICLAW_WORKER_IMAGE` / `HICLAW_COPAW_WORKER_IMAGE` (defaults `hiclaw/worker-agent:latest` / `hiclaw/copaw-worker:latest`) |
+| `spec.runtime` | string | No | `openclaw` | Agent runtime: `openclaw`, `copaw`, or `hermes` |
+| `spec.image` | string | No | — | Custom Docker image; if empty, the controller uses `HICLAW_WORKER_IMAGE` / `HICLAW_COPAW_WORKER_IMAGE` / `HICLAW_HERMES_WORKER_IMAGE` (defaults `hiclaw/worker-agent:latest` / `hiclaw/copaw-worker:latest` / `hiclaw-hermes-worker:latest`) |
 | `spec.identity` | string | No | — | Worker public identity (OpenClaw: generates IDENTITY.md; CoPaw: merged into SOUL.md per controller) |
 | `spec.soul` | string | No | — | Worker personality and values (generates SOUL.md) |
 | `spec.agents` | string | No | — | Agent behavior rules, used to generate AGENTS.md |
@@ -236,7 +236,7 @@ spec:
 |-------|------|----------|-------------|
 | `workers[].name` | string | Yes | Worker name |
 | `workers[].model` | string | No | LLM model |
-| `workers[].runtime` | string | No | Agent runtime (`openclaw` or `copaw`) |
+| `workers[].runtime` | string | No | Agent runtime (`openclaw`, `copaw`, or `hermes`) |
 | `workers[].image` | string | No | Custom Docker image |
 | `workers[].identity` | string | No | Worker public identity (generates IDENTITY.md) |
 | `workers[].soul` | string | No | Worker personality and values (generates SOUL.md) |
@@ -373,7 +373,7 @@ spec:
 |-------|------|----------|---------|-------------|
 | `metadata.name` | string | Yes | — | Manager resource name (often `default` for the primary instance) |
 | `spec.model` | string | Yes | — | LLM model ID |
-| `spec.runtime` | string | No | `openclaw` | `openclaw` or `copaw` |
+| `spec.runtime` | string | No | `openclaw` | `openclaw` or `copaw` (Hermes is **not** a supported Manager runtime) |
 | `spec.image` | string | No | — | Custom Manager image; empty uses deployment default |
 | `spec.soul` | string | No | — | Custom SOUL.md content |
 | `spec.agents` | string | No | — | Custom AGENTS.md content |
@@ -587,7 +587,7 @@ Regardless of URI format, the extracted package follows a unified structure:
 }
 ```
 
-`worker.runtime` (`openclaw` or `copaw`) is honored by `hiclaw apply worker --zip`
+`worker.runtime` (`openclaw`, `copaw`, or `hermes`) is honored by `hiclaw apply worker --zip`
 and overridden by an explicit `--runtime` flag.
 
 ## Operations
