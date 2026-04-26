@@ -32,20 +32,27 @@ Manager 通过安装时设置的环境变量进行配置。安装脚本会生成
 | `HICLAW_DATA_DIR` | 否 | `hiclaw-data` | 持久化数据的 Docker 卷名称 |
 | `HICLAW_MOUNT_SOCKET` | 否 | `1` | 挂载容器运行时 socket 以支持直接创建 Worker |
 | `HICLAW_YOLO` | 否 | - | 设为 `1` 启用 YOLO 模式（自主决策，无交互提示） |
+| `HICLAW_MANAGER_RUNTIME` | 否 | `openclaw` | Manager 引擎：**`openclaw`**（默认，`hiclaw-manager` 镜像）或 **`copaw`**（`hiclaw-manager-copaw` 镜像）。**Hermes** 仅支持 **Worker**，不能作为 Manager 运行时。 |
+
+### CoPaw Manager（`HICLAW_MANAGER_RUNTIME=copaw`）
+
+安装时若选择 CoPaw Manager，controller 会拉起 **`hiclaw-manager-copaw`** 镜像而非基于 OpenClaw 的 **`hiclaw-manager`**。职责相同（经 Matrix 协调 Worker/Team、驱动 Higress/MCP），差异在于 Agent 引擎与配置形态（Python CoPaw vs Node OpenClaw）。多通道与技能遵循 CoPaw 工作区约定（容器内 **`/root/manager-workspace`**）。
 
 ### 自定义 Manager Agent
 
-Manager Agent 的行为由以下三个文件定义：
+以下三个文件存放在 MinIO **`hiclaw-storage`** 桶中（对象前缀 `agents/manager/`）。安装脚本将宿主机工作区 bind mount 到 Manager 容器的 **`/root/manager-workspace`**，并与该桶保持同步——既可在 MinIO 控制台/API 中编辑，也可直接编辑宿主机 `HICLAW_WORKSPACE_DIR`（默认 `~/hiclaw-manager`）下的对应文件。
 
 1. **SOUL.md** - Agent 身份、安全规则、通信模型
-2. **HEARTBEAT.md** - 定期检查例程（由 OpenClaw 内置心跳机制触发）
+2. **HEARTBEAT.md** - 定期检查例程（随运行时为 OpenClaw 心跳或 CoPaw 等价机制）
 3. **AGENTS.md** - 可用技能和任务工作流
 
-要自定义，请在 MinIO 控制台（http://localhost:9001）的 `hiclaw-storage/agents/manager/` 下编辑这些文件。
+若本地仍暴露 MinIO 端口，可使用 MinIO 控制台；否则在 **`hiclaw-controller`** 内使用 `mc`，或编辑宿主机工作区中的镜像文件。
 
 ### 添加技能
 
-技能是放置在 `agents/manager/skills/<skill-name>/SKILL.md` 的自包含文件。OpenClaw 会自动从该目录发现技能。
+仓库内置 **16** 个 Manager 技能，源码位于 `manager/agent/skills/`，同步到桶内路径 `agents/manager/skills/<name>/SKILL.md`：**channel-management**、**file-sync-management**、**git-delegation-management**、**hiclaw-find-worker**、**human-management**、**matrix-server-management**、**mcp-server-management**、**mcporter**、**model-switch**、**project-management**、**service-publishing**、**task-coordination**、**task-management**、**team-management**、**worker-management**、**worker-model-switch**。
+
+将更多自包含的 `SKILL.md` 放到 `agents/manager/skills/<skill-name>/`。Manager 运行时会自动发现该目录下的技能。
 
 添加新技能的步骤：
 1. 创建目录：`agents/manager/skills/<your-skill-name>/`
@@ -152,17 +159,20 @@ Manager 和 Worker 的 OpenClaw 实例使用**基于类型的会话策略**：
 
 ### 日志
 
+**v1.1.0+ 嵌入式安装：** Higress、Tuwunel、MinIO 运行在 **`hiclaw-controller`** 内。**`hiclaw-manager`** 仅运行协调 Agent；基础设施日志在 controller 上查看。
+
 ```bash
-# 所有组件日志（合并 stdout/stderr）
+# Manager Agent（stdout/stderr + 启动脚本）
 docker logs hiclaw-manager -f
-
-# 特定组件日志（容器内）
 docker exec hiclaw-manager cat /var/log/hiclaw/manager-agent.log
-docker exec hiclaw-manager cat /var/log/hiclaw/tuwunel.log
-docker exec hiclaw-manager cat /var/log/hiclaw/higress-console.log
 
-# OpenClaw 运行时日志（Agent 事件、工具调用、LLM 交互）
+# OpenClaw 运行时日志（仅 OpenClaw Manager）
 docker exec hiclaw-manager bash -c 'cat /tmp/openclaw/openclaw-*.log' | jq .
+
+# 基础设施 + Higress 控制台（嵌入式栈）
+docker logs hiclaw-controller -f
+docker exec hiclaw-controller cat /var/log/hiclaw/higress-console.log
+docker exec hiclaw-controller cat /var/log/hiclaw/tuwunel.log
 ```
 
 ### Replay 对话日志
@@ -179,17 +189,20 @@ make replay-log
 ### 健康检查
 
 ```bash
-# 检查各服务状态
-curl -s http://127.0.0.1:6167/_matrix/client/versions   # Matrix（内部端口，通过 docker exec 从宿主机访问）
-curl -s http://127.0.0.1:9000/minio/health/live          # MinIO（内部端口，通过 docker exec 从宿主机访问）
-curl -s http://127.0.0.1:18001/                           # Higress 控制台（宿主机端口）
+# Matrix / MinIO（默认不发布到宿主机 — 在 controller 容器内探测）
+docker exec hiclaw-controller curl -sf http://127.0.0.1:6167/_matrix/client/versions
+docker exec hiclaw-controller curl -sf http://127.0.0.1:9000/minio/health/live
+
+# Higress 控制台（宿主机端口）
+curl -s http://127.0.0.1:18001/
 ```
 
 ### 控制台
 
-- **Higress 控制台**：http://localhost:18001 - 网关管理、路由、Consumer
-- **MinIO 控制台**：http://localhost:9001 - 文件系统浏览、Agent 配置（直接端口，不经过网关）
-- **Element Web**：http://127.0.0.1:18088 - IM 界面（直接端口），或通过网关访问 http://matrix-client-local.hiclaw.io:18080
+- **Higress 控制台**：http://localhost:18001 — 网关路由与 Consumer
+- **Element Web**：http://127.0.0.1:18088 — IM（宿主机直连端口），或经网关 `http://matrix-client-local.hiclaw.io:18080`（需将 `*-local.hiclaw.io` 解析到本机）
+- **MinIO**：嵌入式安装下 MinIO 在 **`hiclaw-controller`** 内，默认不把控制台端口映射到宿主机；请用容器内 `mc`、内部 API，或自行增加访问方式
+- **OpenClaw 控制 UI**（仅 OpenClaw Manager）：http://127.0.0.1:18888
 
 ## 备份与恢复
 

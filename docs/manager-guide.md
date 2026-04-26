@@ -32,20 +32,27 @@ The Manager is configured via environment variables set during installation. The
 | `HICLAW_DATA_DIR` | No | `hiclaw-data` | Docker volume name for persistent data |
 | `HICLAW_MOUNT_SOCKET` | No | `1` | Mount container runtime socket for direct Worker creation |
 | `HICLAW_YOLO` | No | - | Set to `1` to enable YOLO mode (autonomous decisions, no interactive prompts) |
+| `HICLAW_MANAGER_RUNTIME` | No | `openclaw` | Manager engine: **`openclaw`** (default, `hiclaw-manager` image) or **`copaw`** (`hiclaw-manager-copaw` image). Hermes is supported for **Workers** only, not as a Manager runtime. |
+
+### CoPaw Manager (`HICLAW_MANAGER_RUNTIME=copaw`)
+
+When you choose the CoPaw Manager at install time, the controller runs the **`hiclaw-manager-copaw`** image instead of the OpenClaw-based **`hiclaw-manager`**. Behavior is the same role (coordinate Workers/Teams over Matrix, drive Higress/MCP flows); only the agent engine and config layout differ (Python CoPaw vs Node OpenClaw). Multi-channel setup and skills follow the CoPaw workspace conventions under `/root/manager-workspace`.
 
 ### Customizing the Manager Agent
 
-The Manager Agent's behavior is defined by three files in MinIO:
+The Manager Agent's behavior is defined by three files stored in the **`hiclaw-storage`** MinIO bucket (S3 path prefix `agents/manager/`). The installer bind-mounts the host workspace to **`/root/manager-workspace`** in the Manager container, which is kept in sync with that bucket — edit either via MinIO UI/API or by editing files on the host under `HICLAW_WORKSPACE_DIR` (default `~/hiclaw-manager`).
 
 1. **SOUL.md** - Agent identity, security rules, communication model
-2. **HEARTBEAT.md** - Periodic check routine (triggered by OpenClaw's built-in heartbeat mechanism)
+2. **HEARTBEAT.md** - Periodic check routine (OpenClaw heartbeat or CoPaw equivalent, depending on runtime)
 3. **AGENTS.md** - Available skills and task workflow
 
-To customize, edit these files in MinIO Console (http://localhost:9001) under `hiclaw-storage/agents/manager/`.
+If your install still exposes MinIO on localhost, use the MinIO Console; otherwise use `mc` from inside **`hiclaw-controller`** or edit the mirrored files under the workspace directory on the host.
 
 ### Adding Skills
 
-Skills are self-contained SKILL.md files placed in `agents/manager/skills/<skill-name>/SKILL.md`. OpenClaw auto-discovers skills from this directory.
+The repo ships **16** built-in Manager skills under `manager/agent/skills/` (synced into the bucket as `agents/manager/skills/<name>/SKILL.md`): **channel-management**, **file-sync-management**, **git-delegation-management**, **hiclaw-find-worker**, **human-management**, **matrix-server-management**, **mcp-server-management**, **mcporter**, **model-switch**, **project-management**, **service-publishing**, **task-coordination**, **task-management**, **team-management**, **worker-management**, **worker-model-switch**.
+
+Place additional self-contained `SKILL.md` files under `agents/manager/skills/<skill-name>/`. The Manager runtime auto-discovers skills from that directory.
 
 To add a new skill:
 1. Create directory: `agents/manager/skills/<your-skill-name>/`
@@ -152,17 +159,20 @@ When the Manager or Human Admin asks a Worker to resume a task after a session r
 
 ### Logs
 
+**v1.1.0+ embedded install:** Higress, Tuwunel, and MinIO run inside **`hiclaw-controller`**. The **`hiclaw-manager`** container only runs the coordinator agent; infrastructure logs are on the controller.
+
 ```bash
-# All component logs (combined stdout/stderr)
+# Manager Agent (stdout/stderr + startup scripts)
 docker logs hiclaw-manager -f
-
-# Specific component logs (inside container)
 docker exec hiclaw-manager cat /var/log/hiclaw/manager-agent.log
-docker exec hiclaw-manager cat /var/log/hiclaw/tuwunel.log
-docker exec hiclaw-manager cat /var/log/hiclaw/higress-console.log
 
-# OpenClaw runtime log (agent events, tool calls, LLM interactions)
+# OpenClaw runtime log (agent events, tool calls, LLM interactions) — OpenClaw Manager only
 docker exec hiclaw-manager bash -c 'cat /tmp/openclaw/openclaw-*.log' | jq .
+
+# Infrastructure + Higress Console (embedded stack)
+docker logs hiclaw-controller -f
+docker exec hiclaw-controller cat /var/log/hiclaw/higress-console.log
+docker exec hiclaw-controller cat /var/log/hiclaw/tuwunel.log
 ```
 
 ### Replay Conversation Logs
@@ -179,17 +189,20 @@ make replay-log
 ### Health Checks
 
 ```bash
-# Check individual services
-curl -s http://127.0.0.1:6167/_matrix/client/versions   # Matrix (internal port, from host via docker exec)
-curl -s http://127.0.0.1:9000/minio/health/live          # MinIO (internal port, from host via docker exec)
-curl -s http://127.0.0.1:18001/                           # Higress Console (host port)
+# Matrix / MinIO (not published on host by default — exec into controller)
+docker exec hiclaw-controller curl -sf http://127.0.0.1:6167/_matrix/client/versions
+docker exec hiclaw-controller curl -sf http://127.0.0.1:9000/minio/health/live
+
+# Higress Console (host port)
+curl -s http://127.0.0.1:18001/
 ```
 
 ### Consoles
 
-- **Higress Console**: http://localhost:18001 - Gateway management, routes, consumers
-- **MinIO Console**: http://localhost:9001 - File system browsing, agent configs (direct port, not via gateway)
-- **Element Web**: http://127.0.0.1:18088 - IM interface (direct port), or http://matrix-client-local.hiclaw.io:18080 via gateway
+- **Higress Console**: http://localhost:18001 — gateway routes and consumers
+- **Element Web**: http://127.0.0.1:18088 — IM (direct host port), or via gateway hostname `http://matrix-client-local.hiclaw.io:18080` when `*-local.hiclaw.io` resolves to localhost
+- **MinIO**: embedded install keeps MinIO **inside** `hiclaw-controller` (no default host publish). Use `mc` from that container, the MinIO API through internal URLs, or browse objects if you add a console route yourself
+- **OpenClaw control UI** (OpenClaw Manager): http://127.0.0.1:18888
 
 ## Backup and Recovery
 
