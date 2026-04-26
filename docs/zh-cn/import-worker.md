@@ -6,9 +6,9 @@
 
 HiClaw 使用薄壳 + 容器内 CLI 架构来管理资源：
 
-- **`hiclaw-apply.sh`** —— 在宿主机上运行，将声明式 YAML 转发给 Manager 容器内的 `hiclaw apply`。这是创建和管理 Worker、Team、Human 的主要方式。
-- **`hiclaw-import.sh`** —— 在宿主机上运行，处理 ZIP 包导入，并转发给容器内的 `hiclaw` CLI。
-- **`hiclaw` CLI** —— 在 Manager 容器内运行，负责所有资源管理（apply、get、delete）。
+- **`hiclaw-apply.sh`** —— 在宿主机上运行，将 YAML 拷贝进 **`hiclaw-manager`** 容器并在其中执行 `hiclaw apply -f …`。
+- **`hiclaw-import.sh`** —— 在宿主机上运行，处理 ZIP / 包导入，并转发给 **`hiclaw-manager`** 内的 `hiclaw` CLI。
+- **`hiclaw` CLI** —— 同时内置在 **`hiclaw-controller`**、**`hiclaw-manager`** 与 Worker 镜像中，通过 controller 的 REST API 完成 apply/get/delete/create/update。
 
 ## 声明式 YAML 管理
 
@@ -122,17 +122,11 @@ spec:
 bash hiclaw-apply.sh -f full-setup.yaml
 ```
 
-### 全量同步（Prune）
-
-删除 YAML 中不存在但系统中已有的资源，实现完整的期望状态同步：
-
-```bash
-bash hiclaw-apply.sh -f company-setup.yaml --prune
-```
+当前 `hiclaw apply` 对 YAML 仅稳定支持 **`-f` / `--file`**。**`--prune`、`--dry-run`、`--watch` 均未实现** —— 请用 `hiclaw delete …` 显式删除，或逐个更新资源。
 
 ### 管理已有资源
 
-在 Manager 容器内（或通过 `docker exec`）执行：
+在 **`hiclaw-manager`** 或 **`hiclaw-controller`** 内（或通过 `docker exec`）执行：
 
 ```bash
 # 列出所有 worker
@@ -187,7 +181,7 @@ worker-package.zip
 }
 ```
 
-`worker.runtime`（`openclaw` 或 `copaw`）会被 `hiclaw apply worker --zip` 读取，
+`worker.runtime`（`openclaw`、`copaw` 或 `hermes`）会被 `hiclaw apply worker --zip` 读取，
 显式传入的 `--runtime` 参数优先级更高。两者都没设置时由 controller 兜底（默认 `openclaw`）。
 
 ## 场景一：迁移独立运行的 OpenClaw
@@ -370,7 +364,7 @@ zip -r devops-worker-template.zip manifest.json config/ skills/ Dockerfile
 
 ```bash
 bash hiclaw-import.sh worker --name <名称> [选项]
-bash hiclaw-import.sh -f <resource.yaml> [--prune] [--dry-run]
+bash hiclaw-import.sh -f <resource.yaml>   # 转发到 hiclaw-apply.sh（与 apply 相同约束）
 ```
 
 **Worker 导入模式：**
@@ -383,33 +377,31 @@ bash hiclaw-import.sh -f <resource.yaml> [--prune] [--dry-run]
 | `--model <模型>` | LLM 模型 ID | `qwen3.5-plus` |
 | `--skills <s1,s2>` | 逗号分隔的内置技能 | — |
 | `--mcp-servers <m1,m2>` | 逗号分隔的 MCP Server | — |
-| `--runtime <运行时>` | Agent 运行时（`openclaw`\|`copaw`） | `openclaw` |
-| `--dry-run` | 预览变更但不实际执行 | 关闭 |
-| `--yes` | 跳过交互确认 | 关闭 |
+| `--runtime <运行时>` | Agent 运行时（`openclaw`\|`copaw`\|`hermes`） | `openclaw` |
+| `--yes` | 跳过交互确认（包装脚本可能在底层吞掉） | 关闭 |
 
-**YAML 模式**（`-f`）：转发给 `hiclaw-apply.sh` 执行。
+**YAML 模式**（`-f`）：转发给 `hiclaw-apply.sh`；不支持 `--prune`/`--dry-run`。
 
 ### hiclaw-import.ps1（PowerShell — Windows）
 
 ```powershell
-.\hiclaw-import.ps1 worker -Name <名称> [-Zip <路径或URL>] [-Package <URI>] [-Model 模型] [-Skills s1,s2] [-McpServers m1,m2] [-Runtime rt] [-DryRun] [-Yes]
-.\hiclaw-import.ps1 -File <resource.yaml> [-Prune] [-DryRun]
+.\hiclaw-import.ps1 worker -Name <名称> [-Zip <路径或URL>] [-Package <URI>] [-Model 模型] [-Skills s1,s2] [-McpServers m1,m2] [-Runtime rt] [-Yes]
+.\hiclaw-import.ps1 -File <resource.yaml>
 ```
 
-参数与 Bash 版本一致。
+参数与 Bash 版本一致（YAML 路径无 `-Prune`/`-DryRun`）。
 
 ### hiclaw-apply.sh（Bash — macOS/Linux）
 
 ```bash
-bash hiclaw-apply.sh -f <resource.yaml> [选项]
+bash hiclaw-apply.sh -f <resource.yaml> [-- 其余参数原样传给 hiclaw apply]
 ```
 
 | 选项 | 说明 | 默认值 |
 |------|------|--------|
 | `-f <路径>` | YAML 资源文件（必需） | — |
-| `--prune` | 删除 YAML 中不存在的资源 | 关闭 |
-| `--dry-run` | 预览变更但不实际执行 | 关闭 |
-| `--yes` | Prune 时跳过删除确认 | 关闭 |
+
+安装脚本头部若仍提到 **`--prune` / `--dry-run` / `--watch`**，请以当前 **`hiclaw apply` 实现为准**（未实现上述开关），改用显式 `hiclaw delete`。
 
 ## 故障排查
 

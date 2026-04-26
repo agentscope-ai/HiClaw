@@ -6,9 +6,9 @@ Import pre-configured Workers into HiClaw, or declaratively manage Workers, Team
 
 HiClaw uses a thin-shell + container-internal CLI architecture for resource management:
 
-- **`hiclaw-apply.sh`** — runs on the host; forwards declarative YAML to `hiclaw apply` inside the Manager container. The primary way to create and manage Workers, Teams, and Humans.
-- **`hiclaw-import.sh`** — runs on the host; handles ZIP package imports and forwards to the `hiclaw` CLI inside the Manager container.
-- **`hiclaw` CLI** — runs inside the Manager container; handles all resource management (apply, get, delete).
+- **`hiclaw-apply.sh`** — runs on the host; copies YAML into the **`hiclaw-manager`** container and runs `hiclaw apply -f …` there.
+- **`hiclaw-import.sh`** — runs on the host; handles ZIP / package imports and forwards to the `hiclaw` CLI **inside `hiclaw-manager`**.
+- **`hiclaw` CLI** — present in **`hiclaw-controller`**, **`hiclaw-manager`**, and Worker images; talks to the controller REST API for apply/get/delete/create/update.
 
 ## Declarative YAML Management
 
@@ -122,17 +122,11 @@ spec:
 bash hiclaw-apply.sh -f full-setup.yaml
 ```
 
-### Full Sync (Prune)
-
-To synchronize a complete desired state, deleting resources not in the YAML:
-
-```bash
-bash hiclaw-apply.sh -f company-setup.yaml --prune
-```
+`hiclaw apply` currently supports **`-f` / `--file` only** for multi-document YAML. **`--prune`**, **`--dry-run`**, and **`--watch`** are **not implemented** — remove stale objects with `hiclaw delete …` (from `hiclaw-manager` or `hiclaw-controller`) or edit resources explicitly.
 
 ### Manage Existing Resources
 
-Inside the Manager container (or via `docker exec`):
+Inside **`hiclaw-manager`** or **`hiclaw-controller`** (or via `docker exec`):
 
 ```bash
 # List all workers
@@ -189,7 +183,7 @@ worker-package.zip
 }
 ```
 
-`worker.runtime` (`openclaw` or `copaw`) is honored by `hiclaw apply worker --zip`
+`worker.runtime` (`openclaw`, `copaw`, or `hermes`) is honored by `hiclaw apply worker --zip`
 and overridden by an explicit `--runtime` flag. When neither is set the controller
 falls back to its default runtime (`openclaw`).
 
@@ -373,7 +367,7 @@ zip -r devops-worker-template.zip manifest.json config/ skills/ Dockerfile
 
 ```bash
 bash hiclaw-import.sh worker --name <name> [options]
-bash hiclaw-import.sh -f <resource.yaml> [--prune] [--dry-run]
+bash hiclaw-import.sh -f <resource.yaml>   # forwards to hiclaw-apply.sh (same flags as apply)
 ```
 
 **Worker import mode:**
@@ -386,33 +380,31 @@ bash hiclaw-import.sh -f <resource.yaml> [--prune] [--dry-run]
 | `--model <model>` | LLM model ID | `qwen3.5-plus` |
 | `--skills <s1,s2>` | Comma-separated built-in skills | — |
 | `--mcp-servers <m1,m2>` | Comma-separated MCP servers | — |
-| `--runtime <runtime>` | Agent runtime (`openclaw`\|`copaw`) | `openclaw` |
-| `--dry-run` | Show changes without applying | off |
-| `--yes` | Skip interactive confirmations | off |
+| `--runtime <runtime>` | Agent runtime (`openclaw`\|`copaw`\|`hermes`) | `openclaw` |
+| `--yes` | Skip interactive confirmations (swallowed by wrapper when unsupported) | off |
 
-**YAML mode** (`-f`): delegates to `hiclaw-apply.sh`.
+**YAML mode** (`-f`): delegates to `hiclaw-apply.sh` (only `-f` is required; extra unsupported flags are rejected by `hiclaw apply`).
 
 ### hiclaw-import.ps1 (PowerShell — Windows)
 
 ```powershell
-.\hiclaw-import.ps1 worker -Name <name> [-Zip <path-or-url>] [-Package <uri>] [-Model MODEL] [-Skills s1,s2] [-McpServers m1,m2] [-Runtime rt] [-DryRun] [-Yes]
-.\hiclaw-import.ps1 -File <resource.yaml> [-Prune] [-DryRun]
+.\hiclaw-import.ps1 worker -Name <name> [-Zip <path-or-url>] [-Package <uri>] [-Model MODEL] [-Skills s1,s2] [-McpServers m1,m2] [-Runtime rt] [-Yes]
+.\hiclaw-import.ps1 -File <resource.yaml>
 ```
 
-Parameters mirror the Bash version.
+Parameters mirror the Bash version (no `-Prune`/`-DryRun` on YAML path).
 
 ### hiclaw-apply.sh (Bash — macOS/Linux)
 
 ```bash
-bash hiclaw-apply.sh -f <resource.yaml> [options]
+bash hiclaw-apply.sh -f <resource.yaml> [-- additional args passed to hiclaw apply]
 ```
 
 | Option | Description | Default |
 |--------|-------------|---------|
 | `-f <path>` | YAML resource file (required) | — |
-| `--prune` | Delete resources not in YAML | off |
-| `--dry-run` | Show changes without applying | off |
-| `--yes` | Skip delete confirmation when pruning | off |
+
+The install script header may mention **`--prune` / `--dry-run` / `--watch`** — those are **not** implemented in `hiclaw apply` today; use explicit deletes instead.
 
 ## Troubleshooting
 
