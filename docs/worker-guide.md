@@ -10,9 +10,26 @@ Workers are lightweight, stateless containers that:
 - Use AI Gateway for LLM access
 - Use mcporter CLI for MCP Server tool calls (GitHub, etc.)
 
+### Declarative create / update (v1.1.0+)
+
+Workers are **CRD-backed**. Besides asking the Manager in Matrix, you can:
+
+- Run **`hiclaw create worker` / `hiclaw update worker`** inside `hiclaw-controller` or `hiclaw-manager` (see [faq.md](faq.md)).
+- Apply YAML with **`install/hiclaw-apply.sh`** (forwards to `hiclaw apply -f` in the Manager container).
+
+Full field reference: [Declarative Resource Management](declarative-resource-management.md).
+
+### Filesystem layout by `spec.runtime`
+
+| Runtime | Primary workspace | Notes |
+|---------|-------------------|--------|
+| **openclaw** | `/root/hiclaw-fs/agents/<worker-name>/` (`HOME` points here) | `openclaw.json`, `SOUL.md`, `AGENTS.md`, skills, `.openclaw/` live under this tree. Shared data: `/root/hiclaw-fs/shared/`. |
+| **copaw** | `/root/.hiclaw-worker/<worker-name>/` (CoPaw config in `.copaw/`) | A symlink **`/root/hiclaw-fs`** → the per-worker tree keeps scripts that assume OpenClaw-style paths working. |
+| **hermes** | `/root/hiclaw-fs/agents/<worker-name>/` (`HOME` equals workspace, same mirror root as OpenClaw) | Hermes policy/state under **`.hermes/`** inside that directory (e.g. `.hermes/config.yaml`, `state.db`). |
+
 ## Installation
 
-Workers are created by the Manager Agent. The Manager handles all infrastructure setup (Matrix account, Higress consumer, config files, etc.) and can either create the Worker container directly or provide a command for manual execution.
+Workers are created by the Manager Agent **or** the controller via declarative APIs. The Manager handles all infrastructure setup (Matrix account, Higress consumer, config files, etc.) and can either create the Worker container directly or provide a command for manual execution.
 
 ### Method 1: Direct Creation (Recommended for Local Development)
 
