@@ -1071,3 +1071,105 @@ func TestGetWorker_L2Scoped(t *testing.T) {
 		t.Fatalf("standalone worker status=%d, want 404 (W8: hide existence)", rec3.Code)
 	}
 }
+
+// Unknown spec fields must fail loudly instead of being silently dropped:
+// dropping membership fields leaves the Team spec memberless, after which
+// the membership reconciler repeatedly evicts every worker from the team
+// room ("removed from desired member set").
+func TestCreateTeamRejectsUnknownFields(t *testing.T) {
+	scheme := newServerTestScheme(t)
+	k8sClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+	handler := NewResourceHandler(k8sClient, "default", nil, "")
+
+	cases := []struct {
+		name       string
+		body       string
+		wantSubstr []string
+	}{
+		{
+			name: "legacy workers field carries a migration hint",
+			body: `{
+				"name":"alpha-team",
+				"workerMembers":[{"name":"alpha-lead","role":"team_leader"}],
+				"workers":[{"name":"alpha-lead","role":"team_leader"}]
+			}`,
+			wantSubstr: []string{`"workers"`, "workerMembers"},
+		},
+		{
+			name: "generic unknown field names the offender",
+			body: `{
+				"name":"alpha-team",
+				"workerMembers":[{"name":"alpha-lead","role":"team_leader"}],
+				"bogusField":true
+			}`,
+			wantSubstr: []string{`"bogusField"`},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/teams", bytes.NewReader([]byte(tc.body)))
+			rec := httptest.NewRecorder()
+			handler.CreateTeam(rec, req)
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("expected status %d, got %d: %s", http.StatusBadRequest, rec.Code, rec.Body.String())
+			}
+			for _, sub := range tc.wantSubstr {
+				if !strings.Contains(rec.Body.String(), sub) {
+					t.Fatalf("error should contain %s, got: %s", sub, rec.Body.String())
+				}
+			}
+		})
+	}
+
+	var teams v1beta1.TeamList
+	if err := k8sClient.List(context.Background(), &teams); err != nil {
+		t.Fatalf("list teams: %v", err)
+	}
+	if len(teams.Items) != 0 {
+		t.Fatalf("no team must be created when the request contains unknown fields")
+	}
+}
+
+// An explicit empty workerMembers list would wipe the team membership and
+// trigger room evictions; it must be rejected. Unknown fields on update are
+// rejected too.
+func TestUpdateTeamRejectsEmptyWorkerMembersAndUnknownFields(t *testing.T) {
+	scheme := newServerTestScheme(t)
+	leader := &v1beta1.Worker{ObjectMeta: metav1.ObjectMeta{Name: "alpha-lead", Namespace: "default"}}
+	dev := &v1beta1.Worker{ObjectMeta: metav1.ObjectMeta{Name: "alpha-dev", Namespace: "default"}}
+	team := &v1beta1.Team{
+		ObjectMeta: metav1.ObjectMeta{Name: "alpha-team", Namespace: "default"},
+		Spec: v1beta1.TeamSpec{
+			WorkerMembers: []v1beta1.TeamWorkerRef{
+				{Name: "alpha-lead", Role: "team_leader"},
+				{Name: "alpha-dev", Role: "worker"},
+			},
+		},
+	}
+	k8sClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(leader, dev, team).Build()
+	handler := NewResourceHandler(k8sClient, "default", nil, "")
+
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/teams/alpha-team", bytes.NewReader([]byte(`{"workerMembers":[]}`)))
+	req.SetPathValue("name", "alpha-team")
+	rec := httptest.NewRecorder()
+	handler.UpdateTeam(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected status %d for empty workerMembers, got %d: %s", http.StatusBadRequest, rec.Code, rec.Body.String())
+	}
+
+	var stored v1beta1.Team
+	if err := k8sClient.Get(context.Background(), client.ObjectKey{Name: "alpha-team", Namespace: "default"}, &stored); err != nil {
+		t.Fatalf("get team: %v", err)
+	}
+	if len(stored.Spec.WorkerMembers) != 2 {
+		t.Fatalf("workerMembers wiped: got %d members, want 2", len(stored.Spec.WorkerMembers))
+	}
+
+	req2 := httptest.NewRequest(http.MethodPut, "/api/v1/teams/alpha-team", bytes.NewReader([]byte(`{"workers":[{"name":"alpha-lead"}]}`)))
+	req2.SetPathValue("name", "alpha-team")
+	rec2 := httptest.NewRecorder()
+	handler.UpdateTeam(rec2, req2)
+	if rec2.Code != http.StatusBadRequest {
+		t.Fatalf("expected status %d for unknown field on update, got %d: %s", http.StatusBadRequest, rec2.Code, rec2.Body.String())
+	}
+}
