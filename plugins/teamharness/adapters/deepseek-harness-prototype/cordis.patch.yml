@@ -1,0 +1,38 @@
+- id: skill-filesystem
+  config:
+    includeDefaultRoots: false
+    customSkillDirs:
+      - !!js process.env.TEAMHARNESS_DSH_SKILL_ROOT
+    watch: false
+
+- insert:
+    - id: teamharness-context
+      name: 'agentteams-teamharness-dsh-prototype/context'
+      inject: [systemPrompt]
+      config:
+        pluginDir: !!js process.env.AGENTTEAMS_PLUGIN_DIR
+        runtimeConfigPath: !!js process.env.TEAMHARNESS_RUNTIME_CONFIG
+
+    - id: teamharness-mcp
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: teamharness
+        transport: stdio
+        command: !!js process.env.TEAMHARNESS_PYTHON || 'python'
+        args: ['mcp/server.py']
+        cwd: !!js process.env.AGENTTEAMS_PLUGIN_DIR
+        env:
+          AGENTTEAMS_PLUGIN_DIR: !!js process.env.AGENTTEAMS_PLUGIN_DIR
+          TEAMHARNESS_RUNTIME_CONFIG: !!js process.env.TEAMHARNESS_RUNTIME_CONFIG
+          TEAMHARNESS_WORKSPACE: !!js process.env.TEAMHARNESS_WORKSPACE
+        failOnStartupError: true
+        reconnect:
+          enabled: false
+
+    - id: teamharness-smoke-probe
+      name: 'agentteams-teamharness-dsh-prototype/probe'
+      inject: [systemPrompt, skills, tools]
+      disabled: !!js Boolean(process.env.TEAMHARNESS_DSH_SMOKE_REPORT) === false
+      config:
+        reportPath: !!js process.env.TEAMHARNESS_DSH_SMOKE_REPORT
+        workspace: !!js process.env.TEAMHARNESS_WORKSPACE

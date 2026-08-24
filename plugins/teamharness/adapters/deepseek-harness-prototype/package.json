@@ -1,0 +1,24 @@
+{
+  "name": "agentteams-teamharness-dsh-prototype",
+  "version": "0.0.0-prototype",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./context": "./context.js",
+    "./probe": "./probe.js"
+  },
+  "files": [
+    "context.js",
+    "prepare-skills.js",
+    "probe.js",
+    "cordis.patch.yml"
+  ],
+  "dependencies": {
+    "yaml": "^2.8.1"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}
