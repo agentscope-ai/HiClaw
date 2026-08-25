@@ -207,8 +207,8 @@ func (r *WorkerReconciler) reconcileNormal(ctx context.Context, w *v1beta1.Worke
 		return reconcile.Result{}, err
 	}
 	effectiveRuntime := backend.ResolveRuntime(effectiveSpec.Runtime, r.DefaultRuntime)
-	configOwnedByTeam := inTeam && effectiveRuntime == backend.RuntimeQwenPaw
-	skillsBeforeConfig := effectiveRuntime == backend.RuntimeQwenPaw
+	configOwnedByTeam := inTeam && backend.UsesMemberRuntimeConfig(effectiveRuntime)
+	skillsBeforeConfig := backend.UsesMemberRuntimeConfig(effectiveRuntime)
 
 	if effectiveSpec.ModelProvider != "" && r.GatewayClient != nil {
 		info, err := r.GatewayClient.ResolveModelProvider(ctx, effectiveSpec.ModelProvider)
@@ -821,7 +821,7 @@ func hashAppliedWorkerSpec(spec v1beta1.WorkerSpec) string {
 }
 
 func hashAppliedWorkerSpecForRuntime(spec v1beta1.WorkerSpec, runtime string) string {
-	if runtime == backend.RuntimeQwenPaw {
+	if backend.UsesMemberRuntimeConfig(runtime) {
 		if spec.Runtime == "" {
 			spec.Runtime = runtime
 		}
@@ -831,7 +831,7 @@ func hashAppliedWorkerSpecForRuntime(spec v1beta1.WorkerSpec, runtime string) st
 }
 
 func hashAppliedWorkerSpecForRuntimeAndResources(spec v1beta1.WorkerSpec, runtime string, resources *v1beta1.AgentResourceRequirements) string {
-	if runtime == backend.RuntimeQwenPaw {
+	if backend.UsesMemberRuntimeConfig(runtime) {
 		if spec.Runtime == "" {
 			spec.Runtime = runtime
 		}

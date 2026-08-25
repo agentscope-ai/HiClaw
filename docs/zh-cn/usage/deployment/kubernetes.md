@@ -110,6 +110,7 @@ manager:
 | `openclaw` | `worker.defaultImage.openclaw` | 默认通用 Worker runtime |
 | `copaw` | `worker.defaultImage.copaw` | Python / CoPaw Worker |
 | `hermes` | `worker.defaultImage.hermes` | Hermes Worker |
+| `deepseek-harness` | `worker.defaultImage.deepseekHarness` | 通过 Matrix 和对象存储接入的 headless DeepSeek Harness Worker |
 | `openhuman` | `worker.defaultImage.openhuman` | Chart 中已有默认镜像配置，但当前 Worker CRD enum 不接受显式的 `spec.runtime: openhuman` |
 
 Controller 也认识 `qwenpaw` Worker runtime，但当前 Chart 没有为它提供独立的默认镜像配置。使用时应在 `Worker.spec.image` 中显式指定 QwenPaw Worker 镜像。OpenHuman 的后端与 Helm values 已存在，但 CRD 契约尚未对齐；业务代码单独修正前，不应在 Worker YAML 中显式使用 `openhuman`。

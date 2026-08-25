@@ -147,8 +147,9 @@ flowchart TB
 | **copaw** | Python / CoPaw compatibility path | Retained for existing deployments; uses `agentteams-copaw-worker` and the `.copaw/` runtime directory |
 | **qwenpaw** | Python / **QwenPaw 2.x** | Current QwenPaw Worker path; uses `agentteams-qwenpaw-worker` and the `.qwenpaw/` runtime directory |
 | **hermes** | Python / **`hermes-worker`** | Matrix worker runtime with Hermes policy/config tree under `hermes-worker-agent/` |
+| **deepseek-harness** | Node.js / **DeepSeek Harness** | Headless DSH Worker; consumes Controller-projected `runtime.yaml`, receives text through Matrix, and persists channel/session state to object storage |
 
-The shipped Worker CRD enum accepts the four values above. The Controller and Helm values already contain an OpenHuman backend and default image configuration, but the current CRD does not accept an explicit `spec.runtime: openhuman`, so this document does not list it as a directly declarable Worker runtime. The current chart also has no `worker.defaultImage.qwenpaw`; set `spec.image` explicitly when using `qwenpaw` in a CR. The controller resolves the effective runtime and image when creating Pods or Docker containers.
+The shipped Worker CRD enum accepts the five values above. The Controller and Helm values already contain an OpenHuman backend and default image configuration, but the current CRD does not accept an explicit `spec.runtime: openhuman`, so this document does not list it as a directly declarable Worker runtime. The current chart also has no `worker.defaultImage.qwenpaw`; set `spec.image` explicitly when using `qwenpaw` in a CR. The controller resolves the effective runtime and image when creating Pods or Docker containers.
 
 ### Manager runtimes
 

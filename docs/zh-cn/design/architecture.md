@@ -147,8 +147,9 @@ flowchart TB
 | **copaw** | Python / CoPaw 兼容路径 | 保留给已有部署；使用 `agentteams-copaw-worker` 及 `.copaw/` 运行时目录 |
 | **qwenpaw** | Python / **QwenPaw 2.x** | 当前 QwenPaw Worker 路径；使用 `agentteams-qwenpaw-worker` 及 `.qwenpaw/` 运行时目录 |
 | **hermes** | Python / **`hermes-worker`** | Matrix worker runtime，Hermes policy/config tree 位于 `hermes-worker-agent/` |
+| **deepseek-harness** | Node.js / **DeepSeek Harness** | Headless DSH Worker；读取 Controller 投影的 `runtime.yaml`，通过 Matrix 接收文本消息，并把 channel/session 状态持久化到对象存储 |
 
-当前发布的 Worker CRD enum 接受上表四个值。Controller 和 Helm values 中已经存在 OpenHuman 的后端及默认镜像配置，但当前 CRD 尚不接受显式的 `spec.runtime: openhuman`，因此本文不把它列为可直接声明的 Worker runtime。当前 Chart 也没有 `worker.defaultImage.qwenpaw`，在 CR 中使用 `qwenpaw` 时需要显式设置 `spec.image`。controller 在创建 Pod 或 Docker container 时解析最终 runtime 和镜像。
+当前发布的 Worker CRD enum 接受上表五个值。Controller 和 Helm values 中已经存在 OpenHuman 的后端及默认镜像配置，但当前 CRD 尚不接受显式的 `spec.runtime: openhuman`，因此本文不把它列为可直接声明的 Worker runtime。当前 Chart 也没有 `worker.defaultImage.qwenpaw`，在 CR 中使用 `qwenpaw` 时需要显式设置 `spec.image`。controller 在创建 Pod 或 Docker container 时解析最终 runtime 和镜像。
 
 ### Manager runtimes
 

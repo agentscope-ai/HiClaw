@@ -17,7 +17,7 @@ function requiredArgument(values, name) {
 function adapterRole(value) {
   const role = String(value ?? '').toLowerCase().replaceAll('_', '-').trim()
   if (['team-leader', 'teamleader', 'leader'].includes(role)) return 'leader'
-  if (role === 'worker') return 'worker'
+  if (['worker', 'standalone'].includes(role)) return 'worker'
   if (['remote', 'remote-member'].includes(role)) return 'remote-member'
   if (role === 'manager') return 'manager'
   throw new Error(`unsupported TeamHarness role: ${value}`)

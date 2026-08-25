@@ -5,10 +5,12 @@
   "type": "module",
   "exports": {
     "./context": "./context.js",
+    "./live-probe": "./live-probe.js",
     "./probe": "./probe.js"
   },
   "files": [
     "context.js",
+    "live-probe.js",
     "prepare-skills.js",
     "probe.js",
     "cordis.patch.yml"

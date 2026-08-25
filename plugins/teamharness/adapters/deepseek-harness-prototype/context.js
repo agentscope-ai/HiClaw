@@ -19,6 +19,15 @@ function rolePromptName(role) {
   throw new Error(`unsupported TeamHarness role for DSH prototype: ${role}`)
 }
 
+function inlineAgentConfig(runtimeConfig) {
+  const inline = runtimeConfig?.desired?.inlineConfig ?? {}
+  return [
+    inline.identity ? `# Agent Identity\n\n${String(inline.identity).trim()}` : '',
+    inline.soul ? `# Agent Soul\n\n${String(inline.soul).trim()}` : '',
+    inline.agents ? `# Agent Instructions\n\n${String(inline.agents).trim()}` : '',
+  ].filter(Boolean).join('\n\n')
+}
+
 export function apply(ctx, config) {
   const pluginDir = resolve(requiredString(config.pluginDir, 'pluginDir'))
   const runtimeConfigPath = resolve(requiredString(config.runtimeConfigPath, 'runtimeConfigPath'))
@@ -26,6 +35,33 @@ export function apply(ctx, config) {
   const team = runtimeConfig?.team ?? {}
   const member = runtimeConfig?.member ?? {}
   const role = requiredString(member.role, 'member.role')
+  const normalizedRole = role.toLowerCase().replaceAll('_', '-').trim()
+  const configuredAgent = inlineAgentConfig(runtimeConfig)
+
+  if (normalizedRole === 'standalone') {
+    const standalonePrompt = [
+      '# Worker Role — Standalone',
+      '',
+      'You are an independent AgentTeams Worker coordinated by Manager and Admin.',
+      'Answer direct questions in the current room. Use task-execution only when a concrete task is assigned.',
+      'Do not invent a Team, Team Leader, team room, project, or delegation workflow.',
+      '',
+      '# Current Agent Context',
+      '',
+      `member.name: ${requiredString(member.name, 'member.name')}`,
+      `member.runtimeName: ${requiredString(member.runtimeName, 'member.runtimeName')}`,
+      `member.role: ${role}`,
+      `member.matrixUserId: ${requiredString(member.matrixUserId, 'member.matrixUserId')}`,
+      `member.personalRoomId: ${requiredString(member.personalRoomId, 'member.personalRoomId')}`,
+      configuredAgent,
+    ].filter(Boolean).join('\n')
+    ctx.effect(() => ctx.systemPrompt.section({
+      name: 'teamharness:collaboration',
+      order: 20,
+      text: standalonePrompt,
+    }), 'teamharness-context.section()')
+    return
+  }
 
   const teamPrompt = readFileSync(join(pluginDir, 'prompts', 'team', 'TEAMS.md'), 'utf8').trim()
   const rolePrompt = readFileSync(
@@ -44,7 +80,7 @@ export function apply(ctx, config) {
     `member.matrixUserId: ${requiredString(member.matrixUserId, 'member.matrixUserId')}`,
   ].join('\n')
 
-  const text = `${teamPrompt}\n\n${rolePrompt}\n\n${currentContext}`
+  const text = [teamPrompt, rolePrompt, currentContext, configuredAgent].filter(Boolean).join('\n\n')
   ctx.effect(() => ctx.systemPrompt.section({
     name: 'teamharness:collaboration',
     order: 20,

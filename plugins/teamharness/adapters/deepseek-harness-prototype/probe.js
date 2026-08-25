@@ -2,7 +2,7 @@ import { writeFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 
 export const name = 'teamharness-smoke-probe'
-export const inject = ['systemPrompt', 'skills', 'tools']
+export const inject = ['systemPrompt', 'skills', 'tools', 'agentDefaultModel']
 
 const delay = milliseconds => new Promise(done => setTimeout(done, milliseconds))
 
@@ -38,6 +38,10 @@ async function waitUntilReady(ctx, workspace) {
 export async function apply(ctx, config) {
   const reportPath = resolve(String(config.reportPath ?? ''))
   const workspace = resolve(String(config.workspace ?? ''))
+  const expectedRuntimeRole = String(config.expectedRuntimeRole ?? 'worker')
+  const expectMessageTool = config.expectMessageTool === true
+  const expectTeamContract = config.expectTeamContract !== false
+  const expectedModel = String(config.expectedModel ?? 'deepseek-v4-flash')
   let exitCode = 1
   try {
     const { prompt, skillNames, toolNames } = await waitUntilReady(ctx, workspace)
@@ -62,11 +66,12 @@ export async function apply(ctx, config) {
     })
     const filesync = jsonText(filesyncResult, 'filesync')
 
+    const selectedModel = ctx.get('agentDefaultModel').currentSelection()
     const checks = {
-      promptHasTeamContract: prompt.includes('# Team Contract'),
+      promptHasTeamContract: prompt.includes('# Team Contract') === expectTeamContract,
       promptHasWorkerRole: prompt.includes('# Worker Role'),
       promptHasRuntimeIdentity: prompt.includes('member.runtimeName: dsh-worker-a'),
-      promptHasRuntimeRole: prompt.includes('member.role: worker'),
+      promptHasRuntimeRole: prompt.includes(`member.role: ${expectedRuntimeRole}`),
       skillDiscovered: skillNames.includes('teamharness-task-execution'),
       leaderSkillsHidden: !skillNames.some(name => [
         'teamharness-roomflow',
@@ -77,12 +82,13 @@ export async function apply(ctx, config) {
       unregisteredSkillHidden: !skillNames.includes('teamharness-organization'),
       healthToolRegistered: toolNames.includes('mcp__teamharness__health'),
       filesyncToolRegistered: toolNames.includes('mcp__teamharness__filesync'),
-      workerMessageToolHidden: !toolNames.includes('mcp__teamharness__message'),
+      messageToolVisibilityMatchesRole: toolNames.includes('mcp__teamharness__message') === expectMessageTool,
+      defaultModelMatchesRuntime: selectedModel.provider === 'deepseek-official' && selectedModel.model === expectedModel,
       healthCallPassed: health.ok === true && health.status === 'ok',
       filesyncDryRunPassed: filesync.ok === true && filesync.dryRun === true,
     }
     const failed = Object.entries(checks).filter(([, passed]) => !passed).map(([check]) => check)
-    await writeFile(reportPath, `${JSON.stringify({ checks, failed, skillNames, toolNames, health, filesync }, null, 2)}\n`, 'utf8')
+    await writeFile(reportPath, `${JSON.stringify({ checks, failed, skillNames, toolNames, selectedModel, health, filesync }, null, 2)}\n`, 'utf8')
     exitCode = failed.length === 0 ? 0 : 1
   } catch (error) {
     await writeFile(reportPath, `${JSON.stringify({ fatal: error instanceof Error ? error.stack : String(error) }, null, 2)}\n`, 'utf8')
