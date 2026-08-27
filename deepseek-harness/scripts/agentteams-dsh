@@ -6,7 +6,7 @@ set -euo pipefail
 : "${TEAMHARNESS_RUNTIME_CONFIG:?TEAMHARNESS_RUNTIME_CONFIG is required}"
 : "${TEAMHARNESS_DSH_SKILL_ROOT:?TEAMHARNESS_DSH_SKILL_ROOT is required}"
 
-ADAPTER_PACKAGE="${DSH_HOME}/profiles/headless/node_modules/agentteams-teamharness-dsh-prototype"
+ADAPTER_PACKAGE="${DSH_HOME}/profiles/headless/node_modules/agentteams-teamharness-dsh"
 node "${ADAPTER_PACKAGE}/prepare-skills.js" \
     --plugin-dir "${AGENTTEAMS_PLUGIN_DIR}" \
     --runtime-config "${TEAMHARNESS_RUNTIME_CONFIG}" \

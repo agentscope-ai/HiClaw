@@ -12,47 +12,10 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-function Get-FreeTcpPort {
-    $Listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
-    $Listener.Start()
-    try { return ([Net.IPEndPoint]$Listener.LocalEndpoint).Port }
-    finally { $Listener.Stop() }
-}
-
-function Wait-TcpPort([int]$Port) {
-    $Deadline = [DateTime]::UtcNow.AddSeconds(20)
-    while ([DateTime]::UtcNow -lt $Deadline) {
-        $Client = [Net.Sockets.TcpClient]::new()
-        try {
-            $Task = $Client.ConnectAsync('127.0.0.1', $Port)
-            if ($Task.Wait(250) -and $Client.Connected) { return }
-        }
-        catch { }
-        finally { $Client.Dispose() }
-        Start-Sleep -Milliseconds 100
-    }
-    throw "Timed out waiting for local port $Port"
-}
-
-function Get-PodEnv([object]$Pod, [string]$Name) {
-    $Entry = @($Pod.spec.containers[0].env) | Where-Object { $_.name -eq $Name } | Select-Object -First 1
-    if ($null -eq $Entry -or [string]::IsNullOrWhiteSpace([string]$Entry.value)) {
-        throw "Pod is missing required literal env $Name"
-    }
-    return [string]$Entry.value
-}
-
-function Invoke-MatrixJson([string]$Method, [string]$Url, [string]$Token, [object]$Body = $null) {
-    $Headers = @{ Authorization = "Bearer $Token" }
-    if ($null -eq $Body) {
-        return Invoke-RestMethod -Method $Method -Uri $Url -Headers $Headers
-    }
-    return Invoke-RestMethod -Method $Method -Uri $Url -Headers $Headers -ContentType 'application/json' -Body ($Body | ConvertTo-Json -Depth 10 -Compress)
-}
-
 $AdapterDir = [IO.Path]::GetFullPath($PSScriptRoot)
 $TeamHarnessDir = [IO.Path]::GetFullPath((Join-Path $AdapterDir '..\..'))
 $RepoRoot = [IO.Path]::GetFullPath((Join-Path $AdapterDir '..\..\..\..'))
+. (Join-Path $RepoRoot 'deepseek-harness/tests/lib/test-helpers.ps1')
 if ([string]::IsNullOrWhiteSpace($DshRoot)) {
     $DshRoot = Join-Path (Split-Path -Parent $RepoRoot) 'deepseek-harness-rc2'
 }
@@ -91,7 +54,7 @@ $McPath = if ([string]::IsNullOrWhiteSpace($McBinary)) {
     [IO.Path]::GetFullPath($McBinary)
 }
 $Marker = 'TEAMHARNESS_DSH_LIVE_' + [guid]::NewGuid().ToString('N')
-$ArtifactRelativePath = "shared\prototype\live\$Marker.txt"
+$ArtifactRelativePath = "shared\deepseek-harness\live\$Marker.txt"
 $ArtifactPath = Join-Path $Workspace $ArtifactRelativePath
 $MatrixPort = Get-FreeTcpPort
 $MinioPort = Get-FreeTcpPort
@@ -100,7 +63,7 @@ $MatrixErr = Join-Path $RunRoot 'matrix-port-forward.err.log'
 $MinioOut = Join-Path $RunRoot 'minio-port-forward.log'
 $MinioErr = Join-Path $RunRoot 'minio-port-forward.err.log'
 $ProfileName = 'teamharness-live'
-$PackageName = 'agentteams-teamharness-dsh-prototype'
+$PackageName = 'agentteams-teamharness-dsh'
 $Succeeded = $false
 $MatrixForward = $null
 $MinioForward = $null
@@ -195,7 +158,7 @@ try {
     Push-Location $DshRoot
     try {
         & pnpm --dir $AdapterDir pack --pack-destination $RunRoot
-        if ($LASTEXITCODE -ne 0) { throw 'TeamHarness prototype pack failed' }
+        if ($LASTEXITCODE -ne 0) { throw 'TeamHarness DeepSeek Harness adapter pack failed' }
         $PackageArchive = Get-ChildItem -LiteralPath $RunRoot -Filter '*.tgz' | Select-Object -First 1
         & node $DshCli plugin --profile $ProfileName add $PackageArchive.FullName
         if ($LASTEXITCODE -ne 0) { throw 'DSH plugin add failed' }
@@ -219,7 +182,7 @@ try {
     if ($null -eq $ObservedEvent) { throw 'Matrix read-back did not find the sent event and marker' }
 
     $RemotePath = [string]$Report.push.remotePath
-    if (-not $RemotePath.StartsWith("$StoragePrefix/teams/ui-team-01/shared/prototype/live/", [StringComparison]::Ordinal)) {
+    if (-not $RemotePath.StartsWith("$StoragePrefix/teams/ui-team-01/shared/deepseek-harness/live/", [StringComparison]::Ordinal)) {
         throw "Refusing to inspect unexpected storage path: $RemotePath"
     }
     $AliasUrl = "http://$([Uri]::EscapeDataString($StorageAccessKey)):$([Uri]::EscapeDataString($StorageSecretKey))@127.0.0.1:$MinioPort"

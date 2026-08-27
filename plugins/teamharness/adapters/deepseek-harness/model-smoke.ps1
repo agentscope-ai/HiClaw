@@ -36,7 +36,7 @@ $ModelDshHome = Join-Path $RunRoot 'dsh-home'
 $Workspace = Join-Path $RunRoot 'workspace'
 $RoleSkillRoot = Join-Path $RunRoot 'role-skills'
 $TranscriptPath = Join-Path $RunRoot 'transcript.txt'
-$PackageName = 'agentteams-teamharness-dsh-prototype'
+$PackageName = 'agentteams-teamharness-dsh'
 $Succeeded = $false
 
 New-Item -ItemType Directory -Path $ModelDshHome, $Workspace | Out-Null
@@ -61,9 +61,9 @@ try {
     Push-Location $DshRoot
     try {
         & pnpm --dir $AdapterDir pack --pack-destination $RunRoot
-        if ($LASTEXITCODE -ne 0) { throw 'TeamHarness prototype pack failed' }
+        if ($LASTEXITCODE -ne 0) { throw 'TeamHarness DeepSeek Harness adapter pack failed' }
         $PackageArchive = Get-ChildItem -LiteralPath $RunRoot -Filter '*.tgz' | Select-Object -First 1
-        if ($null -eq $PackageArchive) { throw 'TeamHarness prototype pack produced no archive' }
+        if ($null -eq $PackageArchive) { throw 'TeamHarness DeepSeek Harness adapter pack produced no archive' }
 
         & node $DshCli plugin --profile headless add $PackageArchive.FullName
         if ($LASTEXITCODE -ne 0) { throw 'DSH plugin add failed' }

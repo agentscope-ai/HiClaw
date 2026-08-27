@@ -1,4 +1,4 @@
-# DeepSeek Harness adapter prototype result
+# DeepSeek Harness compatibility report
 
 ## Question
 
@@ -16,7 +16,7 @@ Can an unmodified DeepSeek Harness release act as an AgentTeams-managed Worker: 
 ## Command
 
 ```powershell
-pwsh -NoProfile -File plugins/teamharness/adapters/deepseek-harness-prototype/smoke.ps1 -DshRoot ../deepseek-harness-rc2
+pwsh -NoProfile -File plugins/teamharness/adapters/deepseek-harness/smoke.ps1 -DshRoot ../deepseek-harness-rc2
 ```
 
 ## Result
@@ -37,13 +37,17 @@ The local adapter smoke and all live checks completed with exit code 0 on 2026-0
 - The Controller created a `deepseek-harness` Worker with the runtime-specific image and projected runtime contract.
 - A real Matrix message reached the DSH Worker, produced a model reply, and returned to the same Matrix room.
 - The bridge persisted its Matrix sync cursor to object storage. After the Worker Pod was deleted, the Controller recreated it and the replacement replied to a second message without replaying the first.
+- A stable DSH session is now assigned to each Matrix room. A second message continued the first conversation after the Team Leader Pod was replaced and its session was restored from object storage.
+- Matrix image/file events are downloaded into a path-confined Workspace inbox. Files created or changed in the Workspace outbox are uploaded and returned as Matrix file/image messages.
+- Completed Matrix event IDs and pending answers are persisted. Matrix delivery uses deterministic transaction IDs, skips completed events after restart, and retries transient delivery failures without rerunning a completed model turn.
+- A real Team containing a DSH Team Leader and DSH Worker received the same Team-room event with the correct role-specific runtime context. The same run covered session recovery and a real file round trip.
 - Installing the same package again left exactly one TeamHarness MCP row and the second runtime smoke also passed.
 - Removing the package removed its dependency and bundle rows from the profile.
 - The successful run removed its temporary DSH home and workspace.
 
 ## Remaining limits
 
-The Matrix bridge currently handles plain-text events sequentially. Each event invokes a fresh headless DSH turn; session files are mirrored to object storage, but conversational session resume is not wired into the channel loop yet. The live storage check covers MinIO, not OSS. The image is pinned to one DSH release candidate, so later DSH releases need a compatibility run before the pin is changed.
+The bridge processes Matrix events sequentially within one Worker, and the live storage checks cover MinIO rather than OSS. The image is pinned to one DSH release candidate, so later DSH releases need a compatibility run before the pin is changed. Encrypted Matrix attachments are not decoded by this bridge; the current AgentTeams deployment uses unencrypted internal rooms.
 
 ## Design answer
 

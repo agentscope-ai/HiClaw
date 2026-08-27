@@ -62,7 +62,7 @@ if (outputExists) {
   await rm(outputDir, { recursive: true, force: true })
 }
 await mkdir(outputDir, { recursive: true })
-await writeFile(marker, 'PROTOTYPE - generated TeamHarness role skill root\n', 'utf8')
+await writeFile(marker, 'Generated TeamHarness role skill root for DeepSeek Harness\n', 'utf8')
 
 for (const skill of selected) {
   const source = sourceUnderPlugin(pluginDir, String(skill.path ?? ''))

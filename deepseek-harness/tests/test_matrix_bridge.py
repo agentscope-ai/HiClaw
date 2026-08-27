@@ -1,11 +1,26 @@
 import sys
+import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
-from matrix_bridge import dsh_error_detail, text_events  # noqa: E402
+from matrix_bridge import (  # noqa: E402
+    BridgeState,
+    dsh_error_detail,
+    materialize_attachment,
+    matrix_transaction_id,
+    matrix_events,
+    restore_output_paths,
+    run_dsh,
+    runtime_matrix_context,
+    send_workspace_outputs,
+    snapshot_outbox,
+    sync_output_paths,
+    text_events,
+)
 
 
 class TextEventsTest(unittest.TestCase):
@@ -105,6 +120,241 @@ Node.js v22.22.3
             dsh_error_detail(stderr, 1),
             "Error: dsh: HTTP_405: DeepSeek API error (HTTP 405)",
         )
+
+
+class RoomSessionContinuationTest(unittest.TestCase):
+    def test_room_session_is_restored_after_bridge_restart(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "matrix-bridge-state.json"
+
+            first_process = BridgeState.load(path)
+            first_session, first_is_resume = first_process.session_for("!team:matrix.local")
+            self.assertFalse(first_is_resume)
+            first_process.mark_session_ready("!team:matrix.local")
+            first_process.save()
+
+            restarted_process = BridgeState.load(path)
+            restored_session, restored_is_resume = restarted_process.session_for("!team:matrix.local")
+
+            self.assertEqual(restored_session, first_session)
+            self.assertTrue(restored_is_resume)
+
+    @patch("matrix_bridge.subprocess.run")
+    def test_dsh_receives_room_session_and_resume_mode(self, mocked_run):
+        mocked_run.return_value.returncode = 0
+        mocked_run.return_value.stdout = "continued answer\n"
+        mocked_run.return_value.stderr = ""
+
+        answer = run_dsh(
+            "what did I say before?",
+            Path("/workspace"),
+            30,
+            session_id="session-agentteams-room-123",
+            resume=True,
+            event_id="$second-message",
+        )
+
+        self.assertEqual(answer, "continued answer")
+        environment = mocked_run.call_args.kwargs["env"]
+        self.assertEqual(environment["TEAMHARNESS_DSH_SESSION_ID"], "session-agentteams-room-123")
+        self.assertEqual(environment["TEAMHARNESS_DSH_RESUME"], "true")
+        self.assertEqual(environment["TEAMHARNESS_MATRIX_EVENT_ID"], "$second-message")
+
+    def test_runtime_room_set_changes_when_worker_joins_a_team(self):
+        with tempfile.TemporaryDirectory() as directory:
+            runtime = Path(directory) / "runtime.yaml"
+            runtime.write_text(
+                "member:\n"
+                "  runtimeName: dsh-worker\n"
+                "  matrixUserId: '@dsh-worker:matrix.local'\n"
+                "  personalRoomId: '!personal:matrix.local'\n",
+                encoding="utf-8",
+            )
+            _user_id, standalone_rooms = runtime_matrix_context(runtime, "dsh-worker", "matrix.local")
+
+            runtime.write_text(
+                "team:\n"
+                "  teamRoomId: '!team:matrix.local'\n"
+                "member:\n"
+                "  runtimeName: dsh-worker\n"
+                "  matrixUserId: '@dsh-worker:matrix.local'\n"
+                "  personalRoomId: '!personal:matrix.local'\n",
+                encoding="utf-8",
+            )
+            _user_id, team_rooms = runtime_matrix_context(runtime, "dsh-worker", "matrix.local")
+
+            self.assertEqual(standalone_rooms, {"!personal:matrix.local"})
+            self.assertEqual(team_rooms, {"!personal:matrix.local", "!team:matrix.local"})
+
+
+class AttachmentReceiveTest(unittest.TestCase):
+    def test_image_and_file_events_are_extracted_from_matrix(self):
+        payload = {
+            "rooms": {
+                "join": {
+                    "!team:matrix.local": {
+                        "timeline": {
+                            "events": [
+                                {
+                                    "event_id": "$image",
+                                    "sender": "@admin:matrix.local",
+                                    "type": "m.room.message",
+                                    "content": {
+                                        "msgtype": "m.image",
+                                        "body": "diagram.png",
+                                        "url": "mxc://matrix.local/image-id",
+                                        "info": {"mimetype": "image/png", "size": 8},
+                                    },
+                                },
+                                {
+                                    "event_id": "$file",
+                                    "sender": "@admin:matrix.local",
+                                    "type": "m.room.message",
+                                    "content": {
+                                        "msgtype": "m.file",
+                                        "body": "../../budget.csv",
+                                        "url": "mxc://matrix.local/file-id",
+                                        "info": {"mimetype": "text/csv", "size": 12},
+                                    },
+                                },
+                            ]
+                        }
+                    }
+                }
+            }
+        }
+
+        events = matrix_events(payload, {"!team:matrix.local"}, "@dsh:matrix.local")
+
+        self.assertEqual([event["kind"] for event in events], ["image", "file"])
+        self.assertEqual(events[1]["mxc_url"], "mxc://matrix.local/file-id")
+        self.assertEqual(events[1]["mimetype"], "text/csv")
+
+    def test_attachment_is_written_under_workspace_inbox_with_safe_name(self):
+        class FakeMatrixClient:
+            def download_media(self, mxc_url, max_bytes):
+                self.call = (mxc_url, max_bytes)
+                return b"a,b\n1,2\n", "text/csv"
+
+        event = {
+            "room_id": "!team:matrix.local",
+            "event_id": "$file",
+            "sender": "@admin:matrix.local",
+            "kind": "file",
+            "body": "../../budget.csv",
+            "filename": "../../budget.csv",
+            "mxc_url": "mxc://matrix.local/file-id",
+            "mimetype": "text/csv",
+        }
+
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            prompt, saved_path = materialize_attachment(event, FakeMatrixClient(), workspace, 1024)
+
+            self.assertTrue(saved_path.is_relative_to(workspace / "inbox"))
+            self.assertEqual(saved_path.name, "budget.csv")
+            self.assertEqual(saved_path.read_bytes(), b"a,b\n1,2\n")
+            self.assertIn("inbox/", prompt.replace("\\", "/"))
+            self.assertIn("budget.csv", prompt)
+
+
+class AttachmentSendTest(unittest.TestCase):
+    def test_only_new_or_changed_outbox_files_are_sent(self):
+        class FakeMatrixClient:
+            def __init__(self):
+                self.sent = []
+
+            def send_file(self, room_id, path, reply_to, transaction_key):
+                self.sent.append((room_id, path.name, reply_to, transaction_key))
+                return "$uploaded"
+
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            outbox = workspace / "outbox"
+            outbox.mkdir()
+            (outbox / "old.txt").write_text("unchanged", encoding="utf-8")
+            (outbox / "changed.txt").write_text("before", encoding="utf-8")
+            before = snapshot_outbox(workspace)
+
+            (outbox / "changed.txt").write_text("after", encoding="utf-8")
+            (outbox / "result.png").write_bytes(b"png-result")
+            client = FakeMatrixClient()
+            sent = send_workspace_outputs(client, "!team:matrix.local", "$task", workspace, before)
+
+            self.assertEqual([path.name for path in sent], ["changed.txt", "result.png"])
+            self.assertEqual([call[1] for call in client.sent], ["changed.txt", "result.png"])
+            self.assertTrue(all(call[2] == "$task" for call in client.sent))
+
+
+class DeliveryReliabilityTest(unittest.TestCase):
+    def test_matrix_transaction_is_stable_for_the_same_source_event(self):
+        first = matrix_transaction_id("$task:reply")
+        after_restart = matrix_transaction_id("$task:reply")
+
+        self.assertEqual(after_restart, first)
+        self.assertNotEqual(matrix_transaction_id("$other:reply"), first)
+
+    def test_completed_event_is_skipped_after_bridge_restart(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "matrix-bridge-state.json"
+            state = BridgeState.load(path)
+            state.begin_event("$task", "!team:matrix.local")
+            state.mark_answer("$task", "done", ["result.txt"])
+            state.mark_completed("$task", "$reply")
+            state.save()
+
+            restarted = BridgeState.load(path)
+
+            self.assertTrue(restarted.is_completed("$task"))
+            self.assertEqual(restarted.answer_for("$task"), ("done", ["result.txt"]))
+
+    def test_failed_event_keeps_retry_count_across_restart(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "matrix-bridge-state.json"
+            first = BridgeState.load(path)
+            self.assertEqual(first.begin_event("$task", "!team:matrix.local"), 1)
+            first.mark_outbox_before("$task", {"existing.txt": "before-hash"})
+            first.mark_failure("$task", "temporary gateway failure")
+            first.save()
+
+            second = BridgeState.load(path)
+            self.assertEqual(second.outbox_before_for("$task"), {"existing.txt": "before-hash"})
+            self.assertTrue(second.should_retry("$task", max_attempts=3))
+            self.assertEqual(second.begin_event("$task", "!team:matrix.local"), 2)
+            second.mark_failure("$task", "temporary gateway failure")
+            self.assertTrue(second.should_retry("$task", max_attempts=3))
+            self.assertEqual(second.begin_event("$task", "!team:matrix.local"), 3)
+            second.mark_failure("$task", "permanent failure")
+            self.assertFalse(second.should_retry("$task", max_attempts=3))
+
+    @patch("matrix_bridge.mc")
+    def test_pending_output_is_staged_and_can_be_restored_after_restart(self, mocked_mc):
+        with tempfile.TemporaryDirectory() as directory, patch.dict(
+            "matrix_bridge.os.environ",
+            {"AGENTTEAMS_STORAGE_PREFIX": "agentteams/bucket"},
+        ):
+            workspace = Path(directory)
+            output = workspace / "outbox" / "result.txt"
+            output.parent.mkdir()
+            output.write_text("durable result", encoding="utf-8")
+
+            sync_output_paths("dsh-worker", workspace, ["result.txt"])
+
+            mocked_mc.assert_called_once_with(
+                "cp",
+                str(output.resolve()),
+                "agentteams/bucket/agents/dsh-worker/workspace/outbox/result.txt",
+            )
+            output.unlink()
+
+            def restore_copy(*args, **_kwargs):
+                Path(args[2]).write_text("durable result", encoding="utf-8")
+
+            mocked_mc.reset_mock()
+            mocked_mc.side_effect = restore_copy
+            restore_output_paths("dsh-worker", workspace, ["result.txt"])
+
+            self.assertEqual(output.read_text(encoding="utf-8"), "durable result")
 
 
 if __name__ == "__main__":

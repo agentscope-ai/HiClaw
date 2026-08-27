@@ -7,50 +7,7 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
-
-function Get-FreeTcpPort {
-    $Listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
-    $Listener.Start()
-    try { return ([Net.IPEndPoint]$Listener.LocalEndpoint).Port }
-    finally { $Listener.Stop() }
-}
-
-function Wait-TcpPort([int]$Port) {
-    $Deadline = [DateTime]::UtcNow.AddSeconds(20)
-    while ([DateTime]::UtcNow -lt $Deadline) {
-        $Client = [Net.Sockets.TcpClient]::new()
-        try {
-            $Connected = $Client.ConnectAsync('127.0.0.1', $Port)
-            if ($Connected.Wait(250) -and $Client.Connected) { return }
-        }
-        catch { }
-        finally { $Client.Dispose() }
-        Start-Sleep -Milliseconds 100
-    }
-    throw "Timed out waiting for Matrix port-forward on $Port"
-}
-
-function Get-SecretText([object]$Secret, [string]$Key) {
-    $Property = $Secret.data.PSObject.Properties[$Key]
-    if ($null -eq $Property) { throw "Secret is missing $Key" }
-    return [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String([string]$Property.Value))
-}
-
-function Get-PodEnv([object]$Pod, [string]$Name) {
-    $Entry = @($Pod.spec.containers[0].env) | Where-Object { $_.name -eq $Name } | Select-Object -First 1
-    if ($null -eq $Entry -or [string]::IsNullOrWhiteSpace([string]$Entry.value)) {
-        throw "Pod is missing literal env $Name"
-    }
-    return [string]$Entry.value
-}
-
-function Invoke-MatrixJson([string]$Method, [string]$Url, [string]$Token, [object]$Body = $null) {
-    $Headers = @{ Authorization = "Bearer $Token" }
-    if ($null -eq $Body) {
-        return Invoke-RestMethod -Method $Method -Uri $Url -Headers $Headers
-    }
-    return Invoke-RestMethod -Method $Method -Uri $Url -Headers $Headers -ContentType 'application/json' -Body ($Body | ConvertTo-Json -Depth 10 -Compress)
-}
+. (Join-Path $PSScriptRoot 'lib/test-helpers.ps1')
 
 function Get-WorkerPod {
     $Items = (& kubectl get pods -n $Namespace -l "agentteams.io/worker=$WorkerName" -o json | ConvertFrom-Json).items
@@ -151,9 +108,9 @@ try {
     Send-And-WaitForReply $FirstMarker $RoomId $WorkerUserId $MatrixBase $AdminToken $CleanupEventIds | Out-Null
     Write-Output 'first Matrix -> DSH model -> Matrix round trip: PASS'
 
-    & kubectl exec $Pod.metadata.name -n $Namespace -- bash -lc 'worker_home="${AGENTTEAMS_WORKER_HOME:-/root/agentteams-fs/agents/${AGENTTEAMS_WORKER_NAME}}"; test -s "$worker_home/runtime/matrix-next-batch" && mc stat "${AGENTTEAMS_STORAGE_PREFIX%/}/agents/${AGENTTEAMS_WORKER_NAME}/runtime/matrix-next-batch" >/dev/null'
-    if ($LASTEXITCODE -ne 0) { throw 'Matrix sync cursor was not persisted to object storage' }
-    Write-Output 'Matrix sync cursor persistence: PASS'
+    & kubectl exec $Pod.metadata.name -n $Namespace -- bash -lc 'worker_home="${AGENTTEAMS_WORKER_HOME:-/root/agentteams-fs/agents/${AGENTTEAMS_WORKER_NAME}}"; state="$worker_home/runtime/matrix-bridge-state.json"; test -s "$state" && grep -q '"next_batch"' "$state" && mc stat "${AGENTTEAMS_STORAGE_PREFIX%/}/agents/${AGENTTEAMS_WORKER_NAME}/runtime/matrix-bridge-state.json" >/dev/null'
+    if ($LASTEXITCODE -ne 0) { throw 'Matrix bridge state was not persisted to object storage' }
+    Write-Output 'Matrix cursor/session/delivery state persistence: PASS'
 
     $PreviousUid = [string]$Pod.metadata.uid
     & kubectl delete pod $Pod.metadata.name -n $Namespace --wait=true | Out-Null

@@ -16,7 +16,7 @@ function rolePromptName(role) {
   if (['team-leader', 'teamleader', 'leader'].includes(normalized)) return 'leader.md'
   if (normalized === 'worker') return 'worker.md'
   if (['remote', 'remote-member'].includes(normalized)) return 'remote-member.md'
-  throw new Error(`unsupported TeamHarness role for DSH prototype: ${role}`)
+  throw new Error(`unsupported TeamHarness role for DeepSeek Harness: ${role}`)
 }
 
 function inlineAgentConfig(runtimeConfig) {
@@ -27,6 +27,14 @@ function inlineAgentConfig(runtimeConfig) {
     inline.agents ? `# Agent Instructions\n\n${String(inline.agents).trim()}` : '',
   ].filter(Boolean).join('\n\n')
 }
+
+const fileExchangePrompt = [
+  '# Matrix File Exchange',
+  '',
+  'Files received from Matrix are placed under the Workspace `inbox/` directory.',
+  'When the user asks you to create or return a file, write only the intended result under the Workspace `outbox/` directory.',
+  'The channel bridge sends files created or changed in `outbox/` during the current turn back to the same Matrix room.',
+].join('\n')
 
 export function apply(ctx, config) {
   const pluginDir = resolve(requiredString(config.pluginDir, 'pluginDir'))
@@ -53,6 +61,7 @@ export function apply(ctx, config) {
       `member.role: ${role}`,
       `member.matrixUserId: ${requiredString(member.matrixUserId, 'member.matrixUserId')}`,
       `member.personalRoomId: ${requiredString(member.personalRoomId, 'member.personalRoomId')}`,
+      fileExchangePrompt,
       configuredAgent,
     ].filter(Boolean).join('\n')
     ctx.effect(() => ctx.systemPrompt.section({
@@ -80,7 +89,7 @@ export function apply(ctx, config) {
     `member.matrixUserId: ${requiredString(member.matrixUserId, 'member.matrixUserId')}`,
   ].join('\n')
 
-  const text = [teamPrompt, rolePrompt, currentContext, configuredAgent].filter(Boolean).join('\n\n')
+  const text = [teamPrompt, rolePrompt, currentContext, fileExchangePrompt, configuredAgent].filter(Boolean).join('\n\n')
   ctx.effect(() => ctx.systemPrompt.section({
     name: 'teamharness:collaboration',
     order: 20,

@@ -59,7 +59,7 @@ export async function apply(ctx, config) {
       name: 'mcp__teamharness__filesync',
       arguments: {
         action: 'push',
-        path: 'shared/prototype/artifacts/smoke.txt',
+        path: 'shared/deepseek-harness/artifacts/smoke.txt',
         workspaceDir: workspace,
         dryRun: true,
       },

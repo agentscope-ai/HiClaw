@@ -36,7 +36,7 @@ export async function apply(ctx, config) {
   const workspace = resolve(String(config.workspace ?? ''))
   const marker = String(config.marker ?? '')
   const roomId = String(config.roomId ?? '')
-  const artifactPath = `shared/prototype/live/${marker}.txt`
+  const artifactPath = `shared/deepseek-harness/live/${marker}.txt`
   let exitCode = 1
   try {
     await waitForTools(ctx)

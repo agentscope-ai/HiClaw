@@ -27,8 +27,8 @@ if (-not (Test-Path -LiteralPath $DshCli -PathType Leaf)) {
 
 $Python = Get-Command python -ErrorAction Stop
 $TempBase = [IO.Path]::GetFullPath([IO.Path]::GetTempPath())
-$RunRoot = Join-Path $TempBase ("teamharness-dsh-prototype-" + [guid]::NewGuid().ToString('N'))
-$PrototypeDshHome = Join-Path $RunRoot 'dsh-home'
+$RunRoot = Join-Path $TempBase ("teamharness-dsh-adapter-" + [guid]::NewGuid().ToString('N'))
+$AdapterDshHome = Join-Path $RunRoot 'dsh-home'
 $Workspace = Join-Path $RunRoot 'workspace'
 $RoleSkillRoot = Join-Path $RunRoot 'role-skills'
 $StandaloneSkillRoot = Join-Path $RunRoot 'standalone-role-skills'
@@ -38,11 +38,11 @@ $UpdatedConfig = Join-Path $RunRoot 'updated.cordis.yml'
 $AfterRemoveConfig = Join-Path $RunRoot 'after-remove.cordis.yml'
 $ReportPath = Join-Path $RunRoot 'report.json'
 $ProfileName = 'teamharness-smoke'
-$PackageName = 'agentteams-teamharness-dsh-prototype'
+$PackageName = 'agentteams-teamharness-dsh'
 $Succeeded = $false
 
-$SmokeArtifactDir = Join-Path $Workspace 'shared\prototype\artifacts'
-New-Item -ItemType Directory -Path $PrototypeDshHome, $Workspace, $SmokeArtifactDir | Out-Null
+$SmokeArtifactDir = Join-Path $Workspace 'shared\deepseek-harness\artifacts'
+New-Item -ItemType Directory -Path $AdapterDshHome, $Workspace, $SmokeArtifactDir | Out-Null
 [IO.File]::WriteAllText((Join-Path $SmokeArtifactDir 'smoke.txt'), "TeamHarness DSH smoke`n")
 
 $PreviousDshHome = $env:DSH_HOME
@@ -58,7 +58,7 @@ $PreviousExpectTeamContract = $env:TEAMHARNESS_DSH_EXPECT_TEAM_CONTRACT
 $PreviousDshModel = $env:TEAMHARNESS_DSH_MODEL
 
 try {
-    $env:DSH_HOME = $PrototypeDshHome
+    $env:DSH_HOME = $AdapterDshHome
     $env:AGENTTEAMS_PLUGIN_DIR = $TeamHarnessDir
     $env:TEAMHARNESS_RUNTIME_CONFIG = Join-Path $AdapterDir 'fixtures\runtime.yaml'
     $env:TEAMHARNESS_WORKSPACE = $Workspace
@@ -73,13 +73,13 @@ try {
     Push-Location $DshRoot
     try {
         & pnpm --dir $AdapterDir pack --pack-destination $RunRoot
-        if ($LASTEXITCODE -ne 0) { throw 'TeamHarness prototype pack failed' }
+        if ($LASTEXITCODE -ne 0) { throw 'TeamHarness DeepSeek Harness adapter pack failed' }
         $PackageArchive = Get-ChildItem -LiteralPath $RunRoot -Filter '*.tgz' | Select-Object -First 1
-        if ($null -eq $PackageArchive) { throw 'TeamHarness prototype pack produced no archive' }
+        if ($null -eq $PackageArchive) { throw 'TeamHarness DeepSeek Harness adapter pack produced no archive' }
 
         & node $DshCli plugin --profile $ProfileName add $PackageArchive.FullName
         if ($LASTEXITCODE -ne 0) { throw 'DSH plugin add failed' }
-        $InstalledPackageDir = Join-Path $PrototypeDshHome "profiles\$ProfileName\node_modules\$PackageName"
+        $InstalledPackageDir = Join-Path $AdapterDshHome "profiles\$ProfileName\node_modules\$PackageName"
         & node (Join-Path $InstalledPackageDir 'prepare-skills.js') --plugin-dir $TeamHarnessDir --runtime-config $env:TEAMHARNESS_RUNTIME_CONFIG --output $RoleSkillRoot
         if ($LASTEXITCODE -ne 0) { throw 'TeamHarness role skill preparation failed' }
 
@@ -172,12 +172,12 @@ finally {
 
     $ResolvedRunRoot = [IO.Path]::GetFullPath($RunRoot)
     if (-not $ResolvedRunRoot.StartsWith($TempBase, [StringComparison]::OrdinalIgnoreCase)) {
-        throw "Refusing to clean prototype path outside the temp directory: $ResolvedRunRoot"
+        throw "Refusing to clean adapter path outside the temp directory: $ResolvedRunRoot"
     }
     if ($Succeeded) {
         Remove-Item -LiteralPath $ResolvedRunRoot -Recurse -Force
     }
     else {
-        Write-Host "Prototype artifacts kept for debugging: $ResolvedRunRoot"
+        Write-Host "Adapter artifacts kept for debugging: $ResolvedRunRoot"
     }
 }
