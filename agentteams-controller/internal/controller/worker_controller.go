@@ -825,7 +825,7 @@ func hashAppliedWorkerSpecForRuntime(spec v1beta1.WorkerSpec, runtime string) st
 		if spec.Runtime == "" {
 			spec.Runtime = runtime
 		}
-		return hashQwenPawPodSpec(spec)
+		return hashMemberRuntimePodSpec(spec)
 	}
 	return hashAppliedWorkerSpec(spec)
 }
@@ -835,7 +835,7 @@ func hashAppliedWorkerSpecForRuntimeAndResources(spec v1beta1.WorkerSpec, runtim
 		if spec.Runtime == "" {
 			spec.Runtime = runtime
 		}
-		return hashQwenPawPodSpecWithResources(spec, resources)
+		return hashMemberRuntimePodSpecWithResources(spec, resources)
 	}
 	if resources == nil {
 		return hashAppliedWorkerSpec(spec)
@@ -873,12 +873,12 @@ func workerSpecWithEffectiveBackendRuntimeForHash(spec v1beta1.WorkerSpec, backe
 	return spec
 }
 
-func hashQwenPawPodSpec(spec v1beta1.WorkerSpec) string {
-	return hashQwenPawPodSpecWithResources(spec, nil)
+func hashMemberRuntimePodSpec(spec v1beta1.WorkerSpec) string {
+	return hashMemberRuntimePodSpecWithResources(spec, nil)
 }
 
-func hashQwenPawPodSpecWithResources(spec v1beta1.WorkerSpec, resources *v1beta1.AgentResourceRequirements) string {
-	type qwenPawPodSpec struct {
+func hashMemberRuntimePodSpecWithResources(spec v1beta1.WorkerSpec, resources *v1beta1.AgentResourceRequirements) string {
+	type memberRuntimePodSpec struct {
 		Runtime          string                             `json:"runtime,omitempty"`
 		Image            string                             `json:"image,omitempty"`
 		WorkerName       string                             `json:"workerName,omitempty"`
@@ -892,7 +892,7 @@ func hashQwenPawPodSpecWithResources(spec v1beta1.WorkerSpec, resources *v1beta1
 		Mounts           []v1beta1.WorkerMountSpec          `json:"mounts,omitempty"`
 		WorkerDepsLayout string                             `json:"workerDepsLayout,omitempty"`
 	}
-	payload := qwenPawPodSpec{
+	payload := memberRuntimePodSpec{
 		Runtime:          spec.Runtime,
 		Image:            spec.Image,
 		WorkerName:       spec.WorkerName,
