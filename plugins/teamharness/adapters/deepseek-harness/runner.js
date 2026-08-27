@@ -79,7 +79,7 @@ async function openAgent(ctx, sessionId, resume, selection) {
     return agents.resume({ ...options, resumeSessionId: sessionId })
   }
   if (resume) {
-    ctx.logger.warn(`requested resume for missing DSH session ${sessionId}; creating it instead`)
+    throw new Error(`requested resume for missing DSH session ${sessionId}`)
   }
   return agents.create({ ...options, sessionId, meta: { cwd: process.cwd() } })
 }

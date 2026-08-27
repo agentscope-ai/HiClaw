@@ -10,6 +10,18 @@ team:
   leaderName: leader-a
   leaderRuntimeName: leader-a
   leaderDmRoomId: "!leader-dm:matrix.local"
+  members:
+    - name: leader-a
+      runtimeName: leader-a
+      role: team_leader
+      matrixUserId: "@leader-a:matrix.local"
+    - name: dsh-worker-a
+      runtimeName: dsh-worker-a
+      role: worker
+      matrixUserId: "@dsh-worker-a:matrix.local"
+    - name: coordinator-a
+      role: coordinator
+      matrixUserId: "@coordinator-a:matrix.local"
   admin:
     name: admin
     matrixUserId: "@admin:matrix.local"

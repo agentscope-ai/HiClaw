@@ -54,6 +54,58 @@ def runtime_matrix_context(runtime_path: Path, worker_name: str, matrix_domain: 
     return own_user_id, watched_rooms
 
 
+def runtime_agent_user_ids(runtime_path: Path) -> set[str]:
+    """Read agent Matrix IDs from the controller-generated team.members list."""
+    agent_roles = {"team_leader", "team-leader", "teamleader", "leader", "worker", "remote", "remote-member"}
+    members: list[dict[str, str]] = []
+    current: dict[str, str] | None = None
+    in_team = False
+    members_indent: int | None = None
+    item_indent: int | None = None
+
+    for raw in runtime_path.read_text(encoding="utf-8").splitlines():
+        stripped = raw.strip()
+        indent = len(raw) - len(raw.lstrip(" "))
+        if raw == "team:":
+            in_team = True
+            continue
+        if in_team and stripped and indent == 0:
+            break
+        if not in_team:
+            continue
+        if members_indent is None:
+            if stripped == "members:":
+                members_indent = indent
+            continue
+
+        if stripped.startswith("- ") and indent >= members_indent:
+            if current is not None:
+                members.append(current)
+            current = {}
+            item_indent = indent
+            field = stripped[2:]
+        elif current is not None and item_indent is not None and indent > item_indent:
+            field = stripped
+        else:
+            if current is not None:
+                members.append(current)
+            break
+
+        key, separator, value = field.partition(":")
+        if separator:
+            current[key.strip()] = value.strip().strip("'\"")
+    else:
+        if current is not None:
+            members.append(current)
+
+    return {
+        member["matrixUserId"]
+        for member in members
+        if member.get("role", "").strip().lower().replace("_", "-") in agent_roles
+        and member.get("matrixUserId")
+    }
+
+
 def safe_filename(value: str) -> str:
     leaf = value.replace("\\", "/").rsplit("/", 1)[-1].strip()
     leaf = re.sub(r"[\x00-\x1f<>:\"|?*]", "_", leaf)
@@ -295,6 +347,7 @@ def main() -> int:
     workspace.mkdir(parents=True, exist_ok=True)
     matrix_domain = required_env("AGENTTEAMS_MATRIX_DOMAIN")
     own_user_id, watched_rooms = runtime_matrix_context(runtime_path, worker_name, matrix_domain)
+    agent_user_ids = runtime_agent_user_ids(runtime_path)
     if not watched_rooms:
         raise RuntimeError("runtime.yaml contains no personalRoomId or teamRoomId")
 
@@ -325,6 +378,7 @@ def main() -> int:
         try:
             if refresh_runtime_config(worker_name, runtime_path):
                 own_user_id, watched_rooms = runtime_matrix_context(runtime_path, worker_name, matrix_domain)
+                agent_user_ids = runtime_agent_user_ids(runtime_path)
                 if not watched_rooms:
                     raise RuntimeError("updated runtime.yaml contains no personalRoomId or teamRoomId")
                 print(
@@ -333,7 +387,7 @@ def main() -> int:
                 )
             payload = client.sync(since, 30_000)
             batch_complete = True
-            for event in matrix_events(payload, watched_rooms, own_user_id):
+            for event in matrix_events(payload, watched_rooms, own_user_id, agent_user_ids):
                 if state.is_completed(event["event_id"]):
                     continue
                 session_id, resume = state.session_for(event["room_id"])

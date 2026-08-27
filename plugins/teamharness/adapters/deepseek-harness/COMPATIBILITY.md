@@ -39,7 +39,7 @@ The local adapter smoke and all live checks completed with exit code 0 on 2026-0
 - The bridge persisted its Matrix sync cursor to object storage. After the Worker Pod was deleted, the Controller recreated it and the replacement replied to a second message without replaying the first.
 - A stable DSH session is now assigned to each Matrix room. A second message continued the first conversation after the Team Leader Pod was replaced and its session was restored from object storage.
 - Matrix image/file events are downloaded into a path-confined Workspace inbox. Files created or changed in the Workspace outbox are uploaded and returned as Matrix file/image messages.
-- Completed Matrix event IDs and pending answers are persisted. Matrix delivery uses deterministic transaction IDs, skips completed events after restart, and retries transient delivery failures without rerunning a completed model turn.
+- Completed Matrix event IDs and pending answers are persisted. Matrix delivery uses deterministic transaction IDs, skips completed events after restart, and retries transient delivery failures from a persisted answer without running that model turn again.
 - A real Team containing a DSH Team Leader and DSH Worker received the same Team-room event with the correct role-specific runtime context. The same run covered session recovery and a real file round trip.
 - Installing the same package again left exactly one TeamHarness MCP row and the second runtime smoke also passed.
 - Removing the package removed its dependency and bundle rows from the profile.

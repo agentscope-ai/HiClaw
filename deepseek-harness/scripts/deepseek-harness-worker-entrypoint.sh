@@ -58,7 +58,20 @@ export DEEPSEEK_BASE_URL="$(python3 /opt/agentteams/scripts/runtime_env.py base-
 mkdir -p "${DSH_HOME}"
 cp -a /opt/agentteams/dsh-template/. "${DSH_HOME}/"
 mkdir -p "${DSH_HOME}/sessions" "${TEAMHARNESS_WORKSPACE}"
-mc mirror "${REMOTE_WORKER}/.dsh/sessions/" "${DSH_HOME}/sessions/" --overwrite >/dev/null 2>&1 || true
+if jq -e 'any((.rooms // {})[]; .ready == true)' "${RUNTIME_DIR}/matrix-bridge-state.json" >/dev/null 2>&1; then
+    log "Restoring required DeepSeek Harness sessions"
+    RETRY=0
+    until mc mirror "${REMOTE_WORKER}/.dsh/sessions/" "${DSH_HOME}/sessions/" --overwrite >/dev/null 2>&1; do
+        RETRY=$((RETRY + 1))
+        if [ "${RETRY}" -ge 12 ]; then
+            log "ERROR: persisted DeepSeek Harness sessions are unavailable after ${RETRY} attempts"
+            exit 1
+        fi
+        sleep 5
+    done
+else
+    mc mirror "${REMOTE_WORKER}/.dsh/sessions/" "${DSH_HOME}/sessions/" --overwrite >/dev/null 2>&1 || true
+fi
 
 agentteams-dsh --dump-config >/dev/null
 log "DeepSeek Harness profile ready; starting Matrix channel loop"

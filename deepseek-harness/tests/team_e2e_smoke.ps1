@@ -85,6 +85,34 @@ function Wait-ReplacementPod([string]$WorkerName, [string]$PreviousUid) {
     throw "Worker $WorkerName did not get a Ready replacement Pod"
 }
 
+function Get-BridgeCursor([object]$Pod, [string]$WorkerName) {
+    $StatePath = "/root/agentteams-fs/agents/$WorkerName/runtime/matrix-bridge-state.json"
+    $State = (& kubectl exec $Pod.metadata.name -n $Namespace -- cat $StatePath | Out-String) | ConvertFrom-Json
+    $Cursor = [string]$State.next_batch
+    if ([string]::IsNullOrWhiteSpace($Cursor)) { throw "Worker $WorkerName bridge state has no next_batch cursor" }
+    return $Cursor
+}
+
+function Rewind-BridgeCursor([object]$Pod, [string]$WorkerName, [string]$Cursor) {
+    $StatePath = "/root/agentteams-fs/agents/$WorkerName/runtime/matrix-bridge-state.json"
+    $StoragePrefix = (& kubectl exec $Pod.metadata.name -n $Namespace -- printenv AGENTTEAMS_STORAGE_PREFIX | Out-String).Trim()
+    if ([string]::IsNullOrWhiteSpace($StoragePrefix)) { throw "Worker $WorkerName has no storage prefix" }
+
+    # Freeze the channel loop before editing so it cannot advance and upload a
+    # newer cursor between the local rewrite and the object-storage copy.
+    $StopBridge = 'for d in /proc/[0-9]*; do if [ "$(cat "$d/comm" 2>/dev/null)" = python3 ] && tr "\000" " " < "$d/cmdline" | grep -q "/opt/agentteams/scripts/matrix_bridge.py"; then kill -STOP "${d##*/}"; fi; done'
+    & kubectl exec $Pod.metadata.name -n $Namespace -- sh -c $StopBridge
+    if ($LASTEXITCODE -ne 0) { throw "Stopping Worker $WorkerName Matrix loop failed" }
+
+    $CursorBase64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($Cursor))
+    $Rewrite = 'import base64,json,os,pathlib;p=pathlib.Path(os.environ["STATE_PATH"]);d=json.loads(p.read_text());d["next_batch"]=base64.b64decode(os.environ["CURSOR_B64"]).decode();t=p.with_suffix(".json.tmp");t.write_text(json.dumps(d,ensure_ascii=False,sort_keys=True)+"\n");t.replace(p)'
+    & kubectl exec $Pod.metadata.name -n $Namespace -- env "STATE_PATH=$StatePath" "CURSOR_B64=$CursorBase64" python3 -c $Rewrite
+    if ($LASTEXITCODE -ne 0) { throw "Rewinding Worker $WorkerName Matrix cursor failed" }
+
+    & kubectl exec $Pod.metadata.name -n $Namespace -- mc cp $StatePath "$StoragePrefix/agents/$WorkerName/runtime/matrix-bridge-state.json" | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "Persisting rewound Worker $WorkerName Matrix cursor failed" }
+}
+
 function Send-Text([string]$RoomId, [string]$Body, [string]$MatrixBase, [string]$Token) {
     $Room = [uri]::EscapeDataString($RoomId)
     $Txn = [guid]::NewGuid().ToString('N')
@@ -271,7 +299,7 @@ spec:
     if ($LASTEXITCODE -ne 0) { throw 'Creating DSH Team failed' }
     $Team = Wait-TeamActive $TeamName
     $LeaderPod = Wait-TeamRuntime $LeaderName
-    Wait-TeamRuntime $WorkerName | Out-Null
+    $WorkerPod = Wait-TeamRuntime $WorkerName
     Write-Output 'Controller-created DSH Leader + Worker Team runtime: PASS'
 
     $RuntimeSecret = & kubectl get secret agentteams-runtime-env -n $Namespace -o json | ConvertFrom-Json
@@ -293,10 +321,35 @@ spec:
     $LeaderUser = [string]$Leader.status.matrixUserID
     $WorkerUser = [string]$Worker.status.matrixUserID
     $TeamRoom = [string]$Team.status.teamRoomID
+    $WorkerCursorBeforeRole = Get-BridgeCursor $WorkerPod $WorkerName
     $RoleRequest = Send-Text $TeamRoom 'Read the current TeamHarness context. Reply with exactly three whitespace-separated fields: TEAM_ROLE_OK, then member.runtimeName, then member.role. Do not add punctuation.' $MatrixBase $AdminToken
     Wait-TextReply $TeamRoom $LeaderUser $RoleRequest "TEAM_ROLE_OK $LeaderName team_leader" $MatrixBase $AdminToken | Out-Null
     Wait-TextReply $TeamRoom $WorkerUser $RoleRequest "TEAM_ROLE_OK $WorkerName worker" $MatrixBase $AdminToken | Out-Null
     Write-Output 'Team room reached both DSH roles with correct runtime context: PASS'
+
+    Start-Sleep -Seconds 15
+    $TeamAgentMessages = @(Get-RoomMessages $TeamRoom $MatrixBase $AdminToken | Where-Object {
+        $_.sender -in @($LeaderUser, $WorkerUser) -and $_.type -eq 'm.room.message' -and $_.content.msgtype -eq 'm.text'
+    })
+    if ($TeamAgentMessages.Count -ne 2) {
+        throw "Expected the Team room to stop after two Agent replies, found $($TeamAgentMessages.Count) Agent text messages"
+    }
+    Write-Output 'Team room stayed quiet after the two expected Agent replies: PASS'
+
+    $PreviousWorkerUid = [string]$WorkerPod.metadata.uid
+    Rewind-BridgeCursor $WorkerPod $WorkerName $WorkerCursorBeforeRole
+    & kubectl delete pod $WorkerPod.metadata.name -n $Namespace --grace-period=0 --force --wait=false | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'Deleting Worker Pod for Matrix replay failed' }
+    $WorkerPod = Wait-ReplacementPod $WorkerName $PreviousWorkerUid
+    Wait-TeamRuntime $WorkerName | Out-Null
+    Start-Sleep -Seconds 20
+    $WorkerRoleReplies = @(Get-RoomMessages $TeamRoom $MatrixBase $AdminToken | Where-Object {
+        $_.sender -eq $WorkerUser -and (Test-ReplyRelation $_ $RoleRequest) -and $_.content.msgtype -eq 'm.text'
+    })
+    if ($WorkerRoleReplies.Count -ne 1) {
+        throw "Expected one Worker reply after replaying the source Matrix event, found $($WorkerRoleReplies.Count)"
+    }
+    Write-Output 'Persisted Matrix event state suppressed a real replay after Worker Pod replacement: PASS'
 
     $SecretWord = 'DSH_MEMORY_' + [guid]::NewGuid().ToString('N')
     $LeaderRoom = [string]$Leader.status.roomID

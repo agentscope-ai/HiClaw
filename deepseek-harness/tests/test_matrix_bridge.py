@@ -15,6 +15,7 @@ from matrix_bridge import (  # noqa: E402
     matrix_events,
     restore_output_paths,
     run_dsh,
+    runtime_agent_user_ids,
     runtime_matrix_context,
     send_workspace_outputs,
     snapshot_outbox,
@@ -121,6 +122,88 @@ Node.js v22.22.3
             "Error: dsh: HTTP_405: DeepSeek API error (HTTP 405)",
         )
 
+    def test_team_agents_do_not_turn_replies_into_new_tasks(self):
+        payload = {
+            "rooms": {
+                "join": {
+                    "!team:matrix.local": {
+                        "timeline": {
+                            "events": [
+                                {
+                                    "event_id": "$agent-reply",
+                                    "sender": "@leader:matrix.local",
+                                    "type": "m.room.message",
+                                    "content": {
+                                        "msgtype": "m.text",
+                                        "body": "completed",
+                                        "m.relates_to": {"m.in_reply_to": {"event_id": "$task"}},
+                                    },
+                                },
+                                {
+                                    "event_id": "$human-reply",
+                                    "sender": "@coordinator:matrix.local",
+                                    "type": "m.room.message",
+                                    "content": {
+                                        "msgtype": "m.text",
+                                        "body": "please continue",
+                                        "m.relates_to": {"m.in_reply_to": {"event_id": "$agent-reply"}},
+                                    },
+                                },
+                            ]
+                        }
+                    }
+                }
+            }
+        }
+
+        events = matrix_events(
+            payload,
+            {"!team:matrix.local"},
+            "@worker:matrix.local",
+            {"@leader:matrix.local", "@worker:matrix.local"},
+        )
+
+        self.assertEqual([event["event_id"] for event in events], ["$human-reply"])
+
+    def test_team_agent_message_requires_a_structured_mention(self):
+        payload = {
+            "rooms": {
+                "join": {
+                    "!team:matrix.local": {
+                        "timeline": {
+                            "events": [
+                                {
+                                    "event_id": "$untargeted",
+                                    "sender": "@leader:matrix.local",
+                                    "type": "m.room.message",
+                                    "content": {"msgtype": "m.text", "body": "for someone else"},
+                                },
+                                {
+                                    "event_id": "$targeted",
+                                    "sender": "@leader:matrix.local",
+                                    "type": "m.room.message",
+                                    "content": {
+                                        "msgtype": "m.text",
+                                        "body": "please handle this",
+                                        "m.mentions": {"user_ids": ["@worker:matrix.local"]},
+                                    },
+                                },
+                            ]
+                        }
+                    }
+                }
+            }
+        }
+
+        events = matrix_events(
+            payload,
+            {"!team:matrix.local"},
+            "@worker:matrix.local",
+            {"@leader:matrix.local", "@worker:matrix.local"},
+        )
+
+        self.assertEqual([event["event_id"] for event in events], ["$targeted"])
+
 
 class RoomSessionContinuationTest(unittest.TestCase):
     def test_room_session_is_restored_after_bridge_restart(self):
@@ -185,6 +268,31 @@ class RoomSessionContinuationTest(unittest.TestCase):
 
             self.assertEqual(standalone_rooms, {"!personal:matrix.local"})
             self.assertEqual(team_rooms, {"!personal:matrix.local", "!team:matrix.local"})
+
+    def test_runtime_agent_user_ids_excludes_human_members(self):
+        runtime = Path(__file__).resolve().parents[2] / "plugins" / "teamharness" / "adapters" / "deepseek-harness" / "fixtures" / "runtime.yaml"
+
+        self.assertEqual(
+            runtime_agent_user_ids(runtime),
+            {"@leader-a:matrix.local", "@dsh-worker-a:matrix.local"},
+        )
+
+    def test_runtime_agent_user_ids_accepts_controller_indentless_sequence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            runtime = Path(directory) / "runtime.yaml"
+            runtime.write_text(
+                "team:\n"
+                "  members:\n"
+                "  - matrixUserId: '@leader:matrix.local'\n"
+                "    role: team_leader\n"
+                "  - matrixUserId: '@coordinator:matrix.local'\n"
+                "    role: coordinator\n"
+                "member:\n"
+                "  matrixUserId: '@leader:matrix.local'\n",
+                encoding="utf-8",
+            )
+
+            self.assertEqual(runtime_agent_user_ids(runtime), {"@leader:matrix.local"})
 
 
 class AttachmentReceiveTest(unittest.TestCase):

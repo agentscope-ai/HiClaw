@@ -13,7 +13,12 @@ import urllib.parse
 import urllib.request
 
 
-def matrix_events(payload: dict[str, Any], watched_rooms: set[str], own_user_id: str) -> list[dict[str, str]]:
+def matrix_events(
+    payload: dict[str, Any],
+    watched_rooms: set[str],
+    own_user_id: str,
+    agent_user_ids: set[str] | None = None,
+) -> list[dict[str, str]]:
     """Extract actionable text, image, and file events from watched joined rooms."""
     found: list[dict[str, str]] = []
     joined = payload.get("rooms", {}).get("join", {})
@@ -35,13 +40,24 @@ def matrix_events(payload: dict[str, Any], watched_rooms: set[str], own_user_id:
             content = event.get("content")
             if not isinstance(content, dict):
                 continue
+            sender = str(event.get("sender") or "").strip()
+            if sender in (agent_user_ids or set()):
+                relates_to = content.get("m.relates_to")
+                is_reply = isinstance(relates_to, dict) and isinstance(relates_to.get("m.in_reply_to"), dict)
+                mentions = content.get("m.mentions")
+                mentioned_users = mentions.get("user_ids", []) if isinstance(mentions, dict) else []
+                is_targeted = (
+                    isinstance(mentions, dict)
+                    and (mentions.get("room") is True or (isinstance(mentioned_users, list) and own_user_id in mentioned_users))
+                )
+                if is_reply or not is_targeted:
+                    continue
             msgtype = str(content.get("msgtype") or "")
             kind = {"m.text": "text", "m.image": "image", "m.file": "file"}.get(msgtype)
             if kind is None:
                 continue
             body = str(content.get("body") or "").strip()
             event_id = str(event.get("event_id") or "").strip()
-            sender = str(event.get("sender") or "").strip()
             if not body or not event_id or not sender:
                 continue
             extracted = {
@@ -68,11 +84,16 @@ def matrix_events(payload: dict[str, Any], watched_rooms: set[str], own_user_id:
     return found
 
 
-def text_events(payload: dict[str, Any], watched_rooms: set[str], own_user_id: str) -> list[dict[str, str]]:
+def text_events(
+    payload: dict[str, Any],
+    watched_rooms: set[str],
+    own_user_id: str,
+    agent_user_ids: set[str] | None = None,
+) -> list[dict[str, str]]:
     """Return the plain-text compatibility view used by bridge callers."""
     return [
         {key: value for key, value in event.items() if key != "kind"}
-        for event in matrix_events(payload, watched_rooms, own_user_id)
+        for event in matrix_events(payload, watched_rooms, own_user_id, agent_user_ids)
         if event["kind"] == "text"
     ]
 
