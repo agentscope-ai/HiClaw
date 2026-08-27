@@ -126,10 +126,8 @@ function ConvertTo-MatrixAppServiceEnabledValue {
 
 function Test-DeepSeekHarnessAvailable {
     $hasWorkerOverride = -not [string]::IsNullOrWhiteSpace($env:AGENTTEAMS_INSTALL_DEEPSEEK_HARNESS_WORKER_IMAGE)
-    $hasControlPlaneOverride =
-        -not [string]::IsNullOrWhiteSpace($env:AGENTTEAMS_INSTALL_CONTROLLER_IMAGE) -or
-        -not [string]::IsNullOrWhiteSpace($env:AGENTTEAMS_INSTALL_EMBEDDED_IMAGE)
-    if ($hasWorkerOverride -and $hasControlPlaneOverride) { return $true }
+    $hasEmbeddedOverride = -not [string]::IsNullOrWhiteSpace($env:AGENTTEAMS_INSTALL_EMBEDDED_IMAGE)
+    if ($hasWorkerOverride -and $hasEmbeddedOverride) { return $true }
     $selected = if ($script:AGENTTEAMS_VERSION -eq "latest") {
         $script:AGENTTEAMS_KNOWN_STABLE_VERSION
     } else {
@@ -430,7 +428,7 @@ $script:Messages = @{
     "worker_runtime.copaw" = @{ zh = "CoPaw（旧版本，建议升级为 QwenPaw）"; en = "CoPaw (legacy; upgrade to QwenPaw recommended)" }
     "worker_runtime.hermes" = @{ zh = "Hermes"; en = "Hermes" }
     "worker_runtime.deepseek_harness" = @{ zh = "DeepSeek Harness（实验性）"; en = "DeepSeek Harness (experimental)" }
-    "worker_runtime.deepseek_unavailable" = @{ zh = "当前 Controller 版本不支持 DeepSeek Harness；请使用 v1.2.4+，或同时覆盖兼容的 Worker 与 Controller/embedded 镜像"; en = "The selected Controller version does not support DeepSeek Harness; use v1.2.4+, or override both the Worker and compatible Controller/embedded images" }
+    "worker_runtime.deepseek_unavailable" = @{ zh = "当前 Controller 版本不支持 DeepSeek Harness；请使用 v1.2.4+，或同时覆盖兼容的 Worker 与 embedded Controller 镜像"; en = "The selected Controller version does not support DeepSeek Harness; use v1.2.4+, or override both the Worker and compatible embedded Controller image" }
     "worker_runtime.choice" = @{ zh = "请选择 [1/2/3/4]"; en = "Enter choice [1/2/3/4]" }
     "worker_runtime.choice_dsh" = @{ zh = "请选择 [1/2/3/4/5]"; en = "Enter choice [1/2/3/4/5]" }
     "worker_runtime.selected" = @{ zh = "默认 Worker 运行时: {0}"; en = "Default Worker runtime: {0}" }

@@ -35,10 +35,15 @@ if _supports_deepseek_harness "v1.2.3"; then
     fail "A Worker-only image override must not bypass the v1.2.4 Controller contract"
 fi
 AGENTTEAMS_INSTALL_CONTROLLER_IMAGE="agentteams/controller:dsh-test"
+if _supports_deepseek_harness "v1.2.3"; then
+    fail "A Controller image override must not bypass the embedded control-plane contract"
+fi
+AGENTTEAMS_INSTALL_EMBEDDED_IMAGE="agentteams/embedded:dsh-test"
 _supports_deepseek_harness "v1.2.3" ||
-    fail "Compatible Worker and Controller overrides must enable development installs"
+    fail "Compatible Worker and embedded Controller overrides must enable development installs"
 unset AGENTTEAMS_INSTALL_DEEPSEEK_HARNESS_WORKER_IMAGE
 unset AGENTTEAMS_INSTALL_CONTROLLER_IMAGE
+unset AGENTTEAMS_INSTALL_EMBEDDED_IMAGE
 
 grep -Fq 'AGENTTEAMS_INSTALL_DEEPSEEK_HARNESS_WORKER_IMAGE' "${BASH_INSTALLER}" ||
     fail "Bash installer must support a DeepSeek Harness Worker image override"
