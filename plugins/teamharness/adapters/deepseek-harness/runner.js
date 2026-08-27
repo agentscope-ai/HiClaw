@@ -4,6 +4,7 @@ import { installModelSelection } from '@deepseek-ai/dsh-agent'
 import { freezeMessage, MessageId } from '@deepseek-ai/dsh-llm'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import { matrixEventMessageId } from './message-id.js'
+import { executeAttempt } from './turn.js'
 
 
 export const name = 'agentteams-headless-runner'
@@ -17,32 +18,6 @@ export const Config = z.object({
   attempt: z.number().step(1).min(1).default(1),
 })
 
-function summarize(events, firstSeq) {
-  let started = false
-  let text = ''
-  let reason
-  for (const event of events) {
-    if (event.seq < firstSeq) continue
-    if (event.type === 'turn/start') {
-      started = true
-      continue
-    }
-    if (!started) continue
-    if (event.type === 'assistant/message') {
-      const joined = event.data.message.content
-        .filter(block => block.type === 'text')
-        .map(block => block.text)
-        .join('')
-      if (joined !== '') text = joined
-    }
-    if (event.type === 'turn/end') {
-      reason = event.data.reason
-      break
-    }
-  }
-  return { text, reason }
-}
-
 function messageId(eventId, attempt) {
   if (!eventId) return MessageId(randomUUID())
   return MessageId(matrixEventMessageId(eventId, attempt))
@@ -55,12 +30,6 @@ function userMessage(task, id) {
     content: [{ type: 'text', text: task }],
     source: { kind: 'user' },
   })
-}
-
-function existingOutcome(events, id) {
-  const prompt = events.find(event => event.type === 'user/message' && event.data.id === id)
-  if (prompt === undefined) return undefined
-  return summarize(events, prompt.seq)
 }
 
 async function openAgent(ctx, sessionId, resume, selection) {
@@ -98,16 +67,15 @@ async function run(ctx, config, io) {
   await agent.whenIdle()
 
   const id = messageId(config.eventId, config.attempt)
-  let outcome = existingOutcome(agent.session.events, id)
-  if (outcome === undefined) {
-    const firstSeq = agent.session.seq
-    agent.followup(userMessage(config.task, id))
-    await agent.whenIdle()
-    await sessions.flush(agent.session)
-    outcome = summarize(agent.session.events, firstSeq)
-  } else if (outcome.reason === undefined) {
-    throw new Error(`Matrix event ${config.eventId} exists in the DSH session without a completed turn`)
-  }
+  const outcome = await executeAttempt({
+    getEvents: () => agent.session.events,
+    id,
+    firstSeq: agent.session.seq,
+    eventId: config.eventId,
+    followup: () => agent.followup(userMessage(config.task, id)),
+    whenIdle: () => agent.whenIdle(),
+    flush: () => sessions.flush(agent.session),
+  })
 
   io.stdout.write((outcome?.text ?? '') + '\n')
   if (outcome?.reason?.kind === 'error') {

@@ -457,6 +457,17 @@ class DeliveryReliabilityTest(unittest.TestCase):
             self.assertTrue(restarted.is_completed("$task"))
             self.assertEqual(restarted.answer_for("$task"), ("done", ["result.txt"]))
 
+    def test_processing_event_reuses_attempt_after_bridge_restart(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "matrix-bridge-state.json"
+            first = BridgeState.load(path)
+            self.assertEqual(first.begin_event("$task", "!team:matrix.local"), 1)
+            first.save()
+
+            restarted = BridgeState.load(path)
+
+            self.assertEqual(restarted.begin_event("$task", "!team:matrix.local"), 1)
+
     def test_failed_event_keeps_retry_count_across_restart(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "matrix-bridge-state.json"

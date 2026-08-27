@@ -65,9 +65,13 @@ class BridgeState:
     def begin_event(self, event_id: str, room_id: str) -> int:
         record = self.data["events"].get(event_id)
         if not isinstance(record, dict):
-            record = {"room_id": room_id, "attempts": 0}
+            record = {"room_id": room_id, "attempts": 1}
             self.data["events"][event_id] = record
-        record["attempts"] = int(record.get("attempts") or 0) + 1
+        else:
+            attempts = max(1, int(record.get("attempts") or 0))
+            if record.get("status") == "failed":
+                attempts += 1
+            record["attempts"] = attempts
         record["status"] = "processing"
         record["updated_at"] = int(time.time())
         return record["attempts"]
