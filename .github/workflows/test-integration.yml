@@ -153,7 +153,9 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Run DeepSeek Harness bridge tests
-        run: python3 -m unittest discover -s deepseek-harness/tests -p 'test_*.py' -v
+        run: |
+          python3 -m unittest discover -s deepseek-harness/tests -p 'test_*.py' -v
+          node --test deepseek-harness/tests/*.test.mjs
 
   # Step 1a: Build the shared base image (agentteams-controller)
   build-base:

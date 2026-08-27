@@ -235,6 +235,7 @@ class RoomSessionContinuationTest(unittest.TestCase):
             session_id="session-agentteams-room-123",
             resume=True,
             event_id="$second-message",
+            attempt=2,
         )
 
         self.assertEqual(answer, "continued answer")
@@ -242,6 +243,7 @@ class RoomSessionContinuationTest(unittest.TestCase):
         self.assertEqual(environment["TEAMHARNESS_DSH_SESSION_ID"], "session-agentteams-room-123")
         self.assertEqual(environment["TEAMHARNESS_DSH_RESUME"], "true")
         self.assertEqual(environment["TEAMHARNESS_MATRIX_EVENT_ID"], "$second-message")
+        self.assertEqual(environment["TEAMHARNESS_DSH_ATTEMPT"], "2")
 
     def test_runtime_room_set_changes_when_worker_joins_a_team(self):
         with tempfile.TemporaryDirectory() as directory:

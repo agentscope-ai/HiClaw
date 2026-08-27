@@ -1,8 +1,9 @@
-import { createHash, randomUUID } from 'node:crypto'
+import { randomUUID } from 'node:crypto'
 import z from '@deepseek-ai/schemastery'
 import { installModelSelection } from '@deepseek-ai/dsh-agent'
 import { freezeMessage, MessageId } from '@deepseek-ai/dsh-llm'
 import { SessionId } from '@deepseek-ai/dsh-session'
+import { matrixEventMessageId } from './message-id.js'
 
 
 export const name = 'agentteams-headless-runner'
@@ -13,6 +14,7 @@ export const Config = z.object({
   sessionId: z.string().default(''),
   resume: z.boolean().default(false),
   eventId: z.string().default(''),
+  attempt: z.number().step(1).min(1).default(1),
 })
 
 function summarize(events, firstSeq) {
@@ -41,10 +43,9 @@ function summarize(events, firstSeq) {
   return { text, reason }
 }
 
-function messageId(eventId) {
+function messageId(eventId, attempt) {
   if (!eventId) return MessageId(randomUUID())
-  const digest = createHash('sha256').update(eventId).digest('hex')
-  return MessageId(`matrix-${digest}`)
+  return MessageId(matrixEventMessageId(eventId, attempt))
 }
 
 function userMessage(task, id) {
@@ -96,7 +97,7 @@ async function run(ctx, config, io) {
   const { agent } = await openAgent(ctx, sessionId, config.resume, selection)
   await agent.whenIdle()
 
-  const id = messageId(config.eventId)
+  const id = messageId(config.eventId, config.attempt)
   let outcome = existingOutcome(agent.session.events, id)
   if (outcome === undefined) {
     const firstSeq = agent.session.seq

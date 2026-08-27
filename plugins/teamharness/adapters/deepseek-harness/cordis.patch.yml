@@ -22,6 +22,7 @@
         sessionId: !!js process.env.TEAMHARNESS_DSH_SESSION_ID || ''
         resume: !!js process.env.TEAMHARNESS_DSH_RESUME === 'true'
         eventId: !!js process.env.TEAMHARNESS_MATRIX_EVENT_ID || ''
+        attempt: !!js Math.max(1, Number.parseInt(process.env.TEAMHARNESS_DSH_ATTEMPT || '1', 10) || 1)
 
     - id: teamharness-context
       name: 'agentteams-teamharness-dsh/context'

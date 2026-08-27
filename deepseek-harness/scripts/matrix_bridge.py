@@ -286,6 +286,7 @@ def run_dsh(
     session_id: str,
     resume: bool,
     event_id: str,
+    attempt: int,
 ) -> str:
     environment = os.environ.copy()
     environment.update(
@@ -293,6 +294,7 @@ def run_dsh(
             "TEAMHARNESS_DSH_SESSION_ID": session_id,
             "TEAMHARNESS_DSH_RESUME": "true" if resume else "false",
             "TEAMHARNESS_MATRIX_EVENT_ID": event_id,
+            "TEAMHARNESS_DSH_ATTEMPT": str(attempt),
         }
     )
     completed = subprocess.run(
@@ -413,6 +415,7 @@ def main() -> int:
                             session_id=session_id,
                             resume=resume,
                             event_id=event["event_id"],
+                            attempt=attempts,
                         )
                         sync_sessions(worker_name)
                         state.mark_session_ready(event["room_id"])

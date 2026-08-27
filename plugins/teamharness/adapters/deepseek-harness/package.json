@@ -6,12 +6,14 @@
   "exports": {
     "./context": "./context.js",
     "./live-probe": "./live-probe.js",
+    "./message-id": "./message-id.js",
     "./probe": "./probe.js",
     "./runner": "./runner.js"
   },
   "files": [
     "context.js",
     "live-probe.js",
+    "message-id.js",
     "prepare-skills.js",
     "probe.js",
     "runner.js",
