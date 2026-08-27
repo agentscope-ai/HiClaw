@@ -87,7 +87,10 @@ _ver_lt() {
 
 _supports_deepseek_harness() {
     local version="$1"
-    [ -n "${AGENTTEAMS_INSTALL_DEEPSEEK_HARNESS_WORKER_IMAGE:-}" ] && return 0
+    if [ -n "${AGENTTEAMS_INSTALL_DEEPSEEK_HARNESS_WORKER_IMAGE:-}" ] && \
+       { [ -n "${AGENTTEAMS_INSTALL_CONTROLLER_IMAGE:-}" ] || [ -n "${AGENTTEAMS_INSTALL_EMBEDDED_IMAGE:-}" ]; }; then
+        return 0
+    fi
     [ "${version}" = "latest" ] && version="${AGENTTEAMS_KNOWN_STABLE_VERSION}"
     ! _ver_lt "${version}" "${AGENTTEAMS_DEEPSEEK_HARNESS_MIN_VERSION}"
 }
@@ -626,6 +629,8 @@ msg() {
         "worker_runtime.hermes.en") text="Hermes" ;;
         "worker_runtime.deepseek_harness.zh") text="DeepSeek Harness（实验性）" ;;
         "worker_runtime.deepseek_harness.en") text="DeepSeek Harness (experimental)" ;;
+        "worker_runtime.deepseek_unavailable.zh") text="当前 Controller 版本不支持 DeepSeek Harness；请使用 v1.2.4+，或同时覆盖兼容的 Worker 与 Controller/embedded 镜像" ;;
+        "worker_runtime.deepseek_unavailable.en") text="The selected Controller version does not support DeepSeek Harness; use v1.2.4+, or override both the Worker and compatible Controller/embedded images" ;;
         "worker_runtime.choice.zh") text="请选择 [1/2/3/4]" ;;
         "worker_runtime.choice.en") text="Enter choice [1/2/3/4]" ;;
         "worker_runtime.choice_dsh.zh") text="请选择 [1/2/3/4/5]" ;;
@@ -2789,6 +2794,9 @@ step_runtime() {
                fi ;;
             *) AGENTTEAMS_DEFAULT_WORKER_RUNTIME="qwenpaw" ;;
         esac
+    fi
+    if [ "${AGENTTEAMS_DEFAULT_WORKER_RUNTIME}" = "deepseek-harness" ] && ! _supports_deepseek_harness "${AGENTTEAMS_VERSION}"; then
+        die "$(msg worker_runtime.deepseek_unavailable)"
     fi
     export AGENTTEAMS_DEFAULT_WORKER_RUNTIME
     log "$(msg worker_runtime.selected "${AGENTTEAMS_DEFAULT_WORKER_RUNTIME}")"
