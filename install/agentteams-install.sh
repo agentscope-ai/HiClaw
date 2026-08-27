@@ -36,6 +36,7 @@
 #   AGENTTEAMS_INSTALL_COPAW_WORKER_IMAGE  Override copaw worker image (e.g., local build)
 #   AGENTTEAMS_INSTALL_QWENPAW_WORKER_IMAGE Override QwenPaw worker image (e.g., local build)
 #   AGENTTEAMS_INSTALL_HERMES_WORKER_IMAGE Override hermes worker image (e.g., local build)
+#   AGENTTEAMS_INSTALL_DEEPSEEK_HARNESS_WORKER_IMAGE Override experimental DeepSeek Harness worker image
 #   AGENTTEAMS_NACOS_REGISTRY_URI          Default Nacos registry URI for Worker market search/import
 #                                      (default: nacos://market.agentteams.io:80/public)
 #   AGENTTEAMS_NACOS_USERNAME              Default Nacos username for nacos:// package imports (optional)
@@ -63,6 +64,7 @@ set -e
 
 AGENTTEAMS_VERSION="${AGENTTEAMS_VERSION:-}"
 AGENTTEAMS_KNOWN_STABLE_VERSION="v1.2.3"   # fallback if GitHub API is unreachable
+AGENTTEAMS_DEEPSEEK_HARNESS_MIN_VERSION="v1.2.4"
 
 _normalize_version() {
     local version="$1"
@@ -81,6 +83,13 @@ _ver_lt() {
     [ "$2" = "latest" ] && return 0
     [ "$1" = "$2" ] && return 1
     [ "$(printf '%s\n%s' "$1" "$2" | sort -V | head -1)" = "$1" ]
+}
+
+_supports_deepseek_harness() {
+    local version="$1"
+    [ -n "${AGENTTEAMS_INSTALL_DEEPSEEK_HARNESS_WORKER_IMAGE:-}" ] && return 0
+    [ "${version}" = "latest" ] && version="${AGENTTEAMS_KNOWN_STABLE_VERSION}"
+    ! _ver_lt "${version}" "${AGENTTEAMS_DEEPSEEK_HARNESS_MIN_VERSION}"
 }
 
 _use_legacy_image_env() {
@@ -615,8 +624,12 @@ msg() {
         "worker_runtime.copaw.en") text="CoPaw (legacy; upgrade to QwenPaw recommended)" ;;
         "worker_runtime.hermes.zh") text="Hermes" ;;
         "worker_runtime.hermes.en") text="Hermes" ;;
+        "worker_runtime.deepseek_harness.zh") text="DeepSeek Harness（实验性）" ;;
+        "worker_runtime.deepseek_harness.en") text="DeepSeek Harness (experimental)" ;;
         "worker_runtime.choice.zh") text="请选择 [1/2/3/4]" ;;
         "worker_runtime.choice.en") text="Enter choice [1/2/3/4]" ;;
+        "worker_runtime.choice_dsh.zh") text="请选择 [1/2/3/4/5]" ;;
+        "worker_runtime.choice_dsh.en") text="Enter choice [1/2/3/4/5]" ;;
         "worker_runtime.choice_legacy.zh") text="请选择 [1/2/3]" ;;
         "worker_runtime.choice_legacy.en") text="Enter choice [1/2/3]" ;;
         "worker_runtime.selected.zh") text="默认 Worker 运行时: %s" ;;
@@ -1104,6 +1117,7 @@ WORKER_IMAGE="${AGENTTEAMS_INSTALL_WORKER_IMAGE:-}"
 COPAW_WORKER_IMAGE="${AGENTTEAMS_INSTALL_COPAW_WORKER_IMAGE:-}"
 QWENPAW_WORKER_IMAGE="${AGENTTEAMS_INSTALL_QWENPAW_WORKER_IMAGE:-}"
 HERMES_WORKER_IMAGE="${AGENTTEAMS_INSTALL_HERMES_WORKER_IMAGE:-}"
+DEEPSEEK_HARNESS_WORKER_IMAGE="${AGENTTEAMS_INSTALL_DEEPSEEK_HARNESS_WORKER_IMAGE:-}"
 CONTROLLER_IMAGE="${AGENTTEAMS_INSTALL_CONTROLLER_IMAGE:-}"
 
 resolve_image_tags() {
@@ -1115,6 +1129,7 @@ resolve_image_tags() {
     COPAW_WORKER_IMAGE="${AGENTTEAMS_INSTALL_COPAW_WORKER_IMAGE:-${AGENTTEAMS_REGISTRY}/agentteams/agentteams-copaw-worker:${AGENTTEAMS_VERSION}}"
     QWENPAW_WORKER_IMAGE="${AGENTTEAMS_INSTALL_QWENPAW_WORKER_IMAGE:-${AGENTTEAMS_REGISTRY}/agentteams/agentteams-qwenpaw-worker:${AGENTTEAMS_VERSION}}"
     HERMES_WORKER_IMAGE="${AGENTTEAMS_INSTALL_HERMES_WORKER_IMAGE:-${AGENTTEAMS_REGISTRY}/agentteams/agentteams-hermes-worker:${AGENTTEAMS_VERSION}}"
+    DEEPSEEK_HARNESS_WORKER_IMAGE="${AGENTTEAMS_INSTALL_DEEPSEEK_HARNESS_WORKER_IMAGE:-${AGENTTEAMS_REGISTRY}/agentteams/agentteams-deepseek-harness-worker:${AGENTTEAMS_VERSION}}"
     EMBEDDED_IMAGE="${AGENTTEAMS_INSTALL_EMBEDDED_IMAGE:-${AGENTTEAMS_REGISTRY}/agentteams/agentteams-embedded:${AGENTTEAMS_VERSION}}"
     # CoPaw Worker introduced in v1.0.4; Hermes Worker introduced in v1.1.0
     if [ -z "${AGENTTEAMS_INSTALL_COPAW_WORKER_IMAGE:-}" ] && _ver_lt "${AGENTTEAMS_VERSION}" "v1.0.4"; then
@@ -1122,6 +1137,9 @@ resolve_image_tags() {
     fi
     if [ -z "${AGENTTEAMS_INSTALL_HERMES_WORKER_IMAGE:-}" ] && _ver_lt "${AGENTTEAMS_VERSION}" "v1.1.0"; then
         HERMES_WORKER_IMAGE=""
+    fi
+    if ! _supports_deepseek_harness "${AGENTTEAMS_VERSION}"; then
+        DEEPSEEK_HARNESS_WORKER_IMAGE=""
     fi
 }
 
@@ -2710,6 +2728,7 @@ step_runtime() {
     if ! _ver_lt "${AGENTTEAMS_VERSION}" "v1.1.0"; then
         echo "  3) $(msg worker_runtime.hermes)"
         echo "  4) $(msg worker_runtime.copaw)"
+        [ -n "${DEEPSEEK_HARNESS_WORKER_IMAGE:-}" ] && echo "  5) $(msg worker_runtime.deepseek_harness)"
     else
         echo "  3) $(msg worker_runtime.copaw)"
     fi
@@ -2720,7 +2739,9 @@ step_runtime() {
         log "$(msg prompt.upgrade_keep "$(msg worker_runtime.title_short)" "${AGENTTEAMS_DEFAULT_WORKER_RUNTIME}")"
         local _runtime_choice
         local _runtime_prompt
-        if ! _ver_lt "${AGENTTEAMS_VERSION}" "v1.1.0"; then
+        if [ -n "${DEEPSEEK_HARNESS_WORKER_IMAGE:-}" ]; then
+            _runtime_prompt="$(msg worker_runtime.choice_dsh)"
+        elif ! _ver_lt "${AGENTTEAMS_VERSION}" "v1.1.0"; then
             _runtime_prompt="$(msg worker_runtime.choice)"
         else
             _runtime_prompt="$(msg worker_runtime.choice_legacy)"
@@ -2736,13 +2757,18 @@ step_runtime() {
                        AGENTTEAMS_DEFAULT_WORKER_RUNTIME="copaw"
                    fi ;;
                 4) AGENTTEAMS_DEFAULT_WORKER_RUNTIME="copaw" ;;
+                5) if [ -n "${DEEPSEEK_HARNESS_WORKER_IMAGE:-}" ]; then
+                       AGENTTEAMS_DEFAULT_WORKER_RUNTIME="deepseek-harness"
+                   fi ;;
                 *) AGENTTEAMS_DEFAULT_WORKER_RUNTIME="qwenpaw" ;;
             esac
         fi
     elif [ -z "${AGENTTEAMS_DEFAULT_WORKER_RUNTIME+x}" ]; then
         local _runtime_choice
         local _runtime_prompt
-        if ! _ver_lt "${AGENTTEAMS_VERSION}" "v1.1.0"; then
+        if [ -n "${DEEPSEEK_HARNESS_WORKER_IMAGE:-}" ]; then
+            _runtime_prompt="$(msg worker_runtime.choice_dsh)"
+        elif ! _ver_lt "${AGENTTEAMS_VERSION}" "v1.1.0"; then
             _runtime_prompt="$(msg worker_runtime.choice)"
         else
             _runtime_prompt="$(msg worker_runtime.choice_legacy)"
@@ -2758,6 +2784,9 @@ step_runtime() {
                    AGENTTEAMS_DEFAULT_WORKER_RUNTIME="copaw"
                fi ;;
             4) AGENTTEAMS_DEFAULT_WORKER_RUNTIME="copaw" ;;
+            5) if [ -n "${DEEPSEEK_HARNESS_WORKER_IMAGE:-}" ]; then
+                   AGENTTEAMS_DEFAULT_WORKER_RUNTIME="deepseek-harness"
+               fi ;;
             *) AGENTTEAMS_DEFAULT_WORKER_RUNTIME="qwenpaw" ;;
         esac
     fi
@@ -3544,8 +3573,9 @@ AGENTTEAMS_WORKER_IMAGE=${WORKER_IMAGE}
 AGENTTEAMS_COPAW_WORKER_IMAGE=${COPAW_WORKER_IMAGE}
 AGENTTEAMS_QWENPAW_WORKER_IMAGE=${QWENPAW_WORKER_IMAGE}
 AGENTTEAMS_HERMES_WORKER_IMAGE=${HERMES_WORKER_IMAGE}
+AGENTTEAMS_DEEPSEEK_HARNESS_WORKER_IMAGE=${DEEPSEEK_HARNESS_WORKER_IMAGE}
 
-# Default Worker runtime (qwenpaw | openclaw | hermes | copaw)
+# Default Worker runtime (qwenpaw | openclaw | hermes | copaw | deepseek-harness [experimental])
 AGENTTEAMS_DEFAULT_WORKER_RUNTIME=${AGENTTEAMS_DEFAULT_WORKER_RUNTIME:-qwenpaw}
 
 # Matrix E2EE (0=disabled, 1=enabled; default: 0)
@@ -3720,6 +3750,7 @@ EOF
     _pull_image "${COPAW_WORKER_IMAGE}" "install.image.worker_exists" "install.image.pulling_worker"
     _pull_image "${QWENPAW_WORKER_IMAGE}" "install.image.worker_exists" "install.image.pulling_worker"
     _pull_image "${HERMES_WORKER_IMAGE}" "install.image.worker_exists" "install.image.pulling_worker"
+    _pull_image "${DEEPSEEK_HARNESS_WORKER_IMAGE}" "install.image.worker_exists" "install.image.pulling_worker"
 
     # --- Pre-upgrade: extract Matrix passwords from running old containers ---
     # Only needed when upgrading FROM old architecture (v1.0.9) TO embedded.
@@ -3945,6 +3976,7 @@ CREDEOF
             -e "${_ctrl_env_prefix}COPAW_WORKER_IMAGE=${COPAW_WORKER_IMAGE}"
             -e "${_ctrl_env_prefix}QWENPAW_WORKER_IMAGE=${QWENPAW_WORKER_IMAGE}"
             -e "${_ctrl_env_prefix}HERMES_WORKER_IMAGE=${HERMES_WORKER_IMAGE}"
+            -e "${_ctrl_env_prefix}DEEPSEEK_HARNESS_WORKER_IMAGE=${DEEPSEEK_HARNESS_WORKER_IMAGE}"
             -e "${_ctrl_env_prefix}MATRIX_DOMAIN=${_matrix_domain}"
             -e "${_ctrl_env_prefix}ELEMENT_HOMESERVER_URL=http://127.0.0.1:${AGENTTEAMS_PORT_GATEWAY}"
             -e "${_ctrl_env_prefix}MATRIX_URL=http://127.0.0.1:6167"
@@ -4210,6 +4242,7 @@ CREDEOF
                     -e AGENTTEAMS_COPAW_WORKER_IMAGE="${COPAW_WORKER_IMAGE}" \
                     -e AGENTTEAMS_QWENPAW_WORKER_IMAGE="${QWENPAW_WORKER_IMAGE}" \
                     -e AGENTTEAMS_HERMES_WORKER_IMAGE="${HERMES_WORKER_IMAGE}" \
+                    -e AGENTTEAMS_DEEPSEEK_HARNESS_WORKER_IMAGE="${DEEPSEEK_HARNESS_WORKER_IMAGE}" \
                     ${AGENTTEAMS_PROXY_ALLOWED_REGISTRIES:+-e AGENTTEAMS_PROXY_ALLOWED_REGISTRIES="${AGENTTEAMS_PROXY_ALLOWED_REGISTRIES}"} \
                     --restart unless-stopped \
                     "${_proxy_image}"

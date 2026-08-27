@@ -12,6 +12,7 @@ on:
       - 'tests/check-installer-pre-1.2-env-compat.sh'
       - 'tests/check-installer-embedded-latest-pull.sh'
       - 'tests/check-installer-qwenpaw-runtime-options.sh'
+      - 'tests/check-installer-deepseek-harness-runtime-options.sh'
       - 'tests/check-windows-appservice-normalization.ps1'
       - 'tests/check-apply-wrapper-flags.sh'
       - 'tests/check-helm-agentteams.sh'
@@ -35,6 +36,9 @@ jobs:
 
       - name: Check QwenPaw installer runtime options
         run: bash tests/check-installer-qwenpaw-runtime-options.sh
+
+      - name: Check DeepSeek Harness installer runtime options
+        run: bash tests/check-installer-deepseek-harness-runtime-options.sh
 
       - name: Check Windows AppService normalization
         shell: pwsh

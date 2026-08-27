@@ -33,6 +33,7 @@
 #   AGENTTEAMS_INSTALL_COPAW_WORKER_IMAGE  Override copaw worker image (e.g., local build)
 #   AGENTTEAMS_INSTALL_QWENPAW_WORKER_IMAGE Override qwenpaw worker image (e.g., local build)
 #   AGENTTEAMS_INSTALL_HERMES_WORKER_IMAGE Override hermes worker image (e.g., local build)
+#   AGENTTEAMS_INSTALL_DEEPSEEK_HARNESS_WORKER_IMAGE Override experimental DeepSeek Harness worker image
 #   AGENTTEAMS_PORT_GATEWAY       Host port for Higress gateway (default: 18080)
 #   AGENTTEAMS_PORT_CONSOLE       Host port for Higress console (default: 18001)
 #   AGENTTEAMS_PORT_ELEMENT_WEB   Host port for Element Web direct access (default: 18088)
@@ -64,6 +65,8 @@ param(
 # ============================================================
 
 $script:AGENTTEAMS_VERSION = if ($env:AGENTTEAMS_VERSION) { $env:AGENTTEAMS_VERSION } else { "latest" }
+$script:AGENTTEAMS_KNOWN_STABLE_VERSION = "v1.2.3"
+$script:AGENTTEAMS_DEEPSEEK_HARNESS_MIN_VERSION = "v1.2.4"
 $script:AGENTTEAMS_NON_INTERACTIVE = if ($env:AGENTTEAMS_NON_INTERACTIVE -eq "1" -or $NonInteractive) { $true } else { $false }
 $script:AGENTTEAMS_MOUNT_SOCKET = if ($env:AGENTTEAMS_MOUNT_SOCKET -eq "0") { $false } else { $true }
 $script:AGENTTEAMS_ENV_FILE = if ($EnvFile) { $EnvFile } elseif ($env:AGENTTEAMS_ENV_FILE) { $env:AGENTTEAMS_ENV_FILE } else { "$env:USERPROFILE\agentteams-manager.env" }
@@ -119,6 +122,19 @@ function Write-Warning {
 function ConvertTo-MatrixAppServiceEnabledValue {
     param([string]$Value)
     return $Value.ToLowerInvariant()
+}
+
+function Test-DeepSeekHarnessAvailable {
+    if ($env:AGENTTEAMS_INSTALL_DEEPSEEK_HARNESS_WORKER_IMAGE) { return $true }
+    $selected = if ($script:AGENTTEAMS_VERSION -eq "latest") {
+        $script:AGENTTEAMS_KNOWN_STABLE_VERSION
+    } else {
+        $script:AGENTTEAMS_VERSION
+    }
+    $selectedMatch = [regex]::Match($selected, '^v?(\d+\.\d+\.\d+)')
+    $minimumMatch = [regex]::Match($script:AGENTTEAMS_DEEPSEEK_HARNESS_MIN_VERSION, '^v?(\d+\.\d+\.\d+)')
+    if (-not $selectedMatch.Success -or -not $minimumMatch.Success) { return $false }
+    return [version]$selectedMatch.Groups[1].Value -ge [version]$minimumMatch.Groups[1].Value
 }
 
 # Pause before exit on error so user can read the message when running via double-click
@@ -409,7 +425,9 @@ $script:Messages = @{
     "worker_runtime.qwenpaw" = @{ zh = "QwenPaw（推荐）"; en = "QwenPaw (recommended)" }
     "worker_runtime.copaw" = @{ zh = "CoPaw（旧版本，建议升级为 QwenPaw）"; en = "CoPaw (legacy; upgrade to QwenPaw recommended)" }
     "worker_runtime.hermes" = @{ zh = "Hermes"; en = "Hermes" }
+    "worker_runtime.deepseek_harness" = @{ zh = "DeepSeek Harness（实验性）"; en = "DeepSeek Harness (experimental)" }
     "worker_runtime.choice" = @{ zh = "请选择 [1/2/3/4]"; en = "Enter choice [1/2/3/4]" }
+    "worker_runtime.choice_dsh" = @{ zh = "请选择 [1/2/3/4/5]"; en = "Enter choice [1/2/3/4/5]" }
     "worker_runtime.selected" = @{ zh = "默认 Worker 运行时: {0}"; en = "Default Worker runtime: {0}" }
     "worker_runtime.title_short" = @{ zh = "默认 Worker 运行时"; en = "Default Worker Runtime" }
 
@@ -1081,11 +1099,12 @@ AGENTTEAMS_WORKER_IMAGE=$($Config.WORKER_IMAGE)
 AGENTTEAMS_COPAW_WORKER_IMAGE=$($Config.COPAW_WORKER_IMAGE)
 AGENTTEAMS_QWENPAW_WORKER_IMAGE=$($Config.QWENPAW_WORKER_IMAGE)
 AGENTTEAMS_HERMES_WORKER_IMAGE=$($Config.HERMES_WORKER_IMAGE)
+AGENTTEAMS_DEEPSEEK_HARNESS_WORKER_IMAGE=$($Config.DEEPSEEK_HARNESS_WORKER_IMAGE)
 
 # Manager runtime (qwenpaw | openclaw | copaw)
 AGENTTEAMS_MANAGER_RUNTIME=$($Config.MANAGER_RUNTIME)
 
-# Default Worker runtime (qwenpaw | openclaw | hermes | copaw)
+# Default Worker runtime (qwenpaw | openclaw | hermes | copaw | deepseek-harness [experimental])
 AGENTTEAMS_DEFAULT_WORKER_RUNTIME=$($Config.DEFAULT_WORKER_RUNTIME)
 
 # Matrix E2EE (0=disabled, 1=enabled; default: 0)
@@ -2226,25 +2245,28 @@ function Step-Workspace {
 }
 
 function Step-Runtime {
+    $deepSeekHarnessAvailable = Test-DeepSeekHarnessAvailable
     Write-Log (Get-Msg "worker_runtime.title")
     Write-Host ""
     Write-Host "  1) $(Get-Msg 'worker_runtime.qwenpaw')"
     Write-Host "  2) $(Get-Msg 'worker_runtime.openclaw')"
     Write-Host "  3) $(Get-Msg 'worker_runtime.hermes')"
     Write-Host "  4) $(Get-Msg 'worker_runtime.copaw')"
+    if ($deepSeekHarnessAvailable) { Write-Host "  5) $(Get-Msg 'worker_runtime.deepseek_harness')" }
     Write-Host ""
 
     if ($script:AGENTTEAMS_NON_INTERACTIVE) {
         $script:config.DEFAULT_WORKER_RUNTIME = if ($env:AGENTTEAMS_DEFAULT_WORKER_RUNTIME) { $env:AGENTTEAMS_DEFAULT_WORKER_RUNTIME } else { "qwenpaw" }
     } elseif ($script:AGENTTEAMS_UPGRADE -and $env:AGENTTEAMS_DEFAULT_WORKER_RUNTIME) {
         Write-Log (Get-Msg "prompt.upgrade_keep" -f (Get-Msg "worker_runtime.title_short"), $env:AGENTTEAMS_DEFAULT_WORKER_RUNTIME)
-        $rtChoice = Read-Host (Get-Msg "worker_runtime.choice")
+        $rtChoice = Read-Host (Get-Msg $(if ($deepSeekHarnessAvailable) { "worker_runtime.choice_dsh" } else { "worker_runtime.choice" }))
         if ($rtChoice -eq "b") { $script:StepResult = "back"; return }
         if ($rtChoice) {
             $script:config.DEFAULT_WORKER_RUNTIME = switch ($rtChoice) {
                 "2" { "openclaw" }
                 "3" { "hermes" }
                 "4" { "copaw" }
+                "5" { if ($deepSeekHarnessAvailable) { "deepseek-harness" } else { "qwenpaw" } }
                 default { "qwenpaw" }
             }
         } else {
@@ -2253,13 +2275,14 @@ function Step-Runtime {
     } elseif ($env:AGENTTEAMS_DEFAULT_WORKER_RUNTIME) {
         $script:config.DEFAULT_WORKER_RUNTIME = $env:AGENTTEAMS_DEFAULT_WORKER_RUNTIME
     } else {
-        $rtChoice = Read-Host (Get-Msg "worker_runtime.choice")
+        $rtChoice = Read-Host (Get-Msg $(if ($deepSeekHarnessAvailable) { "worker_runtime.choice_dsh" } else { "worker_runtime.choice" }))
         if ($rtChoice -eq "b") { $script:StepResult = "back"; return }
         $rtChoice = if ($rtChoice) { $rtChoice } else { "1" }
         $script:config.DEFAULT_WORKER_RUNTIME = switch ($rtChoice) {
             "2" { "openclaw" }
             "3" { "hermes" }
             "4" { "copaw" }
+            "5" { if ($deepSeekHarnessAvailable) { "deepseek-harness" } else { "qwenpaw" } }
             default { "qwenpaw" }
         }
     }
@@ -2531,6 +2554,14 @@ function Install-Manager {
         "$($script:AGENTTEAMS_REGISTRY)/agentteams/agentteams-hermes-worker:$($script:AGENTTEAMS_VERSION)"
     }
 
+    $script:DEEPSEEK_HARNESS_WORKER_IMAGE = if ($env:AGENTTEAMS_INSTALL_DEEPSEEK_HARNESS_WORKER_IMAGE) {
+        $env:AGENTTEAMS_INSTALL_DEEPSEEK_HARNESS_WORKER_IMAGE
+    } elseif (Test-DeepSeekHarnessAvailable) {
+        "$($script:AGENTTEAMS_REGISTRY)/agentteams/agentteams-deepseek-harness-worker:$($script:AGENTTEAMS_VERSION)"
+    } else {
+        ""
+    }
+
     $script:MANAGER_COPAW_IMAGE = if ($env:AGENTTEAMS_INSTALL_MANAGER_COPAW_IMAGE) {
         $env:AGENTTEAMS_INSTALL_MANAGER_COPAW_IMAGE
     } else {
@@ -2721,6 +2752,7 @@ function Install-Manager {
     $config.COPAW_WORKER_IMAGE = $script:COPAW_WORKER_IMAGE
     $config.QWENPAW_WORKER_IMAGE = $script:QWENPAW_WORKER_IMAGE
     $config.HERMES_WORKER_IMAGE = $script:HERMES_WORKER_IMAGE
+    $config.DEEPSEEK_HARNESS_WORKER_IMAGE = $script:DEEPSEEK_HARNESS_WORKER_IMAGE
     $config.MANAGER_QWENPAW_IMAGE = $script:MANAGER_QWENPAW_IMAGE
     $config.MANAGER_COPAW_IMAGE = $script:MANAGER_COPAW_IMAGE
 
@@ -2803,6 +2835,7 @@ function Install-Manager {
                     -e "AGENTTEAMS_COPAW_WORKER_IMAGE=$($script:COPAW_WORKER_IMAGE)" `
                     -e "AGENTTEAMS_QWENPAW_WORKER_IMAGE=$($script:QWENPAW_WORKER_IMAGE)" `
                     -e "AGENTTEAMS_HERMES_WORKER_IMAGE=$($script:HERMES_WORKER_IMAGE)" `
+                    -e "AGENTTEAMS_DEEPSEEK_HARNESS_WORKER_IMAGE=$($script:DEEPSEEK_HARNESS_WORKER_IMAGE)" `
                     -e "AGENTTEAMS_DEFAULT_WORKER_RUNTIME=$($script:config.DEFAULT_WORKER_RUNTIME)" `
                     $(if ($config.PROXY_ALLOWED_REGISTRIES) { @("-e", "AGENTTEAMS_PROXY_ALLOWED_REGISTRIES=$($config.PROXY_ALLOWED_REGISTRIES)") }) `
                     --restart unless-stopped `
@@ -2909,6 +2942,7 @@ function Install-Manager {
         $script:QWENPAW_WORKER_IMAGE
         $script:HERMES_WORKER_IMAGE
     )
+    if ($script:DEEPSEEK_HARNESS_WORKER_IMAGE) { $workerImages += $script:DEEPSEEK_HARNESS_WORKER_IMAGE }
     foreach ($workerImg in $workerImages) {
         if ($workerImg -match $LocalImagePattern) {
             if (Test-LocalImage $workerImg) {
@@ -3108,6 +3142,7 @@ function Install-Manager {
             "-e", "AGENTTEAMS_COPAW_WORKER_IMAGE=$($script:COPAW_WORKER_IMAGE)",
             "-e", "AGENTTEAMS_QWENPAW_WORKER_IMAGE=$($script:QWENPAW_WORKER_IMAGE)",
             "-e", "AGENTTEAMS_HERMES_WORKER_IMAGE=$($script:HERMES_WORKER_IMAGE)",
+            "-e", "AGENTTEAMS_DEEPSEEK_HARNESS_WORKER_IMAGE=$($script:DEEPSEEK_HARNESS_WORKER_IMAGE)",
             "-e", "AGENTTEAMS_MATRIX_DOMAIN=$matrixDomain",
             "-e", "AGENTTEAMS_ELEMENT_HOMESERVER_URL=http://127.0.0.1:$($config.PORT_GATEWAY)",
             "-e", "AGENTTEAMS_MATRIX_URL=http://127.0.0.1:6167",
