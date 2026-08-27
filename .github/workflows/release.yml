@@ -138,6 +138,9 @@ jobs:
           # QwenPaw Worker
           docker pull ${REGISTRY}/${REPO}/agentteams-qwenpaw-worker:${VERSION}
 
+          # DeepSeek Harness Worker (experimental)
+          docker pull ${REGISTRY}/${REPO}/agentteams-deepseek-harness-worker:${VERSION}
+
           # Controller (used standalone in k8s; bundled inside agentteams-embedded for docker installs)
           docker pull ${REGISTRY}/${REPO}/agentteams-controller:${VERSION}
           \`\`\`

@@ -35,6 +35,7 @@ make build-embedded
 make build-manager-qwenpaw
 make build-copaw-worker
 make build-hermes-worker
+make build-deepseek-harness-worker
 
 # Build with a specific version tag
 make build VERSION=0.1.0

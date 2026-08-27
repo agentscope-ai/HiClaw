@@ -8,7 +8,7 @@ on:
         required: true
         type: string
       targets:
-        description: 'Space-separated list of push targets (default: all). Options: openclaw-base agentteams-controller embedded manager manager-qwenpaw worker copaw-worker hermes-worker qwenpaw-worker'
+        description: 'Space-separated list of push targets (default: all). Options: openclaw-base agentteams-controller embedded manager manager-qwenpaw worker copaw-worker hermes-worker qwenpaw-worker deepseek-harness-worker'
         required: false
         type: string
         default: 'all'
@@ -83,7 +83,7 @@ jobs:
 
       - name: Build and push multi-arch images
         run: |
-          make push-manager push-manager-qwenpaw push-worker push-copaw-worker push-hermes-worker push-qwenpaw-worker push-agentteams-controller push-embedded \
+          make push-manager push-manager-qwenpaw push-worker push-copaw-worker push-hermes-worker push-qwenpaw-worker push-deepseek-harness-worker push-agentteams-controller push-embedded \
             VERSION=${{ inputs.version }} \
             OPENCLAW_BASE_VERSION=${{ inputs.version }} \
             REGISTRY=${{ env.REGISTRY }} \
@@ -100,6 +100,7 @@ jobs:
           COPAW_WORKER_IMAGE: ${{ env.REGISTRY }}/${{ env.REPO }}/agentteams-copaw-worker
           HERMES_WORKER_IMAGE: ${{ env.REGISTRY }}/${{ env.REPO }}/agentteams-hermes-worker
           QWENPAW_WORKER_IMAGE: ${{ env.REGISTRY }}/${{ env.REPO }}/agentteams-qwenpaw-worker
+          DEEPSEEK_HARNESS_WORKER_IMAGE: ${{ env.REGISTRY }}/${{ env.REPO }}/agentteams-deepseek-harness-worker
           CONTROLLER_IMAGE: ${{ env.REGISTRY }}/${{ env.REPO }}/agentteams-controller
           EMBEDDED_IMAGE: ${{ env.REGISTRY }}/${{ env.REPO }}/agentteams-embedded
         run: |
@@ -113,6 +114,7 @@ jobs:
           echo "- CoPaw Worker: \`${COPAW_WORKER_IMAGE}:${{ inputs.version }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- Hermes Worker: \`${HERMES_WORKER_IMAGE}:${{ inputs.version }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- QwenPaw Worker: \`${QWENPAW_WORKER_IMAGE}:${{ inputs.version }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- DeepSeek Harness Worker: \`${DEEPSEEK_HARNESS_WORKER_IMAGE}:${{ inputs.version }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- Controller: \`${CONTROLLER_IMAGE}:${{ inputs.version }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- Embedded: \`${EMBEDDED_IMAGE}:${{ inputs.version }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- Base (RC): \`${BASE_IMAGE}:${{ inputs.version }}\`" >> $GITHUB_STEP_SUMMARY
