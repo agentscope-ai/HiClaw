@@ -257,6 +257,32 @@ class AttachmentReceiveTest(unittest.TestCase):
             self.assertIn("inbox/", prompt.replace("\\", "/"))
             self.assertIn("budget.csv", prompt)
 
+    def test_attachment_rejects_inbox_symlink_outside_workspace(self):
+        class FakeMatrixClient:
+            def download_media(self, _mxc_url, _max_bytes):
+                return b"unsafe", "application/octet-stream"
+
+        event = {
+            "room_id": "!team:matrix.local",
+            "event_id": "$file",
+            "sender": "@admin:matrix.local",
+            "kind": "file",
+            "body": "payload.bin",
+            "filename": "payload.bin",
+            "mxc_url": "mxc://matrix.local/file-id",
+            "mimetype": "application/octet-stream",
+        }
+
+        with tempfile.TemporaryDirectory() as directory, tempfile.TemporaryDirectory() as outside:
+            workspace = Path(directory)
+            try:
+                (workspace / "inbox").symlink_to(Path(outside), target_is_directory=True)
+            except OSError as error:
+                self.skipTest(f"directory symlinks are unavailable: {error}")
+
+            with self.assertRaisesRegex(RuntimeError, "escapes the Workspace"):
+                materialize_attachment(event, FakeMatrixClient(), workspace, 1024)
+
 
 class AttachmentSendTest(unittest.TestCase):
     def test_only_new_or_changed_outbox_files_are_sent(self):
@@ -284,6 +310,19 @@ class AttachmentSendTest(unittest.TestCase):
             self.assertEqual([path.name for path in sent], ["changed.txt", "result.png"])
             self.assertEqual([call[1] for call in client.sent], ["changed.txt", "result.png"])
             self.assertTrue(all(call[2] == "$task" for call in client.sent))
+
+    def test_output_rejects_outbox_symlink_outside_workspace(self):
+        with tempfile.TemporaryDirectory() as directory, tempfile.TemporaryDirectory() as outside:
+            workspace = Path(directory)
+            outside_file = Path(outside) / "secret.txt"
+            outside_file.write_text("secret", encoding="utf-8")
+            try:
+                (workspace / "outbox").symlink_to(Path(outside), target_is_directory=True)
+            except OSError as error:
+                self.skipTest(f"directory symlinks are unavailable: {error}")
+
+            with self.assertRaisesRegex(RuntimeError, "escapes the Workspace"):
+                send_workspace_outputs(object(), "!team:matrix.local", "$task", workspace, {})
 
 
 class DeliveryReliabilityTest(unittest.TestCase):

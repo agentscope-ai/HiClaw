@@ -62,6 +62,17 @@ def safe_filename(value: str) -> str:
     return leaf[:180]
 
 
+def workspace_subdirectory(workspace: Path, name: str, *, create: bool = False) -> tuple[Path, Path]:
+    workspace_root = workspace.resolve()
+    directory_path = workspace_root / name
+    if create:
+        directory_path.mkdir(parents=True, exist_ok=True)
+    directory = directory_path.resolve()
+    if not directory.is_relative_to(workspace_root):
+        raise RuntimeError(f"Workspace {name} escapes the Workspace through a symbolic link")
+    return workspace_root, directory
+
+
 def materialize_attachment(
     event: dict[str, str],
     client: MatrixClient,
@@ -71,14 +82,14 @@ def materialize_attachment(
     data, downloaded_type = client.download_media(event["mxc_url"], max_bytes)
     room_key = hashlib.sha256(event["room_id"].encode("utf-8")).hexdigest()[:16]
     event_key = hashlib.sha256(event["event_id"].encode("utf-8")).hexdigest()[:16]
-    inbox = (workspace / "inbox").resolve()
+    workspace_root, inbox = workspace_subdirectory(workspace, "inbox", create=True)
     destination = inbox / room_key / event_key / safe_filename(event.get("filename") or event["body"])
     destination.parent.mkdir(parents=True, exist_ok=True)
     resolved = destination.resolve()
-    if not resolved.is_relative_to(inbox):
+    if not resolved.is_relative_to(inbox) or not resolved.is_relative_to(workspace_root):
         raise RuntimeError("Matrix attachment path escapes the Workspace inbox")
     resolved.write_bytes(data)
-    relative = resolved.relative_to(workspace.resolve()).as_posix()
+    relative = resolved.relative_to(workspace_root).as_posix()
     mimetype = event.get("mimetype") or downloaded_type
     label = "图片" if event["kind"] == "image" else "文件"
     prompt = (
@@ -90,9 +101,10 @@ def materialize_attachment(
 
 
 def snapshot_outbox(workspace: Path) -> dict[str, str]:
-    outbox = workspace / "outbox"
-    if not outbox.exists():
+    outbox_path = workspace.resolve() / "outbox"
+    if not outbox_path.exists():
         return {}
+    _workspace_root, outbox = workspace_subdirectory(workspace, "outbox")
     snapshot: dict[str, str] = {}
     for path in sorted(outbox.rglob("*")):
         if not path.is_file() or path.is_symlink():
@@ -112,9 +124,9 @@ def changed_outbox_files(workspace: Path, before: dict[str, str]) -> list[str]:
 
 
 def workspace_output_path(workspace: Path, relative: str) -> Path:
-    outbox = (workspace / "outbox").resolve()
+    workspace_root, outbox = workspace_subdirectory(workspace, "outbox")
     path = (outbox / Path(relative)).resolve()
-    if not path.is_relative_to(outbox):
+    if not path.is_relative_to(outbox) or not path.is_relative_to(workspace_root):
         raise RuntimeError(f"Workspace output escapes outbox: {relative}")
     return path
 
