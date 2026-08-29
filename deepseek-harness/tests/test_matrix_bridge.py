@@ -308,6 +308,24 @@ Node.js v22.22.3
         self.assertEqual(sent["m.mentions"], {"user_ids": ["@leader:matrix.local"]})
         self.assertEqual(sent["m.relates_to"], {"m.in_reply_to": {"event_id": "$task"}})
 
+    def test_visible_known_agent_ids_accept_sentence_punctuation_without_matching_longer_ids(self):
+        allowed = {"@leader:matrix.local"}
+
+        self.assertEqual(
+            {
+                "colon": visible_matrix_user_ids("@leader:matrix.local: task complete", allowed),
+                "period": visible_matrix_user_ids("@leader:matrix.local. Task complete", allowed),
+                "port": visible_matrix_user_ids("@leader:matrix.local:8448", allowed),
+                "longer-domain": visible_matrix_user_ids("@leader:matrix.local.example", allowed),
+            },
+            {
+                "colon": ["@leader:matrix.local"],
+                "period": ["@leader:matrix.local"],
+                "port": [],
+                "longer-domain": [],
+            },
+        )
+
 
 class RoomSessionContinuationTest(unittest.TestCase):
     def test_room_session_is_restored_after_bridge_restart(self):

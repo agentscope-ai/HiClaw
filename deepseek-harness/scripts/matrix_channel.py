@@ -105,7 +105,8 @@ def visible_matrix_user_ids(text: str, allowed_user_ids: set[str]) -> list[str]:
     """Return known Matrix user IDs that appear as complete tokens in text."""
     found: list[str] = []
     for user_id in sorted(allowed_user_ids):
-        pattern = rf"(?<![0-9A-Za-z._=/+@-]){re.escape(user_id)}(?![0-9A-Za-z._=/+:-])"
+        trailing_boundary = r"(?![0-9A-Za-z_=/+@-]|\.(?=[0-9A-Za-z-])|:(?=[0-9]))"
+        pattern = rf"(?<![0-9A-Za-z._=/+@-]){re.escape(user_id)}{trailing_boundary}"
         if re.search(pattern, text):
             found.append(user_id)
     return found
