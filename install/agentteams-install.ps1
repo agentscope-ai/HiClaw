@@ -25,6 +25,7 @@
 #   AGENTTEAMS_DATA_DIR           Docker volume name for persistent data (default: agentteams-data)
 #   AGENTTEAMS_WORKSPACE_DIR      Host directory for manager workspace (default: ~/agentteams-manager)
 #   AGENTTEAMS_VERSION            Image tag          (default: latest)
+#   AGENTTEAMS_DEEPSEEK_HARNESS_WORKER_VERSION DeepSeek Harness runtime image tag (default: v0.1.0; independent of AGENTTEAMS_VERSION)
 #   AGENTTEAMS_REGISTRY           Image registry     (default: auto-detected by timezone)
 #   AGENTTEAMS_INSTALL_MANAGER_IMAGE       Override manager image (e.g., local build)
 #   AGENTTEAMS_INSTALL_MANAGER_QWENPAW_IMAGE Override QwenPaw manager image (e.g., local build)
@@ -67,6 +68,7 @@ param(
 $script:AGENTTEAMS_VERSION = if ($env:AGENTTEAMS_VERSION) { $env:AGENTTEAMS_VERSION } else { "latest" }
 $script:AGENTTEAMS_KNOWN_STABLE_VERSION = "v1.2.3"
 $script:AGENTTEAMS_DEEPSEEK_HARNESS_MIN_VERSION = "v1.2.4"
+$script:AGENTTEAMS_DEEPSEEK_HARNESS_WORKER_VERSION = if ($env:AGENTTEAMS_DEEPSEEK_HARNESS_WORKER_VERSION) { $env:AGENTTEAMS_DEEPSEEK_HARNESS_WORKER_VERSION } else { "v0.1.0" }
 $script:AGENTTEAMS_NON_INTERACTIVE = if ($env:AGENTTEAMS_NON_INTERACTIVE -eq "1" -or $NonInteractive) { $true } else { $false }
 $script:AGENTTEAMS_MOUNT_SOCKET = if ($env:AGENTTEAMS_MOUNT_SOCKET -eq "0") { $false } else { $true }
 $script:AGENTTEAMS_ENV_FILE = if ($EnvFile) { $EnvFile } elseif ($env:AGENTTEAMS_ENV_FILE) { $env:AGENTTEAMS_ENV_FILE } else { "$env:USERPROFILE\agentteams-manager.env" }
@@ -117,6 +119,23 @@ function Write-Error {
 function Write-Warning {
     param([string]$Message)
     Write-Host "$($script:ESC)[33m[AgentTeams WARNING]$($script:ESC)[0m $Message"
+}
+
+function Update-AgentTeamsKnownStableVersion {
+    if ($script:AGENTTEAMS_VERSION -ne "latest") { return }
+    try {
+        $release = Invoke-RestMethod `
+            -Uri "https://api.github.com/repos/agentscope-ai/AgentTeams/releases/latest" `
+            -Headers @{ "Accept" = "application/vnd.github+json"; "User-Agent" = "AgentTeams-Installer" } `
+            -TimeoutSec 5 `
+            -ErrorAction Stop
+        $tag = [string]$release.tag_name
+        if ($tag -match '^v\d+\.\d+\.\d+$') {
+            $script:AGENTTEAMS_KNOWN_STABLE_VERSION = $tag
+        }
+    } catch {
+        # Keep the bundled fallback when GitHub is unavailable.
+    }
 }
 
 function ConvertTo-MatrixAppServiceEnabledValue {
@@ -2520,6 +2539,10 @@ function Install-Manager {
     }
     $env:AGENTTEAMS_LANGUAGE = $script:AGENTTEAMS_LANGUAGE
 
+    # "latest" is mutable. Refresh the stable release used by runtime feature
+    # gates so a newly released Controller is not hidden behind a stale constant.
+    Update-AgentTeamsKnownStableVersion
+
     # Detect registry
     $script:AGENTTEAMS_REGISTRY = Get-Registry -Timezone $script:AGENTTEAMS_TIMEZONE
 
@@ -2563,7 +2586,7 @@ function Install-Manager {
     $script:DEEPSEEK_HARNESS_WORKER_IMAGE = if ($env:AGENTTEAMS_INSTALL_DEEPSEEK_HARNESS_WORKER_IMAGE) {
         $env:AGENTTEAMS_INSTALL_DEEPSEEK_HARNESS_WORKER_IMAGE
     } elseif (Test-DeepSeekHarnessAvailable) {
-        "$($script:AGENTTEAMS_REGISTRY)/agentteams/agentteams-deepseek-harness-worker:$($script:AGENTTEAMS_VERSION)"
+        "$($script:AGENTTEAMS_REGISTRY)/agentteams/agentteams-deepseek-harness-worker:$($script:AGENTTEAMS_DEEPSEEK_HARNESS_WORKER_VERSION)"
     } else {
         ""
     }

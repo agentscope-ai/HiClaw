@@ -4,11 +4,18 @@ This directory packages DeepSeek Harness as an AgentTeams-managed Worker. The Co
 
 The image is pinned to `@deepseek-ai/dsh@0.1.1-rc.2` and uses the TeamHarness adapter in `plugins/teamharness/adapters/deepseek-harness` without patching DSH itself. This runtime is experimental until the upstream DSH dependency reaches a stable release and passes the same compatibility suite.
 
-Build the image from the repository root:
+The adapter image has its own version (`v0.1.0` initially) instead of inheriting
+the AgentTeams core release tag. Build the image from the repository root:
 
 ```bash
 make build-deepseek-harness-worker
+make push-deepseek-harness-worker DEEPSEEK_HARNESS_WORKER_VERSION=v0.1.0
 ```
+
+Production multi-architecture images are published by
+`.github/workflows/build-deepseek-harness.yml`, either manually or from a
+`deepseek-harness-vX.Y.Z` tag. Core `vX.Y.Z` and RC workflows do not rebuild or
+retag this runtime; installers and Helm pin a tested runtime version explicitly.
 
 Create a Worker with the runtime explicitly selected:
 

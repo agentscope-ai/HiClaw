@@ -28,6 +28,7 @@
 #   AGENTTEAMS_DATA_DIR           Docker volume name for persistent data (default: agentteams-data)
 #   AGENTTEAMS_WORKSPACE_DIR      Host directory for manager workspace (default: ~/agentteams-manager)
 #   AGENTTEAMS_VERSION            Image tag            (default: latest)
+#   AGENTTEAMS_DEEPSEEK_HARNESS_WORKER_VERSION DeepSeek Harness runtime image tag (default: v0.1.0; independent of AGENTTEAMS_VERSION)
 #   AGENTTEAMS_REGISTRY           Image registry       (default: auto-detected by timezone)
 #   AGENTTEAMS_INSTALL_MANAGER_IMAGE       Override manager image (e.g., local build)
 #   AGENTTEAMS_INSTALL_MANAGER_QWENPAW_IMAGE Override QwenPaw manager image (e.g., local build)
@@ -65,6 +66,7 @@ set -e
 AGENTTEAMS_VERSION="${AGENTTEAMS_VERSION:-}"
 AGENTTEAMS_KNOWN_STABLE_VERSION="v1.2.3"   # fallback if GitHub API is unreachable
 AGENTTEAMS_DEEPSEEK_HARNESS_MIN_VERSION="v1.2.4"
+AGENTTEAMS_DEEPSEEK_HARNESS_WORKER_VERSION="${AGENTTEAMS_DEEPSEEK_HARNESS_WORKER_VERSION:-v0.1.0}"
 
 _normalize_version() {
     local version="$1"
@@ -93,6 +95,19 @@ _supports_deepseek_harness() {
     fi
     [ "${version}" = "latest" ] && version="${AGENTTEAMS_KNOWN_STABLE_VERSION}"
     ! _ver_lt "${version}" "${AGENTTEAMS_DEEPSEEK_HARNESS_MIN_VERSION}"
+}
+
+_refresh_known_stable_version() {
+    log "$(msg install.version.fetching)"
+    local fetched
+    fetched=$(curl -sf --max-time 5 \
+        -H "Accept: application/vnd.github+json" \
+        "https://api.github.com/repos/agentscope-ai/AgentTeams/releases/latest" \
+        2>/dev/null | grep '"tag_name"' | head -1 | sed 's/.*"tag_name": *"\([^"]*\)".*/\1/')
+    case "${fetched}" in
+        v[0-9]*.[0-9]*.[0-9]*) AGENTTEAMS_KNOWN_STABLE_VERSION="${fetched}" ;;
+        *) log "$(msg install.version.fetch_failed "${AGENTTEAMS_KNOWN_STABLE_VERSION}")" ;;
+    esac
 }
 
 _use_legacy_image_env() {
@@ -1134,7 +1149,7 @@ resolve_image_tags() {
     COPAW_WORKER_IMAGE="${AGENTTEAMS_INSTALL_COPAW_WORKER_IMAGE:-${AGENTTEAMS_REGISTRY}/agentteams/agentteams-copaw-worker:${AGENTTEAMS_VERSION}}"
     QWENPAW_WORKER_IMAGE="${AGENTTEAMS_INSTALL_QWENPAW_WORKER_IMAGE:-${AGENTTEAMS_REGISTRY}/agentteams/agentteams-qwenpaw-worker:${AGENTTEAMS_VERSION}}"
     HERMES_WORKER_IMAGE="${AGENTTEAMS_INSTALL_HERMES_WORKER_IMAGE:-${AGENTTEAMS_REGISTRY}/agentteams/agentteams-hermes-worker:${AGENTTEAMS_VERSION}}"
-    DEEPSEEK_HARNESS_WORKER_IMAGE="${AGENTTEAMS_INSTALL_DEEPSEEK_HARNESS_WORKER_IMAGE:-${AGENTTEAMS_REGISTRY}/agentteams/agentteams-deepseek-harness-worker:${AGENTTEAMS_VERSION}}"
+    DEEPSEEK_HARNESS_WORKER_IMAGE="${AGENTTEAMS_INSTALL_DEEPSEEK_HARNESS_WORKER_IMAGE:-${AGENTTEAMS_REGISTRY}/agentteams/agentteams-deepseek-harness-worker:${AGENTTEAMS_DEEPSEEK_HARNESS_WORKER_VERSION}}"
     EMBEDDED_IMAGE="${AGENTTEAMS_INSTALL_EMBEDDED_IMAGE:-${AGENTTEAMS_REGISTRY}/agentteams/agentteams-embedded:${AGENTTEAMS_VERSION}}"
     # CoPaw Worker introduced in v1.0.4; Hermes Worker introduced in v1.1.0
     if [ -z "${AGENTTEAMS_INSTALL_COPAW_WORKER_IMAGE:-}" ] && _ver_lt "${AGENTTEAMS_VERSION}" "v1.0.4"; then
@@ -1855,21 +1870,11 @@ step_mode() {
 step_version() {
     # Skip if version already provided via env var
     if [ -n "${AGENTTEAMS_VERSION}" ]; then
+        [ "${AGENTTEAMS_VERSION}" = "latest" ] && _refresh_known_stable_version
         resolve_image_tags
         return 0
     fi
-    # Try to fetch the latest stable release from GitHub
-    log "$(msg install.version.fetching)"
-    local _fetched
-    _fetched=$(curl -sf --max-time 5 \
-        -H "Accept: application/vnd.github+json" \
-        "https://api.github.com/repos/agentscope-ai/AgentTeams/releases/latest" \
-        2>/dev/null | grep '"tag_name"' | head -1 | sed 's/.*"tag_name": *"\([^"]*\)".*/\1/')
-    if [ -n "${_fetched}" ]; then
-        AGENTTEAMS_KNOWN_STABLE_VERSION="${_fetched}"
-    else
-        log "$(msg install.version.fetch_failed "${AGENTTEAMS_KNOWN_STABLE_VERSION}")"
-    fi
+    _refresh_known_stable_version
     log "$(msg install.version.title)"
     echo ""
     echo "$(msg install.version.choose)"
@@ -3359,6 +3364,9 @@ install_manager() {
     # Non-interactive fallback: resolve version immediately so image tags are available
     # before the step state machine runs. Interactive mode lets step_version handle it.
     if [ "${AGENTTEAMS_NON_INTERACTIVE}" = "1" ]; then
+        if [ -z "${AGENTTEAMS_VERSION}" ] || [ "${AGENTTEAMS_VERSION}" = "latest" ]; then
+            _refresh_known_stable_version
+        fi
         AGENTTEAMS_VERSION="${AGENTTEAMS_VERSION:-${AGENTTEAMS_KNOWN_STABLE_VERSION}}"
         resolve_image_tags
     fi

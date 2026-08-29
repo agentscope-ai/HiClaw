@@ -21,6 +21,7 @@
 # ---------- Configuration ----------
 
 VERSION        ?= latest
+DEEPSEEK_HARNESS_WORKER_VERSION ?= v0.1.0
 REGISTRY       ?= higress-registry.cn-hangzhou.cr.aliyuncs.com
 REPO           ?= agentteams
 
@@ -43,7 +44,7 @@ COPAW_WORKER_TAG   ?= $(COPAW_WORKER_IMAGE):$(VERSION)
 HERMES_WORKER_TAG  ?= $(HERMES_WORKER_IMAGE):$(VERSION)
 QWENPAW_WORKER_TAG ?= $(QWENPAW_WORKER_IMAGE):$(VERSION)
 OPENHUMAN_WORKER_TAG ?= $(OPENHUMAN_WORKER_IMAGE):$(VERSION)
-DEEPSEEK_HARNESS_WORKER_TAG ?= $(DEEPSEEK_HARNESS_WORKER_IMAGE):$(VERSION)
+DEEPSEEK_HARNESS_WORKER_TAG ?= $(DEEPSEEK_HARNESS_WORKER_IMAGE):$(DEEPSEEK_HARNESS_WORKER_VERSION)
 OPENCLAW_BASE_TAG  ?= $(OPENCLAW_BASE_IMAGE):$(VERSION)
 CONTROLLER_TAG     ?= $(CONTROLLER_IMAGE):$(VERSION)
 EMBEDDED_TAG       ?= $(EMBEDDED_IMAGE):$(VERSION)
@@ -131,7 +132,7 @@ all: build
 
 # ---------- Build ----------
 
-build: build-manager build-manager-qwenpaw build-worker build-copaw-worker build-hermes-worker build-openhuman-worker build-qwenpaw-worker build-deepseek-harness-worker build-agentteams-controller ## Build all images (base image pulled from registry, not rebuilt locally)
+build: build-manager build-manager-qwenpaw build-worker build-copaw-worker build-hermes-worker build-openhuman-worker build-qwenpaw-worker build-agentteams-controller ## Build core images (experimental runtimes have explicit build targets)
 
 build-openclaw-base: ## Build OpenClaw base image
 	@echo "==> Building OpenClaw base image: $(LOCAL_OPENCLAW_BASE) (registry: $(HIGRESS_REGISTRY))"
@@ -230,7 +231,6 @@ tag: build ## Tag images for registry push
 	docker tag $(LOCAL_HERMES_WORKER) $(HERMES_WORKER_TAG)
 	docker tag $(LOCAL_OPENHUMAN_WORKER) $(OPENHUMAN_WORKER_TAG)
 	docker tag $(LOCAL_QWENPAW_WORKER) $(QWENPAW_WORKER_TAG)
-	docker tag $(LOCAL_DEEPSEEK_HARNESS_WORKER) $(DEEPSEEK_HARNESS_WORKER_TAG)
 ifeq ($(PUSH_LATEST),yes)
 	docker tag $(LOCAL_MANAGER) $(MANAGER_IMAGE):latest
 	docker tag $(LOCAL_WORKER) $(WORKER_IMAGE):latest
@@ -238,7 +238,6 @@ ifeq ($(PUSH_LATEST),yes)
 	docker tag $(LOCAL_HERMES_WORKER) $(HERMES_WORKER_IMAGE):latest
 	docker tag $(LOCAL_OPENHUMAN_WORKER) $(OPENHUMAN_WORKER_IMAGE):latest
 	docker tag $(LOCAL_QWENPAW_WORKER) $(QWENPAW_WORKER_IMAGE):latest
-	docker tag $(LOCAL_DEEPSEEK_HARNESS_WORKER) $(DEEPSEEK_HARNESS_WORKER_IMAGE):latest
 	docker tag $(LOCAL_CONTROLLER) $(CONTROLLER_IMAGE):latest
 	@echo "==> Images tagged as $(VERSION) and latest"
 else
@@ -267,7 +266,7 @@ else
 	fi
 endif
 
-push: push-manager push-manager-qwenpaw push-worker push-copaw-worker push-hermes-worker push-openhuman-worker push-qwenpaw-worker push-deepseek-harness-worker push-agentteams-controller push-embedded ## Build + push multi-arch images (amd64 + arm64); base image built separately via build-base.yml
+push: push-manager push-manager-qwenpaw push-worker push-copaw-worker push-hermes-worker push-openhuman-worker push-qwenpaw-worker push-agentteams-controller push-embedded ## Build + push core multi-arch images; experimental runtimes publish independently
 
 push-openclaw-base: buildx-setup ## Build + push multi-arch OpenClaw base image
 	@echo "==> Building + pushing multi-arch OpenClaw base: $(OPENCLAW_BASE_TAG) [$(MULTIARCH_PLATFORMS)]"
@@ -527,16 +526,12 @@ ifeq ($(IS_PODMAN),1)
 			--manifest $(DEEPSEEK_HARNESS_WORKER_TAG) \
 			-f deepseek-harness/Dockerfile . && ) true
 	podman manifest push --all $(DEEPSEEK_HARNESS_WORKER_TAG) docker://$(DEEPSEEK_HARNESS_WORKER_TAG)
-	$(if $(PUSH_LATEST), \
-		podman manifest push --all $(DEEPSEEK_HARNESS_WORKER_TAG) docker://$(DEEPSEEK_HARNESS_WORKER_IMAGE):latest && \
-		echo "  -> Also pushed :latest tag")
 else
 	docker buildx build \
 		--builder $(BUILDX_BUILDER) \
 		--platform $(MULTIARCH_PLATFORMS) \
 		$(REGISTRY_ARG) $(DOCKER_BUILD_ARGS) \
 		-t $(DEEPSEEK_HARNESS_WORKER_TAG) \
-		$(if $(PUSH_LATEST),-t $(DEEPSEEK_HARNESS_WORKER_IMAGE):latest) \
 		--push \
 		-f deepseek-harness/Dockerfile .
 endif
@@ -557,15 +552,12 @@ push-native: tag ## Push native-arch images (dev only, overwrites multi-arch!)
 	docker push $(HERMES_WORKER_TAG)
 	@echo "==> Pushing QwenPaw Worker: $(QWENPAW_WORKER_TAG)"
 	docker push $(QWENPAW_WORKER_TAG)
-	@echo "==> Pushing DeepSeek Harness Worker: $(DEEPSEEK_HARNESS_WORKER_TAG)"
-	docker push $(DEEPSEEK_HARNESS_WORKER_TAG)
 ifeq ($(PUSH_LATEST),yes)
 	docker push $(MANAGER_IMAGE):latest
 	docker push $(WORKER_IMAGE):latest
 	docker push $(COPAW_WORKER_IMAGE):latest
 	docker push $(HERMES_WORKER_IMAGE):latest
 	docker push $(QWENPAW_WORKER_IMAGE):latest
-	docker push $(DEEPSEEK_HARNESS_WORKER_IMAGE):latest
 endif
 
 push-native-manager: build-manager ## Push native-arch Manager only (dev)

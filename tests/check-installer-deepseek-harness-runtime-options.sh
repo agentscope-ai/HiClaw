@@ -8,6 +8,11 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BASH_INSTALLER="${ROOT_DIR}/install/agentteams-install.sh"
 POWERSHELL_INSTALLER="${ROOT_DIR}/install/agentteams-install.ps1"
+MAKEFILE="${ROOT_DIR}/Makefile"
+CORE_BUILD_WORKFLOW="${ROOT_DIR}/.github/workflows/build.yml"
+RC_BUILD_WORKFLOW="${ROOT_DIR}/.github/workflows/build-rc.yml"
+DSH_BUILD_WORKFLOW="${ROOT_DIR}/.github/workflows/build-deepseek-harness.yml"
+RELEASE_WORKFLOW="${ROOT_DIR}/.github/workflows/release.yml"
 
 fail() {
     echo "FAIL: $*" >&2
@@ -21,6 +26,7 @@ extract_bash_function() {
 
 eval "$(extract_bash_function _ver_lt)"
 eval "$(extract_bash_function _supports_deepseek_harness)"
+eval "$(extract_bash_function _refresh_known_stable_version)"
 
 AGENTTEAMS_KNOWN_STABLE_VERSION="v1.2.3"
 AGENTTEAMS_DEEPSEEK_HARNESS_MIN_VERSION="v1.2.4"
@@ -45,10 +51,21 @@ unset AGENTTEAMS_INSTALL_DEEPSEEK_HARNESS_WORKER_IMAGE
 unset AGENTTEAMS_INSTALL_CONTROLLER_IMAGE
 unset AGENTTEAMS_INSTALL_EMBEDDED_IMAGE
 
+log() { :; }
+msg() { printf '%s' "$1"; }
+curl() { printf '%s\n' '{"tag_name":"v1.2.4"}'; }
+_refresh_known_stable_version
+[[ "${AGENTTEAMS_KNOWN_STABLE_VERSION}" == "v1.2.4" ]] ||
+    fail "Bash latest probe must update the stable Controller feature-gate version"
+_supports_deepseek_harness "latest" ||
+    fail "Bash latest installs must expose DSH after the v1.2.4 probe succeeds"
+
 grep -Fq 'AGENTTEAMS_INSTALL_DEEPSEEK_HARNESS_WORKER_IMAGE' "${BASH_INSTALLER}" ||
     fail "Bash installer must support a DeepSeek Harness Worker image override"
-grep -Fq 'agentteams-deepseek-harness-worker:${AGENTTEAMS_VERSION}' "${BASH_INSTALLER}" ||
-    fail "Bash installer must resolve the published DeepSeek Harness Worker image"
+grep -Fq 'agentteams-deepseek-harness-worker:${AGENTTEAMS_DEEPSEEK_HARNESS_WORKER_VERSION}' "${BASH_INSTALLER}" ||
+    fail "Bash installer must resolve the independently versioned DeepSeek Harness Worker image"
+grep -Fq '_refresh_known_stable_version' "${BASH_INSTALLER}" ||
+    fail "Bash installer must refresh the stable version used by the latest feature gate"
 grep -Fq '5) $(msg worker_runtime.deepseek_harness)' "${BASH_INSTALLER}" ||
     fail "Bash installer Worker menu must list DeepSeek Harness"
 grep -Fq 'AGENTTEAMS_DEFAULT_WORKER_RUNTIME="deepseek-harness"' "${BASH_INSTALLER}" ||
@@ -62,8 +79,12 @@ grep -Fq 'AGENTTEAMS_DEEPSEEK_HARNESS_WORKER_IMAGE=${DEEPSEEK_HARNESS_WORKER_IMA
 
 grep -Fq 'AGENTTEAMS_INSTALL_DEEPSEEK_HARNESS_WORKER_IMAGE' "${POWERSHELL_INSTALLER}" ||
     fail "PowerShell installer must support a DeepSeek Harness Worker image override"
-grep -Fq 'agentteams-deepseek-harness-worker:$($script:AGENTTEAMS_VERSION)' "${POWERSHELL_INSTALLER}" ||
-    fail "PowerShell installer must resolve the published DeepSeek Harness Worker image"
+grep -Fq 'agentteams-deepseek-harness-worker:$($script:AGENTTEAMS_DEEPSEEK_HARNESS_WORKER_VERSION)' "${POWERSHELL_INSTALLER}" ||
+    fail "PowerShell installer must resolve the independently versioned DeepSeek Harness Worker image"
+grep -Fq 'Update-AgentTeamsKnownStableVersion' "${POWERSHELL_INSTALLER}" ||
+    fail "PowerShell installer must refresh the stable version used by the latest feature gate"
+grep -Fq 'repos/agentscope-ai/AgentTeams/releases/latest' "${POWERSHELL_INSTALLER}" ||
+    fail "PowerShell installer must query the latest GitHub release"
 grep -Fq "5) \$(Get-Msg 'worker_runtime.deepseek_harness')" "${POWERSHELL_INSTALLER}" ||
     fail "PowerShell installer Worker menu must list DeepSeek Harness"
 grep -Fq '"5" { if ($deepSeekHarnessAvailable) { "deepseek-harness" }' "${POWERSHELL_INSTALLER}" ||
@@ -74,5 +95,23 @@ grep -Fq '$workerImages += $script:DEEPSEEK_HARNESS_WORKER_IMAGE' "${POWERSHELL_
     fail "PowerShell installer must pull the DeepSeek Harness Worker image"
 grep -Fq 'AGENTTEAMS_DEEPSEEK_HARNESS_WORKER_IMAGE=$($Config.DEEPSEEK_HARNESS_WORKER_IMAGE)' "${POWERSHELL_INSTALLER}" ||
     fail "PowerShell installer env file must expose the DeepSeek Harness Worker image"
+pwsh -NoProfile -File "${ROOT_DIR}/tests/check-powershell-deepseek-harness-latest.ps1"
 
-echo "PASS: DeepSeek Harness is a first-class experimental Worker runtime in both installers"
+grep -Fq 'DEEPSEEK_HARNESS_WORKER_VERSION ?= v0.1.0' "${MAKEFILE}" ||
+    fail "Makefile must give the DeepSeek Harness runtime an independent version"
+if sed -n '/^push-native:/,/^push-native-manager:/p' "${MAKEFILE}" | grep -Fq 'DEEPSEEK_HARNESS'; then
+    fail "The aggregate native push must not publish or retag the DeepSeek Harness runtime"
+fi
+if grep -Fq 'deepseek-harness-worker' "${CORE_BUILD_WORKFLOW}" || grep -Fq 'deepseek-harness-worker' "${RC_BUILD_WORKFLOW}"; then
+    fail "Core and RC workflows must not publish the DeepSeek Harness runtime"
+fi
+grep -Fq 'make push-deepseek-harness-worker' "${DSH_BUILD_WORKFLOW}" ||
+    fail "DeepSeek Harness must have a dedicated image publishing workflow"
+grep -Fq 'DEEPSEEK_HARNESS_WORKER_VERSION: v0.1.0' "${RELEASE_WORKFLOW}" ||
+    fail "Release notes must pin the independently published DeepSeek Harness runtime"
+grep -Fq 'docker buildx imagetools inspect' "${RELEASE_WORKFLOW}" ||
+    fail "A core release must verify that its pinned DeepSeek Harness runtime is pullable"
+grep -Fq 'python3 -m py_compile' "${RELEASE_WORKFLOW}" ||
+    fail "A core release must smoke-test the pinned DeepSeek Harness runtime contract"
+
+echo "PASS: DeepSeek Harness installer and independent release contracts are wired"
