@@ -169,8 +169,8 @@ type Config struct {
 	Runtime            string
 	ModelContextWindow int
 	ModelMaxTokens     int
-	ModelVision    *bool // nil = use model default; overrides model-level vision capability
-	ModelReasoning *bool // nil = use model default; overrides model-level reasoning capability
+	ModelVision        *bool // nil = use model default; overrides model-level vision capability
+	ModelReasoning     *bool // nil = use model default; overrides model-level reasoning capability
 
 	// LLM provider (for Gateway initialization)
 	LLMProvider                string
@@ -210,6 +210,7 @@ type WorkerEnvDefaults struct {
 	FSEndpoint           string
 	FSBucket             string
 	StoragePrefix        string
+	StorageProvider      string
 	ControllerURL        string
 	AIGatewayURL         string
 	MatrixURL            string
@@ -347,7 +348,7 @@ func LoadConfig() *Config {
 
 		ManagerEnabled:          envOrDefault("AGENTTEAMS_MANAGER_ENABLED", "true") == "true",
 		ManagerModel:            firstNonEmpty(os.Getenv("AGENTTEAMS_MANAGER_MODEL"), envOrDefault("AGENTTEAMS_DEFAULT_MODEL", "qwen3.6-plus")),
-		ManagerRuntime:          envOrDefault("AGENTTEAMS_MANAGER_RUNTIME", "openclaw"),
+		ManagerRuntime:          envOrDefault("AGENTTEAMS_MANAGER_RUNTIME", "qwenpaw"),
 		ManagerImage:            os.Getenv("AGENTTEAMS_MANAGER_IMAGE"),
 		DefaultWorkerRuntime:    os.Getenv("AGENTTEAMS_DEFAULT_WORKER_RUNTIME"),
 		K8sManagerCPURequest:    envOrDefault("AGENTTEAMS_K8S_MANAGER_CPU_REQUEST", "500m"),
@@ -410,6 +411,7 @@ func LoadConfig() *Config {
 			FSEndpoint:           os.Getenv("AGENTTEAMS_FS_ENDPOINT"),
 			FSBucket:             envOrDefault("AGENTTEAMS_FS_BUCKET", "agentteams-storage"),
 			StoragePrefix:        envOrDefault("AGENTTEAMS_STORAGE_PREFIX", "agentteams/agentteams-storage"),
+			StorageProvider:      envOrDefault("AGENTTEAMS_STORAGE_PROVIDER", "minio"),
 			ControllerURL:        os.Getenv("AGENTTEAMS_CONTROLLER_URL"),
 			AIGatewayURL:         envOrDefault("AGENTTEAMS_AI_GATEWAY_URL", "http://aigw-local.agentteams.io:8080"),
 			MatrixURL:            envOrDefault("AGENTTEAMS_MATRIX_URL", "http://matrix-local.agentteams.io:8080"),

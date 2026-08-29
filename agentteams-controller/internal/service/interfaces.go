@@ -51,6 +51,9 @@ type WorkerProvisioner interface {
 	// InviteToRoom invites userID to roomID using the admin token.
 	// Idempotent: returns nil when the user is already joined/invited.
 	InviteToRoom(ctx context.Context, roomID, userID string) error
+	// JoinRoomAs accepts a room invite using the invited user's token.
+	// Idempotent: returns nil when the user has already joined.
+	JoinRoomAs(ctx context.Context, roomID, userToken string) error
 	// KickFromRoom removes userID from roomID using the admin token.
 	// Idempotent: returns nil when the user is not a member.
 	KickFromRoom(ctx context.Context, roomID, userID, reason string) error
@@ -68,6 +71,10 @@ type WorkerDeployer interface {
 	DeployMemberRuntimeConfig(ctx context.Context, req MemberRuntimeConfigDeployRequest) error
 	MergeMemberRuntimeTeamContext(ctx context.Context, req MemberRuntimeConfigDeployRequest) error
 	DeployWorkerConfig(ctx context.Context, req WorkerDeployRequest) error
+	// PushOnDemandSkills restores or refreshes declared Skill files. A returned
+	// error is safe to surface as a non-blocking Worker warning: it reports a
+	// missing required copy or a failed remote refresh that retained an older
+	// canonical copy, without exposing remote source credentials.
 	PushOnDemandSkills(ctx context.Context, workerName string, skills []string, remoteSkills []v1beta1.RemoteSkillSource) error
 	PrepareWorkerDeps(ctx context.Context, req WorkerDepsPrepareRequest) error
 	CleanupOSSData(ctx context.Context, workerName string) error

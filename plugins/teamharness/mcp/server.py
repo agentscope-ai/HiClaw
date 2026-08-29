@@ -2222,6 +2222,17 @@ def _section(data: dict[str, Any], name: str) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
+def _runtime_team_name() -> str:
+    """Return the runtime team name from TEAMHARNESS_RUNTIME_CONFIG, if any.
+
+    Used to stamp ``team_id`` onto project metadata so the Controller can map
+    a project back to its owning team (``teams/{team}/shared/projects/`` vs the
+    global ``shared/projects/`` prefix). Empty string when no team is configured.
+    """
+    team = _section(_load_runtime_config(), "team")
+    return str(team.get("name") or "").strip()
+
+
 def _runtime_team_admin_user_id() -> str:
     config = _load_runtime_config()
     team = _section(config, "team")
@@ -2248,7 +2259,7 @@ def _runtime_leader_dm_admin_user_id(config: dict[str, Any]) -> str:
     return ""
 
 
-def _matrix_room_member_user_ids(room_id: str) -> list[str]:
+def _matrix_room_member_user_ids(room_id: str, memberships: set[str] | None = None) -> list[str]:
     homeserver, token = _matrix_env("roomflow")
     encoded_room = urllib.parse.quote(room_id, safe="")
     request = urllib.request.Request(
@@ -2257,6 +2268,7 @@ def _matrix_room_member_user_ids(room_id: str) -> list[str]:
     )
     with urllib.request.urlopen(request, timeout=10) as response:
         data = json.loads(response.read().decode("utf-8") or "{}")
+    allowed = memberships or {"join", "invite"}
     members: list[str] = []
     for event in data.get("chunk", []):
         if not isinstance(event, dict):
@@ -2264,7 +2276,7 @@ def _matrix_room_member_user_ids(room_id: str) -> list[str]:
         user_id = str(event.get("state_key") or "").strip()
         content = event.get("content") if isinstance(event.get("content"), dict) else {}
         membership = str(content.get("membership") or "").strip()
-        if user_id and membership in {"join", "invite"}:
+        if user_id and membership in allowed:
             members.append(user_id)
     return members
 
@@ -3104,6 +3116,7 @@ def _accept_task_result(arguments: dict[str, Any], payload: dict[str, Any]) -> d
             project["requester_report"] = requester_report
     _write_json(_project_state_path(arguments, project_id), project)
     _write_project_plan(_project_dir(arguments, project_id), project)
+    _sync_project(arguments, project_id)
     publish_artifacts = _payload_bool_field(payload, ("publishArtifacts", "publish_artifacts"), False)
     published_artifacts = (
         _publish_project_artifacts(
@@ -3145,6 +3158,7 @@ def _mark_requester_report_sent(arguments: dict[str, Any], payload: dict[str, An
     requester_report["sent_at"] = str(payload.get("sentAt") or payload.get("sent_at") or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
     project["requester_report"] = requester_report
     _write_json(_project_state_path(arguments, project_id), project)
+    _sync_project(arguments, project_id)
     return {
         "ok": True,
         "tool": "projectflow",
@@ -3193,10 +3207,79 @@ def _notification_needed(
     return result
 
 
+def _project_id_for_pull(arguments: dict[str, Any], payload: dict[str, Any]) -> str:
+    """Resolve the project id for a projectflow/taskflow payload before the
+    read-before-read pull.
+
+    create_project/create_quick_project generate/validate a unique id, so the
+    project does not yet exist — pull is meaningless (and would fail on the
+    remote). Read-type actions carry projectId/project_id directly, except
+    resolve_project which may carry only taskId (the task belongs to a
+    project). Returns "" when the payload does not identify a project.
+    """
+    action = str(payload.get("action") or "").strip()
+    if action in {"create_project", "create_quick_project"}:
+        return ""
+    project_id = _first_text(payload.get("projectId"), payload.get("project_id"))
+    if project_id:
+        return project_id
+    task_id = _first_text(payload.get("taskId"), payload.get("task_id"))
+    if task_id:
+        task = _read_json(_task_state_path(arguments, task_id))
+        if task:
+            return _first_text(task.get("project_id"), task.get("projectId"))
+    return ""
+
+
+# Actions that write project/task state back to shared storage. When the
+# authoritative pull fails, these must NOT continue from stale local state
+# (their _sync would clobber a Controller pause/resume/replan) — they fail
+# with a retryable error instead. Read-only actions tolerate a failed pull
+# and serve local state.
+_PROJECTFLOW_MUTATING_ACTIONS = frozenset({
+    "accept_task_result",
+    "record_loop_iteration",
+    "pause_project",
+    "resume_project",
+    "complete_project",
+    "replan_project",
+})
+_TASKFLOW_MUTATING_ACTIONS = frozenset({
+    "delegate_task",
+    "ack_task",
+    "submit_task",
+    "cancel_task",
+})
+
+
+def _pull_failed_response(tool: str, action: str) -> dict[str, Any]:
+    return {
+        "ok": False,
+        "tool": tool,
+        "action": action,
+        "error": "cannot pull authoritative project state from shared storage; retry",
+        "retryable": True,
+    }
+
+
 def _projectflow(arguments: dict[str, Any]) -> dict[str, Any]:
     action = str(arguments.get("action") or "").strip()
     payload = _payload(arguments)
     try:
+        # the lifecycle write API read-before-read: pull the authoritative meta.json from
+        # shared storage before any read-type action so a Controller write
+        # (pause/resume/replan) takes effect on the next read. One call at
+        # the entry covers every read path (resolve_project, ready_nodes,
+        # ready_loop_nodes, accept_task_result, record_loop_iteration,
+        # pause/resume/complete, ...) instead of adding a pull per action.
+        pid = _project_id_for_pull(arguments, payload)
+        if pid and not _pull_project(arguments, pid):
+            # Mutating actions must not continue from stale local state:
+            # their write-back (_sync_project) could clobber a Controller
+            # pause/resume/replan that this worker has not seen. Fail with a
+            # retryable error; read actions tolerate the stale state.
+            if action in _PROJECTFLOW_MUTATING_ACTIONS:
+                return _pull_failed_response("projectflow", action)
         if action == "create_project":
             project_id = _project_id_from_payload(arguments, payload)
             project = {
@@ -3204,6 +3287,7 @@ def _projectflow(arguments: dict[str, Any]) -> dict[str, Any]:
                 "title": str(payload.get("title") or project_id),
                 "source": str(payload.get("source") or ""),
                 "requester": str(payload.get("requester") or ""),
+                "team_id": str(payload.get("teamId") or payload.get("team_id") or _runtime_team_name()).strip(),
                 "status": "active",
                 "tasks": [],
             }
@@ -3218,6 +3302,7 @@ def _projectflow(arguments: dict[str, Any]) -> dict[str, Any]:
             project_dir = _project_dir(arguments, project_id)
             _write_json(_project_state_path(arguments, project_id), project)
             _write_project_plan(project_dir, project)
+            _sync_project(arguments, project_id)
             return {
                 "ok": True,
                 "tool": "projectflow",
@@ -3255,6 +3340,7 @@ def _projectflow(arguments: dict[str, Any]) -> dict[str, Any]:
                 "title": title,
                 "source": str(payload.get("source") or ""),
                 "requester": str(payload.get("requester") or ""),
+                "team_id": str(payload.get("teamId") or payload.get("team_id") or _runtime_team_name()).strip(),
                 "status": "active",
                 "mode": "quick",
                 "plan_type": "dag",
@@ -3273,6 +3359,7 @@ def _projectflow(arguments: dict[str, Any]) -> dict[str, Any]:
             project_dir = _project_dir(arguments, project_id)
             _write_json(_project_state_path(arguments, project_id), project)
             _write_project_plan(project_dir, project)
+            _sync_project(arguments, project_id)
 
             task_dir = _task_dir(arguments, task_id)
             task_dir.mkdir(parents=True, exist_ok=True)
@@ -3326,6 +3413,7 @@ def _projectflow(arguments: dict[str, Any]) -> dict[str, Any]:
             project_dir = _project_dir(arguments, project_id)
             _write_json(state_path, project)
             _write_project_plan(project_dir, project)
+            _sync_project(arguments, project_id)
             return {
                 "ok": True,
                 "tool": "projectflow",
@@ -3381,6 +3469,7 @@ def _projectflow(arguments: dict[str, Any]) -> dict[str, Any]:
             project_dir = _project_dir(arguments, project_id)
             _write_json(state_path, project)
             _write_project_plan(project_dir, project)
+            _sync_project(arguments, project_id)
             return {
                 "ok": True,
                 "tool": "projectflow",
@@ -3452,6 +3541,7 @@ def _projectflow(arguments: dict[str, Any]) -> dict[str, Any]:
             project_dir = _project_dir(arguments, project_id)
             _write_json(_project_state_path(arguments, project_id), project)
             _write_project_plan(project_dir, project)
+            _sync_project(arguments, project_id)
             return {
                 "ok": True,
                 "tool": "projectflow",
@@ -3483,6 +3573,7 @@ def _projectflow(arguments: dict[str, Any]) -> dict[str, Any]:
             project_dir = _project_dir(arguments, project_id)
             _write_json(state_path, project)
             _write_project_plan(project_dir, project)
+            _sync_project(arguments, project_id)
             result = {
                 "ok": True,
                 "tool": "projectflow",
@@ -3729,6 +3820,25 @@ def _sync_task(arguments: dict[str, Any], task_id: str, exclude: list[str] | Non
     return bool(result.get("ok"))
 
 
+def _sync_project(arguments: dict[str, Any], project_id: str) -> bool:
+    """Push a project directory (meta.json + plan.md + result.md) to shared
+    storage.
+
+    Project state is written locally by projectflow, and — unlike tasks,
+    which are pushed via _sync_task — was previously only synced to MinIO at
+    worker startup (mirror_all). Without this push, a Controller-level project
+    API (or dashboard) would read a stale startup snapshot. Mirrors the
+    _sync_task pattern.
+    """
+    sync_args = dict(arguments)
+    sync_args.update({
+        "action": "push",
+        "path": f"shared/projects/{project_id}",
+    })
+    result = _filesync(sync_args)
+    return bool(result.get("ok"))
+
+
 def _pull_task(arguments: dict[str, Any], task_id: str) -> bool:
     existing = _read_json(_task_state_path(arguments, task_id))
     sync_args = dict(arguments)
@@ -3753,6 +3863,65 @@ def _pull_task(arguments: dict[str, Any], task_id: str) -> bool:
                 if preserved:
                     task[snake] = preserved
             _write_task(arguments, task)
+    return True
+
+
+def _pull_project(arguments: dict[str, Any], project_id: str) -> bool:
+    """Pull a project's meta.json from shared storage (single file) so a
+    Controller-level write (pause / resume / replan) takes effect on the next
+    read.
+
+    Mirrors _pull_task's field-preservation pattern, but for the single
+    authoritative file (shared/projects/{id}/meta.json) instead of a task
+    directory (E3): plan.md/result.md are derived/data files and the
+    Controller only ever writes meta.json. The pull uses a single-file
+    `mc cp` (the normalized path has 4 segments, so _normalize_shared_path
+    treats it as a file, not a directory), which is an order of magnitude
+    cheaper than a directory mirror.
+
+    After the pull, if the authoritative fields (status / tasks / plan_type)
+    differ from the pre-pull local copy, plan.md is re-rendered from the new
+    meta (D2) so the derived plan document stays consistent with the single
+    source of truth. Fields that the remote copy omits (older versions) are
+    back-filled from the local copy to avoid clobbering them.
+
+    Returns True on a successful pull (even when the remote object does not
+    exist — the pull is best-effort); callers ignore the return value and
+    proceed to read local state, which yields "project not found" naturally
+    when the project does not exist.
+    """
+    existing = _read_json(_project_state_path(arguments, project_id))
+    sync_args = dict(arguments)
+    sync_args.update({
+        "action": "pull",
+        "path": f"shared/projects/{project_id}/meta.json",
+    })
+    result = _filesync(sync_args)
+    if not result.get("ok"):
+        return False
+    pulled = _read_json(_project_state_path(arguments, project_id))
+    if not pulled:
+        return False
+
+    changed = any(pulled.get(key) != existing.get(key) for key in ("status", "tasks", "plan_type"))
+    if existing:
+        # Back-fill fields the remote copy omits (older versions). String
+        # fields use _first_text; reply_route is a dict and must be preserved
+        # as-is when the remote omits it.
+        for snake, camel in (
+            ("source_room_id", "sourceRoomId"),
+            ("team_id", "teamId"),
+        ):
+            if _first_text(pulled.get(snake), pulled.get(camel)):
+                continue
+            preserved = _first_text(existing.get(snake), existing.get(camel))
+            if preserved:
+                pulled[snake] = preserved
+        if not pulled.get("reply_route") and existing.get("reply_route"):
+            pulled["reply_route"] = existing["reply_route"]
+        _write_json(_project_state_path(arguments, project_id), pulled)
+    if changed:
+        _write_project_plan(_project_dir(arguments, project_id), pulled)
     return True
 
 
@@ -3801,6 +3970,113 @@ def _update_project_task(arguments: dict[str, Any], project_id: str, task_id: st
     if changed:
         _write_json(path, project)
         _write_project_plan(_project_dir(arguments, project_id), project)
+        _sync_project(arguments, project_id)
+
+
+def _validate_assignee_membership(room_id: str, assignee: str) -> dict[str, Any]:
+    """Validate that the assignee is a joined member of the target Matrix room.
+
+    Strict when the Matrix environment is configured and the assignee is a
+    Matrix mxid (``@user:server``): a missing membership is a retryable
+    failure so delegation never marks a task assigned when the Worker cannot
+    receive the automatic notification. Skipped when the Matrix environment is
+    unavailable (the notification would be skipped anyway) or the assignee is a
+    display name (there is no mxid to verify).
+    """
+    homeserver = os.getenv("AGENTTEAMS_MATRIX_URL", "").strip()
+    token = os.getenv("AGENTTEAMS_WORKER_MATRIX_TOKEN", "").strip()
+    if not homeserver or not token:
+        return {"ok": True, "skipped": "matrix env unavailable"}
+    matrix_room_id = _canonical_room_id(room_id)
+    if not matrix_room_id.startswith("!"):
+        return {"ok": True, "skipped": f"non-Matrix room target: {room_id}"}
+    assignee_mxid = str(assignee or "").strip()
+    if not assignee_mxid.startswith("@"):
+        return {"ok": True, "skipped": f"assignee is a display name, not an mxid: {assignee}"}
+    try:
+        members = _matrix_room_member_user_ids(matrix_room_id, {"join"})
+    except (ValueError, urllib.error.HTTPError, urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
+        return {"ok": False, "error": f"cannot verify room membership: {exc}"}
+    if assignee_mxid in members:
+        return {"ok": True, "member": True}
+    return {
+        "ok": False,
+        "error": f"assignee {assignee_mxid} is not a joined member of room {matrix_room_id}",
+    }
+
+
+def _send_delegate_notification(
+    arguments: dict[str, Any],
+    *,
+    room_id: str,
+    task_id: str,
+    title: str,
+    assignee: str,
+    spec: str,
+) -> dict[str, Any]:
+    """Send the automatic Worker assignment notification for delegate_task.
+
+    Publishes the assignment to the Task room with ``m.mentions`` using the
+    same Matrix HTTP send path as the message tool. The transaction ID is
+    stable per task so a retry cannot produce a duplicate assignment.
+    Returns the Matrix ``eventId`` on success.
+    """
+    homeserver = os.getenv("AGENTTEAMS_MATRIX_URL", "").rstrip("/")
+    token = os.getenv("AGENTTEAMS_WORKER_MATRIX_TOKEN", "")
+    if not homeserver or not token:
+        return {
+            "sent": False,
+            "error": "AGENTTEAMS_MATRIX_URL and AGENTTEAMS_WORKER_MATRIX_TOKEN are required",
+        }
+
+    matrix_room_id = str(room_id or "").strip()
+    if matrix_room_id.startswith("room:"):
+        matrix_room_id = matrix_room_id[len("room:") :].strip()
+    if not matrix_room_id.startswith("!"):
+        return {"sent": False, "error": f"invalid Matrix room target: {room_id}"}
+
+    spec_preview = (spec or "")[:500]
+    if len(spec or "") > 500:
+        spec_preview += "..."
+    notification_text = (
+        f"{assignee} You are assigned task **{task_id}**: {title}\n\n"
+        f"{spec_preview}"
+    )
+    mentions = [assignee]
+    content = _matrix_content(notification_text, mentions)
+
+    room_enc = urllib.parse.quote(matrix_room_id, safe="")
+    txn = urllib.parse.quote(f"delegate-{task_id}", safe="")
+    url = f"{homeserver}/_matrix/client/v3/rooms/{room_enc}/send/m.room.message/{txn}"
+    request = urllib.request.Request(
+        url,
+        data=json.dumps(content).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        },
+        method="PUT",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=10) as response:
+            data = json.loads(response.read().decode("utf-8") or "{}")
+        event_id = str(data.get("event_id") or "").strip()
+        if not event_id:
+            return {"sent": False, "error": "Matrix send returned no event_id"}
+        return {
+            "sent": True,
+            "eventId": event_id,
+            "roomId": matrix_room_id,
+            "assignee": assignee,
+        }
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")[:200]
+        return {
+            "sent": False,
+            "error": f"Matrix API error: HTTP {exc.code}: {body}",
+        }
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        return {"sent": False, "error": f"Matrix API error: {exc}"}
 
 
 def _taskflow(arguments: dict[str, Any]) -> dict[str, Any]:
@@ -3808,6 +4084,19 @@ def _taskflow(arguments: dict[str, Any]) -> dict[str, Any]:
     payload = _payload(arguments)
     role = _role(arguments)
     try:
+        # the lifecycle write API read-before-read: taskflow has no create action; every
+        # action (delegate/ack/submit/cancel/check) belongs to a project.
+        # Pull the authoritative meta.json first so a Controller pause /
+        # resume / replan is visible before ack/submit/cancel write the
+        # project node status back (otherwise the write-back would clobber
+        # the Controller's paused status with a stale active).
+        pid = _project_id_for_pull(arguments, payload)
+        if pid and not _pull_project(arguments, pid):
+            # Same rationale as _projectflow: ack/submit/cancel write the
+            # project node status back — proceeding on stale local state
+            # could clobber a Controller intervention.
+            if action in _TASKFLOW_MUTATING_ACTIONS:
+                return _pull_failed_response("taskflow", action)
         if action == "delegate_task":
             if role != "leader":
                 raise ValueError("delegate_task requires leader role")
@@ -3837,6 +4126,78 @@ def _taskflow(arguments: dict[str, Any]) -> dict[str, Any]:
                     if isinstance(item, dict) and item.get("task_id") == task_id:
                         assigned_to = str(item.get("assigned_to") or "").strip()
                         break
+            assignment_mxid = str(assigned_to or "").strip()
+
+            # Idempotent retry of a fully assigned task: the automatic
+            # notification was already delivered (event_id recorded) - return
+            # the existing assignment instead of sending a duplicate. The
+            # assigned state must still reach shared storage: if the sync
+            # fails, return a retryable failure so a later retry finishes it.
+            if str(existing_task.get("status") or "") == "assigned" and existing_task.get("eventId"):
+                notification_reused = {
+                    "sent": True,
+                    "eventId": existing_task["eventId"],
+                    "roomId": room_id,
+                    "assignee": assignment_mxid,
+                    "reused": True,
+                }
+                existing_task["notification"] = notification_reused
+                synced = _sync_task(arguments, task_id)
+                if not synced:
+                    return {
+                        "ok": False,
+                        "tool": "taskflow",
+                        "action": action,
+                        "task": existing_task,
+                        "synced": False,
+                        "error": "task is assigned but shared-storage sync failed",
+                        "retryable": True,
+                        "notification": notification_reused,
+                        "notificationNeeded": _notification_needed(
+                            "delegate_task",
+                            project or {"project_id": project_id},
+                            existing_task,
+                            summary=f"delegate_task: {task_id} assigned to {assigned_to}",
+                        ),
+                    }
+                return {
+                    "ok": True,
+                    "tool": "taskflow",
+                    "action": action,
+                    "task": existing_task,
+                    "synced": True,
+                    "notification": notification_reused,
+                    "notificationNeeded": _notification_needed(
+                        "delegate_task",
+                        project or {"project_id": project_id},
+                        existing_task,
+                        summary=f"delegate_task: {task_id} assigned to {assigned_to}",
+                    ),
+                }
+
+            # Atomicity contract: never mark a task assigned until the Worker
+            # can actually receive it. Validate room membership first; then
+            # prepare (status="prepared", files published); then send the
+            # notification with a stable txn id; only commit
+            # status="assigned" + eventId after the send succeeded. A send
+            # failure returns a retryable error and leaves the task prepared.
+            membership = _validate_assignee_membership(room_id, assignment_mxid)
+            if not membership.get("ok"):
+                return {
+                    "ok": False,
+                    "tool": "taskflow",
+                    "action": action,
+                    "task": existing_task,
+                    "error": membership.get("error", "room membership validation failed"),
+                    "retryable": True,
+                    "notificationNeeded": _notification_needed(
+                        "delegate_task",
+                        project or {"project_id": project_id},
+                        existing_task,
+                        summary=f"delegate_task: {task_id} blocked before assignment",
+                    ),
+                }
+
             task_dir = _task_dir(arguments, task_id)
             task_dir.mkdir(parents=True, exist_ok=True)
             spec = str(payload.get("spec") or "")
@@ -3846,30 +4207,128 @@ def _taskflow(arguments: dict[str, Any]) -> dict[str, Any]:
                 "task_id": task_id,
                 "project_id": project_id,
                 "room_id": room_id,
-                "status": "assigned",
+                "status": "prepared",
                 "spec_path": f"shared/tasks/{task_id}/spec.md",
             }
             if assigned_to:
                 task["assigned_to"] = assigned_to
             if source_room_id:
                 task["source_room_id"] = source_room_id
-            if assigned_to:
-                task["assigned_to"] = assigned_to
+            _write_task(arguments, task)
+            # Publish task files to shared storage FIRST so a Worker that
+            # receives the notification can read spec.md/meta.json. If the
+            # publish fails, keep the task prepared and do NOT send the Matrix
+            # notification - a Worker must never receive a reference to files
+            # that were not published. A retry re-publishes (idempotent) and
+            # only then proceeds to notify.
+            synced = _sync_task(arguments, task_id)
+            if not synced:
+                return {
+                    "ok": False,
+                    "tool": "taskflow",
+                    "action": action,
+                    "task": task,
+                    "synced": False,
+                    "error": "failed to publish task files to shared storage",
+                    "retryable": True,
+                    "notificationNeeded": _notification_needed(
+                        "delegate_task",
+                        project or {"project_id": project_id},
+                        task,
+                        summary=f"delegate_task: {task_id} files pending publish",
+                    ),
+                }
+
+            task_title = str(payload.get("title") or "").strip()
+            if not task_title:
+                for item in project.get("tasks", []):
+                    if isinstance(item, dict) and item.get("task_id") == task_id:
+                        task_title = str(item.get("title") or "").strip()
+                        break
+            has_matrix_env = bool(
+                (os.getenv("AGENTTEAMS_MATRIX_URL", "").strip())
+                and (os.getenv("AGENTTEAMS_WORKER_MATRIX_TOKEN", "").strip())
+            )
+            notification: dict[str, Any] = {
+                "sent": False,
+                "error": "notification skipped",
+            }
+            if assignment_mxid and _role(arguments) == "leader" and has_matrix_env:
+                try:
+                    notification = _send_delegate_notification(
+                        arguments,
+                        room_id=room_id,
+                        task_id=task_id,
+                        title=task_title or task_id,
+                        assignee=assignment_mxid,
+                        spec=spec,
+                    )
+                except Exception as exc:
+                    notification = {
+                        "sent": False,
+                        "error": f"automatic notification failed: {exc}",
+                    }
+            task["notification"] = notification
+            if not notification.get("sent"):
+                # Retryable failure: the task stays prepared (not assigned),
+                # so a retry cannot produce a duplicate assignment.
+                return {
+                    "ok": False,
+                    "tool": "taskflow",
+                    "action": action,
+                    "task": task,
+                    "synced": synced,
+                    "notification": notification,
+                    "retryable": True,
+                    "notificationNeeded": _notification_needed(
+                        "delegate_task",
+                        project or {"project_id": project_id},
+                        task,
+                        summary=f"delegate_task: {task_id} notification pending",
+                    ),
+                }
+
+            # Send succeeded - commit the assignment atomically with the
+            # recorded event_id, then re-push the assigned state.
+            task["status"] = "assigned"
+            task["eventId"] = notification["eventId"]
             _write_task(arguments, task)
             project_task_updates: dict[str, Any] = {"status": "assigned"}
             if assigned_to:
                 project_task_updates["assigned_to"] = assigned_to
             if source_room_id:
                 project_task_updates["source_room_id"] = source_room_id
-            if assigned_to:
-                project_task_updates["assigned_to"] = assigned_to
             _update_project_task(arguments, project_id, task_id, **project_task_updates)
+            synced = _sync_task(arguments, task_id)
+            if not synced:
+                # The assignment was committed locally and the notification
+                # was sent, but the assigned state did not reach shared
+                # storage. Return a retryable failure instead of reporting
+                # success: the idempotent retry (assigned + eventId) finishes
+                # the sync without sending a duplicate notification.
+                return {
+                    "ok": False,
+                    "tool": "taskflow",
+                    "action": action,
+                    "task": task,
+                    "synced": False,
+                    "error": "task assigned but shared-storage sync failed; retry to complete",
+                    "retryable": True,
+                    "notification": notification,
+                    "notificationNeeded": _notification_needed(
+                        "delegate_task",
+                        project or {"project_id": project_id},
+                        task,
+                        summary=f"delegate_task: {task_id} assigned to {assigned_to}",
+                    ),
+                }
             return {
                 "ok": True,
                 "tool": "taskflow",
                 "action": action,
                 "task": task,
-                "synced": _sync_task(arguments, task_id),
+                "synced": True,
+                "notification": notification,
                 "notificationNeeded": _notification_needed(
                     "delegate_task",
                     project or {"project_id": project_id},
@@ -3877,7 +4336,6 @@ def _taskflow(arguments: dict[str, Any]) -> dict[str, Any]:
                     summary=f"delegate_task: {task_id} assigned to {assigned_to}",
                 ),
             }
-
         if action == "ack_task":
             if role not in {"worker", "remote-member"}:
                 raise ValueError("ack_task requires worker or remote-member role")
