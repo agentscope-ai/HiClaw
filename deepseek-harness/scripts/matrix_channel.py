@@ -6,26 +6,28 @@ import hashlib
 import json
 import mimetypes
 import os
-from pathlib import Path
-from typing import Any
+import re
 import urllib.error
 import urllib.parse
 import urllib.request
+from pathlib import Path
+from typing import Any
 
 
 def matrix_events(
     payload: dict[str, Any],
-    watched_rooms: set[str],
+    room_types: dict[str, str],
     own_user_id: str,
     agent_user_ids: set[str] | None = None,
-) -> list[dict[str, str]]:
+) -> list[dict[str, Any]]:
     """Extract actionable text, image, and file events from watched joined rooms."""
-    found: list[dict[str, str]] = []
+    found: list[dict[str, Any]] = []
     joined = payload.get("rooms", {}).get("join", {})
     if not isinstance(joined, dict):
         return found
     for room_id, room in joined.items():
-        if room_id not in watched_rooms or not isinstance(room, dict):
+        room_type = room_types.get(room_id)
+        if room_type not in {"personal", "team"} or not isinstance(room, dict):
             continue
         events = room.get("timeline", {}).get("events", [])
         if not isinstance(events, list):
@@ -41,17 +43,18 @@ def matrix_events(
             if not isinstance(content, dict):
                 continue
             sender = str(event.get("sender") or "").strip()
-            if sender in (agent_user_ids or set()):
-                relates_to = content.get("m.relates_to")
-                is_reply = isinstance(relates_to, dict) and isinstance(relates_to.get("m.in_reply_to"), dict)
-                mentions = content.get("m.mentions")
-                mentioned_users = mentions.get("user_ids", []) if isinstance(mentions, dict) else []
-                is_targeted = (
-                    isinstance(mentions, dict)
-                    and (mentions.get("room") is True or (isinstance(mentioned_users, list) and own_user_id in mentioned_users))
-                )
-                if is_reply or not is_targeted:
-                    continue
+            mentions = content.get("m.mentions")
+            mentioned_users = mentions.get("user_ids", []) if isinstance(mentions, dict) else []
+            is_targeted = (
+                isinstance(mentions, dict)
+                and (mentions.get("room") is True or (isinstance(mentioned_users, list) and own_user_id in mentioned_users))
+            )
+            # Personal rooms remain conversational for humans. Team rooms are
+            # dispatch surfaces, so every sender must explicitly target this
+            # Worker. Agent messages require the same targeting in either room
+            # to prevent reply loops while still allowing delegated replies.
+            if (room_type == "team" or sender in (agent_user_ids or set())) and not is_targeted:
+                continue
             msgtype = str(content.get("msgtype") or "")
             kind = {"m.text": "text", "m.image": "image", "m.file": "file"}.get(msgtype)
             if kind is None:
@@ -86,16 +89,26 @@ def matrix_events(
 
 def text_events(
     payload: dict[str, Any],
-    watched_rooms: set[str],
+    room_types: dict[str, str],
     own_user_id: str,
     agent_user_ids: set[str] | None = None,
-) -> list[dict[str, str]]:
+) -> list[dict[str, Any]]:
     """Return the plain-text compatibility view used by bridge callers."""
     return [
         {key: value for key, value in event.items() if key != "kind"}
-        for event in matrix_events(payload, watched_rooms, own_user_id, agent_user_ids)
+        for event in matrix_events(payload, room_types, own_user_id, agent_user_ids)
         if event["kind"] == "text"
     ]
+
+
+def visible_matrix_user_ids(text: str, allowed_user_ids: set[str]) -> list[str]:
+    """Return known Matrix user IDs that appear as complete tokens in text."""
+    found: list[str] = []
+    for user_id in sorted(allowed_user_ids):
+        pattern = rf"(?<![0-9A-Za-z._=/+@-]){re.escape(user_id)}(?![0-9A-Za-z._=/+:-])"
+        if re.search(pattern, text):
+            found.append(user_id)
+    return found
 
 
 def random_transaction_key() -> str:
@@ -209,10 +222,14 @@ class MatrixClient:
         text: str,
         reply_to: str | None = None,
         transaction_key: str | None = None,
+        mentioned_user_ids: list[str] | None = None,
     ) -> str:
         content: dict[str, Any] = {"msgtype": "m.text", "body": text}
         if reply_to:
             content["m.relates_to"] = {"m.in_reply_to": {"event_id": reply_to}}
+        mentions = sorted({user_id for user_id in (mentioned_user_ids or []) if user_id})
+        if mentions:
+            content["m.mentions"] = {"user_ids": mentions}
         return self.send_content(room_id, content, transaction_key or random_transaction_key())
 
     def send_file(self, room_id: str, path: Path, reply_to: str, transaction_key: str) -> str:

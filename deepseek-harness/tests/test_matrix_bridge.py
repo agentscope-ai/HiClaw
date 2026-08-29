@@ -4,15 +4,15 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 from matrix_bridge import (  # noqa: E402
     BridgeState,
+    MatrixClient,
     dsh_error_detail,
     materialize_attachment,
-    matrix_transaction_id,
     matrix_events,
+    matrix_transaction_id,
     restore_output_paths,
     run_dsh,
     runtime_agent_user_ids,
@@ -21,6 +21,7 @@ from matrix_bridge import (  # noqa: E402
     snapshot_outbox,
     sync_output_paths,
     text_events,
+    visible_matrix_user_ids,
 )
 
 
@@ -71,7 +72,7 @@ class TextEventsTest(unittest.TestCase):
         }
 
         self.assertEqual(
-            text_events(payload, {"!personal:matrix.local"}, "@dsh:matrix.local"),
+            text_events(payload, {"!personal:matrix.local": "personal"}, "@dsh:matrix.local"),
             [
                 {
                     "room_id": "!personal:matrix.local",
@@ -109,7 +110,7 @@ class TextEventsTest(unittest.TestCase):
             }
         }
 
-        self.assertEqual(text_events(payload, {"!room:matrix.local"}, "@dsh:matrix.local"), [])
+        self.assertEqual(text_events(payload, {"!room:matrix.local": "personal"}, "@dsh:matrix.local"), [])
 
     def test_dsh_error_prefers_actionable_message_over_runtime_footer(self):
         stderr = """file:///dsh/lib/index.js:1
@@ -122,7 +123,7 @@ Node.js v22.22.3
             "Error: dsh: HTTP_405: DeepSeek API error (HTTP 405)",
         )
 
-    def test_team_agents_do_not_turn_replies_into_new_tasks(self):
+    def test_team_agent_reply_is_accepted_only_when_structurally_targeted(self):
         payload = {
             "rooms": {
                 "join": {
@@ -137,6 +138,7 @@ Node.js v22.22.3
                                         "msgtype": "m.text",
                                         "body": "completed",
                                         "m.relates_to": {"m.in_reply_to": {"event_id": "$task"}},
+                                        "m.mentions": {"user_ids": ["@worker:matrix.local"]},
                                     },
                                 },
                                 {
@@ -158,12 +160,12 @@ Node.js v22.22.3
 
         events = matrix_events(
             payload,
-            {"!team:matrix.local"},
+            {"!team:matrix.local": "team"},
             "@worker:matrix.local",
             {"@leader:matrix.local", "@worker:matrix.local"},
         )
 
-        self.assertEqual([event["event_id"] for event in events], ["$human-reply"])
+        self.assertEqual([event["event_id"] for event in events], ["$agent-reply"])
 
     def test_team_agent_message_requires_a_structured_mention(self):
         payload = {
@@ -197,12 +199,114 @@ Node.js v22.22.3
 
         events = matrix_events(
             payload,
-            {"!team:matrix.local"},
+            {"!team:matrix.local": "team"},
             "@worker:matrix.local",
             {"@leader:matrix.local", "@worker:matrix.local"},
         )
 
         self.assertEqual([event["event_id"] for event in events], ["$targeted"])
+
+    def test_unmentioned_team_human_is_quiet_but_personal_room_remains_conversational(self):
+        event = {
+            "event_id": "$human",
+            "sender": "@admin:matrix.local",
+            "type": "m.room.message",
+            "content": {"msgtype": "m.text", "body": "ordinary chatter"},
+        }
+        payload = {
+            "rooms": {
+                "join": {
+                    "!team:matrix.local": {"timeline": {"events": [event]}},
+                    "!personal:matrix.local": {"timeline": {"events": [event]}},
+                }
+            }
+        }
+
+        events = matrix_events(
+            payload,
+            {"!team:matrix.local": "team", "!personal:matrix.local": "personal"},
+            "@worker:matrix.local",
+            {"@worker:matrix.local"},
+        )
+
+        self.assertEqual([item["room_id"] for item in events], ["!personal:matrix.local"])
+
+    def test_team_room_mention_targets_one_worker_or_the_whole_room(self):
+        payload = {
+            "rooms": {
+                "join": {
+                    "!team:matrix.local": {
+                        "timeline": {
+                            "events": [
+                                {
+                                    "event_id": "$other",
+                                    "sender": "@admin:matrix.local",
+                                    "type": "m.room.message",
+                                    "content": {
+                                        "msgtype": "m.text",
+                                        "body": "for the other worker",
+                                        "m.mentions": {"user_ids": ["@other:matrix.local"]},
+                                    },
+                                },
+                                {
+                                    "event_id": "$self",
+                                    "sender": "@admin:matrix.local",
+                                    "type": "m.room.message",
+                                    "content": {
+                                        "msgtype": "m.text",
+                                        "body": "for this worker",
+                                        "m.mentions": {"user_ids": ["@worker:matrix.local"]},
+                                    },
+                                },
+                                {
+                                    "event_id": "$room",
+                                    "sender": "@admin:matrix.local",
+                                    "type": "m.room.message",
+                                    "content": {
+                                        "msgtype": "m.text",
+                                        "body": "for the room",
+                                        "m.mentions": {"room": True},
+                                    },
+                                },
+                            ]
+                        }
+                    }
+                }
+            }
+        }
+
+        events = matrix_events(
+            payload,
+            {"!team:matrix.local": "team"},
+            "@worker:matrix.local",
+            {"@worker:matrix.local", "@other:matrix.local"},
+        )
+
+        self.assertEqual([item["event_id"] for item in events], ["$self", "$room"])
+
+    def test_visible_known_agent_ids_become_matrix_mentions(self):
+        allowed = {"@leader:matrix.local", "@worker:matrix.local"}
+
+        self.assertEqual(
+            visible_matrix_user_ids("@leader:matrix.local，任务完成", allowed),
+            ["@leader:matrix.local"],
+        )
+        self.assertEqual(visible_matrix_user_ids("email@leader:matrix.local", allowed), [])
+
+        client = MatrixClient("http://matrix.local", "token")
+        with patch.object(client, "send_content", return_value="$reply") as send_content:
+            result = client.send_text(
+                "!team:matrix.local",
+                "@leader:matrix.local，任务完成",
+                "$task",
+                "$task:reply",
+                ["@leader:matrix.local"],
+            )
+
+        self.assertEqual(result, "$reply")
+        sent = send_content.call_args.args[1]
+        self.assertEqual(sent["m.mentions"], {"user_ids": ["@leader:matrix.local"]})
+        self.assertEqual(sent["m.relates_to"], {"m.in_reply_to": {"event_id": "$task"}})
 
 
 class RoomSessionContinuationTest(unittest.TestCase):
@@ -268,8 +372,11 @@ class RoomSessionContinuationTest(unittest.TestCase):
             )
             _user_id, team_rooms = runtime_matrix_context(runtime, "dsh-worker", "matrix.local")
 
-            self.assertEqual(standalone_rooms, {"!personal:matrix.local"})
-            self.assertEqual(team_rooms, {"!personal:matrix.local", "!team:matrix.local"})
+            self.assertEqual(standalone_rooms, {"!personal:matrix.local": "personal"})
+            self.assertEqual(
+                team_rooms,
+                {"!personal:matrix.local": "personal", "!team:matrix.local": "team"},
+            )
 
     def test_runtime_agent_user_ids_excludes_human_members(self):
         runtime = Path(__file__).resolve().parents[2] / "plugins" / "teamharness" / "adapters" / "deepseek-harness" / "fixtures" / "runtime.yaml"
@@ -314,6 +421,7 @@ class AttachmentReceiveTest(unittest.TestCase):
                                         "body": "diagram.png",
                                         "url": "mxc://matrix.local/image-id",
                                         "info": {"mimetype": "image/png", "size": 8},
+                                        "m.mentions": {"user_ids": ["@dsh:matrix.local"]},
                                     },
                                 },
                                 {
@@ -325,6 +433,7 @@ class AttachmentReceiveTest(unittest.TestCase):
                                         "body": "../../budget.csv",
                                         "url": "mxc://matrix.local/file-id",
                                         "info": {"mimetype": "text/csv", "size": 12},
+                                        "m.mentions": {"user_ids": ["@dsh:matrix.local"]},
                                     },
                                 },
                             ]
@@ -334,7 +443,7 @@ class AttachmentReceiveTest(unittest.TestCase):
             }
         }
 
-        events = matrix_events(payload, {"!team:matrix.local"}, "@dsh:matrix.local")
+        events = matrix_events(payload, {"!team:matrix.local": "team"}, "@dsh:matrix.local")
 
         self.assertEqual([event["kind"] for event in events], ["image", "file"])
         self.assertEqual(events[1]["mxc_url"], "mxc://matrix.local/file-id")

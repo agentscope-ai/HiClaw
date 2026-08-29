@@ -113,13 +113,23 @@ function Rewind-BridgeCursor([object]$Pod, [string]$WorkerName, [string]$Cursor)
     if ($LASTEXITCODE -ne 0) { throw "Persisting rewound Worker $WorkerName Matrix cursor failed" }
 }
 
-function Send-Text([string]$RoomId, [string]$Body, [string]$MatrixBase, [string]$Token) {
+function Send-Text(
+    [string]$RoomId,
+    [string]$Body,
+    [string]$MatrixBase,
+    [string]$Token,
+    [string[]]$MentionUserIds = @()
+) {
     $Room = [uri]::EscapeDataString($RoomId)
     $Txn = [guid]::NewGuid().ToString('N')
-    $Response = Invoke-MatrixJson 'PUT' "$MatrixBase/_matrix/client/v3/rooms/$Room/send/m.room.message/$Txn" $Token @{
+    $Content = @{
         msgtype = 'm.text'
         body = $Body
     }
+    if ($MentionUserIds.Count -gt 0) {
+        $Content['m.mentions'] = @{ user_ids = @($MentionUserIds) }
+    }
+    $Response = Invoke-MatrixJson 'PUT' "$MatrixBase/_matrix/client/v3/rooms/$Room/send/m.room.message/$Txn" $Token $Content
     $EventId = [string]$Response.event_id
     if ([string]::IsNullOrWhiteSpace($EventId)) { throw 'Matrix send returned no event_id' }
     return $EventId
@@ -162,6 +172,52 @@ function Wait-TextReply(
         Start-Sleep -Seconds 5
     }
     throw "Timed out waiting for $Sender to reply to $RequestEventId"
+}
+
+function Wait-AnyTextReply(
+    [string]$RoomId,
+    [string]$Sender,
+    [string]$RequestEventId,
+    [string]$MatrixBase,
+    [string]$Token,
+    [int]$TimeoutSeconds = $ReplyTimeoutSeconds
+) {
+    $Deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
+    while ([DateTime]::UtcNow -lt $Deadline) {
+        $Replies = @(Get-RoomMessages $RoomId $MatrixBase $Token | Where-Object {
+            $_.sender -eq $Sender -and (Test-ReplyRelation $_ $RequestEventId) -and $_.content.msgtype -eq 'm.text'
+        })
+        if ($Replies.Count -gt 0) { return $Replies | Select-Object -First 1 }
+        Start-Sleep -Seconds 5
+    }
+    throw "Timed out waiting for $Sender to reply to $RequestEventId"
+}
+
+function Assert-NoTextReply(
+    [string]$RoomId,
+    [string[]]$Senders,
+    [string]$RequestEventId,
+    [string]$MatrixBase,
+    [string]$Token,
+    [int]$QuietSeconds = 20
+) {
+    $Deadline = [DateTime]::UtcNow.AddSeconds($QuietSeconds)
+    while ([DateTime]::UtcNow -lt $Deadline) {
+        $Replies = @(Get-RoomMessages $RoomId $MatrixBase $Token | Where-Object {
+            $_.sender -in $Senders -and (Test-ReplyRelation $_ $RequestEventId) -and $_.content.msgtype -eq 'm.text'
+        })
+        if ($Replies.Count -gt 0) {
+            throw "Expected no Agent reply to unmentioned event $RequestEventId, found $($Replies.Count)"
+        }
+        Start-Sleep -Seconds 2
+    }
+}
+
+function Test-MentionsUser([object]$Event, [string]$UserId) {
+    $Mentions = $Event.content.PSObject.Properties['m.mentions']
+    if ($null -eq $Mentions) { return $false }
+    $UserIds = $Mentions.Value.PSObject.Properties['user_ids']
+    return $null -ne $UserIds -and $UserId -in @($UserIds.Value)
 }
 
 function Upload-MatrixFile([string]$Path, [string]$MatrixBase, [string]$Token) {
@@ -321,8 +377,13 @@ spec:
     $LeaderUser = [string]$Leader.status.matrixUserID
     $WorkerUser = [string]$Worker.status.matrixUserID
     $TeamRoom = [string]$Team.status.teamRoomID
+
+    $ChatterRequest = Send-Text $TeamRoom 'UNMENTIONED_TEAM_CHATTER' $MatrixBase $AdminToken
+    Assert-NoTextReply $TeamRoom @($LeaderUser, $WorkerUser) $ChatterRequest $MatrixBase $AdminToken
+    Write-Output 'Unmentioned Team room chatter did not wake DSH members: PASS'
+
     $WorkerCursorBeforeRole = Get-BridgeCursor $WorkerPod $WorkerName
-    $RoleRequest = Send-Text $TeamRoom 'Read the current TeamHarness context. Reply with exactly three whitespace-separated fields: TEAM_ROLE_OK, then member.runtimeName, then member.role. Do not add punctuation.' $MatrixBase $AdminToken
+    $RoleRequest = Send-Text $TeamRoom 'Read the current TeamHarness context. Reply with exactly three whitespace-separated fields: TEAM_ROLE_OK, then member.runtimeName, then member.role. Do not add punctuation.' $MatrixBase $AdminToken @($LeaderUser, $WorkerUser)
     Wait-TextReply $TeamRoom $LeaderUser $RoleRequest "TEAM_ROLE_OK $LeaderName team_leader" $MatrixBase $AdminToken | Out-Null
     Wait-TextReply $TeamRoom $WorkerUser $RoleRequest "TEAM_ROLE_OK $WorkerName worker" $MatrixBase $AdminToken | Out-Null
     Write-Output 'Team room reached both DSH roles with correct runtime context: PASS'
@@ -335,6 +396,18 @@ spec:
         throw "Expected the Team room to stop after two Agent replies, found $($TeamAgentMessages.Count) Agent text messages"
     }
     Write-Output 'Team room stayed quiet after the two expected Agent replies: PASS'
+
+    $LeaderReceipt = 'DSH_LEADER_RECEIVED_' + [guid]::NewGuid().ToString('N')
+    $DelegationRequest = Send-Text $TeamRoom "Reply with exactly two whitespace-separated fields: $LeaderUser and $LeaderReceipt. Do not add punctuation." $MatrixBase $AdminToken @($WorkerUser)
+    $WorkerCompletion = Wait-AnyTextReply $TeamRoom $WorkerUser $DelegationRequest $MatrixBase $AdminToken
+    if (-not ([string]$WorkerCompletion.content.body).Contains($LeaderUser)) {
+        throw "Worker completion did not contain the visible Leader Matrix ID $LeaderUser"
+    }
+    if (-not (Test-MentionsUser $WorkerCompletion $LeaderUser)) {
+        throw "Worker completion did not carry an m.mentions entry for $LeaderUser"
+    }
+    Wait-AnyTextReply $TeamRoom $LeaderUser ([string]$WorkerCompletion.event_id) $MatrixBase $AdminToken | Out-Null
+    Write-Output 'DSH Worker completion reached the explicitly mentioned DSH Leader: PASS'
 
     $PreviousWorkerUid = [string]$WorkerPod.metadata.uid
     Rewind-BridgeCursor $WorkerPod $WorkerName $WorkerCursorBeforeRole

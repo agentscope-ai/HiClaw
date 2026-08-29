@@ -6,17 +6,22 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-from pathlib import Path
 import re
 import signal
 import subprocess
 import threading
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import urllib.error
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 
 from bridge_state import BridgeState
-from matrix_channel import MatrixClient, matrix_events, matrix_transaction_id, text_events
-
+from matrix_channel import (
+    MatrixClient,
+    matrix_events,
+    matrix_transaction_id,
+    text_events,
+    visible_matrix_user_ids,
+)
 
 STOP = threading.Event()
 
@@ -46,12 +51,16 @@ def runtime_section(path: Path, section: str) -> dict[str, str]:
     return values
 
 
-def runtime_matrix_context(runtime_path: Path, worker_name: str, matrix_domain: str) -> tuple[str, set[str]]:
+def runtime_matrix_context(runtime_path: Path, worker_name: str, matrix_domain: str) -> tuple[str, dict[str, str]]:
     member = runtime_section(runtime_path, "member")
     team = runtime_section(runtime_path, "team")
     own_user_id = member.get("matrixUserId") or f"@{worker_name}:{matrix_domain}"
-    watched_rooms = {room for room in (member.get("personalRoomId"), team.get("teamRoomId")) if room}
-    return own_user_id, watched_rooms
+    room_types: dict[str, str] = {}
+    if member.get("personalRoomId"):
+        room_types[member["personalRoomId"]] = "personal"
+    if team.get("teamRoomId"):
+        room_types[team["teamRoomId"]] = "team"
+    return own_user_id, room_types
 
 
 def runtime_agent_user_ids(runtime_path: Path) -> set[str]:
@@ -348,9 +357,9 @@ def main() -> int:
     workspace = Path(required_env("TEAMHARNESS_WORKSPACE"))
     workspace.mkdir(parents=True, exist_ok=True)
     matrix_domain = required_env("AGENTTEAMS_MATRIX_DOMAIN")
-    own_user_id, watched_rooms = runtime_matrix_context(runtime_path, worker_name, matrix_domain)
+    own_user_id, room_types = runtime_matrix_context(runtime_path, worker_name, matrix_domain)
     agent_user_ids = runtime_agent_user_ids(runtime_path)
-    if not watched_rooms:
+    if not room_types:
         raise RuntimeError("runtime.yaml contains no personalRoomId or teamRoomId")
 
     state_path = runtime_path.parent / "matrix-bridge-state.json"
@@ -375,21 +384,21 @@ def main() -> int:
     attachment_max_bytes = int(os.getenv("AGENTTEAMS_MATRIX_ATTACHMENT_MAX_BYTES", str(25 * 1024 * 1024)))
     max_attempts = max(1, int(os.getenv("AGENTTEAMS_MATRIX_EVENT_MAX_ATTEMPTS", "3")))
     retry_base_seconds = max(1, int(os.getenv("AGENTTEAMS_MATRIX_RETRY_BASE_SECONDS", "2")))
-    print(f"[agentteams-dsh-worker] ready worker={worker_name} rooms={len(watched_rooms)}", flush=True)
+    print(f"[agentteams-dsh-worker] ready worker={worker_name} rooms={len(room_types)}", flush=True)
     while not STOP.is_set():
         try:
             if refresh_runtime_config(worker_name, runtime_path):
-                own_user_id, watched_rooms = runtime_matrix_context(runtime_path, worker_name, matrix_domain)
+                own_user_id, room_types = runtime_matrix_context(runtime_path, worker_name, matrix_domain)
                 agent_user_ids = runtime_agent_user_ids(runtime_path)
-                if not watched_rooms:
+                if not room_types:
                     raise RuntimeError("updated runtime.yaml contains no personalRoomId or teamRoomId")
                 print(
-                    f"[agentteams-dsh-worker] runtime config refreshed rooms={len(watched_rooms)}",
+                    f"[agentteams-dsh-worker] runtime config refreshed rooms={len(room_types)}",
                     flush=True,
                 )
             payload = client.sync(since, 30_000)
             batch_complete = True
-            for event in matrix_events(payload, watched_rooms, own_user_id, agent_user_ids):
+            for event in matrix_events(payload, room_types, own_user_id, agent_user_ids):
                 if state.is_completed(event["event_id"]):
                     continue
                 session_id, resume = state.session_for(event["room_id"])
@@ -433,6 +442,7 @@ def main() -> int:
                         answer,
                         event["event_id"],
                         f"{event['event_id']}:reply",
+                        visible_matrix_user_ids(answer, agent_user_ids - {own_user_id}),
                     )
                     send_output_paths(client, event["room_id"], event["event_id"], workspace, output_paths)
                     state.mark_completed(event["event_id"], reply_event_id)
