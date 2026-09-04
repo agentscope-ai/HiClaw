@@ -74,6 +74,8 @@ spec:
     - name: github
       url: https://gateway.example.com/mcp-servers/github/mcp
       transport: http              # `http`（默认，Streamable HTTP）或 `sse`
+  env:
+    APP_MODE: audit
   resources:
     requests:
       cpu: 250m
@@ -100,7 +102,10 @@ spec:
 | `spec.expose` | []object | 否 | — | 通过 Higress 网关暴露的端口列表（见 [服务发布](#服务发布)） |
 | `spec.channelPolicy` | object | 否 | — | 在默认策略之上增减群聊 @mention 与 DM 的允许/拒绝列表（详见下文「通信策略（Worker 与 Team）」） |
 | `spec.state` | string | 否 | `Running` | 期望生命周期：`Running`、`Sleeping`、`Stopped`，Controller 将实际容器状态调和到此目标 |
+| `spec.env` | map[string]string | 否 | — | 用户自定义的容器环境变量；与 Controller/backend 管理的键冲突时始终以系统值为准。 |
 | `spec.resources` | object | 否 | 安装或后端默认值 | Worker Pod 的 CPU/内存 request 和 limit，字段为 `requests.cpu`、`requests.memory`、`limits.cpu`、`limits.memory`，使用 Kubernetes quantity 字符串。 |
+
+`agt apply -f` 以及 Worker REST 创建/更新接口均支持 `spec.env`。更新时会整体替换用户自定义环境变量；设置 `env: {}` 可清空。值会保存在资源 spec 中，因此秘密应优先使用平台凭据机制，而不是明文环境变量。
 
 修改 `spec.resources` 会更新 Worker 规格并重建受管容器或 Pod。不要在 Worker 正在处理任务时修改资源配置。
 
@@ -356,6 +361,8 @@ spec:
     heartbeatInterval: 15m
     workerIdleTimeout: 720m
     notifyChannel: admin-dm
+  env:
+    APP_MODE: audit
   resources:
     requests:
       cpu: 500m
@@ -379,10 +386,13 @@ spec:
 | `spec.mcpServers` | []object | 否 | — | mcporter 可调用的 MCP Server。每项包含 `name`、`url` 和 `transport`（`http`/`sse`）；网关侧授权不在本字段范围内。 |
 | `spec.package` | string | 否 | — | 包 URI（`file://`、`http(s)://`、`nacos://`） |
 | `spec.state` | string | 否 | `Running` | 期望生命周期：`Running`、`Sleeping`、`Stopped` |
+| `spec.env` | map[string]string | 否 | — | 用户自定义的容器环境变量；与 Controller/backend 管理的键冲突时始终以系统值为准。 |
 | `spec.resources` | object | 否 | 安装或后端默认值 | Manager Pod 的 CPU/内存 request 和 limit，字段为 `requests.cpu`、`requests.memory`、`limits.cpu`、`limits.memory`。 |
 | `spec.config.heartbeatInterval` | string | 否 | — | 心跳检查间隔（如 `15m`） |
 | `spec.config.workerIdleTimeout` | string | 否 | — | 空闲自动休眠前等待时间（如 `720m`） |
 | `spec.config.notifyChannel` | string | 否 | — | 通知渠道（如 `admin-dm`） |
+
+Manager `spec.env` 与上文 Worker 相同，支持 `agt apply -f`、REST 创建/更新、整体替换和清空，并遵循相同的秘密存储注意事项。
 
 ### Manager 状态
 
