@@ -115,6 +115,28 @@ def runtime_agent_user_ids(runtime_path: Path) -> set[str]:
     }
 
 
+def source_agent_reply_user_id(event: dict[str, object], agent_user_ids: set[str], own_user_id: str) -> str:
+    sender = str(event.get("sender") or "").strip()
+    if sender != own_user_id and sender in agent_user_ids and event.get("auto_source_mention") is not True:
+        return sender
+    return ""
+
+
+def reply_mention_user_ids(
+    event: dict[str, object],
+    text: str,
+    agent_user_ids: set[str],
+    own_user_id: str,
+) -> list[str]:
+    """Target the source Agent, plus any known Agent visibly named in the reply."""
+    allowed = agent_user_ids - {own_user_id}
+    mentioned = set(visible_matrix_user_ids(text, allowed))
+    source_agent = source_agent_reply_user_id(event, agent_user_ids, own_user_id)
+    if source_agent:
+        mentioned.add(source_agent)
+    return sorted(mentioned)
+
+
 def safe_filename(value: str) -> str:
     leaf = value.replace("\\", "/").rsplit("/", 1)[-1].strip()
     leaf = re.sub(r"[\x00-\x1f<>:\"|?*]", "_", leaf)
@@ -223,13 +245,22 @@ def send_output_paths(
     event_id: str,
     workspace: Path,
     relative_paths: list[str],
+    mentioned_user_ids: list[str] | None = None,
+    auto_source_mention: bool = False,
 ) -> list[Path]:
     sent: list[Path] = []
     for relative in sorted(relative_paths):
         path = workspace_output_path(workspace, relative)
         if not path.is_file() or path.is_symlink():
             raise RuntimeError(f"Workspace output is unavailable: {relative}")
-        client.send_file(room_id, path, event_id, f"{event_id}:file:{relative}")
+        client.send_file(
+            room_id,
+            path,
+            event_id,
+            f"{event_id}:file:{relative}",
+            mentioned_user_ids,
+            auto_source_mention,
+        )
         sent.append(path)
     return sent
 
@@ -240,8 +271,18 @@ def send_workspace_outputs(
     event_id: str,
     workspace: Path,
     before: dict[str, str],
+    mentioned_user_ids: list[str] | None = None,
+    auto_source_mention: bool = False,
 ) -> list[Path]:
-    return send_output_paths(client, room_id, event_id, workspace, changed_outbox_files(workspace, before))
+    return send_output_paths(
+        client,
+        room_id,
+        event_id,
+        workspace,
+        changed_outbox_files(workspace, before),
+        mentioned_user_ids,
+        auto_source_mention,
+    )
 
 
 def mc(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
@@ -437,14 +478,25 @@ def main() -> int:
                         answer, output_paths = cached_answer
 
                     restore_output_paths(worker_name, workspace, output_paths)
+                    source_agent = source_agent_reply_user_id(event, agent_user_ids, own_user_id)
+                    reply_mentions = reply_mention_user_ids(event, answer, agent_user_ids, own_user_id)
                     reply_event_id = client.send_text(
                         event["room_id"],
                         answer,
                         event["event_id"],
                         f"{event['event_id']}:reply",
-                        visible_matrix_user_ids(answer, agent_user_ids - {own_user_id}),
+                        reply_mentions,
+                        bool(source_agent),
                     )
-                    send_output_paths(client, event["room_id"], event["event_id"], workspace, output_paths)
+                    send_output_paths(
+                        client,
+                        event["room_id"],
+                        event["event_id"],
+                        workspace,
+                        output_paths,
+                        [source_agent] if source_agent else [],
+                        bool(source_agent),
+                    )
                     state.mark_completed(event["event_id"], reply_event_id)
                     state.save()
                     push_runtime_state(worker_name, state_path)
@@ -463,11 +515,14 @@ def main() -> int:
                         STOP.wait(delay)
                         break
                     failure = f"DeepSeek Harness 任务执行失败（已重试 {attempts} 次）：{error}"
+                    source_agent = source_agent_reply_user_id(event, agent_user_ids, own_user_id)
                     failure_event_id = client.send_text(
                         event["room_id"],
                         failure,
                         event["event_id"],
                         f"{event['event_id']}:failure",
+                        reply_mention_user_ids(event, failure, agent_user_ids, own_user_id),
+                        bool(source_agent),
                     )
                     state.mark_completed(event["event_id"], failure_event_id)
                     state.save()

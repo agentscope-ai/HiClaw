@@ -14,6 +14,7 @@ from matrix_bridge import (  # noqa: E402
     matrix_events,
     matrix_transaction_id,
     restore_output_paths,
+    reply_mention_user_ids,
     run_dsh,
     runtime_agent_user_ids,
     runtime_matrix_context,
@@ -326,6 +327,90 @@ Node.js v22.22.3
             },
         )
 
+    def test_text_reply_marks_an_automatically_targeted_source_agent(self):
+        client = MatrixClient("http://matrix.local", "token")
+        with patch.object(client, "send_content", return_value="$reply") as send_content:
+            client.send_text(
+                "!team:matrix.local",
+                "TASK_COMPLETED",
+                "$delegation",
+                "$delegation:reply",
+                ["@leader:matrix.local"],
+                True,
+            )
+
+        content = send_content.call_args.args[1]
+        self.assertTrue(content["com.agentteams.auto_source_mention"])
+
+    def test_agent_reply_mentions_source_even_when_answer_omits_its_id(self):
+        event = {
+            "event_id": "$delegation",
+            "sender": "@leader:matrix.local",
+            "body": "complete the task",
+        }
+
+        self.assertEqual(
+            reply_mention_user_ids(
+                event,
+                "TASK_COMPLETED",
+                {"@leader:matrix.local", "@worker:matrix.local"},
+                "@worker:matrix.local",
+            ),
+            ["@leader:matrix.local"],
+        )
+
+    def test_auto_source_mention_is_not_bounced_back(self):
+        event = {
+            "event_id": "$completion",
+            "sender": "@worker:matrix.local",
+            "body": "TASK_COMPLETED",
+            "auto_source_mention": True,
+        }
+
+        self.assertEqual(
+            reply_mention_user_ids(
+                event,
+                "Acknowledged",
+                {"@leader:matrix.local", "@worker:matrix.local"},
+                "@leader:matrix.local",
+            ),
+            [],
+        )
+
+    def test_matrix_event_preserves_auto_source_mention_marker(self):
+        payload = {
+            "rooms": {
+                "join": {
+                    "!team:matrix.local": {
+                        "timeline": {
+                            "events": [
+                                {
+                                    "event_id": "$completion",
+                                    "sender": "@worker:matrix.local",
+                                    "type": "m.room.message",
+                                    "content": {
+                                        "msgtype": "m.text",
+                                        "body": "TASK_COMPLETED",
+                                        "m.mentions": {"user_ids": ["@leader:matrix.local"]},
+                                        "com.agentteams.auto_source_mention": True,
+                                    },
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        }
+
+        events = matrix_events(
+            payload,
+            {"!team:matrix.local": "team"},
+            "@leader:matrix.local",
+            {"@leader:matrix.local", "@worker:matrix.local"},
+        )
+
+        self.assertTrue(events[0]["auto_source_mention"])
+
 
 class RoomSessionContinuationTest(unittest.TestCase):
     def test_room_session_is_restored_after_bridge_restart(self):
@@ -488,7 +573,7 @@ class AttachmentReceiveTest(unittest.TestCase):
             workspace = Path(directory)
             prompt, saved_path = materialize_attachment(event, FakeMatrixClient(), workspace, 1024)
 
-            self.assertTrue(saved_path.is_relative_to(workspace / "inbox"))
+            self.assertTrue(saved_path.is_relative_to((workspace / "inbox").resolve()))
             self.assertEqual(saved_path.name, "budget.csv")
             self.assertEqual(saved_path.read_bytes(), b"a,b\n1,2\n")
             self.assertIn("inbox/", prompt.replace("\\", "/"))
@@ -522,13 +607,46 @@ class AttachmentReceiveTest(unittest.TestCase):
 
 
 class AttachmentSendTest(unittest.TestCase):
+    def test_returned_file_mentions_the_source_agent(self):
+        client = MatrixClient("http://matrix.local", "token")
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "result.txt"
+            path.write_text("done", encoding="utf-8")
+            with (
+                patch.object(client, "upload_media", return_value=("mxc://matrix.local/result", "text/plain", 4)),
+                patch.object(client, "send_content", return_value="$file") as send_content,
+            ):
+                event_id = client.send_file(
+                    "!team:matrix.local",
+                    path,
+                    "$delegation",
+                    "$delegation:file:result.txt",
+                    ["@leader:matrix.local"],
+                    True,
+                )
+
+        self.assertEqual(event_id, "$file")
+        content = send_content.call_args.args[1]
+        self.assertEqual(content["m.mentions"], {"user_ids": ["@leader:matrix.local"]})
+        self.assertTrue(content["com.agentteams.auto_source_mention"])
+
     def test_only_new_or_changed_outbox_files_are_sent(self):
         class FakeMatrixClient:
             def __init__(self):
                 self.sent = []
 
-            def send_file(self, room_id, path, reply_to, transaction_key):
-                self.sent.append((room_id, path.name, reply_to, transaction_key))
+            def send_file(
+                self,
+                room_id,
+                path,
+                reply_to,
+                transaction_key,
+                mentioned_user_ids=None,
+                auto_source_mention=False,
+            ):
+                self.sent.append(
+                    (room_id, path.name, reply_to, transaction_key, mentioned_user_ids, auto_source_mention)
+                )
                 return "$uploaded"
 
         with tempfile.TemporaryDirectory() as directory:
@@ -542,11 +660,21 @@ class AttachmentSendTest(unittest.TestCase):
             (outbox / "changed.txt").write_text("after", encoding="utf-8")
             (outbox / "result.png").write_bytes(b"png-result")
             client = FakeMatrixClient()
-            sent = send_workspace_outputs(client, "!team:matrix.local", "$task", workspace, before)
+            sent = send_workspace_outputs(
+                client,
+                "!team:matrix.local",
+                "$task",
+                workspace,
+                before,
+                ["@leader:matrix.local"],
+                True,
+            )
 
             self.assertEqual([path.name for path in sent], ["changed.txt", "result.png"])
             self.assertEqual([call[1] for call in client.sent], ["changed.txt", "result.png"])
             self.assertTrue(all(call[2] == "$task" for call in client.sent))
+            self.assertTrue(all(call[4] == ["@leader:matrix.local"] for call in client.sent))
+            self.assertTrue(all(call[5] is True for call in client.sent))
 
     def test_output_rejects_outbox_symlink_outside_workspace(self):
         with tempfile.TemporaryDirectory() as directory, tempfile.TemporaryDirectory() as outside:

@@ -397,17 +397,20 @@ spec:
     }
     Write-Output 'Team room stayed quiet after the two expected Agent replies: PASS'
 
-    $LeaderReceipt = 'DSH_LEADER_RECEIVED_' + [guid]::NewGuid().ToString('N')
-    $DelegationRequest = Send-Text $TeamRoom "Reply with exactly two whitespace-separated fields: $LeaderUser and $LeaderReceipt. Do not add punctuation." $MatrixBase $AdminToken @($WorkerUser)
+    $LeaderToken = (& kubectl exec $LeaderPod.metadata.name -n $Namespace -- printenv AGENTTEAMS_WORKER_MATRIX_TOKEN | Out-String).Trim()
+    if ([string]::IsNullOrWhiteSpace($LeaderToken)) { throw 'DSH Leader has no Matrix token' }
+    $WorkerReceipt = 'DSH_WORKER_COMPLETED_' + [guid]::NewGuid().ToString('N')
+    $DelegationRequest = Send-Text $TeamRoom "Reply with exactly $WorkerReceipt and no other text." $MatrixBase $LeaderToken @($WorkerUser)
     $WorkerCompletion = Wait-AnyTextReply $TeamRoom $WorkerUser $DelegationRequest $MatrixBase $AdminToken
-    if (-not ([string]$WorkerCompletion.content.body).Contains($LeaderUser)) {
-        throw "Worker completion did not contain the visible Leader Matrix ID $LeaderUser"
+    if (([string]$WorkerCompletion.content.body).Trim() -ne $WorkerReceipt) {
+        throw "Worker completion should not need to repeat the Leader Matrix ID: $($WorkerCompletion.content.body)"
     }
     if (-not (Test-MentionsUser $WorkerCompletion $LeaderUser)) {
-        throw "Worker completion did not carry an m.mentions entry for $LeaderUser"
+        throw "Worker completion did not automatically mention source Agent $LeaderUser"
     }
-    Wait-AnyTextReply $TeamRoom $LeaderUser ([string]$WorkerCompletion.event_id) $MatrixBase $AdminToken | Out-Null
-    Write-Output 'DSH Worker completion reached the explicitly mentioned DSH Leader: PASS'
+    $LeaderAcknowledgement = Wait-AnyTextReply $TeamRoom $LeaderUser ([string]$WorkerCompletion.event_id) $MatrixBase $AdminToken
+    Assert-NoTextReply $TeamRoom @($WorkerUser) ([string]$LeaderAcknowledgement.event_id) $MatrixBase $AdminToken
+    Write-Output 'DSH Worker completion automatically reached its source DSH Leader: PASS'
 
     $PreviousWorkerUid = [string]$WorkerPod.metadata.uid
     Rewind-BridgeCursor $WorkerPod $WorkerName $WorkerCursorBeforeRole

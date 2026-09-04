@@ -70,6 +70,8 @@ def matrix_events(
                 "body": body,
                 "kind": kind,
             }
+            if content.get("com.agentteams.auto_source_mention") is True:
+                extracted["auto_source_mention"] = True
             if kind != "text":
                 mxc_url = str(content.get("url") or "").strip()
                 if not mxc_url.startswith("mxc://"):
@@ -224,6 +226,7 @@ class MatrixClient:
         reply_to: str | None = None,
         transaction_key: str | None = None,
         mentioned_user_ids: list[str] | None = None,
+        auto_source_mention: bool = False,
     ) -> str:
         content: dict[str, Any] = {"msgtype": "m.text", "body": text}
         if reply_to:
@@ -231,9 +234,19 @@ class MatrixClient:
         mentions = sorted({user_id for user_id in (mentioned_user_ids or []) if user_id})
         if mentions:
             content["m.mentions"] = {"user_ids": mentions}
+        if auto_source_mention:
+            content["com.agentteams.auto_source_mention"] = True
         return self.send_content(room_id, content, transaction_key or random_transaction_key())
 
-    def send_file(self, room_id: str, path: Path, reply_to: str, transaction_key: str) -> str:
+    def send_file(
+        self,
+        room_id: str,
+        path: Path,
+        reply_to: str,
+        transaction_key: str,
+        mentioned_user_ids: list[str] | None = None,
+        auto_source_mention: bool = False,
+    ) -> str:
         content_uri, mimetype, size = self.upload_media(path)
         msgtype = "m.image" if mimetype.startswith("image/") else "m.file"
         content: dict[str, Any] = {
@@ -244,4 +257,9 @@ class MatrixClient:
             "info": {"mimetype": mimetype, "size": size},
             "m.relates_to": {"m.in_reply_to": {"event_id": reply_to}},
         }
+        mentions = sorted({user_id for user_id in (mentioned_user_ids or []) if user_id})
+        if mentions:
+            content["m.mentions"] = {"user_ids": mentions}
+        if auto_source_mention:
+            content["com.agentteams.auto_source_mention"] = True
         return self.send_content(room_id, content, transaction_key)
