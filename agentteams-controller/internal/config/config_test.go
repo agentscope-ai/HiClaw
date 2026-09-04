@@ -146,6 +146,38 @@ func TestBackendConfigsIncludeQwenPawWorkerImage(t *testing.T) {
 	}
 }
 
+func TestBackendConfigsIncludeDeepSeekHarnessWorkerImage(t *testing.T) {
+	t.Setenv("AGENTTEAMS_DEEPSEEK_HARNESS_WORKER_IMAGE", "agentteams/deepseek-harness-worker:test")
+
+	cfg := LoadConfig()
+
+	for name, got := range map[string]string{
+		"docker":  cfg.DockerConfig().DeepSeekHarnessWorkerImage,
+		"k8s":     cfg.K8sConfig().DeepSeekHarnessWorkerImage,
+		"sandbox": cfg.SandboxConfig().DeepSeekHarnessWorkerImage,
+	} {
+		if want := "agentteams/deepseek-harness-worker:test"; got != want {
+			t.Fatalf("%s DeepSeekHarnessWorkerImage = %q, want %q", name, got, want)
+		}
+	}
+}
+
+func TestBackendConfigsDefaultToIndependentDeepSeekHarnessVersion(t *testing.T) {
+	t.Setenv("AGENTTEAMS_DEEPSEEK_HARNESS_WORKER_IMAGE", "")
+
+	cfg := LoadConfig()
+
+	for name, got := range map[string]string{
+		"docker":  cfg.DockerConfig().DeepSeekHarnessWorkerImage,
+		"k8s":     cfg.K8sConfig().DeepSeekHarnessWorkerImage,
+		"sandbox": cfg.SandboxConfig().DeepSeekHarnessWorkerImage,
+	} {
+		if want := "agentteams/agentteams-deepseek-harness-worker:v0.1.0"; got != want {
+			t.Fatalf("%s DeepSeekHarnessWorkerImage = %q, want %q", name, got, want)
+		}
+	}
+}
+
 func TestLoadConfigPanicsOnInvalidManagerSpec(t *testing.T) {
 	t.Setenv("AGENTTEAMS_MANAGER_SPEC", "{")
 

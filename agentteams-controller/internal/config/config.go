@@ -514,13 +514,14 @@ func (c *Config) ManagerResources() *backend.ResourceRequirements {
 
 func (c *Config) DockerConfig() backend.DockerConfig {
 	return backend.DockerConfig{
-		SocketPath:           c.SocketPath,
-		WorkerImage:          envOrDefault("AGENTTEAMS_WORKER_IMAGE", "agentteams/agentteams-worker:latest"),
-		CopawWorkerImage:     envOrDefault("AGENTTEAMS_COPAW_WORKER_IMAGE", "agentteams/agentteams-copaw-worker:latest"),
-		HermesWorkerImage:    envOrDefault("AGENTTEAMS_HERMES_WORKER_IMAGE", "agentteams/agentteams-hermes-worker:latest"),
-		OpenHumanWorkerImage: envOrDefault("AGENTTEAMS_OPENHUMAN_WORKER_IMAGE", "agentteams/agentteams-openhuman-worker:latest"),
-		QwenPawWorkerImage:   envOrDefault("AGENTTEAMS_QWENPAW_WORKER_IMAGE", "agentteams/agentteams-qwenpaw-worker:latest"),
-		DefaultNetwork:       envOrDefault("AGENTTEAMS_DOCKER_NETWORK", "agentteams-net"),
+		SocketPath:                 c.SocketPath,
+		WorkerImage:                envOrDefault("AGENTTEAMS_WORKER_IMAGE", "agentteams/agentteams-worker:latest"),
+		CopawWorkerImage:           envOrDefault("AGENTTEAMS_COPAW_WORKER_IMAGE", "agentteams/agentteams-copaw-worker:latest"),
+		HermesWorkerImage:          envOrDefault("AGENTTEAMS_HERMES_WORKER_IMAGE", "agentteams/agentteams-hermes-worker:latest"),
+		OpenHumanWorkerImage:       envOrDefault("AGENTTEAMS_OPENHUMAN_WORKER_IMAGE", "agentteams/agentteams-openhuman-worker:latest"),
+		QwenPawWorkerImage:         envOrDefault("AGENTTEAMS_QWENPAW_WORKER_IMAGE", "agentteams/agentteams-qwenpaw-worker:latest"),
+		DeepSeekHarnessWorkerImage: envOrDefault("AGENTTEAMS_DEEPSEEK_HARNESS_WORKER_IMAGE", "agentteams/agentteams-deepseek-harness-worker:v0.1.0"),
+		DefaultNetwork:             envOrDefault("AGENTTEAMS_DOCKER_NETWORK", "agentteams-net"),
 	}
 }
 
@@ -557,16 +558,17 @@ func (c *Config) UsesExternalOSS() bool {
 
 func (c *Config) K8sConfig() backend.K8sConfig {
 	return backend.K8sConfig{
-		Namespace:            c.K8sNamespace,
-		WorkerImage:          envOrDefault("AGENTTEAMS_WORKER_IMAGE", "agentteams/agentteams-worker:latest"),
-		CopawWorkerImage:     envOrDefault("AGENTTEAMS_COPAW_WORKER_IMAGE", "agentteams/agentteams-copaw-worker:latest"),
-		HermesWorkerImage:    envOrDefault("AGENTTEAMS_HERMES_WORKER_IMAGE", "agentteams/agentteams-hermes-worker:latest"),
-		OpenHumanWorkerImage: envOrDefault("AGENTTEAMS_OPENHUMAN_WORKER_IMAGE", "agentteams/agentteams-openhuman-worker:latest"),
-		QwenPawWorkerImage:   envOrDefault("AGENTTEAMS_QWENPAW_WORKER_IMAGE", "agentteams/agentteams-qwenpaw-worker:latest"),
-		WorkerCPU:            c.K8sWorkerCPU,
-		WorkerMemory:         c.K8sWorkerMemory,
-		ControllerName:       c.ControllerName,
-		ResourcePrefix:       c.ResourcePrefix,
+		Namespace:                  c.K8sNamespace,
+		WorkerImage:                envOrDefault("AGENTTEAMS_WORKER_IMAGE", "agentteams/agentteams-worker:latest"),
+		CopawWorkerImage:           envOrDefault("AGENTTEAMS_COPAW_WORKER_IMAGE", "agentteams/agentteams-copaw-worker:latest"),
+		HermesWorkerImage:          envOrDefault("AGENTTEAMS_HERMES_WORKER_IMAGE", "agentteams/agentteams-hermes-worker:latest"),
+		OpenHumanWorkerImage:       envOrDefault("AGENTTEAMS_OPENHUMAN_WORKER_IMAGE", "agentteams/agentteams-openhuman-worker:latest"),
+		QwenPawWorkerImage:         envOrDefault("AGENTTEAMS_QWENPAW_WORKER_IMAGE", "agentteams/agentteams-qwenpaw-worker:latest"),
+		DeepSeekHarnessWorkerImage: envOrDefault("AGENTTEAMS_DEEPSEEK_HARNESS_WORKER_IMAGE", "agentteams/agentteams-deepseek-harness-worker:v0.1.0"),
+		WorkerCPU:                  c.K8sWorkerCPU,
+		WorkerMemory:               c.K8sWorkerMemory,
+		ControllerName:             c.ControllerName,
+		ResourcePrefix:             c.ResourcePrefix,
 	}
 }
 
@@ -580,6 +582,7 @@ func (c *Config) SandboxConfig() backend.SandboxConfig {
 		HermesWorkerImage:            envOrDefault("AGENTTEAMS_HERMES_WORKER_IMAGE", "agentteams/agentteams-hermes-worker:latest"),
 		OpenHumanWorkerImage:         envOrDefault("AGENTTEAMS_OPENHUMAN_WORKER_IMAGE", "agentteams/agentteams-openhuman-worker:latest"),
 		QwenPawWorkerImage:           envOrDefault("AGENTTEAMS_QWENPAW_WORKER_IMAGE", "agentteams/agentteams-qwenpaw-worker:latest"),
+		DeepSeekHarnessWorkerImage:   envOrDefault("AGENTTEAMS_DEEPSEEK_HARNESS_WORKER_IMAGE", "agentteams/agentteams-deepseek-harness-worker:v0.1.0"),
 		WorkerCPU:                    c.K8sWorkerCPU,
 		WorkerMemory:                 c.K8sWorkerMemory,
 		SandboxPrewarmSize:           c.SandboxPrewarmSize,
