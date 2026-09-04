@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"regexp"
 	"time"
 
 	v1beta1 "github.com/agentscope-ai/AgentTeams/agentteams-controller/api/v1beta1"
@@ -19,6 +20,39 @@ import (
 // k8sUpdateMaxRetries is the max attempts for Get→patch spec→Update against
 // optimistic locking conflicts when the controller updates status between Get and Update.
 const k8sUpdateMaxRetries = 3
+
+// unknownFieldPattern extracts the offending field name from the error
+// produced by json.Decoder.DisallowUnknownFields.
+var unknownFieldPattern = regexp.MustCompile(`unknown field "([^"]+)"`)
+
+// legacyFieldHints maps removed or renamed spec fields to migration guidance.
+// Without strict decoding, manifests written for another controller version
+// (or with a typo) are silently stripped during decode: the resource is
+// created/updated without its members, and the membership reconciler then
+// repeatedly evicts the orphaned members from the team room ("removed from
+// desired member set").
+var legacyFieldHints = map[string]string{
+	"workers": "`workers` was removed in v1.2.0; create standalone Worker resources and reference them by name via `workerMembers`",
+}
+
+// decodeResourceRequest decodes a resource create/update request body,
+// rejecting unknown fields so that schema drift between the client manifest
+// and the controller version fails loudly instead of silently dropping spec
+// fields such as team membership.
+func decodeResourceRequest(r *http.Request, v interface{}) error {
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(v); err != nil {
+		if m := unknownFieldPattern.FindStringSubmatch(err.Error()); m != nil {
+			if hint, ok := legacyFieldHints[m[1]]; ok {
+				return fmt.Errorf("unknown field %q: %s", m[1], hint)
+			}
+			return fmt.Errorf("unknown field %q in request body; check the field name against the current resource schema", m[1])
+		}
+		return err
+	}
+	return nil
+}
 
 // ResourceHandler handles declarative CRUD operations on CRs.
 //
@@ -70,7 +104,7 @@ func (h *ResourceHandler) stampControllerLabel(meta *metav1.ObjectMeta) {
 
 func (h *ResourceHandler) CreateWorker(w http.ResponseWriter, r *http.Request) {
 	var req CreateWorkerRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeResourceRequest(r, &req); err != nil {
 		httputil.WriteError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
 		return
 	}
@@ -207,7 +241,7 @@ func (h *ResourceHandler) UpdateWorker(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req UpdateWorkerRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeResourceRequest(r, &req); err != nil {
 		httputil.WriteError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
 		return
 	}
@@ -314,7 +348,7 @@ func (h *ResourceHandler) DeleteWorker(w http.ResponseWriter, r *http.Request) {
 
 func (h *ResourceHandler) CreateTeam(w http.ResponseWriter, r *http.Request) {
 	var req CreateTeamRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeResourceRequest(r, &req); err != nil {
 		httputil.WriteError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
 		return
 	}
@@ -419,8 +453,13 @@ func (h *ResourceHandler) UpdateTeam(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req UpdateTeamRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeResourceRequest(r, &req); err != nil {
 		httputil.WriteError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+		return
+	}
+	if req.WorkerMembers != nil && len(req.WorkerMembers) == 0 {
+		httputil.WriteError(w, http.StatusBadRequest,
+			"workerMembers must not be empty: an empty list removes every Worker from the team and triggers eviction from the team room; omit the field to keep the current membership")
 		return
 	}
 	if req.WorkerMembers != nil {
@@ -496,7 +535,7 @@ func (h *ResourceHandler) DeleteTeam(w http.ResponseWriter, r *http.Request) {
 
 func (h *ResourceHandler) CreateHuman(w http.ResponseWriter, r *http.Request) {
 	var req CreateHumanRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeResourceRequest(r, &req); err != nil {
 		httputil.WriteError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
 		return
 	}
@@ -583,7 +622,7 @@ func (h *ResourceHandler) DeleteHuman(w http.ResponseWriter, r *http.Request) {
 
 func (h *ResourceHandler) CreateManager(w http.ResponseWriter, r *http.Request) {
 	var req CreateManagerRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeResourceRequest(r, &req); err != nil {
 		httputil.WriteError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
 		return
 	}
@@ -668,7 +707,7 @@ func (h *ResourceHandler) UpdateManager(w http.ResponseWriter, r *http.Request) 
 	}
 
 	var req UpdateManagerRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeResourceRequest(r, &req); err != nil {
 		httputil.WriteError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
 		return
 	}
