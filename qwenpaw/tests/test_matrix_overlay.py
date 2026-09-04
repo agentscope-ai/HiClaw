@@ -63,6 +63,63 @@ def test_matrix_overlay_supports_streaming_reasoning_hooks() -> None:
     assert "async def on_streaming_end" in source
 
 
+def test_matrix_event_callback_is_scheduled_without_blocking_sync() -> None:
+    module = _load_overlay_module()
+    channel = module.AgentTeamsMatrixChannel.__new__(
+        module.AgentTeamsMatrixChannel,
+    )
+    channel._callback_tasks = set()
+    started = asyncio.Event()
+    released = asyncio.Event()
+    finished = asyncio.Event()
+    room = SimpleNamespace(room_id="!room:hs.local")
+    event = SimpleNamespace(event_id="$event", sender="@worker:hs.local")
+
+    async def _blocked_callback(_room, _event):
+        started.set()
+        await released.wait()
+        finished.set()
+
+    async def _run() -> None:
+        channel._schedule_event_callback(_blocked_callback, room, event)
+        await asyncio.wait_for(started.wait(), timeout=1)
+        assert len(channel._callback_tasks) == 1
+
+        released.set()
+        await asyncio.wait_for(finished.wait(), timeout=1)
+        await asyncio.sleep(0)
+        assert not channel._callback_tasks
+
+    asyncio.run(_run())
+
+
+def test_matrix_event_callback_timeout_is_logged_and_cleaned_up(caplog) -> None:
+    module = _load_overlay_module()
+    module.MATRIX_EVENT_CALLBACK_TIMEOUT_S = 0.01
+    channel = module.AgentTeamsMatrixChannel.__new__(
+        module.AgentTeamsMatrixChannel,
+    )
+    channel._callback_tasks = set()
+    room = SimpleNamespace(room_id="!room:hs.local")
+    event = SimpleNamespace(event_id="$event", sender="@worker:hs.local")
+
+    async def _blocked_callback(_room, _event):
+        await asyncio.Event().wait()
+
+    async def _run() -> None:
+        channel._schedule_event_callback(_blocked_callback, room, event)
+        for _ in range(10):
+            await asyncio.sleep(0.01)
+            if not channel._callback_tasks:
+                return
+        raise AssertionError("timed-out callback task was not cleaned up")
+
+    with caplog.at_level("ERROR"):
+        asyncio.run(_run())
+
+    assert "event callback timed out" in caplog.text
+
+
 def _install_module(name: str, **attrs):
     module = types.ModuleType(name)
     module.__dict__.update(attrs)
@@ -1134,6 +1191,33 @@ def test_matrix_ordinary_own_message_is_skipped() -> None:
     )
 
     assert channel.enqueued == []
+
+
+def test_matrix_text_message_is_enqueued_before_slow_receipt() -> None:
+    channel = _make_inbound_channel()
+    started = asyncio.Event()
+    released = asyncio.Event()
+
+    async def _blocked_read_receipt(_room_id, _event_id):
+        started.set()
+        await released.wait()
+
+    channel._send_read_receipt = _blocked_read_receipt
+
+    async def _run() -> None:
+        task = asyncio.create_task(
+            channel._on_room_event(
+                _FakeInboundRoom(),
+                _matrix_event("copywriting-assistant: process this", mentioned=True),
+            ),
+        )
+        await asyncio.wait_for(started.wait(), timeout=1)
+        assert len(channel.enqueued) == 1
+
+        released.set()
+        await task
+
+    asyncio.run(_run())
 
 
 def test_matrix_teamharness_self_trigger_bypasses_own_skip_and_mention_gate() -> None:
