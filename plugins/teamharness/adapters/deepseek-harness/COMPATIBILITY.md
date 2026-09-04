@@ -47,7 +47,7 @@ The local adapter smoke and all live checks completed with exit code 0 on 2026-0
 
 ## Remaining limits
 
-The bridge processes Matrix events sequentially within one Worker, and the live storage checks cover MinIO rather than OSS. The image is pinned to one DSH release candidate, so later DSH releases need a compatibility run before the pin is changed. Encrypted Matrix attachments are not decoded by this bridge; the current AgentTeams deployment uses unencrypted internal rooms.
+The bridge processes Matrix events sequentially within one Worker, and the live storage checks cover MinIO rather than OSS. The image is pinned to one DSH release candidate, so later DSH releases need a compatibility run before the pin is changed. This bridge does not implement Matrix E2EE and fails fast when `AGENTTEAMS_MATRIX_E2EE=1`; use unencrypted rooms for this experimental runtime.
 
 ## Design answer
 

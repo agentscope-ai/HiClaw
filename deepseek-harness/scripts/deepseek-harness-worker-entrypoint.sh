@@ -1,6 +1,17 @@
 #!/bin/bash
 set -euo pipefail
 
+if [ "${AGENTTEAMS_MATRIX_E2EE:-0}" = "1" ]; then
+    echo "[agentteams-dsh-worker] ERROR: DeepSeek Harness does not support Matrix E2EE; disable AGENTTEAMS_MATRIX_E2EE or choose another runtime" >&2
+    exit 1
+fi
+
+DSH_LLM_CREDENTIAL="${DEEPSEEK_API_KEY:-${AGENTTEAMS_WORKER_GATEWAY_KEY:-}}"
+if [ -z "${DSH_LLM_CREDENTIAL}" ]; then
+    echo "[agentteams-dsh-worker] ERROR: no LLM credential available; set DEEPSEEK_API_KEY or provide the Controller-issued gateway key" >&2
+    exit 1
+fi
+
 source /opt/agentteams/scripts/lib/agentteams-env.sh
 
 WORKER_NAME="${AGENTTEAMS_WORKER_NAME:?AGENTTEAMS_WORKER_NAME is required}"
@@ -35,7 +46,8 @@ export TEAMHARNESS_DSH_SKILL_ROOT="${RUNTIME_DIR}/dsh-skills"
 export TEAMHARNESS_PYTHON="/usr/bin/python3"
 export AGENTTEAMS_PLUGIN_DIR="/opt/agentteams/plugins/teamharness"
 export AGENTTEAMS_MATRIX_USER_ID="@${WORKER_NAME}:${AGENTTEAMS_MATRIX_DOMAIN}"
-export DEEPSEEK_API_KEY="${DEEPSEEK_API_KEY:-${AGENTTEAMS_WORKER_GATEWAY_KEY:-}}"
+export DEEPSEEK_API_KEY="${DSH_LLM_CREDENTIAL}"
+unset DSH_LLM_CREDENTIAL AGENTTEAMS_WORKER_GATEWAY_KEY
 
 log "Pulling controller-projected runtime state"
 RETRY=0

@@ -1,4 +1,5 @@
 #!/bin/bash
+# Prepare the TeamHarness adapter before handing the turn to DSH.
 set -euo pipefail
 
 : "${DSH_HOME:?DSH_HOME is required}"
