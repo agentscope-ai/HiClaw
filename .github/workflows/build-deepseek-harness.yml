@@ -48,17 +48,23 @@ jobs:
       - name: Resolve runtime version
         id: meta
         shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_VERSION: ${{ inputs.version }}
+          GIT_REF: ${{ github.ref }}
+          REF_NAME: ${{ github.ref_name }}
+          COMMIT_SHA: ${{ github.sha }}
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            VERSION="${{ inputs.version }}"
-          elif [[ "${{ github.ref }}" == refs/tags/deepseek-harness-* ]]; then
-            VERSION="${{ github.ref_name }}"
+          if [ "${EVENT_NAME}" = "workflow_dispatch" ]; then
+            VERSION="${INPUT_VERSION}"
+          elif [[ "${GIT_REF}" == refs/tags/deepseek-harness-* ]]; then
+            VERSION="${REF_NAME}"
             VERSION="${VERSION#deepseek-harness-}"
           else
-            VERSION="sha-$(echo '${{ github.sha }}' | cut -c1-12)"
+            VERSION="sha-${COMMIT_SHA:0:12}"
           fi
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ] || [[ "${{ github.ref }}" == refs/tags/deepseek-harness-* ]]; then
-            if ! echo "${VERSION}" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+          if [ "${EVENT_NAME}" = "workflow_dispatch" ] || [[ "${GIT_REF}" == refs/tags/deepseek-harness-* ]]; then
+            if [[ ! "${VERSION}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
               echo "ERROR: invalid runtime version: ${VERSION}"
               exit 1
             fi
@@ -79,20 +85,33 @@ jobs:
           password: ${{ secrets.REGISTRY_PASSWORD }}
 
       - name: Build and push runtime image
+        env:
+          RUNTIME_VERSION: ${{ steps.meta.outputs.version }}
         run: |
           make push-deepseek-harness-worker \
-            DEEPSEEK_HARNESS_WORKER_VERSION=${{ steps.meta.outputs.version }} \
-            REGISTRY=${{ env.REGISTRY }} \
-            REPO=${{ env.REPO }} \
+            DEEPSEEK_HARNESS_WORKER_VERSION="${RUNTIME_VERSION}" \
+            REGISTRY="${REGISTRY}" \
+            REPO="${REPO}" \
             DOCKER_BUILD_ARGS="--build-arg APT_MIRROR= --build-arg PIP_INDEX_URL=https://pypi.org/simple/"
 
       - name: Verify published image
         env:
           VERSION: ${{ steps.meta.outputs.version }}
         run: |
-          IMAGE="${{ env.REGISTRY }}/${{ env.REPO }}/agentteams-deepseek-harness-worker:${VERSION}"
+          IMAGE="${REGISTRY}/${REPO}/agentteams-deepseek-harness-worker:${VERSION}"
           docker buildx imagetools inspect "${IMAGE}"
-          echo "### DeepSeek Harness Runtime" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Image: \`${IMAGE}\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Platforms: \`linux/amd64, linux/arm64\`" >> "$GITHUB_STEP_SUMMARY"
+          MANIFEST="$(docker buildx imagetools inspect --raw "${IMAGE}")"
+          for PLATFORM in linux/amd64 linux/arm64; do
+            if ! jq -e --arg platform "${PLATFORM}" \
+              'any(.manifests[]?; ((.platform.os // "") + "/" + (.platform.architecture // "")) == $platform)' \
+              <<<"${MANIFEST}" >/dev/null; then
+              echo "ERROR: ${IMAGE} is missing ${PLATFORM}"
+              exit 1
+            fi
+          done
+          {
+            echo "### DeepSeek Harness Runtime"
+            echo ""
+            echo "- Image: \`${IMAGE}\`"
+            echo "- Platforms: \`linux/amd64, linux/arm64\`"
+          } >> "$GITHUB_STEP_SUMMARY"
