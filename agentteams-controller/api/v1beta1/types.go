@@ -585,6 +585,16 @@ type HumanSpec struct {
 	AccessibleWorkers []string            `json:"accessibleWorkers,omitempty"`
 	IdentitySource    *IdentitySourceSpec `json:"identitySource,omitempty"`
 	Note              string              `json:"note,omitempty"`
+	// WorkspaceFileAccess controls what this human may do to the knowledge
+	// base files (workspace-files endpoints) of workers in their own teams:
+	// "read" (the default, including when empty) allows the read endpoints
+	// (tree / file-metadata / file-content / file-download); "readwrite"
+	// additionally allows PUT file-content. Write is an explicit opt-in so
+	// that a controller upgrade cannot silently grant pre-existing humans
+	// the new ability to modify worker knowledge files. Admin (L1) callers
+	// are never restricted, and team leaders always stay read-only on this
+	// API.
+	WorkspaceFileAccess string `json:"workspaceFileAccess,omitempty"`
 }
 
 type IdentitySourceSpec struct {

@@ -662,3 +662,94 @@ Error responses:
 | `404` | Worker not found / caller does not own it (existence hidden). |
 | `502` | Worker app unreachable, pre-2.1 checkpoint API, or upstream error. |
 | `503` | Kube mode (no stable worker pod DNS to proxy). |
+
+## Worker knowledge base (workspace files) endpoints
+
+The Controller proxies four endpoints of each worker's QwenPaw app
+(QwenPaw ≥ 2.1) so L2 humans and frontends can inspect — and, where the
+caller's Human CR permits, update — a worker's knowledge base: the
+long-term memory file `MEMORY.md`, the daily note tree `memory/`, and the
+distilled knowledge tree `digest/`.
+
+| Endpoint | Meaning |
+|:--|:--|
+| `GET /api/v1/workers/{name}/workspace-files/tree` | Paginated listing of one knowledge directory: `?path=` (required, `memory` / `digest` or any subpath of them), optional `?cursor=` (opaque) and `?limit=` (1..500). Returns `{directory, entries[], has_more, next_cursor}`. |
+| `GET /api/v1/workers/{name}/workspace-files/file-metadata` | `?path=` (required, an allowed knowledge file): `{etag, modified_at, path, preview_kind, size}`. |
+| `GET /api/v1/workers/{name}/workspace-files/file-content` | `?path=` (required) plus optional `?offset=` (≥0) and `?limit=` (1..1048576): a bounded UTF-8 chunk `{content, eof, next_offset, truncated, etag, ...}` — continue with `offset=next_offset` while `truncated` is true. |
+| `PUT /api/v1/workers/{name}/workspace-files/file-content` | Save one knowledge file: `?path=` (required), body `{"content": "<text>"}` (1 MiB cap, non-empty) and the `If-Match` header (see the concurrency rule below). Returns the new `{etag, path, size}`. |
+| `GET /api/v1/workers/{name}/workspace-files/file-download` | Stream one knowledge file as an attachment: `?path=` (required). Forwards the upstream `Content-Disposition` / `Content-Length` / `ETag` headers. |
+
+- **Scope**: same worker read authorization as `GET /api/v1/workers/{name}`
+  and the checkpoint endpoints — team leaders / L2 humans only see workers
+  in their accessible teams; unknown or out-of-scope workers are hidden as
+  `404`.
+- **Write scope**: `PUT file-content` is allowed for admin/manager (any
+  team); an L2 human may write only workers in their own teams while
+  `Human.spec.workspaceFileAccess` is explicitly `"readwrite"` — the
+  default is `read` (an empty or unset value means read-only), so a
+  controller upgrade cannot silently grant pre-existing humans write
+  access; L1 grants a user write access by setting the field to
+  `readwrite`. Team leaders stay read-only on this API. Cross-team writes
+  hide the worker as `404` (existence must not be probeable); an in-scope
+  caller without write permission gets an explicit `403`.
+- **Concurrency (ETag)**: before a write the proxy probes `file-metadata`.
+  For an existing file the `If-Match` header is mandatory (a worker
+  auto-appends to its memory files, so an unconditional overwrite would be
+  a lost update) and for a new file it must be absent. An upstream ETag
+  mismatch passes through as `409` — reload the file and retry.
+- **Write limits**: the body is capped at 1 MiB (the read chunk cap),
+  `content` must be a non-empty string, and every successful write is
+  audit-logged by the controller (worker, path, caller, byte count).
+- **`workspaceFileAccess` (Human CRD field)**: `read` | `readwrite`
+  (default is `read` when empty — write is an explicit opt-in) — the
+  per-user read/write permission L1 can set on a human's access to team
+  knowledge base files. Settable at human creation (`agt apply`) and
+  through `PUT /api/v1/humans/{name}` (that update API carries the field
+  in its updatable set, shipped with the humans-update PR).
+- **Path allowlist (knowledge boundary)**: only `MEMORY.md`,
+  `memory/**` and `digest/**` are addressable — for reads and writes
+  alike. Every other workspace
+  location — `SOUL.md`, `PROFILE.md`, `TODO.md`, `checkpoints/`, `skills/`,
+  and all dot directories (`.copaw/agent.json` carries the worker's
+  credentials) — is rejected with `400` before the request reaches the
+  worker. Roots match on the exact first segment, so `memories/` and
+  `memoryX/` are not prefixes of `memory/`. File roots are single
+  top-level files: `MEMORY.md` is addressable, but `MEMORY.md/foo` is
+  rejected (`MEMORY.md` is one file, not a directory — nested files must
+  live under `memory/` or `digest/`).
+- **Root pinned**: the QwenPaw `root=workspace` parameter (the agent's own
+  storage root, as opposed to `root=project`, the primary bound project
+  directory) is fixed server-side and is not part of the client query
+  surface.
+- **Embedded mode only**: the endpoints proxy the worker's qwenpaw app
+  inside the shared docker network, using the effective container prefix
+  and the system-wins console port — the same address resolution as the
+  checkpoint endpoints. In kube mode they return `503`.
+- **Version gate (passthrough 404)**: a worker running QwenPaw < 2.1 has no
+  workspace file router, so every request is an upstream `404` passed
+  through verbatim. To distinguish "worker too old" from "file missing",
+  probe `file-metadata?path=MEMORY.md` — that file exists in every
+  initialized QwenPaw workspace, so a `404` there means the worker is
+  pre-2.1 (or its workspace is not initialized) while other `404`s are
+  plain missing files.
+- **Runtime scope**: the endpoints target workers running the QwenPaw app
+  (`qwenpaw` runtime). Workers on other runtimes have no QwenPaw workspace
+  API: when that runtime's app serves the console port the proxy passes its
+  response through verbatim (typically `404`); when nothing listens it
+  returns `502`. The MEMORY.md probe is therefore only meaningful for
+  QwenPaw workers.
+- Forwarding is fixed-path (tree / file-metadata / file-content GET+PUT /
+  file-download) with a strict query whitelist — not a generic reverse
+  proxy. The multipart `file-upload` endpoint and the rest of the
+  workspace API surface remain unreachable.
+
+Error responses:
+
+| Code | Meaning |
+|:--|:--|
+| `400` | Invalid worker name / unsupported subpath or query parameter / path outside the knowledge allowlist / out-of-bounds `limit` or `offset` / (write) missing or misplaced `If-Match`, over-size or empty body. |
+| `403` | (write only) in-scope caller without write permission — read-only human or team leader. |
+| `404` | Worker not found or not in the caller's teams (existence hidden); or (passthrough) the file does not exist — see the version-gate probe above. |
+| `409` / `416` | (passthrough) the file changed while being read / while waiting for the write (ETag mismatch — reload and retry) / offset beyond end of file. |
+| `502` | Worker app unreachable, or an upstream error (status echoed in the body). |
+| `503` | Kube mode (no stable worker pod DNS to proxy). |

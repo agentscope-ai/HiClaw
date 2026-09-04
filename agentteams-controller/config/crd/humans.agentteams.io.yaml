@@ -50,6 +50,12 @@ spec:
                   required: [issuer, subject]
                 note:
                   type: string
+                workspaceFileAccess:
+                  type: string
+                  enum:
+                    - read
+                    - readwrite
+                  description: "Knowledge base file access for this human's own teams: read (default when empty) or readwrite (explicit write opt-in); L1 admin is never restricted, team leaders stay read-only"
             status:
               type: object
               properties:

@@ -6,19 +6,20 @@ import "fmt"
 type Action string
 
 const (
-	ActionCreate             Action = "create"
-	ActionUpdate             Action = "update"
-	ActionDelete             Action = "delete"
-	ActionGet                Action = "get"
-	ActionList               Action = "list"
-	ActionWake               Action = "wake"
-	ActionSleep              Action = "sleep"
-	ActionEnsureReady        Action = "ensure-ready"
-	ActionReady              Action = "ready"
-	ActionSTS                Action = "sts"
-	ActionStatus             Action = "status"
-	ActionRefreshMatrixToken Action = "refresh-matrix-token"
-	ActionGateway            Action = "gateway"
+	ActionCreate              Action = "create"
+	ActionUpdate              Action = "update"
+	ActionDelete              Action = "delete"
+	ActionGet                 Action = "get"
+	ActionList                Action = "list"
+	ActionWake                Action = "wake"
+	ActionSleep               Action = "sleep"
+	ActionEnsureReady         Action = "ensure-ready"
+	ActionReady               Action = "ready"
+	ActionSTS                 Action = "sts"
+	ActionStatus              Action = "status"
+	ActionRefreshMatrixToken  Action = "refresh-matrix-token"
+	ActionGateway             Action = "gateway"
+	ActionWorkspaceFilesWrite Action = "workspace-files-write"
 )
 
 // AuthzRequest describes the resource being accessed.
@@ -104,6 +105,17 @@ func (a *Authorizer) authorizeHuman(caller *CallerIdentity, req AuthzRequest) er
 	case "worker":
 		if req.Action == ActionGet || req.Action == ActionList {
 			return nil // handler filters by accessibleTeams
+		}
+		if req.Action == ActionWorkspaceFilesWrite {
+			// W3②-rw: L2 humans may write knowledge base files of workers
+			// in their own teams. Like ActionGet/ActionList this action is
+			// NOT rejected cross-team at the authorizer level: the
+			// middleware resolves the worker's team, and a 403 here would
+			// let a scoped caller probe which workers exist in other teams
+			// (W8 anti-probing). The handler is the real boundary — it
+			// hides cross-team workers as 404 and enforces the per-user
+			// workspaceFileAccess flag and the knowledge base allowlist.
+			return nil
 		}
 		return deny(caller, req)
 

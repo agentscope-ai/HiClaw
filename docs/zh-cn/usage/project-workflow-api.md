@@ -319,3 +319,73 @@ agt project complete demo-project-001
 ```
 
 同样的 bearer 令牌转发适用（L2 人类用 Matrix 令牌）。
+
+## Worker 知识库（工作区文件）端点
+
+Controller 代理每个 worker 的 QwenPaw app（QwenPaw ≥ 2.1）的四个端点，
+让 L2 人类与前端可以查看——并在 Human CR 允许时更新——worker 的知识库：
+长期记忆文件 `MEMORY.md`、日记目录树 `memory/` 与沉淀知识目录树 `digest/`。
+
+| 端点 | 含义 |
+|:--|:--|
+| `GET /api/v1/workers/{name}/workspace-files/tree` | 分页列出某个知识目录：`?path=`（必填，`memory` / `digest` 或其子路径），可选 `?cursor=`（不透明串）与 `?limit=`（1..500）。返回 `{directory, entries[], has_more, next_cursor}`。 |
+| `GET /api/v1/workers/{name}/workspace-files/file-metadata` | `?path=`（必填，允许的知识库文件）：`{etag, modified_at, path, preview_kind, size}`。 |
+| `GET /api/v1/workers/{name}/workspace-files/file-content` | `?path=`（必填）加可选 `?offset=`（≥0）与 `?limit=`（1..1048576）：有界 UTF-8 分块 `{content, eof, next_offset, truncated, etag, ...}`——`truncated` 为真时用 `offset=next_offset` 续读。 |
+| `PUT /api/v1/workers/{name}/workspace-files/file-content` | 保存一个知识库文件：`?path=`（必填），body `{"content": "<文本>"}`（≤1 MiB，非空），`If-Match` 请求头（并发规则见下）。返回新的 `{etag, path, size}`。 |
+| `GET /api/v1/workers/{name}/workspace-files/file-download` | 以附件形式流式下载一个知识库文件：`?path=`（必填）。透传上游 `Content-Disposition` / `Content-Length` / `ETag` 头。 |
+
+- **范围**：与 `GET /api/v1/workers/{name}` 相同的 worker 读授权——团队
+  leader / L2 人类只能看自己可访问团队内的 worker；未知或越权 worker 一律
+  隐藏为 `404`。
+- **写范围**：`PUT file-content` 对 admin/manager 全团队开放；L2 人类仅可写
+  自己团队内的 worker，且 `Human.spec.workspaceFileAccess` 显式为
+  `"readwrite"`（缺省/未设置即 `read` 只读——Controller 升级不会静默授予
+  既有用户写权限；L1 把字段设为 `readwrite` 即授予）。团队 leader 在本 API
+  上保持只读。跨团队写隐藏 worker 为 `404`（存在性不可探测）；范围内但无
+  写权限的调用得到明确的 `403`。
+- **并发（ETag）**：写之前代理先探测 `file-metadata`。文件已存在时
+  `If-Match` 头必填（worker 会向自己的记忆文件自动追加，无条件覆盖即丢
+  更新）；新建文件时不得携带。上游 ETag 不匹配原样透传 `409`——重新加载
+  后重试。
+- **写限制**：body 上限 1 MiB（与读分块上限一致），`content` 必须为非空
+  字符串，每次成功写均由 controller 审计记录（worker、路径、调用者、字节
+  数）。
+- **`workspaceFileAccess`（Human CRD 字段）**：`read` | `readwrite`
+  （缺省为 `read`，写权限为显式 opt-in）——L1 可逐用户授予/收回的团队知识
+  库文件写权限。建 Human 时（`agt apply`）与 `PUT /api/v1/humans/{name}`
+  均可设置（后者随 humans-update PR 把该字段纳入可更新集）。
+- **路径白名单（知识边界）**：只放行 `MEMORY.md`、`memory/**` 与
+  `digest/**`（读写同界）。工作区内其他一切位置——`SOUL.md`、`PROFILE.md`、`TODO.md`、
+  `checkpoints/`、`skills/`，以及所有 dot 目录（`.copaw/agent.json` 承载
+  worker 凭据）——在请求到达 worker 之前即被 `400` 拒绝。根目录按完整首段
+  精确匹配，`memories/` 与 `memoryX/` 不构成 `memory/` 的前缀。文件根只能是
+  单个顶层文件：`MEMORY.md` 可寻址，但 `MEMORY.md/foo` 被拒（它是文件而非
+  目录——嵌套文件必须在 `memory/` 或 `digest/` 下）。
+- **root 固定**：QwenPaw 的 `root=workspace` 参数（agent 自身存储根，相对
+  于 `root=project` 即主绑定项目目录）由服务端固定，不属于客户端查询面。
+- **仅 embedded 模式**：端点经共享 docker 网络代理 worker 的 qwenpaw app，
+  地址解析与 checkpoint 端点相同（生效容器前缀 + system-wins 控制台端口）。
+  kube 模式返回 `503`。
+- **版本门（404 透传）**：worker 运行 QwenPaw < 2.1 时没有工作区文件
+  路由，所有请求均为上游 `404` 原样透传。区分"worker 版本过旧"与"文件不
+  存在"的方法：探测 `file-metadata?path=MEMORY.md`——该文件在每个已初始
+  化的 QwenPaw 工作区中都存在，因此这里的 `404` 表示 worker 为 2.1 以下
+  （或工作区未初始化），其余 `404` 即普通文件缺失。
+- **Runtime 范围**：端点面向运行 QwenPaw app 的 worker（`qwenpaw`
+  runtime）。其他 runtime 的 worker 没有 QwenPaw 工作区 API：该 runtime 的
+  应用若在服务 console 端口，代理原样透传其响应（通常 `404`）；无人监听
+  时返回 `502`。MEMORY.md 探测因此只对 QwenPaw worker 有意义。
+- 转发为固定子路径（tree / file-metadata / file-content GET+PUT /
+  file-download）+ 严格查询白名单——不是通用反向代理。multipart 的
+  `file-upload` 端点与工作区 API 的其余面均不可达。
+
+错误响应：
+
+| 码 | 含义 |
+|:--|:--|
+| `400` | worker 名非法 / 不支持的子路径或查询参数 / 路径不在知识白名单内 / `limit` 或 `offset` 越界 /（写）`If-Match` 缺失或误用、body 超限或为空。 |
+| `403` | （仅写）范围内但无写权限的调用者——只读人类或团队 leader。 |
+| `404` | worker 不存在或不在调用方团队内（存在性隐藏）；或（透传）文件不存在——见上方版本门探测。 |
+| `409` / `416` | （透传）读取期间或写入等待期间文件被修改（ETag 不匹配——重载重试）/ offset 超出文件末尾。 |
+| `502` | worker app 不可达，或上游错误（状态码回显在 body 中）。 |
+| `503` | kube 模式（无稳定的 worker pod DNS 可代理）。 |
