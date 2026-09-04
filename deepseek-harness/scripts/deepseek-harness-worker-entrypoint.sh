@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-if [ "${AGENTTEAMS_MATRIX_E2EE:-0}" = "1" ]; then
+if [ "${AGENTTEAMS_MATRIX_E2EE:-0}" = "1" ] || [ "${AGENTTEAMS_MATRIX_E2EE:-}" = "true" ]; then
     echo "[agentteams-dsh-worker] ERROR: DeepSeek Harness does not support Matrix E2EE; disable AGENTTEAMS_MATRIX_E2EE or choose another runtime" >&2
     exit 1
 fi

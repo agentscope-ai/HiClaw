@@ -25,6 +25,21 @@ class DeepSeekHarnessEntrypointTest(unittest.TestCase):
             completed.stdout + completed.stderr,
         )
 
+    def test_e2ee_true_configuration_fails_before_worker_startup(self) -> None:
+        completed = subprocess.run(
+            ["bash", str(ENTRYPOINT)],
+            env={**os.environ, "AGENTTEAMS_MATRIX_E2EE": "true"},
+            text=True,
+            capture_output=True,
+            timeout=10,
+        )
+
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertIn(
+            "DeepSeek Harness does not support Matrix E2EE",
+            completed.stdout + completed.stderr,
+        )
+
     def test_missing_llm_credential_fails_before_worker_startup(self) -> None:
         environment = {
             key: value
