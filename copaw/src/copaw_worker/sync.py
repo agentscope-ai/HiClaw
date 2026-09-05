@@ -303,9 +303,14 @@ class FileSync:
 
         Cloud mode (RRSA/STS): refresh credentials before every mc batch
         via the shared shell function (lazy, no-op when token is valid).
-        Local mode: set mc alias once with static credentials.
+        Kubernetes uses an existing MC_HOST alias for OSS, or sets the alias
+        once with static credentials for MinIO.
+        Local mode also sets the alias once with static credentials.
         """
         runtime = os.environ.get("AGENTTEAMS_RUNTIME", "<unset>")
+        storage_provider = (
+            os.environ.get("AGENTTEAMS_STORAGE_PROVIDER", "").strip().lower()
+        )
         mc_host_set = bool(os.environ.get(f"MC_HOST_{_MC_ALIAS}"))
         controller_url = os.environ.get("AGENTTEAMS_CONTROLLER_URL", "<unset>")
         logger.info(
@@ -322,9 +327,17 @@ class FileSync:
             controller_url,
         )
         if self._k8s_mode:
-            logger.info("_ensure_alias: k8s mode, skipping mc alias set (mc-wrapper handles credentials)")
-            self._alias_set = True
-            return
+            if mc_host_set:
+                logger.info(
+                    "_ensure_alias: k8s mode, MC_HOST_%s already set, skipping mc alias set",
+                    _MC_ALIAS,
+                )
+                self._alias_set = True
+                return
+            if storage_provider == "oss":
+                raise RuntimeError(
+                    f"OSS storage requires controller-issued MC_HOST_{_MC_ALIAS} credentials"
+                )
         if self._cloud_mode:
             logger.info("_ensure_alias: credential path=sts, refreshing MC_HOST_%s", _MC_ALIAS)
             self._refresh_cloud_credentials()

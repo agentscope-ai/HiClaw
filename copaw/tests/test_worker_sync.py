@@ -3,17 +3,14 @@
 import logging
 import subprocess
 
+import pytest
+
 from copaw_worker import sync
 from copaw_worker.sync import FileSync
 
 
-def test_ensure_alias_skips_static_alias_in_k8s_mode(monkeypatch, tmp_path):
-    calls = []
-
-    monkeypatch.setenv("AGENTTEAMS_RUNTIME", "k8s")
-    monkeypatch.setattr(sync, "_mc", lambda *args, **_kwargs: calls.append(args))
-
-    fs = FileSync(
+def _file_sync(tmp_path):
+    return FileSync(
         endpoint="minio:9000",
         access_key="tt",
         secret_key="secret",
@@ -21,6 +18,69 @@ def test_ensure_alias_skips_static_alias_in_k8s_mode(monkeypatch, tmp_path):
         worker_name="tt",
         local_dir=tmp_path,
     )
+
+
+@pytest.mark.parametrize("storage_provider", ["minio", None])
+def test_ensure_alias_sets_static_alias_for_minio_in_k8s_mode(
+    monkeypatch, tmp_path, storage_provider
+):
+    calls = []
+
+    monkeypatch.setenv("AGENTTEAMS_RUNTIME", "k8s")
+    if storage_provider is None:
+        monkeypatch.delenv("AGENTTEAMS_STORAGE_PROVIDER", raising=False)
+    else:
+        monkeypatch.setenv("AGENTTEAMS_STORAGE_PROVIDER", storage_provider)
+    monkeypatch.delenv(f"MC_HOST_{sync._MC_ALIAS}", raising=False)
+    monkeypatch.setattr(sync, "_mc", lambda *args, **_kwargs: calls.append(args))
+
+    fs = _file_sync(tmp_path)
+
+    fs._ensure_alias()
+
+    assert fs._alias_set is True
+    assert calls == [
+        (
+            "alias",
+            "set",
+            sync._MC_ALIAS,
+            "http://minio:9000",
+            "tt",
+            "secret",
+        )
+    ]
+
+
+def test_ensure_alias_requires_mc_host_for_oss_in_k8s_mode(monkeypatch, tmp_path):
+    calls = []
+
+    monkeypatch.setenv("AGENTTEAMS_RUNTIME", "k8s")
+    monkeypatch.setenv("AGENTTEAMS_STORAGE_PROVIDER", "oss")
+    monkeypatch.delenv(f"MC_HOST_{sync._MC_ALIAS}", raising=False)
+    monkeypatch.setattr(sync, "_mc", lambda *args, **_kwargs: calls.append(args))
+
+    fs = _file_sync(tmp_path)
+
+    with pytest.raises(RuntimeError, match=f"MC_HOST_{sync._MC_ALIAS}"):
+        fs._ensure_alias()
+
+    assert calls == []
+
+
+def test_ensure_alias_uses_existing_mc_host_for_oss_in_k8s_mode(
+    monkeypatch, tmp_path
+):
+    calls = []
+
+    monkeypatch.setenv("AGENTTEAMS_RUNTIME", "k8s")
+    monkeypatch.setenv("AGENTTEAMS_STORAGE_PROVIDER", "oss")
+    monkeypatch.setenv(
+        f"MC_HOST_{sync._MC_ALIAS}",
+        "https://access:secret:token@oss-cn-hangzhou.aliyuncs.com",
+    )
+    monkeypatch.setattr(sync, "_mc", lambda *args, **_kwargs: calls.append(args))
+
+    fs = _file_sync(tmp_path)
 
     fs._ensure_alias()
 
