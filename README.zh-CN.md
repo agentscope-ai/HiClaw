@@ -25,6 +25,7 @@ AgentTeams 不再实现 Agent 运行时本身，而是编排和管理多个 Agen
 ![架构](https://img.alicdn.com/imgextra/i4/O1CN01c1VlDE1zYZ46EW3OA_!!6000000006726-49-tps-9895-8231.webp)
 
 ## 动态
+- **2026-08-22:** [Release Notes](https://github.com/agentscope-ai/AgentTeams/releases/tag/v1.2.3) — AgentTeams v1.2.3：通过新增 Controller API、`agt` 命令和 Dashboard v1.2.4，让长时运行的 Project 工作流可见、可控；新增带审计记录的人工干预、Project 历史和 QwenPaw Worker 检查点；将 QwenPaw 提升为本地 Manager 和 Worker 的推荐默认运行时；并增强 Skill 恢复、Windows AppService 启动及运行可靠性。
 - **2026-08-08:** [Release Notes](https://github.com/agentscope-ai/AgentTeams/releases/tag/v1.2.2) — AgentTeams v1.2.2：新增 Manager 向 Worker 下发自定义 Skill，支持校验、上传存储、更新 `Worker.spec.skills`，并由 QwenPaw 无需重启即可热刷新和启用；增强 Manager 与 Worker 的 Skill 加载保护；同时确保 Team Leader 和 Worker 在受邀后显式加入 Team Room。
 - **2026-08-06:** [Release Notes](https://github.com/agentscope-ai/AgentTeams/releases/tag/v1.2.1) — AgentTeams v1.2.1：将 Manager 和 Worker 运行时栈统一到 QwenPaw 2.0.1，正式发布 QwenPaw Worker 多架构镜像，增强 Matrix 与 TeamHarness 任务分配原子性以及 CoPaw 到 QwenPaw 的状态迁移，新增自定义模型视觉与推理能力覆盖，并提升 Worker 生命周期和运行时管理可靠性。
 - **2026-07-30:** [Release Notes](https://github.com/agentscope-ai/AgentTeams/releases/tag/v1.2.0) — AgentTeams v1.2.0（正式版）：端到端统一 AgentTeams 命名并确立最终的 Team/Worker 资源契约；新增可选的 AgentTeams Dashboard；同时改进 Worker 存储同步、Team 路由与生命周期收敛，安装器可按旧环境变量与存储契约安装 v1.1.2（更早版本仍需使用对应的旧版安装器），并提升 Dashboard 可靠性以及工具和诊断安全性。
