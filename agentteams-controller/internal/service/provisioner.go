@@ -1074,6 +1074,45 @@ func (p *Provisioner) EnsureRoomNonMember(ctx context.Context, roomID, userID, r
 	return p.matrix.KickFromRoom(ctx, roomID, userID, reason)
 }
 
+// EnsureRoomPowerLevel reconciles userID's entry in the room's
+// m.room.power_levels to EXACTLY `level` (raising or lowering it) via the
+// admin token. The complete existing content is preserved — every other
+// user and every non-user field (events, invite, notifications,
+// users_default, state_default, ban, kick, redact, extension fields); only
+// the target users entry is mutated. Idempotent: no write when the user
+// already has exactly `level`. Rooms that never had power_levels set
+// (legacy rooms) start from an empty users map.
+func (p *Provisioner) EnsureRoomPowerLevel(ctx context.Context, roomID, userID string, level int) error {
+	cur, err := p.matrix.GetRoomState(ctx, roomID, "m.room.power_levels", "")
+	if err != nil {
+		return fmt.Errorf("read power levels %s: %w", roomID, err)
+	}
+	// Preserve the complete existing content and mutate only the target
+	// users entry — rebuilding the struct would drop fields we don't
+	// explicitly know about (events, invite, notifications, extensions).
+	content := map[string]interface{}{}
+	var users map[string]interface{}
+	if cur != nil {
+		for k, v := range cur {
+			content[k] = v
+		}
+		users, _ = cur["users"].(map[string]interface{})
+	}
+	if users == nil {
+		users = map[string]interface{}{}
+	}
+	// Exact-target semantics: a demoted human (e.g. permissionLevel 1 → 2,
+	// 100 → 50) must actually be lowered, not kept at the old level.
+	if have, ok := users[userID]; ok {
+		if n, ok := have.(float64); ok && int(n) == level {
+			return nil // already at exactly the desired level — no write
+		}
+	}
+	users[userID] = float64(level)
+	content["users"] = users
+	return p.matrix.SetRoomState(ctx, roomID, "m.room.power_levels", "", content, "")
+}
+
 // ReconcileRoomMembership drives the membership of roomID to match `desired`
 // (a list of full Matrix user IDs). Users present in `desired` but not in
 // the room are invited; users in the room but not in `desired` are kicked.

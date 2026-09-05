@@ -60,6 +60,13 @@ type Client interface {
 	// it falls back to the homeserver-admin identity.
 	SetRoomState(ctx context.Context, roomID, eventType, stateKey string, content map[string]interface{}, userToken string) error
 
+	// GetRoomState reads the content of a single state event from a room
+	// using the homeserver-admin identity (the event's `content` object,
+	// not the full event envelope). A room that has never had the event
+	// set (e.g. legacy rooms with no m.room.power_levels) yields (nil, nil)
+	// rather than an error; any other failure is returned.
+	GetRoomState(ctx context.Context, roomID, eventType, stateKey string) (map[string]interface{}, error)
+
 	// JoinRoom makes the user identified by token join the given room.
 	JoinRoom(ctx context.Context, roomID, userToken string) error
 
@@ -751,6 +758,38 @@ func (c *TuwunelClient) SetRoomState(ctx context.Context, roomID, eventType, sta
 			roomID, eventType, statusCode, truncate(respBody, 500))
 	}
 	return nil
+}
+
+func (c *TuwunelClient) GetRoomState(ctx context.Context, roomID, eventType, stateKey string) (map[string]interface{}, error) {
+	token, err := c.ensureAdminToken(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("get room state %s %s: %w", roomID, eventType, err)
+	}
+	encodedRoom := encodeRoomID(roomID)
+	// Always include the state-key segment (trailing slash when the key is
+	// empty) to match SetRoomState — some strict homeservers reject the
+	// segment-less form for empty-key events.
+	path := fmt.Sprintf("/_matrix/client/v3/rooms/%s/state/%s/%s",
+		encodedRoom, url.PathEscape(eventType), url.PathEscape(stateKey))
+	statusCode, respBody, err := c.doJSON(ctx, http.MethodGet, path, token, nil, nil)
+	if err != nil {
+		return nil, fmt.Errorf("get room state %s %s: %w", roomID, eventType, err)
+	}
+	if statusCode == http.StatusNotFound {
+		return nil, nil // state event never set on this room
+	}
+	if statusCode != http.StatusOK {
+		return nil, fmt.Errorf("get room state %s %s: HTTP %d: %s",
+			roomID, eventType, statusCode, truncate(respBody, 500))
+	}
+	// The state endpoint returns the state CONTENT object directly
+	// (e.g. {"users":{...},"ban":50}), not an event envelope — decode
+	// the wire response as-is.
+	var content map[string]interface{}
+	if err := json.Unmarshal(respBody, &content); err != nil {
+		return nil, fmt.Errorf("get room state %s %s: decode: %w", roomID, eventType, err)
+	}
+	return content, nil
 }
 
 func (c *TuwunelClient) JoinRoom(ctx context.Context, roomID, userToken string) error {

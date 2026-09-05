@@ -57,6 +57,15 @@ type WorkerProvisioner interface {
 	// KickFromRoom removes userID from roomID using the admin token.
 	// Idempotent: returns nil when the user is not a member.
 	KickFromRoom(ctx context.Context, roomID, userID, reason string) error
+
+	// EnsureRoomPowerLevel reconciles userID's entry in the room's
+	// m.room.power_levels to exactly the given power level (raising or
+	// lowering it), using the admin token. The complete existing content is
+	// preserved (every other user, every non-user field); only the target
+	// users entry is mutated. The call is a no-op write when the user
+	// already has exactly that level. Rooms that never had power_levels set
+	// (legacy) are treated as starting from an empty users map.
+	EnsureRoomPowerLevel(ctx context.Context, roomID, userID string, level int) error
 	// ForceLeaveRoom removes a user whose room power level prevents a normal
 	// admin kick.
 	ForceLeaveRoom(ctx context.Context, userID, roomID string) error
@@ -237,6 +246,15 @@ type HumanProvisioner interface {
 	// KickFromRoom removes userID from roomID using the admin token.
 	// Idempotent: returns nil when the user is not a member.
 	KickFromRoom(ctx context.Context, roomID, userID, reason string) error
+
+	// EnsureRoomPowerLevel reconciles userID's entry in the room's
+	// m.room.power_levels to exactly the given power level (raising or
+	// lowering it), using the admin token. The complete existing content is
+	// preserved (every other user, every non-user field); only the target
+	// users entry is mutated. The call is a no-op write when the user
+	// already has exactly that level. Rooms that never had power_levels set
+	// (legacy) are treated as starting from an empty users map.
+	EnsureRoomPowerLevel(ctx context.Context, roomID, userID string, level int) error
 
 	// ForceLeaveRoom asks the Tuwunel admin bot to force-leave userID out
 	// of roomID via "!admin users force-leave-room". Fire-and-forget at

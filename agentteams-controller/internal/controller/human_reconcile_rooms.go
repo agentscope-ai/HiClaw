@@ -44,29 +44,43 @@ func (r *HumanReconciler) reconcileHumanRooms(ctx context.Context, s *humanScope
 	next := make([]string, 0, len(h.Status.Rooms)+len(desired))
 	next = append(next, h.Status.Rooms...)
 
+	powerLevel := humanRoomPowerLevel(h.Spec.PermissionLevel)
+
 	for rid := range desired {
+		alreadyMember := false
 		if _, ok := observed[rid]; ok {
-			continue
+			alreadyMember = true
 		}
-		if err := r.Provisioner.InviteToRoom(ctx, rid, matrixUserID); err != nil {
-			logger.Error(err, "failed to invite human to room", "room", rid)
-			continue
+		if !alreadyMember {
+			if err := r.Provisioner.InviteToRoom(ctx, rid, matrixUserID); err != nil {
+				logger.Error(err, "failed to invite human to room", "room", rid)
+				continue
+			}
+			// Acquire a user token lazily — only on the first new-room
+			// addition of this reconcile. Steady-state passes (desired ==
+			// observed) and revoke-only passes never reach this call, so
+			// Matrix Login is not issued on every 5-minute requeue.
+			token := r.ensureUserToken(ctx, s)
+			if token == "" {
+				logger.V(1).Info("user token unavailable; invite-only this cycle",
+					"room", rid, "human", h.Name, "username", s.username)
+				continue
+			}
+			if err := r.Provisioner.JoinRoomAs(ctx, rid, token); err != nil {
+				logger.Error(err, "failed to join room as human", "room", rid)
+				continue
+			}
+			next = append(next, rid)
 		}
-		// Acquire a user token lazily — only on the first new-room
-		// addition of this reconcile. Steady-state passes (desired ==
-		// observed) and revoke-only passes never reach this call, so
-		// Matrix Login is not issued on every 5-minute requeue.
-		token := r.ensureUserToken(ctx, s)
-		if token == "" {
-			logger.V(1).Info("user token unavailable; invite-only this cycle",
-				"room", rid, "human", h.Name, "username", s.username)
-			continue
+		// Grant the human their power level in every room they should be
+		// in — new rooms and already-observed ones alike. The existing-room
+		// pass is the healing path: legacy rooms were created before power
+		// levels accounted for human members, leaving them at the implicit
+		// level 0 and 403 on room operations (rename, invite). Non-fatal
+		// per this file's error policy; the next cycle retries.
+		if err := r.Provisioner.EnsureRoomPowerLevel(ctx, rid, matrixUserID, powerLevel); err != nil {
+			logger.Error(err, "failed to ensure human power level", "room", rid, "level", powerLevel)
 		}
-		if err := r.Provisioner.JoinRoomAs(ctx, rid, token); err != nil {
-			logger.Error(err, "failed to join room as human", "room", rid)
-			continue
-		}
-		next = append(next, rid)
 	}
 
 	// Removals: in-place filter. A failed kick keeps the room so the
@@ -84,6 +98,21 @@ func (r *HumanReconciler) reconcileHumanRooms(ctx context.Context, s *humanScope
 	}
 
 	h.Status.Rooms = kept
+}
+
+// humanRoomPowerLevel maps the Human CR permission level to the Matrix power
+// level granted in rooms the human belongs to. Level 1 (admin equivalent)
+// co-owns the rooms (full control); levels 2/3 (team/worker scoped) get
+// level 50 — Matrix's default member authority: rename, invite, kick, ban
+// and redact (the homeserver defaults all sit at 50), but not power-level
+// changes, and only against members strictly below 50 — the manager/leader
+// at 100 can never be kicked or banned by the human. This authority is
+// accepted and documented in docs/design/room-power-levels.md.
+func humanRoomPowerLevel(permissionLevel int) int {
+	if permissionLevel == 1 {
+		return 100
+	}
+	return 50
 }
 
 // ensureUserToken returns a Matrix access token for the human,

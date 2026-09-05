@@ -548,6 +548,58 @@ func TestSetRoomState(t *testing.T) {
 	}
 }
 
+func TestGetRoomState(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/_matrix/client/v3/login":
+			adminLoginHandler(t, w)
+		case "/_matrix/client/v3/rooms/!room:d/state/m.room.power_levels/":
+			// Trailing slash: the empty state key is always included in the
+			// URL (aligned with SetRoomState, strict-homeserver safe).
+			if r.Method != http.MethodGet {
+				t.Errorf("method = %s, want GET", r.Method)
+			}
+			if auth := r.Header.Get("Authorization"); auth != "Bearer admin-token" {
+				t.Errorf("Authorization = %q, want Bearer admin-token", auth)
+			}
+			w.WriteHeader(http.StatusOK)
+			// A compliant homeserver returns the state CONTENT object
+			// directly — no event envelope (no type/state_key/sender, no
+			// "content" wrapper).
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"users": map[string]interface{}{"@a:d": 100.0},
+			})
+		case "/_matrix/client/v3/rooms/!room:d/state/room.meta/":
+			w.WriteHeader(http.StatusNotFound)
+			w.Write([]byte(`{"errcode":"M_NOT_FOUND"}`))
+		default:
+			t.Errorf("unexpected path: %s", r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	c := NewTuwunelClient(Config{ServerURL: server.URL, Domain: "d"}, server.Client())
+
+	st, err := c.GetRoomState(context.Background(), "!room:d", "m.room.power_levels", "")
+	if err != nil {
+		t.Fatalf("GetRoomState: %v", err)
+	}
+	users, ok := st["users"].(map[string]interface{})
+	if !ok || users["@a:d"] != 100.0 {
+		t.Fatalf("users=%#v, want @a:d=100 (content, not event envelope)", st)
+	}
+
+	// A room that never had the state set yields (nil, nil), not an error.
+	st, err = c.GetRoomState(context.Background(), "!room:d", "room.meta", "")
+	if err != nil {
+		t.Fatalf("missing state must not error: %v", err)
+	}
+	if st != nil {
+		t.Errorf("missing state = %#v, want nil", st)
+	}
+}
+
 // adminLoginHandler returns a handler that responds to admin login with a
 // fixed token, allowing tests that exercise admin-driven endpoints.
 func adminLoginHandler(t *testing.T, w http.ResponseWriter) {

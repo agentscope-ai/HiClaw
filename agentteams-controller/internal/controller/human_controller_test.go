@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sort"
 	"testing"
 
@@ -635,3 +636,98 @@ func sortedCopy(in []string) []string {
 // Silence unused import lint when the service package is referenced only
 // via the mock type alias in some future subtest.
 var _ = service.HumanCredentials{}
+
+// TestHumanReconciler_PowerLevelMapping checks that every room in the
+// desired set — new and already-observed — gets EnsureRoomPowerLevel with
+// the level derived from the Human CR's permissionLevel.
+func TestHumanReconciler_PowerLevelMapping(t *testing.T) {
+	worker := newReadyWorker("w1", "!room-w1:localhost")
+	team := newReadyTeam("t1", "!room-t1:localhost")
+	human := newHuman("alice", v1beta1.HumanSpec{
+		PermissionLevel:   1, // admin-equivalent → 100
+		AccessibleWorkers: []string{"w1"},
+		AccessibleTeams:   []string{"t1"},
+	})
+	human.Status.MatrixUserID = "@alice:localhost"
+	human.Status.InitialPassword = "stored-pw"
+	human.Status.Rooms = []string{"!room-w1:localhost"} // already in the worker room
+	human.Status.Phase = "Active"
+	human.Finalizers = []string{finalizerName}
+
+	rig := newHumanRig(t, human, worker, team)
+	out, _, err := rig.reconcile("alice")
+	if err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	byRoom := map[string]int{}
+	for _, c := range rig.prov.Calls.EnsureRoomPowerLevel {
+		byRoom[c.RoomID] = c.Level
+	}
+	if byRoom["!room-w1:localhost"] != 100 {
+		t.Errorf("existing room heal: level=%d, want 100 (calls=%+v)", byRoom["!room-w1:localhost"], rig.prov.Calls.EnsureRoomPowerLevel)
+	}
+	if byRoom["!room-t1:localhost"] != 100 {
+		t.Errorf("new room: level=%d, want 100 (calls=%+v)", byRoom["!room-t1:localhost"], rig.prov.Calls.EnsureRoomPowerLevel)
+	}
+	for _, c := range rig.prov.Calls.EnsureRoomPowerLevel {
+		if c.UserID != "@alice:localhost" {
+			t.Errorf("power level granted to %s, want @alice:localhost", c.UserID)
+		}
+	}
+	if len(out.Status.Rooms) != 2 {
+		t.Errorf("Status.Rooms=%v, want both rooms", out.Status.Rooms)
+	}
+}
+
+// Team-scoped humans (level 2) get the default member level (50), not room
+// ownership.
+func TestHumanReconciler_PowerLevelL2GetsDefault(t *testing.T) {
+	worker := newReadyWorker("w1", "!room-w1:localhost")
+	human := newHuman("bob", v1beta1.HumanSpec{
+		PermissionLevel:   2,
+		AccessibleWorkers: []string{"w1"},
+	})
+	human.Status.MatrixUserID = "@bob:localhost"
+	human.Status.InitialPassword = "stored-pw"
+	human.Status.Phase = "Active"
+	human.Finalizers = []string{finalizerName}
+
+	rig := newHumanRig(t, human, worker)
+	if _, _, err := rig.reconcile("bob"); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	if len(rig.prov.Calls.EnsureRoomPowerLevel) != 1 {
+		t.Fatalf("power calls=%+v, want 1", rig.prov.Calls.EnsureRoomPowerLevel)
+	}
+	if got := rig.prov.Calls.EnsureRoomPowerLevel[0].Level; got != 50 {
+		t.Errorf("level=%d, want 50", got)
+	}
+}
+
+// A power-level grant failure is non-fatal: the room is still recorded and
+// the next cycle retries.
+func TestHumanReconciler_PowerLevelErrorNonFatal(t *testing.T) {
+	worker := newReadyWorker("w1", "!room-w1:localhost")
+	human := newHuman("carol", v1beta1.HumanSpec{
+		PermissionLevel:   2,
+		AccessibleWorkers: []string{"w1"},
+	})
+	human.Status.MatrixUserID = "@carol:localhost"
+	human.Status.InitialPassword = "stored-pw"
+	human.Status.Phase = "Active"
+	human.Finalizers = []string{finalizerName}
+
+	rig := newHumanRig(t, human, worker)
+	rig.prov.EnsureRoomPowerLevelFn = func(ctx context.Context, roomID, userID string, level int) error {
+		return fmt.Errorf("matrix unavailable")
+	}
+
+	out, _, err := rig.reconcile("carol")
+	if err != nil {
+		t.Fatalf("power-level failure must be non-fatal, got: %v", err)
+	}
+	if len(out.Status.Rooms) != 1 || out.Status.Rooms[0] != "!room-w1:localhost" {
+		t.Errorf("room not recorded despite power failure: %v", out.Status.Rooms)
+	}
+}

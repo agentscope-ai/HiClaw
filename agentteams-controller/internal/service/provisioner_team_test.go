@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"reflect"
 	"sort"
@@ -31,6 +32,11 @@ type fakeTeamMatrix struct {
 	roomStates   []roomStateCall
 	tokenInvites []roomUserCall
 	created      bool
+
+	// powerStates seeds m.room.power_levels reads per room; an absent room
+	// reports (nil, nil) — the legacy "state never set" case.
+	powerStates   map[string]map[string]interface{}
+	powerStateErr error
 }
 
 type roomUserCall struct {
@@ -118,7 +124,37 @@ func (f *fakeTeamMatrix) SetRoomState(_ context.Context, roomID, eventType, stat
 		content:   content,
 		token:     token,
 	})
+	if eventType == "m.room.power_levels" {
+		// JSON round-trip so stored state matches what the homeserver
+		// would return (numbers as float64 in map[string]interface{}).
+		data, _ := json.Marshal(content)
+		var rt map[string]interface{}
+		if err := json.Unmarshal(data, &rt); err != nil {
+			rt = content
+		}
+		if f.powerStates == nil {
+			f.powerStates = map[string]map[string]interface{}{}
+		}
+		f.powerStates[roomID] = rt
+	}
 	return nil
+}
+
+func (f *fakeTeamMatrix) GetRoomState(_ context.Context, roomID, eventType, _ string) (map[string]interface{}, error) {
+	if eventType != "m.room.power_levels" {
+		return nil, nil
+	}
+	if f.powerStateErr != nil {
+		return nil, f.powerStateErr
+	}
+	if f.powerStates == nil {
+		return nil, nil // legacy room: state never set
+	}
+	st, ok := f.powerStates[roomID]
+	if !ok {
+		return nil, nil
+	}
+	return st, nil
 }
 
 func (f *fakeTeamMatrix) JoinRoom(_ context.Context, roomID, token string) error {

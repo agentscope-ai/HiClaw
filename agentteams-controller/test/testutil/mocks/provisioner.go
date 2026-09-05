@@ -44,6 +44,7 @@ type MockProvisioner struct {
 	InviteToRoomFn                 func(ctx context.Context, roomID, userID string) error
 	JoinRoomAsFn                   func(ctx context.Context, roomID, userToken string) error
 	KickFromRoomFn                 func(ctx context.Context, roomID, userID, reason string) error
+	EnsureRoomPowerLevelFn         func(ctx context.Context, roomID, userID string, level int) error
 	ForceLeaveRoomFn               func(ctx context.Context, userID, roomID string) error
 	DeactivateHumanUserFn          func(ctx context.Context, userID string) error
 	ProvisionTeamRoomsFn           func(ctx context.Context, req service.TeamRoomRequest) (*service.TeamRoomResult, error)
@@ -85,6 +86,7 @@ type MockProvisioner struct {
 		InviteToRoom                 []roomMembershipCall
 		JoinRoomAs                   []joinRoomAsCall
 		KickFromRoom                 []kickFromRoomCall
+		EnsureRoomPowerLevel         []ensureRoomPowerLevelCall
 		ForceLeaveRoom               []roomMembershipCall
 		DeactivateHumanUser          []string
 		ProvisionTeamRooms           []service.TeamRoomRequest
@@ -118,6 +120,12 @@ type tokenRequestCall struct {
 type remoteNamespaceCall struct {
 	ClusterID string
 	Namespace string
+}
+
+type ensureRoomPowerLevelCall struct {
+	RoomID string
+	UserID string
+	Level  int
 }
 
 type userPasswordCall struct {
@@ -186,6 +194,7 @@ func (m *MockProvisioner) Reset() {
 	m.InviteToRoomFn = nil
 	m.JoinRoomAsFn = nil
 	m.KickFromRoomFn = nil
+	m.EnsureRoomPowerLevelFn = nil
 	m.ForceLeaveRoomFn = nil
 	m.DeactivateHumanUserFn = nil
 	m.ProvisionTeamRoomsFn = nil
@@ -232,6 +241,7 @@ func (m *MockProvisioner) clearCallsLocked() {
 		InviteToRoom                 []roomMembershipCall
 		JoinRoomAs                   []joinRoomAsCall
 		KickFromRoom                 []kickFromRoomCall
+		EnsureRoomPowerLevel         []ensureRoomPowerLevelCall
 		ForceLeaveRoom               []roomMembershipCall
 		DeactivateHumanUser          []string
 		ProvisionTeamRooms           []service.TeamRoomRequest
@@ -613,6 +623,17 @@ func (m *MockProvisioner) KickFromRoom(ctx context.Context, roomID, userID, reas
 	m.mu.Unlock()
 	if fn != nil {
 		return fn(ctx, roomID, userID, reason)
+	}
+	return nil
+}
+
+func (m *MockProvisioner) EnsureRoomPowerLevel(ctx context.Context, roomID, userID string, level int) error {
+	m.mu.Lock()
+	m.Calls.EnsureRoomPowerLevel = append(m.Calls.EnsureRoomPowerLevel, ensureRoomPowerLevelCall{RoomID: roomID, UserID: userID, Level: level})
+	fn := m.EnsureRoomPowerLevelFn
+	m.mu.Unlock()
+	if fn != nil {
+		return fn(ctx, roomID, userID, level)
 	}
 	return nil
 }
