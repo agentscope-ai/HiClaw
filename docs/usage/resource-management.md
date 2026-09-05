@@ -494,6 +494,17 @@ Human permissions are enforced through two mechanisms:
 | L2 | Added to specified Teams' Leaders + Workers + specified standalone Workers | Specified Team Rooms + Worker Rooms |
 | L3 | Added to specified Workers | Specified Worker Rooms |
 
+### Human Updates (API)
+
+`PUT /api/v1/humans/{name}` updates an existing human's permission profile. It is a merge-patch: only fields present in the body change; an absent field is kept, and an explicitly empty list clears it.
+
+- **Updatable:** `displayName`, `email`, `permissionLevel` (1/2/3), `accessibleTeams`, `accessibleWorkers`, `note`.
+- **Not updatable:** `name` and the Matrix identity (re-provisioning the account is a separate operation).
+- **Validation:** `permissionLevel` outside 1–3 → `400`; `accessibleTeams` / `accessibleWorkers` referencing missing Teams/Workers → `400` naming the references.
+- **Authorization:** admin / manager only. Team leaders, team-scoped humans, and worker accounts are denied — permission grants are an admin operation.
+
+The update is applied to the Human CR; the existing human reconcile then re-syncs Matrix invitations, room memberships, `groupAllowFrom`, and the power level granted in each room the human belongs to, so a `permissionLevel` change takes effect on room administration at the next reconcile cycle (a demotion lowers the level).
+
 ### Human Creation Flow
 
 1. Register a Matrix account (random password auto-generated)

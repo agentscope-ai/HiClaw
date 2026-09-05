@@ -71,6 +71,31 @@ func TestAuthorizer_HumanScoped(t *testing.T) {
 	}
 }
 
+// TestAuthorizer_HumanUpdateAdminOnly guards the human permission-update
+// boundary: only admin/manager may PUT /api/v1/humans/{name}.
+func TestAuthorizer_HumanUpdateAdminOnly(t *testing.T) {
+	az := NewAuthorizer()
+	allowed := []CallerIdentity{
+		{Role: RoleAdmin, Username: "admin"},
+		{Role: RoleManager, Username: "manager"},
+	}
+	for i := range allowed {
+		if err := az.Authorize(&allowed[i], AuthzRequest{Action: ActionUpdate, ResourceKind: "human", ResourceName: "maizong"}); err != nil {
+			t.Errorf("%s should be allowed to update humans, got: %v", allowed[i].Role, err)
+		}
+	}
+	denied := []CallerIdentity{
+		{Role: RoleTeamLeader, Username: "alpha-lead", Team: "alpha-team"},
+		{Role: RoleHuman, Username: "maizong", Teams: []string{"market-team"}},
+		{Role: RoleWorker, Username: "alpha-dev", Team: "alpha-team"},
+	}
+	for i := range denied {
+		if err := az.Authorize(&denied[i], AuthzRequest{Action: ActionUpdate, ResourceKind: "human", ResourceName: "maizong"}); err == nil {
+			t.Errorf("%s must be denied updating humans", denied[i].Role)
+		}
+	}
+}
+
 func TestAuthorizer_TeamLeaderOwnTeam(t *testing.T) {
 	az := NewAuthorizer()
 	caller := &CallerIdentity{Role: RoleTeamLeader, Username: "alpha-lead", Team: "alpha-team"}

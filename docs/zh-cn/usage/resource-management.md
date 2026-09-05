@@ -493,6 +493,17 @@ Human 的权限通过两个机制实现：
 | L2 | 添加到指定 Team 的 Leader + Worker + 指定独立 Worker | 指定 Team Room + Worker Room |
 | L3 | 添加到指定 Worker | 指定 Worker Room |
 
+### Human 更新（API）
+
+`PUT /api/v1/humans/{name}` 更新既有 human 的权限配置。合并补丁语义：body 里出现的字段才变，未出现保持原值，显式空数组清空列表。
+
+- **可更新：** `displayName`、`email`、`permissionLevel`（1/2/3）、`accessibleTeams`、`accessibleWorkers`、`note`。
+- **不可更新：** `name` 与 Matrix 身份（账号重新开通是独立操作）。
+- **校验：** `permissionLevel` 超出 1–3 → `400`；`accessibleTeams` / `accessibleWorkers` 引用不存在的 Team/Worker → `400` 并点名。
+- **鉴权：** 仅 admin / manager。团队 Leader、团队范围人类用户、worker 账号一律拒绝——授权是管理员操作。
+
+更新写入 Human CR，既有的 human reconcile 自动把 Matrix 邀请、房间成员、`groupAllowFrom` 以及该 human 所在每个房间授予的 power level 重新同步到新范围——因此 `permissionLevel` 变更在下一个 reconcile 周期才对房间管理生效（降级真的会把级别降下来）。
+
 ### Human 创建流程
 
 1. 注册 Matrix 账号（自动生成随机密码）

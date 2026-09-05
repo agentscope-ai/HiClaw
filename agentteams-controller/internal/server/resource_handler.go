@@ -556,6 +556,117 @@ func (h *ResourceHandler) GetHuman(w http.ResponseWriter, r *http.Request) {
 	httputil.WriteJSON(w, http.StatusOK, humanToResponse(&human))
 }
 
+func (h *ResourceHandler) UpdateHuman(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if name == "" {
+		httputil.WriteError(w, http.StatusBadRequest, "human name is required")
+		return
+	}
+
+	var req UpdateHumanRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		httputil.WriteError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+		return
+	}
+
+	ctx := r.Context()
+	for attempt := 0; attempt < k8sUpdateMaxRetries; attempt++ {
+		var human v1beta1.Human
+		if err := h.client.Get(ctx, client.ObjectKey{Name: name, Namespace: h.namespace}, &human); err != nil {
+			writeK8sError(w, "get human for update", err)
+			return
+		}
+
+		if req.PermissionLevel != nil && (*req.PermissionLevel < 1 || *req.PermissionLevel > 3) {
+			httputil.WriteError(w, http.StatusBadRequest, "permissionLevel must be 1 (admin), 2 (team), or 3 (worker)")
+			return
+		}
+		if err := h.validateHumanReferences(ctx, req.AccessibleTeams, req.AccessibleWorkers); err != nil {
+			httputil.WriteError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+
+		if req.DisplayName != nil {
+			human.Spec.DisplayName = *req.DisplayName
+		}
+		if req.Email != nil {
+			human.Spec.Email = *req.Email
+		}
+		if req.PermissionLevel != nil {
+			human.Spec.PermissionLevel = *req.PermissionLevel
+		}
+		if req.AccessibleTeams != nil {
+			human.Spec.AccessibleTeams = *req.AccessibleTeams
+		}
+		if req.AccessibleWorkers != nil {
+			human.Spec.AccessibleWorkers = *req.AccessibleWorkers
+		}
+		if req.Note != nil {
+			human.Spec.Note = *req.Note
+		}
+
+		if err := h.client.Update(ctx, &human); err != nil {
+			if apierrors.IsConflict(err) && attempt+1 < k8sUpdateMaxRetries {
+				time.Sleep(time.Duration(attempt+1) * 100 * time.Millisecond)
+				continue
+			}
+			writeK8sError(w, "update human", err)
+			return
+		}
+
+		httputil.WriteJSON(w, http.StatusOK, humanToResponse(&human))
+		return
+	}
+}
+
+// validateHumanReferences rejects permission grants that point at missing
+// Teams or Workers: a dangling reference silently widens nothing but leaves
+// the human unable to reach a resource they believe they can.
+func (h *ResourceHandler) validateHumanReferences(ctx context.Context, teams *[]string, workers *[]string) error {
+	if teams != nil {
+		var teamList v1beta1.TeamList
+		if err := h.client.List(ctx, &teamList, client.InNamespace(h.namespace)); err != nil {
+			return fmt.Errorf("list teams: %w", err)
+		}
+		existing := make(map[string]struct{}, len(teamList.Items))
+		for i := range teamList.Items {
+			existing[teamList.Items[i].Name] = struct{}{}
+		}
+		var missing []string
+		for _, t := range *teams {
+			if t == "" {
+				continue
+			}
+			if _, ok := existing[t]; !ok {
+				missing = append(missing, t)
+			}
+		}
+		if len(missing) > 0 {
+			return fmt.Errorf("accessibleTeams references missing teams: %s", strings.Join(missing, ", "))
+		}
+	}
+	if workers != nil {
+		var missing []string
+		for _, wn := range *workers {
+			if wn == "" {
+				continue
+			}
+			var worker v1beta1.Worker
+			if err := h.client.Get(ctx, client.ObjectKey{Name: wn, Namespace: h.namespace}, &worker); err != nil {
+				if apierrors.IsNotFound(err) {
+					missing = append(missing, wn)
+					continue
+				}
+				return fmt.Errorf("get worker %s: %w", wn, err)
+			}
+		}
+		if len(missing) > 0 {
+			return fmt.Errorf("accessibleWorkers references missing workers: %s", strings.Join(missing, ", "))
+		}
+	}
+	return nil
+}
+
 func (h *ResourceHandler) ListHumans(w http.ResponseWriter, r *http.Request) {
 	var list v1beta1.HumanList
 	if err := h.client.List(r.Context(), &list, client.InNamespace(h.namespace)); err != nil {
