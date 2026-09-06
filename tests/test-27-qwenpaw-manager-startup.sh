@@ -145,6 +145,12 @@ fi
 docker exec "${_AGENT_CTR}" bash -c \
     "printf '%s\n' '---' 'name: ${_HOT_SKILL}' 'description: QwenPaw Manager updated hot loading regression skill.' '---' '' '# Hot Loading Regression Updated' > '/root/manager-workspace/skills/${_HOT_SKILL}/SKILL.md'"
 
+# QwenPaw 2.2.0: the workspace skill watcher is directory-level, so a
+# content-only update (same skill dir, edited SKILL.md) does NOT trigger an
+# automatic reconcile. Force a refresh so the updated content is picked up
+# before polling /api/skills.
+docker exec "${_AGENT_CTR}" curl -fsS -X POST http://127.0.0.1:18799/api/skills/refresh >/dev/null 2>&1 || true
+
 _skill_updated=false
 _deadline=$(( $(date +%s) + 30 ))
 while [ "$(date +%s)" -lt "${_deadline}" ]; do
