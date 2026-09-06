@@ -319,6 +319,14 @@ export QWENPAW_SECRET_DIR="${QWENPAW_SECRET_DIR:-${QWENPAW_WORKING_DIR}.secret}"
 export QWENPAW_RUNNING_IN_CONTAINER=true
 export QWENPAW_LOG_LEVEL="${COPAW_LOG_LEVEL:-info}"
 
+# LLM stream stall detection (QwenPaw 2.2.0 #7150): aligned with the Worker
+# entrypoint. Upstream default 30s; AgentTeams defaults 300s (8/26
+# QwenPaw001 false-kill precedent, lesson #386). Priority: native
+# QWENPAW_LLM_STREAM_* vars > AGENTTEAMS_LLM_STREAM_TIMEOUT_S > 300.
+AGENTTEAMS_LLM_STREAM_TIMEOUT_S="${AGENTTEAMS_LLM_STREAM_TIMEOUT_S:-300}"
+export QWENPAW_LLM_STREAM_FIRST_CONTENT_TIMEOUT="${QWENPAW_LLM_STREAM_FIRST_CONTENT_TIMEOUT:-${AGENTTEAMS_LLM_STREAM_TIMEOUT_S}}"
+export QWENPAW_LLM_STREAM_IDLE_TIMEOUT="${QWENPAW_LLM_STREAM_IDLE_TIMEOUT:-${AGENTTEAMS_LLM_STREAM_TIMEOUT_S}}"
+
 # YOLO mode: AGENTTEAMS_YOLO=1 → set approval_level=OFF in agent.json
 # (QwenPaw 2.2 equivalent of OpenClaw's tools.exec.ask=off).
 # start-manager-agent.sh promotes the yolo-mode marker file to
